@@ -2,11 +2,13 @@ FROM maven:3.9-eclipse-temurin-21 AS build
 
 WORKDIR /app
 
-COPY backend/pom.xml .
-COPY backend/src src
+COPY ./pom.xml .
+COPY ./src src
 
-RUN apt-get update && apt-get install -y kotlin stdlib && \
-    mvn package -DskipTests
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends kotlin \
+    && rm -rf /var/lib/apt/lists/* \
+    && mvn -B package -DskipTests
 
 FROM eclipse-temurin:21-jre-alpine
 
