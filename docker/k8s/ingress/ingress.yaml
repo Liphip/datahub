@@ -1,0 +1,38 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dataturntable-ingress
+  labels:
+    app: dataturntable
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+    # For production, enable TLS
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  rules:
+    - host: dataturntable.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dataturntable-frontend
+                port:
+                  number: 80
+          - path: /q
+            pathType: Prefix
+            backend:
+              service:
+                name: dataturntable-backend
+                port:
+                  number: 8080
+  # TLS configuration for production
+  # tls:
+  #   - hosts:
+  #       - dataturntable.example.com
+  #     secretName: dataturntable-tls
