@@ -78,6 +78,12 @@
             <artifactId>quarkus-smallrye-reactive-messaging-kafka</artifactId>
         </dependency>
         
+        <!-- MQTT -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-reactive-messaging-mqtt</artifactId>
+        </dependency>
+        
         <!-- Redis -->
         <dependency>
             <groupId>io.quarkus</groupId>
