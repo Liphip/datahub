@@ -90,12 +90,6 @@
             <artifactId>quarkus-redis-client</artifactId>
         </dependency>
         
-        <!-- Docker -->
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-docker</artifactId>
-        </dependency>
-        
         <!-- Config -->
         <dependency>
             <groupId>io.quarkus</groupId>
@@ -119,6 +113,13 @@
             <groupId>org.mindrot</groupId>
             <artifactId>jbcrypt</artifactId>
             <version>0.4</version>
+        </dependency>
+        
+        <!-- Docker Java API -->
+        <dependency>
+            <groupId>com.spotify</groupId>
+            <artifactId>docker-client</artifactId>
+            <version>8.16.0</version>
         </dependency>
         
         <!-- Kotlin -->
