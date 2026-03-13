@@ -72,8 +72,8 @@ services:
 
   backend:
     build:
-      context: ../backend
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: backend/Dockerfile
     container_name: dataturntable-backend
     ports:
       - "8080:8080"
@@ -96,8 +96,8 @@ services:
 
   frontend:
     build:
-      context: ../frontend
-      dockerfile: ../docker/frontend.Dockerfile
+      context: ..
+      dockerfile: docker/frontend.Dockerfile
     container_name: dataturntable-frontend
     ports:
       - "3000:80"
