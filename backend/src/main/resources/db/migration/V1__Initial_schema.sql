@@ -181,11 +181,11 @@ CREATE INDEX idx_alert_history_sent ON alert_history(sent_at DESC);
 -- Tenant Hierarchy View
 CREATE OR REPLACE VIEW tenant_tree AS
 WITH RECURSIVE tenant_tree AS (
-    SELECT id, name, parent_id, 1 AS level, ARRAY[name] AS path
+    SELECT id, name, parent_id, 1 AS level, ARRAY[name]::VARCHAR(255)[] AS path
     FROM tenants
     WHERE parent_id IS NULL
     UNION ALL
-    SELECT t.id, t.name, t.parent_id, tt.level + 1, tt.path || t.name
+    SELECT t.id, t.name, t.parent_id, tt.level + 1, (tt.path || t.name)::VARCHAR(255)[]
     FROM tenants t
     INNER JOIN tenant_tree tt ON t.parent_id = tt.id
 )

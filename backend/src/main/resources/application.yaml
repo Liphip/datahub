@@ -8,9 +8,9 @@ quarkus:
   datasource:
     db-kind: postgresql
     jdbc:
-      url: jdbc:postgresql://localhost:5432/dataturntable
-    username: dataturntable
-    password: dataturntable
+      url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dataturntable}
+    username: ${DB_USER:dataturntable}
+    password: ${DB_PASSWORD:dataturntable}
   
   hibernate-orm:
     database:
@@ -24,10 +24,10 @@ quarkus:
   
   kafka:
     bootstrap:
-      servers: localhost:9092
+      servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
   
   redis:
-    hosts: redis://localhost:6379
+    hosts: ${REDIS_HOSTS:redis://localhost:6379}
   
   security:
     users:
@@ -70,7 +70,14 @@ dataturntable:
   quarkus:
     datasource:
       jdbc:
-        url: jdbc:postgresql://localhost:5432/dataturntable
+        url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dataturntable}
+      username: ${DB_USER:dataturntable}
+      password: ${DB_PASSWORD:dataturntable}
+    kafka:
+      bootstrap:
+        servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    redis:
+      hosts: ${REDIS_HOSTS:redis://localhost:6379}
     flyway:
       migrate-at-start: true
 
