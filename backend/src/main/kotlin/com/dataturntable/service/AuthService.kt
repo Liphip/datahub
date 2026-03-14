@@ -5,14 +5,14 @@ import com.dataturntable.dto.*
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
 import com.fasterxml.jackson.databind.ObjectMapper
-import io.smallrye.jwt.build.Jwt
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
 import jakarta.transaction.Transactional
 import org.mindrot.jbcrypt.BCrypt
-import java.time.Duration
 import java.time.Instant
 import java.util.*
+import java.security.SecureRandom
+import java.util.Base64
 
 @ApplicationScoped
 class AuthService {
@@ -91,17 +91,10 @@ class AuthService {
     }
     
     private fun generateToken(user: User): String {
-        val abilities = user.getAllAbilities()
-        
-        return Jwt.issuer("https://dataturntable.io")
-            .subject(user.id.toString())
-            .claim("email", user.email)
-            .claim("tenant_id", user.tenant?.id.toString())
-            .claim("abilities", abilities)
-            .claim("superadmin", user.isSuperadmin)
-            .groups(abilities)
-            .expiresIn(Duration.ofHours(24))
-            .sign()
+        val random = SecureRandom()
+        val bytes = ByteArray(32)
+        random.nextBytes(bytes)
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
     }
     
     private fun toUserDto(user: User): UserDto {
@@ -120,5 +113,9 @@ class AuthService {
     fun getCurrentUser(email: String): UserDto? {
         val user = User.findByEmail(email) ?: return null
         return toUserDto(user)
+    }
+    
+    fun needsSetup(): Boolean {
+        return User.count() == 0L
     }
 }

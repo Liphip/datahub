@@ -3,6 +3,7 @@ package com.dataturntable.api
 import com.dataturntable.dto.*
 import com.dataturntable.service.AuthService
 import io.quarkus.security.Authenticated
+import io.quarkus.security.PermitAll
 import jakarta.inject.Inject
 import jakarta.validation.Valid
 import jakarta.ws.rs.*
@@ -30,6 +31,7 @@ class AuthResource {
     
     @POST
     @Path("/register")
+    @PermitAll
     fun register(@Valid request: RegisterRequest): Response {
         return try {
             val response = authService.register(request)
@@ -37,6 +39,14 @@ class AuthResource {
         } catch (e: IllegalArgumentException) {
             Response.status(400).entity(mapOf("error" to (e.message ?: "Bad request"))).build()
         }
+    }
+    
+    @GET
+    @Path("/setup")
+    @PermitAll
+    fun checkSetup(): Response {
+        val needsSetup = authService.needsSetup()
+        return Response.ok(mapOf("needsSetup" to needsSetup)).build()
     }
     
     @GET

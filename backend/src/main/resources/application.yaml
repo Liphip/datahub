@@ -4,6 +4,7 @@ quarkus:
   http:
     port: 8080
     host: 0.0.0.0
+    non-application-root-path: /q
   
   datasource:
     db-kind: postgresql
@@ -28,14 +29,6 @@ quarkus:
   
   redis:
     hosts: ${REDIS_HOSTS:redis://localhost:6379}
-  
-  security:
-    users:
-      embedded:
-        enabled: false
-  
-  smallrye-jwt:
-    enabled: false
 
 mp:
   jwt:
@@ -43,6 +36,14 @@ mp:
       publickey:
         location: publicKey.pem
       issuer: https://dataturntable.io
+    token:
+      header: Authorization
+      verification:
+        key:
+          location: publicKey.pem
+      generation:
+        key:
+          location: privateKey.pem
 
 jwt:
   issuer: https://dataturntable.io
