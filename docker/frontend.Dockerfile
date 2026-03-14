@@ -21,8 +21,8 @@ FROM nginx:alpine
 # Copy built assets from builder
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Copy nginx config
-COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+# Copy nginx config for frontend (serves static files)
+COPY docker/frontend-nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 
