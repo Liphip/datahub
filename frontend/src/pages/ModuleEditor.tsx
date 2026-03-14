@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { CodeModule, ModuleVersion } from '../types';
+import type { CodeModule } from '../types';
 
 export default function ModuleEditor() {
   const { id } = useParams<{ id: string }>();

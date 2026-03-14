@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { useAuthStore } from '../stores/auth'
-import api from '../services/api'
+import { useAuthStore } from '../../stores/auth'
+import api from '../../services/api'
 
-vi.mock('../services/api', () => ({
+vi.mock('../../services/api', () => ({
   default: {
     login: vi.fn(),
     register: vi.fn(),
@@ -10,10 +10,20 @@ vi.mock('../services/api', () => ({
   },
 }))
 
+const store: Record<string, string> = {};
+const localStorageMock = {
+  getItem: vi.fn((key: string) => store[key] || null),
+  setItem: vi.fn((key: string, value: string) => { store[key] = value; }),
+  removeItem: vi.fn((key: string) => { delete store[key]; }),
+  clear: vi.fn(() => { Object.keys(store).forEach(k => delete store[k]); }),
+};
+
+Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock });
+
 describe('Auth Store', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
-    localStorage.clear()
+    vi.clearAllMocks();
+    Object.keys(store).forEach(k => delete store[k]);
     useAuthStore.setState({
       user: null,
       token: null,
@@ -77,7 +87,7 @@ describe('Auth Store', () => {
     }
 
     vi.mocked(api.getCurrentUser).mockResolvedValue(mockUser)
-    localStorage.getItem.mockReturnValue('existing-token')
+    vi.mocked(localStorage.getItem).mockReturnValue('existing-token')
 
     const { checkAuth } = useAuthStore.getState()
     await checkAuth()
@@ -89,7 +99,7 @@ describe('Auth Store', () => {
   })
 
   it('clears auth on startup with no token', async () => {
-    localStorage.getItem.mockReturnValue(null)
+    vi.mocked(localStorage.getItem).mockReturnValue(null)
 
     const { checkAuth } = useAuthStore.getState()
     await checkAuth()

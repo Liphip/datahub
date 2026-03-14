@@ -81,7 +81,7 @@ class ApiService {
     return response.data;
   }
 
-  async createUser(tenantId: string, email: string, password: string, data?: Partial<User>): Promise<User> {
+  async createUser(tenantId: string, _email: string, password: string, data?: Partial<User>): Promise<User> {
     const response = await this.client.post<User>(`/users?tenantId=${tenantId}&password=${password}`, data);
     return response.data;
   }
