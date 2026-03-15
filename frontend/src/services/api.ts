@@ -6,8 +6,12 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 async function sha256(message: string): Promise<string> {
   const msgBuffer = new TextEncoder().encode(message);
   const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return btoa(String.fromCharCode.apply(null, hashArray));
+  const hashArray = new Uint8Array(hashBuffer);
+  let binary = '';
+  for (let i = 0; i < hashArray.length; i++) {
+    binary += String.fromCharCode(hashArray[i]);
+  }
+  return btoa(binary);
 }
 
 class ApiService {
