@@ -56,15 +56,4 @@ class AlertRule : PanacheEntityBase() {
     @OneToMany(mappedBy = "rule", cascade = [CascadeType.ALL], fetch = FetchType.LAZY)
     @OrderBy("sentAt DESC")
     var history: MutableList<AlertHistory> = mutableListOf()
-    
-    companion object {
-        fun findByTenantId(tenantId: UUID): List<AlertRule> = 
-            list("tenant.id = ?1", tenantId)
-        
-        fun findEnabledByTenant(tenantId: UUID): List<AlertRule> = 
-            list("tenant.id = ?1 AND enabled = true", tenantId)
-        
-        fun findByPipeline(pipelineId: UUID): List<AlertRule> = 
-            list("pipeline.id = ?1 AND enabled = true", pipelineId)
-    }
 }

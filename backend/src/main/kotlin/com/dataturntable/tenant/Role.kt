@@ -38,17 +38,6 @@ class Role : PanacheEntityBase() {
     @Column(name = "updated_at")
     var updatedAt: Instant = Instant.now()
     
-    companion object {
-        fun findByTenantId(tenantId: UUID): List<Role> = 
-            list("tenant.id = ?1", tenantId)
-        
-        fun findDefaultForTenant(tenantId: UUID): Role? = 
-            find("tenant.id = ?1 AND isDefault = true", tenantId).firstResult()
-        
-        fun findSystemRoles(): List<Role> = 
-            list("isSystem = true")
-    }
-    
     fun hasAbility(ability: String): Boolean {
         if (abilities.contains("*")) return true
         return abilities.contains(ability)

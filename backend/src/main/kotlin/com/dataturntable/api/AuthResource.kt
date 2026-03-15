@@ -2,10 +2,7 @@ package com.dataturntable.api
 
 import com.dataturntable.dto.*
 import com.dataturntable.service.AuthService
-import io.quarkus.security.Authenticated
-import io.quarkus.security.PermitAll
 import jakarta.inject.Inject
-import jakarta.validation.Valid
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
@@ -20,7 +17,7 @@ class AuthResource {
     
     @POST
     @Path("/login")
-    fun login(@Valid request: LoginRequest): Response {
+    fun login(request: LoginRequest): Response {
         return try {
             val response = authService.login(request)
             Response.ok(response).build()
@@ -31,8 +28,7 @@ class AuthResource {
     
     @POST
     @Path("/register")
-    @PermitAll
-    fun register(@Valid request: RegisterRequest): Response {
+    fun register(request: RegisterRequest): Response {
         return try {
             val response = authService.register(request)
             Response.status(201).entity(response).build()
@@ -43,7 +39,6 @@ class AuthResource {
     
     @GET
     @Path("/setup")
-    @PermitAll
     fun checkSetup(): Response {
         val needsSetup = authService.needsSetup()
         return Response.ok(mapOf("needsSetup" to needsSetup)).build()
@@ -51,8 +46,10 @@ class AuthResource {
     
     @GET
     @Path("/me")
-    @Authenticated
-    fun me(@Context email: String): Response {
+    fun me(@HeaderParam("X-User-Email") email: String?): Response {
+        if (email == null) {
+            return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        }
         val user = authService.getCurrentUser(email)
         return if (user != null) {
             Response.ok(user).build()

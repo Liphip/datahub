@@ -49,12 +49,4 @@ class AlertChannel : PanacheEntityBase() {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by")
     var createdBy: User? = null
-    
-    companion object {
-        fun findByTenantId(tenantId: UUID): List<AlertChannel> = 
-            list("tenant.id = ?1", tenantId)
-        
-        fun findActiveByTenant(tenantId: UUID): List<AlertChannel> = 
-            list("tenant.id = ?1 AND isActive = true", tenantId)
-    }
 }

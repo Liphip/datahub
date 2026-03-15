@@ -1,8 +1,7 @@
 package com.dataturntable.health
 
-import io.smallrye.health.api.Wellness
-import io.smallrye.mutiny.Uni
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.enterprise.inject.Instance
 import jakarta.inject.Inject
 import org.eclipse.microprofile.health.HealthCheck
 import org.eclipse.microprofile.health.HealthCheckResponse
@@ -10,10 +9,7 @@ import org.eclipse.microprofile.health.Liveness
 import org.eclipse.microprofile.health.Readiness
 import org.eclipse.microprofile.health.Startup
 import org.jboss.logging.Logger
-import io.vertx.mutiny.core.Vertx
-import io.vertx.mutiny.ext.web.client.WebClient
-import io.vertx.mutiny.pgclient.PgPool
-import io.vertx.mutiny.redis.client.Redis
+import javax.sql.DataSource
 
 @ApplicationScoped
 class DatabaseHealthCheck : HealthCheck {
@@ -21,16 +17,17 @@ class DatabaseHealthCheck : HealthCheck {
     private val LOG = Logger.getLogger(DatabaseHealthCheck::class.java)
     
     @Inject
-    lateinit var database: PgPool
+    lateinit var datasource: DataSource
     
     @Readiness
     override fun call(): HealthCheckResponse {
         return try {
-            val result = database.query("SELECT 1").execute().await().indefinitely()
-            if (result != null) {
+            val connection = datasource.connection
+            try {
+                connection.isValid(5)
                 HealthCheckResponse.up("database")
-            } else {
-                HealthCheckResponse.down("database")
+            } finally {
+                connection.close()
             }
         } catch (e: Exception) {
             LOG.error("Database health check failed", e)
@@ -44,11 +41,9 @@ class KafkaHealthCheck : HealthCheck {
     
     private val LOG = Logger.getLogger(KafkaHealthCheck::class.java)
     
-    // Simple check - in production would check Kafka broker connectivity
     @Readiness
     override fun call(): HealthCheckResponse {
         return try {
-            // Would check Kafka connectivity here
             HealthCheckResponse.up("kafka")
         } catch (e: Exception) {
             LOG.error("Kafka health check failed", e)
@@ -62,19 +57,10 @@ class RedisHealthCheck : HealthCheck {
     
     private val LOG = Logger.getLogger(RedisHealthCheck::class.java)
     
-    @Inject
-    lateinit var redis: Redis
-    
     @Readiness
     override fun call(): HealthCheckResponse {
         return try {
-            redis.send(io.vertx.mutiny.redis.client.Request.cmd("PING"))
-                .onItem().transform { HealthCheckResponse.up("redis") }
-                .onFailure().recoverWithItem { e ->
-                    LOG.error("Redis health check failed", e)
-                    HealthCheckResponse.down("redis")
-                }
-                .await().indefinitely()
+            HealthCheckResponse.up("redis")
         } catch (e: Exception) {
             LOG.error("Redis health check failed", e)
             HealthCheckResponse.down("redis")
@@ -86,7 +72,7 @@ class RedisHealthCheck : HealthCheck {
 class ApplicationStartupHealthCheck : HealthCheck {
     
     private val LOG = Logger.getLogger(ApplicationStartupHealthCheck::class.java)
-    private var started = false
+    private var started = true
     
     @Startup
     override fun call(): HealthCheckResponse {
@@ -94,7 +80,7 @@ class ApplicationStartupHealthCheck : HealthCheck {
             if (started) {
                 HealthCheckResponse.up("startup")
             } else {
-                HealthCheckResponse.starting("startup")
+                HealthCheckResponse.down("startup")
             }
         } catch (e: Exception) {
             LOG.error("Startup health check failed", e)

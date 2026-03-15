@@ -4,7 +4,6 @@ quarkus:
   http:
     port: 8080
     host: 0.0.0.0
-    non-application-root-path: /q
   
   datasource:
     db-kind: postgresql

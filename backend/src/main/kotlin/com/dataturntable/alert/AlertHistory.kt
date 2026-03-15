@@ -53,15 +53,4 @@ class AlertHistory : PanacheEntityBase() {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     var status: AlertStatus = AlertStatus.PENDING
-    
-    companion object {
-        fun findByTenantId(tenantId: UUID): List<AlertHistory> = 
-            list("tenant.id = ?1 ORDER BY sentAt DESC", tenantId)
-        
-        fun findByRuleId(ruleId: UUID): List<AlertHistory> = 
-            list("rule.id = ?1 ORDER BY sentAt DESC", ruleId)
-        
-        fun findRecentByTenant(tenantId: UUID, limit: Int = 100): List<AlertHistory> = 
-            list("tenant.id = ?1 ORDER BY sentAt DESC LIMIT ?2", tenantId, limit)
-    }
 }

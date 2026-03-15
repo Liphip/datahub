@@ -35,14 +35,6 @@ class Tenant : PanacheEntityBase() {
     @Column(name = "updated_at")
     var updatedAt: Instant = Instant.now()
     
-    companion object {
-        fun findRootTenants(): List<Tenant> = 
-            list("parent.id IS NULL")
-        
-        fun findByParentId(parentId: UUID): List<Tenant> = 
-            list("parent.id = ?1", parentId)
-    }
-    
     fun isDescendantOf(ancestorId: UUID): Boolean {
         var current = this.parent
         while (current != null) {

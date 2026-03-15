@@ -5,10 +5,7 @@ WORKDIR /app
 COPY backend/pom.xml .
 COPY backend/src src
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends kotlin \
-    && rm -rf /var/lib/apt/lists/* \
-    && mvn -B package -DskipTests
+RUN mvn -B package -DskipTests
 
 FROM eclipse-temurin:21-jre-alpine
 

@@ -1,7 +1,7 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, AlertChannel, AlertRule, AlertHistory } from '../types';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 
 class ApiService {
   private client: AxiosInstance;

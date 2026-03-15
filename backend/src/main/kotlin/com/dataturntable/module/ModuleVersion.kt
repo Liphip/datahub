@@ -42,20 +42,4 @@ class ModuleVersion : PanacheEntityBase() {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by")
     var createdBy: User? = null
-    
-    companion object {
-        fun findByModuleId(moduleId: UUID): List<ModuleVersion> = 
-            list("module.id = ?1 ORDER BY version DESC", moduleId)
-        
-        fun findByModuleAndVersion(moduleId: UUID, version: Int): ModuleVersion? = 
-            find("module.id = ?1 AND version = ?2", moduleId, version).firstResult()
-        
-        fun findByModuleAndTag(moduleId: UUID, tag: String): ModuleVersion? = 
-            find("module.id = ?1 AND versionTag = ?2", moduleId, tag).firstResult()
-        
-        fun getNextVersion(moduleId: UUID): Int {
-            val latest = find("module.id = ?1 ORDER BY version DESC", moduleId).firstResult()
-            return (latest?.version ?: 0) + 1
-        }
-    }
 }

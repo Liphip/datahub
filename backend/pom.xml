@@ -13,19 +13,19 @@
     <description>High-performance data hub for IoT/sensor data processing</description>
     
     <properties>
-        <compiler-plugin.version>3.12.1</compiler-plugin.version>
+        <compiler-plugin.version>3.13.0</compiler-plugin.version>
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <quarkus.platform.version>3.8.1</quarkus.platform.version>
-        <kotlin.version>1.9.22</kotlin.version>
-        <surefire-plugin.version>3.2.5</surefire-plugin.version>
+        <quarkus.platform.version>3.32.2</quarkus.platform.version>
+        <kotlin.version>2.3.0</kotlin.version>
+        <surefire-plugin.version>3.5.2</surefire-plugin.version>
     </properties>
     
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>io.quarkus.platform</groupId>
-                <artifactId>quarkus-bom</artifactId>
+                <groupId>io.quarkus</groupId>
+                <artifactId>quarkus-universe-bom</artifactId>
                 <version>${quarkus.platform.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
@@ -41,17 +41,21 @@
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-resteasy-reactive</artifactId>
+            <artifactId>quarkus-rest</artifactId>
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-resteasy-reactive-jackson</artifactId>
+            <artifactId>quarkus-rest-jackson</artifactId>
         </dependency>
         
         <!-- Database -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-hibernate-orm-panache</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm-panache-kotlin</artifactId>
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
@@ -75,13 +79,13 @@
         <!-- Kafka -->
         <dependency>
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-smallrye-reactive-messaging-kafka</artifactId>
+            <artifactId>quarkus-messaging-kafka</artifactId>
         </dependency>
         
         <!-- MQTT -->
         <dependency>
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-smallrye-reactive-messaging-mqtt</artifactId>
+            <artifactId>quarkus-messaging-mqtt</artifactId>
         </dependency>
         
         <!-- Redis -->
@@ -196,9 +200,9 @@
                     <args>
                         <arg>-Xjvm-default=all</arg>
                     </args>
-                    <compilerPlugins>
-                        <plugin>all-open</plugin>
-                    </compilerPlugins>
+                    <sourceDirs>
+                        <sourceDir>${project.basedir}/src/main/kotlin</sourceDir>
+                    </sourceDirs>
                 </configuration>
                 <executions>
                     <execution>
@@ -214,13 +218,6 @@
                         </goals>
                     </execution>
                 </executions>
-                <dependencies>
-                    <dependency>
-                        <groupId>org.jetbrains.kotlin</groupId>
-                        <artifactId>kotlin-allopen</artifactId>
-                        <version>${kotlin.version}</version>
-                    </dependency>
-                </dependencies>
             </plugin>
         </plugins>
     </build>

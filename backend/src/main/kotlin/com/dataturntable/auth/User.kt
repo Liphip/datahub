@@ -53,17 +53,6 @@ class User : PanacheEntityBase() {
     @Column(name = "updated_at")
     var updatedAt: Instant = Instant.now()
     
-    companion object {
-        fun findByTenantId(tenantId: UUID): List<User> = 
-            list("tenant.id = ?1", tenantId)
-        
-        fun findByEmail(email: String): User? = 
-            find("email = ?1", email).firstResult()
-        
-        fun findByTenantAndEmail(tenantId: UUID, email: String): User? = 
-            find("tenant.id = ?1 AND email = ?2", tenantId, email).firstResult()
-    }
-    
     fun hasAbility(ability: String): Boolean {
         if (isSuperadmin) return true
         if (abilities.contains("*")) return true

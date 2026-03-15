@@ -1,14 +1,12 @@
 package com.dataturntable.logging
 
-import io.vertx.core.logging.LogDelegate
-import io.vertx.core.logging.Logger
-import org.jboss.logging.Logger as JBLogger
 import jakarta.enterprise.context.ApplicationScoped
+import org.jboss.logging.Logger
 
 @ApplicationScoped
 class AuditLogger {
     
-    private val log = JBLogger.getLogger(AuditLogger::class.java)
+    private val log = Logger.getLogger(AuditLogger::class.java)
     
     fun logUserLogin(userId: String, tenantId: String, ipAddress: String?) {
         log.infof("USER_LOGIN: userId=%s tenantId=%s ip=%s", userId, tenantId, ipAddress)
@@ -46,7 +44,7 @@ class AuditLogger {
 @ApplicationScoped
 class PerformanceLogger {
     
-    private val log = JBLogger.getLogger(PerformanceLogger::class.java)
+    private val log = Logger.getLogger(PerformanceLogger::class.java)
     
     fun logSlowQuery(query: String, durationMs: Long, tenantId: String) {
         log.warnf("SLOW_QUERY: durationMs=%d tenantId=%s query=%s", durationMs, tenantId, query)

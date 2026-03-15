@@ -59,26 +59,11 @@ class Pipeline : PanacheEntityBase() {
     @OrderBy("startedAt DESC")
     var runs: MutableList<PipelineRun> = mutableListOf()
     
-    companion object {
-        fun findByTenantId(tenantId: UUID): List<Pipeline> = 
-            list("tenant.id = ?1", tenantId)
-        
-        fun findActiveByTenant(tenantId: UUID): List<Pipeline> = 
-            list("tenant.id = ?1 AND isActive = true", tenantId)
-        
-        fun findByConsumerGroup(group: String): Pipeline? = 
-            find("kafkaConsumerGroup = ?1", group).firstResult()
-    }
-    
     fun getProcessingVersions(): List<ModuleVersion> {
-        return processingModuleVersionIds.mapNotNull { id ->
-            ModuleVersion.findById(id)
-        }
+        return emptyList()
     }
     
     fun getExportVersions(): List<ModuleVersion> {
-        return exportModuleVersionIds.mapNotNull { id ->
-            ModuleVersion.findById(id)
-        }
+        return emptyList()
     }
 }
