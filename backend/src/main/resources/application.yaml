@@ -44,6 +44,16 @@ mp:
         key:
           location: privateKey.pem
 
+smallrye:
+  jwt:
+    sign:
+      key:
+        location: privateKey.pem
+
+jwt:
+  issuer: https://dataturntable.io
+  duration: 3600
+
 jwt:
   issuer: https://dataturntable.io
   duration: 3600

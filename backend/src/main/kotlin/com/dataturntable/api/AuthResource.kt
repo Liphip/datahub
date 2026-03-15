@@ -9,6 +9,7 @@ import jakarta.ws.rs.*
 import jakarta.ws.rs.core.Context
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
+import org.eclipse.microprofile.jwt.JsonWebToken
 
 @Path("/auth")
 @Produces(MediaType.APPLICATION_JSON)
@@ -17,6 +18,9 @@ class AuthResource {
     
     @Inject
     lateinit var authService: AuthService
+    
+    @Inject
+    lateinit var jwt: JsonWebToken
     
     @POST
     @Path("/login")
@@ -45,16 +49,12 @@ class AuthResource {
     @GET
     @Path("/me")
     @Authenticated
-    fun me(@Context securityContext: jakarta.ws.rs.core.SecurityContext): Response {
-        val email = securityContext.userPrincipal?.name
-        if (email == null) {
-            return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        }
-        val user = authService.getCurrentUser(email)
+    fun me(): Response {
+        val user = authService.getUserFromJwt()
         return if (user != null) {
             Response.ok(user).build()
         } else {
-            Response.status(404).entity(mapOf("error" to "User not found")).build()
+            Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         }
     }
 }

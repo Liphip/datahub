@@ -3,14 +3,16 @@ package com.dataturntable.service
 import com.dataturntable.auth.User
 import com.dataturntable.dto.*
 import com.dataturntable.tenant.Tenant
+import io.smallrye.jwt.build.Jwt
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
+import org.eclipse.microprofile.jwt.JsonWebToken
 import org.mindrot.jbcrypt.BCrypt
 import java.security.SecureRandom
-import java.util.Base64
+import java.util.HashSet
 import java.util.UUID
 
 @ApplicationScoped
@@ -18,6 +20,9 @@ class AuthService {
     
     @Inject
     lateinit var tenantService: TenantService
+    
+    @Inject
+    lateinit var jwt: JsonWebToken
     
     @PersistenceContext
     lateinit var em: EntityManager
@@ -47,7 +52,7 @@ class AuthService {
         user.lastLoginAt = java.time.Instant.now()
         user.persist()
         
-        val token = generateToken(user)
+        val token = generateJwtToken(user)
         return AuthResponse(token, toUserDto(user))
     }
     
@@ -83,7 +88,6 @@ class AuthService {
         
         user.persist()
         
-        val token = generateToken(user)
         return SetupResponse(
             email = user.email ?: request.email,
             password = password,
@@ -91,10 +95,19 @@ class AuthService {
         )
     }
     
-    private fun generateToken(user: User): String {
-        val bytes = ByteArray(32)
-        secureRandom.nextBytes(bytes)
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+    private fun generateJwtToken(user: User): String {
+        val groups = HashSet<String>()
+        if (user.isSuperadmin) groups.add("superadmin")
+        user.role?.name?.let { groups.add(it) }
+        
+        return Jwt.issuer("https://dataturntable.io")
+            .subject(user.id.toString())
+            .upn(user.email)
+            .groups(groups)
+            .claim("tenantId", user.tenant?.id?.toString())
+            .claim("email", user.email)
+            .expiresIn(3600L)
+            .sign()
     }
     
     private fun generateRandomPassword(length: Int): String {
@@ -119,6 +132,17 @@ class AuthService {
     
     fun getCurrentUser(email: String): UserDto? {
         val user = User.findByEmail(email) ?: return null
+        return toUserDto(user)
+    }
+    
+    fun getUserFromJwt(): UserDto? {
+        val subject = jwt.subject ?: return null
+        val userId = try {
+            UUID.fromString(subject)
+        } catch (e: Exception) {
+            return null
+        }
+        val user = em.find(User::class.java, userId) ?: return null
         return toUserDto(user)
     }
 }
