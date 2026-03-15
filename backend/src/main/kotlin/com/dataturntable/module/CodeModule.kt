@@ -50,6 +50,20 @@ class CodeModule : PanacheEntityBase() {
     @OrderBy("version DESC")
     var versions: MutableList<ModuleVersion> = mutableListOf()
     
+    companion object {
+        fun findById(id: UUID): CodeModule? = 
+            PanacheEntityBase.find<CodeModule>("id = ?1", id).firstResult()
+        
+        fun findByTenantId(tenantId: UUID): List<CodeModule> = 
+            PanacheEntityBase.list<CodeModule>("tenant.id = ?1", tenantId)
+        
+        fun findByTenantAndType(tenantId: UUID, type: ModuleType): List<CodeModule> = 
+            PanacheEntityBase.list<CodeModule>("tenant.id = ?1 AND moduleType = ?2", tenantId, type)
+        
+        fun findByTenantAndName(tenantId: UUID, name: String, type: ModuleType): CodeModule? = 
+            PanacheEntityBase.find<CodeModule>("tenant.id = ?1 AND name = ?2 AND moduleType = ?3", tenantId, name, type).firstResult()
+    }
+    
     fun getLatestVersion(): ModuleVersion? = 
         versions.firstOrNull()
     

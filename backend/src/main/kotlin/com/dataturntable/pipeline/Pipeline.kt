@@ -30,6 +30,9 @@ class Pipeline : PanacheEntityBase() {
     @JoinColumn(name = "import_module_version_id")
     var importModuleVersion: ModuleVersion? = null
     
+    @Column(name = "import_module_version_id")
+    var importModuleVersionId: UUID? = null
+    
     @Column(name = "processing_module_version_ids", columnDefinition = "uuid[]")
     var processingModuleVersionIds: Array<UUID> = emptyArray()
     
@@ -59,11 +62,29 @@ class Pipeline : PanacheEntityBase() {
     @OrderBy("startedAt DESC")
     var runs: MutableList<PipelineRun> = mutableListOf()
     
+    companion object {
+        fun findById(id: UUID): Pipeline? = 
+            PanacheEntityBase.find<Pipeline>("id = ?1", id).firstResult()
+        
+        fun findByTenantId(tenantId: UUID): List<Pipeline> = 
+            PanacheEntityBase.list<Pipeline>("tenant.id = ?1", tenantId)
+        
+        fun findActiveByTenant(tenantId: UUID): List<Pipeline> = 
+            PanacheEntityBase.list<Pipeline>("tenant.id = ?1 AND isActive = ?2", tenantId, true)
+        
+        fun findByConsumerGroup(group: String): Pipeline? = 
+            PanacheEntityBase.find<Pipeline>("kafkaConsumerGroup = ?1", group).firstResult()
+    }
+    
     fun getProcessingVersions(): List<ModuleVersion> {
-        return emptyList()
+        return processingModuleVersionIds.mapNotNull { id ->
+            ModuleVersion.findById(id)
+        }
     }
     
     fun getExportVersions(): List<ModuleVersion> {
-        return emptyList()
+        return exportModuleVersionIds.mapNotNull { id ->
+            ModuleVersion.findById(id)
+        }
     }
 }

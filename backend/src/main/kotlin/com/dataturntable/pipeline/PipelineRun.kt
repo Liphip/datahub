@@ -45,6 +45,17 @@ class PipelineRun : PanacheEntityBase() {
     @Column(columnDefinition = "jsonb")
     var metrics: String = "{}"
     
+    companion object {
+        fun findById(id: UUID): PipelineRun? = 
+            PanacheEntityBase.find<PipelineRun>("id = ?1", id).firstResult()
+        
+        fun findByPipelineId(pipelineId: UUID): List<PipelineRun> = 
+            PanacheEntityBase.list<PipelineRun>("pipeline.id = ?1 ORDER BY startedAt DESC", pipelineId)
+        
+        fun findRunningByPipeline(pipelineId: UUID): PipelineRun? = 
+            PanacheEntityBase.find<PipelineRun>("pipeline.id = ?1 AND status = ?2", pipelineId, PipelineRunStatus.RUNNING).firstResult()
+    }
+    
     fun markRunning() {
         status = PipelineRunStatus.RUNNING
         startedAt = Instant.now()
