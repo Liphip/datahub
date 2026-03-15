@@ -3,6 +3,13 @@ import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, P
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 
+async function sha256(message: string): Promise<string> {
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return btoa(String.fromCharCode.apply(null, hashArray));
+}
+
 class ApiService {
   private client: AxiosInstance;
 
@@ -36,12 +43,14 @@ class ApiService {
 
   // Auth
   async login(email: string, password: string, tenantId?: string): Promise<AuthResponse> {
-    const response = await this.client.post<AuthResponse>('/auth/login', { email, password, tenantId });
+    const passwordHash = await sha256(password);
+    const response = await this.client.post<AuthResponse>('/auth/login', { email, passwordHash, tenantId });
     return response.data;
   }
 
   async register(email: string, password: string, tenantName?: string, tenantId?: string): Promise<AuthResponse> {
-    const response = await this.client.post<AuthResponse>('/auth/register', { email, password, tenantName, tenantId });
+    const passwordHash = await sha256(password);
+    const response = await this.client.post<AuthResponse>('/auth/register', { email, passwordHash, tenantName, tenantId });
     return response.data;
   }
 
@@ -81,8 +90,9 @@ class ApiService {
     return response.data;
   }
 
-  async createUser(tenantId: string, _email: string, password: string, data?: Partial<User>): Promise<User> {
-    const response = await this.client.post<User>(`/users?tenantId=${tenantId}&password=${password}`, data);
+  async createUser(tenantId: string, email: string, password: string, data?: Partial<User>): Promise<User> {
+    const passwordHash = await sha256(password);
+    const response = await this.client.post<User>(`/users?tenantId=${tenantId}`, { email, passwordHash, ...data });
     return response.data;
   }
 

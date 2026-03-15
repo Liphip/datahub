@@ -11,7 +11,9 @@ import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
 import org.eclipse.microprofile.jwt.JsonWebToken
 import org.mindrot.jbcrypt.BCrypt
+import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.Base64
 import java.util.HashSet
 import java.util.UUID
 
@@ -31,21 +33,13 @@ class AuthService {
     
     @Transactional
     fun login(request: LoginRequest): AuthResponse? {
-        val query = if (request.tenantId != null) {
-            em.createQuery("SELECT u FROM User u WHERE u.email = :email AND u.tenant.id = :tenantId", User::class.java)
-                .setParameter("email", request.email)
-                .setParameter("tenantId", UUID.fromString(request.tenantId))
-        } else {
-            em.createQuery("SELECT u FROM User u WHERE u.email = :email", User::class.java)
-                .setParameter("email", request.email)
-        }
-        val user = query.resultList.firstOrNull()
+        val user = findUserByEmail(request.email, request.tenantId)
         
         if (user == null || !user.isActive) {
             throw SecurityException("Invalid credentials")
         }
         
-        if (!BCrypt.checkpw(request.password, user.passwordHash)) {
+        if (!BCrypt.checkpw(request.passwordHash, user.passwordHash)) {
             throw SecurityException("Invalid credentials")
         }
         
@@ -54,6 +48,18 @@ class AuthService {
         
         val token = generateJwtToken(user)
         return AuthResponse(token, toUserDto(user))
+    }
+    
+    private fun findUserByEmail(email: String, tenantId: String?): User? {
+        val query = if (tenantId != null) {
+            em.createQuery("SELECT u FROM User u WHERE u.email = :email AND u.tenant.id = :tenantId", User::class.java)
+                .setParameter("email", email)
+                .setParameter("tenantId", UUID.fromString(tenantId))
+        } else {
+            em.createQuery("SELECT u FROM User u WHERE u.email = :email", User::class.java)
+                .setParameter("email", email)
+        }
+        return query.resultList.firstOrNull()
     }
     
     @Transactional
@@ -73,11 +79,12 @@ class AuthService {
         tenant.persist()
         
         val password = generateRandomPassword(16)
+        val passwordHash = hashPassword(password)
         
         val user = User().apply {
             this.tenant = tenant
             this.email = request.email
-            this.passwordHash = BCrypt.hashpw(password, BCrypt.gensalt())
+            this.passwordHash = BCrypt.hashpw(passwordHash, BCrypt.gensalt())
             this.firstName = "Admin"
             this.lastName = "User"
             this.isSuperadmin = true
@@ -93,6 +100,12 @@ class AuthService {
             password = password,
             user = toUserDto(user)
         )
+    }
+    
+    private fun hashPassword(password: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val hash = digest.digest(password.toByteArray())
+        return Base64.getEncoder().encodeToString(hash)
     }
     
     private fun generateJwtToken(user: User): String {
