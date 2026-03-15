@@ -30,7 +30,6 @@ class Pipeline : PanacheEntityBase() {
     @JoinColumn(name = "import_module_version_id")
     var importModuleVersion: ModuleVersion? = null
     
-    @Column(name = "import_module_version_id")
     var importModuleVersionId: UUID? = null
     
     @Column(name = "processing_module_version_ids", columnDefinition = "uuid[]")
