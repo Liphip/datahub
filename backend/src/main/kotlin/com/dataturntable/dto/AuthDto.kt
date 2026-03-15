@@ -12,16 +12,15 @@ data class LoginRequest(
     val tenantId: String? = null
 )
 
-data class RegisterRequest(
-    @Email
+data class SetupRequest(
     @NotBlank
+    val email: String = "admin@example.com"
+)
+
+data class SetupResponse(
     val email: String,
-    @NotBlank
     val password: String,
-    val firstName: String? = null,
-    val lastName: String? = null,
-    val tenantId: String? = null,
-    val tenantName: String? = null
+    val user: UserDto
 )
 
 data class AuthResponse(

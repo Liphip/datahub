@@ -44,8 +44,8 @@ class Pipeline : PanacheEntityBase() {
     @Column(name = "is_active")
     var isActive: Boolean = false
     
-    @Column(columnDefinition = "jsonb")
-    var config: String = "{}"
+    @Column(columnDefinition = "text")
+    var config: String? = null
     
     @Column(name = "created_at")
     var createdAt: Instant = Instant.now()

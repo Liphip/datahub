@@ -30,21 +30,16 @@ class AuthResource {
     }
     
     @POST
-    @Path("/register")
-    fun register(@Valid request: RegisterRequest): Response {
+    @Path("/setup")
+    fun setup(@Valid request: SetupRequest): Response {
         return try {
-            val response = authService.register(request)
+            val response = authService.setup(request)
             Response.status(201).entity(response).build()
+        } catch (e: IllegalStateException) {
+            Response.status(403).entity(mapOf("error" to (e.message ?: "Setup already completed"))).build()
         } catch (e: IllegalArgumentException) {
             Response.status(400).entity(mapOf("error" to (e.message ?: "Bad request"))).build()
         }
-    }
-    
-    @GET
-    @Path("/setup")
-    fun checkSetup(): Response {
-        val needsSetup = authService.needsSetup()
-        return Response.ok(mapOf("needsSetup" to needsSetup)).build()
     }
     
     @GET

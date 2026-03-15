@@ -6,8 +6,8 @@ CREATE TABLE tenants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
     parent_id UUID REFERENCES tenants(id) ON DELETE SET NULL,
-    settings JSONB DEFAULT '{}',
-    quota JSONB DEFAULT '{"max_users": 100, "max_pipelines": 50, "max_storage_mb": 10240}',
+    settings TEXT DEFAULT '{}',
+    quota TEXT DEFAULT '{"max_users": 100, "max_pipelines": 50, "max_storage_mb": 10240}',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -20,7 +20,7 @@ CREATE TABLE roles (
     tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
     description VARCHAR(500),
-    abilities JSONB NOT NULL DEFAULT '[]',
+    abilities TEXT DEFAULT '[]',
     is_default BOOLEAN DEFAULT FALSE,
     is_system BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -39,7 +39,7 @@ CREATE TABLE users (
     first_name VARCHAR(100),
     last_name VARCHAR(100),
     role_id UUID REFERENCES roles(id) ON DELETE SET NULL,
-    abilities JSONB DEFAULT '[]',
+    abilities TEXT DEFAULT '[]',
     is_superadmin BOOLEAN DEFAULT FALSE,
     is_active BOOLEAN DEFAULT TRUE,
     last_login_at TIMESTAMPTZ,
@@ -76,7 +76,7 @@ CREATE TABLE module_versions (
     version_tag VARCHAR(100),
     code TEXT NOT NULL,
     requirements TEXT DEFAULT '',
-    config JSONB DEFAULT '{}',
+    config TEXT DEFAULT '{}',
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -97,7 +97,7 @@ CREATE TABLE pipelines (
     export_module_version_ids UUID[] DEFAULT '{}',
     kafka_consumer_group VARCHAR(255) UNIQUE,
     is_active BOOLEAN DEFAULT FALSE,
-    config JSONB DEFAULT '{}',
+    config TEXT DEFAULT '{}',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     created_by UUID REFERENCES users(id) ON DELETE SET NULL
@@ -115,7 +115,7 @@ CREATE TABLE pipeline_runs (
     started_at TIMESTAMPTZ DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
     error_message TEXT,
-    metrics JSONB DEFAULT '{}',
+    metrics TEXT DEFAULT '{}',
     UNIQUE(pipeline_id, started_at)
 );
 
@@ -129,7 +129,7 @@ CREATE TABLE alert_channels (
     name VARCHAR(255) NOT NULL,
     description VARCHAR(500),
     channel_type VARCHAR(50) NOT NULL CHECK (channel_type IN ('mqtt', 'webhook', 'rest', 'email', 'slack')),
-    config JSONB NOT NULL,
+    config TEXT NOT NULL,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
@@ -147,7 +147,7 @@ CREATE TABLE alert_rules (
     channel_id UUID REFERENCES alert_channels(id) ON DELETE SET NULL,
     name VARCHAR(255) NOT NULL,
     description VARCHAR(500),
-    condition JSONB NOT NULL,
+    condition TEXT NOT NULL,
     enabled BOOLEAN DEFAULT TRUE,
     cooldown_seconds INTEGER DEFAULT 60,
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -169,7 +169,7 @@ CREATE TABLE alert_history (
     severity VARCHAR(50) NOT NULL CHECK (severity IN ('info', 'warning', 'critical', 'error')),
     title VARCHAR(500) NOT NULL,
     message TEXT,
-    payload JSONB,
+    payload TEXT,
     sent_at TIMESTAMPTZ DEFAULT NOW(),
     status VARCHAR(50) DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed', 'retry'))
 );

@@ -34,7 +34,7 @@ class AlertRule : PanacheEntityBase() {
     @Column
     var description: String? = null
     
-    @Column(columnDefinition = "jsonb", nullable = false)
+    @Column(columnDefinition = "text", nullable = false)
     var condition: String? = null
     
     @Column

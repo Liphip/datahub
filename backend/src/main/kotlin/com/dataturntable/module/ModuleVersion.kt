@@ -31,8 +31,8 @@ class ModuleVersion : PanacheEntityBase() {
     @Column(columnDefinition = "text")
     var requirements: String = ""
     
-    @Column(columnDefinition = "jsonb")
-    var config: String = "{}"
+    @Column(columnDefinition = "text")
+    var config: String? = null
     
     @Column(name = "is_active")
     var isActive: Boolean = true

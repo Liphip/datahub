@@ -23,17 +23,17 @@ class Tenant : PanacheEntityBase() {
     @OneToMany(mappedBy = "parent", fetch = FetchType.LAZY)
     var children: MutableList<Tenant> = mutableListOf()
     
-    @Column(columnDefinition = "jsonb")
-    var settings: String = "{}"
+    @Column(columnDefinition = "text")
+    var settings: String? = null
     
-    @Column(columnDefinition = "jsonb")
-    var quota: String = """{"max_users": 100, "max_pipelines": 50, "max_storage_mb": 10240}"""
+    @Column(columnDefinition = "text")
+    var quota: String? = null
     
     @Column(name = "created_at")
-    var createdAt: Instant = Instant.now()
+    var createdAt: Instant? = null
     
     @Column(name = "updated_at")
-    var updatedAt: Instant = Instant.now()
+    var updatedAt: Instant? = null
     
     companion object {
         fun findById(id: UUID): Tenant? = 

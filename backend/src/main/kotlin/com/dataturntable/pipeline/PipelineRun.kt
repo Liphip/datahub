@@ -42,8 +42,8 @@ class PipelineRun : PanacheEntityBase() {
     @Column(name = "error_message")
     var errorMessage: String? = null
     
-    @Column(columnDefinition = "jsonb")
-    var metrics: String = "{}"
+    @Column(columnDefinition = "text")
+    var metrics: String? = null
     
     companion object {
         fun findById(id: UUID): PipelineRun? = 

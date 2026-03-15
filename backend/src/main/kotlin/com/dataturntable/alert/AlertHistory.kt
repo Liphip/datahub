@@ -44,7 +44,7 @@ class AlertHistory : PanacheEntityBase() {
     @Column(columnDefinition = "text")
     var message: String? = null
     
-    @Column(columnDefinition = "jsonb")
+    @Column(columnDefinition = "text")
     var payload: String? = null
     
     @Column(name = "sent_at")

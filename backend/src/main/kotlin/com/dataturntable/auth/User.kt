@@ -35,8 +35,8 @@ class User : PanacheEntityBase() {
     @JoinColumn(name = "role_id")
     var role: Role? = null
     
-    @Column(name = "abilities", columnDefinition = "jsonb")
-    var abilities: String = "[]"
+    @Column(name = "abilities", columnDefinition = "text")
+    var abilities: String? = null
     
     @Column(name = "is_superadmin")
     var isSuperadmin: Boolean = false
@@ -48,10 +48,10 @@ class User : PanacheEntityBase() {
     var lastLoginAt: Instant? = null
     
     @Column(name = "created_at")
-    var createdAt: Instant = Instant.now()
+    var createdAt: Instant? = null
     
     @Column(name = "updated_at")
-    var updatedAt: Instant = Instant.now()
+    var updatedAt: Instant? = null
     
     companion object {
         fun findById(id: UUID): User? = 
@@ -66,25 +66,25 @@ class User : PanacheEntityBase() {
         fun findByTenantAndEmail(tenantId: UUID, email: String): User? = 
             PanacheEntityBase.find<User>("tenant.id = ?1 AND email = ?2", tenantId, email).firstResult()
         
-        fun count(): Long = PanacheEntityBase.count()
+        fun countUsers(): Long = PanacheEntityBase.count("User")
     }
     
     fun hasAbility(ability: String): Boolean {
         if (isSuperadmin) return true
-        if (abilities.contains("*")) return true
-        if (abilities.contains(ability)) return true
+        if (abilities?.contains("*") == true) return true
+        if (abilities?.contains(ability) == true) return true
         return role?.hasAbility(ability) ?: false
     }
     
     fun getAllAbilities(): Set<String> {
         val result = mutableSetOf<String>()
-        if (isSuperadmin || abilities.contains("*")) {
+        if (isSuperadmin || abilities?.contains("*") == true) {
             result.add("*")
             return result
         }
         role?.getAbilitiesList()?.forEach { result.add(it) }
         try {
-            abilities.let {
+            abilities?.let {
                 val start = it.indexOf('[')
                 val end = it.indexOf(']')
                 if (start >= 0 && end > start) {

@@ -23,8 +23,8 @@ class Role : PanacheEntityBase() {
     @Column
     var description: String? = null
     
-    @Column(name = "abilities", columnDefinition = "jsonb", nullable = false)
-    var abilities: String = "[]"
+    @Column(name = "abilities", columnDefinition = "text", nullable = false)
+    var abilities: String? = null
     
     @Column(name = "is_default")
     var isDefault: Boolean = false
@@ -53,14 +53,14 @@ class Role : PanacheEntityBase() {
     }
     
     fun hasAbility(ability: String): Boolean {
-        if (abilities.contains("*")) return true
-        return abilities.contains(ability)
+        if (abilities?.contains("*") == true) return true
+        return abilities?.contains(ability) == true
     }
     
     fun getAbilitiesList(): List<String> {
         return try {
             val list = mutableListOf<String>()
-            abilities.let {
+            abilities?.let {
                 val start = it.indexOf('[')
                 val end = it.indexOf(']')
                 if (start >= 0 && end > start) {

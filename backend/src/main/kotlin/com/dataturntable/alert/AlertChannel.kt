@@ -34,7 +34,7 @@ class AlertChannel : PanacheEntityBase() {
     @Column(name = "channel_type", nullable = false)
     var channelType: AlertChannelType? = null
     
-    @Column(columnDefinition = "jsonb", nullable = false)
+    @Column(columnDefinition = "text", nullable = false)
     var config: String? = null
     
     @Column(name = "is_active")
