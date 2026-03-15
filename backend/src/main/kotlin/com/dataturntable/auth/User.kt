@@ -55,18 +55,18 @@ class User : PanacheEntityBase() {
     
     companion object {
         fun findById(id: UUID): User? = 
-            PanacheEntityBase.find<User>("id = ?1", id).firstResult()
+            io.quarkus.hibernate.orm.panache.PanacheEntityBase.find<User>("id = ?1", id).firstResult()
         
         fun findByTenantId(tenantId: UUID): List<User> = 
-            PanacheEntityBase.list<User>("tenant.id = ?1", tenantId)
+            io.quarkus.hibernate.orm.panache.PanacheEntityBase.list<User>("tenant.id = ?1", tenantId)
         
         fun findByEmail(email: String): User? = 
-            PanacheEntityBase.find<User>("email = ?1", email).firstResult()
+            io.quarkus.hibernate.orm.panache.PanacheEntityBase.find<User>("email = ?1", email).firstResult()
         
         fun findByTenantAndEmail(tenantId: UUID, email: String): User? = 
-            PanacheEntityBase.find<User>("tenant.id = ?1 AND email = ?2", tenantId, email).firstResult()
+            io.quarkus.hibernate.orm.panache.PanacheEntityBase.find<User>("tenant.id = ?1 AND email = ?2", tenantId, email).firstResult()
         
-        fun countUsers(): Long = PanacheEntityBase.count("User")
+        fun countUsers(): Long = io.quarkus.hibernate.orm.panache.PanacheEntityBase.count()
     }
     
     fun hasAbility(ability: String): Boolean {

@@ -1,15 +1,14 @@
 package com.dataturntable.dto
 
+import com.fasterxml.jackson.annotation.JsonCreator
+import com.fasterxml.jackson.annotation.JsonProperty
 import jakarta.validation.constraints.Email
 import jakarta.validation.constraints.NotBlank
 
-data class LoginRequest(
-    @Email
-    @NotBlank
-    val email: String,
-    @NotBlank
-    val password: String,
-    val tenantId: String? = null
+class LoginRequest @JsonCreator constructor(
+    @JsonProperty("email") @Email @NotBlank val email: String,
+    @JsonProperty("password") @NotBlank val password: String,
+    @JsonProperty("tenantId") val tenantId: String? = null
 )
 
 data class SetupRequest(

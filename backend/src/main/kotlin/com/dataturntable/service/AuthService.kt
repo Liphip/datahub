@@ -26,11 +26,15 @@ class AuthService {
     
     @Transactional
     fun login(request: LoginRequest): AuthResponse? {
-        val user = if (request.tenantId != null) {
-            User.findByTenantAndEmail(UUID.fromString(request.tenantId), request.email)
+        val query = if (request.tenantId != null) {
+            em.createQuery("SELECT u FROM User u WHERE u.email = :email AND u.tenant.id = :tenantId", User::class.java)
+                .setParameter("email", request.email)
+                .setParameter("tenantId", UUID.fromString(request.tenantId))
         } else {
-            User.findByEmail(request.email)
+            em.createQuery("SELECT u FROM User u WHERE u.email = :email", User::class.java)
+                .setParameter("email", request.email)
         }
+        val user = query.resultList.firstOrNull()
         
         if (user == null || !user.isActive) {
             throw SecurityException("Invalid credentials")
