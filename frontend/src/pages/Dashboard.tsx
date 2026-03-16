@@ -2,48 +2,78 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Pipeline, PipelineRun } from '../types';
+import type { Pipeline, PipelineRun, CodeModule, Connector } from '../types';
 
 export default function Dashboard() {
   const { user } = useAuthStore();
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
-  const [recentRuns, setRecentRuns] = useState<PipelineRun[]>([]);
+  const [allRuns, setAllRuns] = useState<(PipelineRun & { pipelineName?: string })[]>([]);
+  const [modules, setModules] = useState<CodeModule[]>([]);
+  const [connectors, setConnectors] = useState<Connector[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   const tenantId = user?.tenantId;
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!tenantId) {
-        setLoading(false);
-        return;
-      }
-      
+      if (!tenantId) { setLoading(false); return; }
       try {
-        const [pipelinesData] = await Promise.all([
+        const [pipelinesData, modulesData, connectorsData] = await Promise.all([
           api.getPipelines(tenantId),
+          api.getModules(tenantId),
+          api.getConnectors(tenantId),
         ]);
         setPipelines(pipelinesData);
-        
-        // Get recent runs from first pipeline
-        if (pipelinesData.length > 0) {
-          const runs = await api.getPipelineRuns(pipelinesData[0].id);
-          setRecentRuns(runs.slice(0, 5));
-        }
-      } catch (error) {
-        console.error('Error fetching dashboard data:', error);
+        setModules(modulesData);
+        setConnectors(connectorsData);
+
+        // Gather recent runs from all pipelines (max 3 each, keep newest 10 total)
+        const runLists = await Promise.all(
+          pipelinesData.map(async (p) => {
+            try {
+              const runs = await api.getPipelineRuns(p.id);
+              return runs.slice(0, 3).map((r) => ({ ...r, pipelineName: p.name }));
+            } catch {
+              return [];
+            }
+          })
+        );
+        const combined = runLists
+          .flat()
+          .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
+          .slice(0, 10);
+        setAllRuns(combined);
+        setError('');
+      } catch {
+        setError('Failed to load dashboard data');
       } finally {
         setLoading(false);
       }
     };
-    
     fetchData();
   }, [tenantId]);
 
-  const activePipelines = pipelines.filter(p => p.isActive).length;
-  const totalPipelines = pipelines.length;
-  const failedRuns = recentRuns.filter(r => r.status === 'FAILED').length;
-  const successRuns = recentRuns.filter(r => r.status === 'SUCCESS').length;
+  const activePipelines = pipelines.filter((p) => p.isActive).length;
+  const failedRuns = allRuns.filter((r) => r.status === 'FAILED').length;
+  const successRuns = allRuns.filter((r) => r.status === 'SUCCESS').length;
+
+  const runStatusColor: Record<string, string> = {
+    SUCCESS: 'bg-green-500',
+    FAILED: 'bg-red-500',
+    RUNNING: 'bg-yellow-400 animate-pulse',
+    PENDING: 'bg-gray-400',
+    CANCELLED: 'bg-gray-300',
+  };
+
+  const stats = [
+    { label: 'Total Pipelines', value: pipelines.length, color: 'text-primary-600' },
+    { label: 'Active Pipelines', value: activePipelines, color: 'text-green-600' },
+    { label: 'Modules', value: modules.length, color: 'text-purple-600' },
+    { label: 'Connectors', value: connectors.length, color: 'text-blue-600' },
+    { label: 'Recent Successes', value: successRuns, color: 'text-green-600' },
+    { label: 'Recent Failures', value: failedRuns, color: failedRuns > 0 ? 'text-red-600' : 'text-gray-500' },
+  ];
 
   return (
     <div className="px-4 py-6 sm:px-0">
@@ -54,93 +84,95 @@ export default function Dashboard() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <div className="card">
-          <div className="text-2xl font-bold text-primary-600">{totalPipelines}</div>
-          <div className="text-sm text-gray-500">Total Pipelines</div>
-        </div>
-        <div className="card">
-          <div className="text-2xl font-bold text-green-600">{activePipelines}</div>
-          <div className="text-sm text-gray-500">Active Pipelines</div>
-        </div>
-        <div className="card">
-          <div className="text-2xl font-bold text-green-600">{successRuns}</div>
-          <div className="text-sm text-gray-500">Successful Runs</div>
-        </div>
-        <div className="card">
-          <div className="text-2xl font-bold text-red-600">{failedRuns}</div>
-          <div className="text-sm text-gray-500">Failed Runs</div>
-        </div>
+      {error && (
+        <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">{error}</div>
+      )}
+
+      {/* Stats grid */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+        {stats.map((s) => (
+          <div key={s.label} className="card text-center">
+            <div className={`text-2xl font-bold ${s.color}`}>
+              {loading ? '–' : s.value}
+            </div>
+            <div className="text-xs text-gray-500 mt-1">{s.label}</div>
+          </div>
+        ))}
       </div>
 
-      <div className="card">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-lg font-semibold">Recent Pipeline Runs</h2>
-          <Link to="/pipelines" className="text-primary-600 hover:text-primary-700">
-            View all
-          </Link>
-        </div>
-        
-        {loading ? (
-          <div className="animate-pulse space-y-4">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="h-12 bg-gray-200 rounded"></div>
-            ))}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Recent runs — 2/3 width */}
+        <div className="lg:col-span-2 card">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-semibold">Recent Pipeline Runs</h2>
+            <Link to="/pipelines" className="text-sm text-primary-600 hover:text-primary-700">View all</Link>
           </div>
-        ) : recentRuns.length > 0 ? (
-          <div className="space-y-3">
-            {recentRuns.map((run) => (
-              <div key={run.id} className="flex items-center justify-between p-3 bg-gray-50 rounded">
-                <div className="flex items-center space-x-3">
-                  <span className={`w-3 h-3 rounded-full ${
-                    run.status === 'SUCCESS' ? 'bg-green-500' :
-                    run.status === 'FAILED' ? 'bg-red-500' :
-                    run.status === 'RUNNING' ? 'bg-yellow-500' :
-                    'bg-gray-400'
-                  }`}></span>
-                  <span className="text-sm font-medium">{run.id.slice(0, 8)}...</span>
-                  <span className="text-sm text-gray-500">{run.triggerType}</span>
+
+          {loading ? (
+            <div className="animate-pulse space-y-3">
+              {[1, 2, 3].map(i => <div key={i} className="h-10 bg-gray-200 rounded"></div>)}
+            </div>
+          ) : allRuns.length > 0 ? (
+            <div className="space-y-2">
+              {allRuns.map((run) => (
+                <div key={run.id} className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded">
+                  <div className="flex items-center space-x-3 min-w-0">
+                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${runStatusColor[run.status] ?? 'bg-gray-400'}`} />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{run.pipelineName ?? 'Pipeline'}</p>
+                      <p className="text-xs text-gray-400">{run.triggerType}</p>
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right ml-4">
+                    <span className={`px-2 py-0.5 text-xs rounded font-medium ${
+                      run.status === 'SUCCESS' ? 'bg-green-100 text-green-800' :
+                      run.status === 'FAILED' ? 'bg-red-100 text-red-800' :
+                      run.status === 'RUNNING' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-gray-100 text-gray-700'
+                    }`}>
+                      {run.status}
+                    </span>
+                    <p className="text-xs text-gray-400 mt-1">{new Date(run.startedAt).toLocaleString()}</p>
+                  </div>
                 </div>
-                <span className="text-sm text-gray-500">
-                  {new Date(run.startedAt).toLocaleString()}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-gray-500 text-center py-4">No pipeline runs yet</p>
-        )}
-      </div>
-
-      <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="card">
-          <h2 className="text-lg font-semibold mb-4">Quick Actions</h2>
-          <div className="space-y-3">
-            <Link to="/modules" className="btn-primary block text-center">
-              Create New Module
-            </Link>
-            <Link to="/pipelines" className="btn-secondary block text-center">
-              Create New Pipeline
-            </Link>
-          </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-gray-500 text-center py-8">No pipeline runs yet</p>
+          )}
         </div>
 
-        <div className="card">
-          <h2 className="text-lg font-semibold mb-4">System Status</h2>
-          <div className="space-y-2">
-            <div className="flex justify-between">
-              <span className="text-gray-600">API Status</span>
-              <span className="text-green-600">● Online</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">Kafka</span>
-              <span className="text-green-600">● Connected</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-600">Database</span>
-              <span className="text-green-600">● Connected</span>
+        {/* Sidebar — 1/3 width */}
+        <div className="space-y-6">
+          {/* Quick actions */}
+          <div className="card">
+            <h2 className="text-base font-semibold mb-3">Quick Actions</h2>
+            <div className="space-y-2">
+              <Link to="/modules" className="btn-primary block text-center text-sm">Create Module</Link>
+              <Link to="/pipelines" className="btn-secondary block text-center text-sm">Create Pipeline</Link>
+              <Link to="/connectors" className="btn-secondary block text-center text-sm">Add Connector</Link>
             </div>
           </div>
+
+          {/* Active pipelines quick-list */}
+          {!loading && pipelines.length > 0 && (
+            <div className="card">
+              <h2 className="text-base font-semibold mb-3">Pipelines</h2>
+              <ul className="space-y-2">
+                {pipelines.slice(0, 5).map((p) => (
+                  <li key={p.id} className="flex items-center justify-between text-sm">
+                    <Link to={`/pipelines/${p.id}`} className="text-primary-600 hover:underline truncate">
+                      {p.name}
+                    </Link>
+                    <span className={`shrink-0 ml-2 w-2 h-2 rounded-full ${p.isActive ? 'bg-green-400' : 'bg-gray-300'}`} />
+                  </li>
+                ))}
+                {pipelines.length > 5 && (
+                  <li className="text-xs text-gray-400">+{pipelines.length - 5} more</li>
+                )}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
     </div>
