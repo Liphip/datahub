@@ -43,7 +43,7 @@ class UserResource {
     @POST
     @Transactional
     fun create(request: Map<String, Any>): Response {
-        val tenantId = request["tenantId"] as? String
+        val tenantId = request["tenantId"] as? String ?: return Response.status(400).entity(mapOf("error" to "tenantId is required")).build()
         val currentUser = try { jwt.subject?.let { User.findById(UUID.fromString(it)) } } catch (_: Exception) { null }
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()

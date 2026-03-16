@@ -28,13 +28,9 @@ class ConnectorResource {
     
     private val objectMapper = ObjectMapper()
     
-    private fun getTenantIdFromToken(): UUID? {
+    private fun getTenantIdFromToken(): String? {
         val tid = jwt.getClaim("tenantId") as? String
-        return try {
-            if (tid.isNullOrBlank()) null else UUID.fromString(tid)
-        } catch (_: Exception) {
-            null
-        }
+        return if (tid.isNullOrBlank()) null else tid
     }
     
     @GET
@@ -87,7 +83,7 @@ class ConnectorResource {
     @POST
     @Transactional
     fun create(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
-        val tenantId = tenantIdQuery ?: (request["tenantId"] as? String) ?: getTenantIdFromToken()?.toString()
+        val tenantId = tenantIdQuery ?: (request["tenantId"] as? String) ?: getTenantIdFromToken()
         val name = request["name"] as? String ?: return Response.status(400)
             .entity(mapOf("error" to "Name is required"))
             .build()
@@ -150,7 +146,7 @@ class ConnectorResource {
         val tenantId = getTenantIdFromToken()
         return if (connector != null) {
             val currentUser = try { jwt.subject?.let { User.findById(UUID.fromString(it)) } } catch (_: Exception) { null }
-            if (tenantId != null && connector.tenant?.id != tenantId) {
+            if (tenantId != null && connector.tenant?.id?.toString() != tenantId) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
             if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString())) {
@@ -188,7 +184,7 @@ class ConnectorResource {
         val tenantId = getTenantIdFromToken()
         return if (connector != null) {
             val currentUser = try { jwt.subject?.let { User.findById(UUID.fromString(it)) } } catch (_: Exception) { null }
-            if (tenantId != null && connector.tenant?.id != tenantId) {
+            if (tenantId != null && connector.tenant?.id?.toString() != tenantId) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
             if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString())) {
