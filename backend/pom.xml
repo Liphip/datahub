@@ -88,6 +88,12 @@
             <artifactId>quarkus-messaging-mqtt</artifactId>
         </dependency>
         
+        <!-- WebSocket -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-websockets</artifactId>
+        </dependency>
+        
         <!-- Redis -->
         <dependency>
             <groupId>io.quarkus</groupId>

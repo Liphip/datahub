@@ -100,6 +100,20 @@ class AuthService {
         // Flush to ensure the user is visible in the same transaction
         em.flush()
         
+        // Ensure user has a membership in the tenant
+        val membership = user.getMembershipForTenant(tenant.id)
+        if (membership == null) {
+            // Create default membership
+            val defaultMembership = com.dataturntable.tenant.Membership().apply {
+                this.authUser = user
+                this.tenant = tenant
+                this.role = com.dataturntable.tenant.Role.findDefaultForTenant(tenant.id) ?: com.dataturntable.tenant.Role.findById(UUID.fromString("00000000-0000-0000-0000-000000000002")) // Viewer role
+                this.abilities = "[]"
+                this.createdAt = java.time.Instant.now()
+            }
+            defaultMembership.persist()
+        }
+
         return SetupResponse(
             email = user.email ?: request.email,
             password = password,
@@ -116,13 +130,16 @@ class AuthService {
     private fun generateJwtToken(user: User): String {
         val groups = HashSet<String>()
         if (user.isSuperadmin) groups.add("superadmin")
-        user.role?.name?.let { groups.add(it) }
+        // Get role from membership
+        user.getPrimaryTenant()?.let { tenant ->
+            user.getMembershipForTenant(tenant.id)?.role?.name?.let { groups.add(it) }
+        }
         
         return Jwt.issuer("https://dataturntable.io")
             .subject(user.id.toString())
             .upn(user.email)
             .groups(groups)
-            .claim("tenantId", user.tenant?.id?.toString())
+            .claim("tenantId", user.getPrimaryTenant()?.id?.toString())
             .claim("email", user.email)
             .expiresIn(3600L)
             .sign()

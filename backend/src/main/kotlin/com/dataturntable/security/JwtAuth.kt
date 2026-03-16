@@ -2,6 +2,8 @@ package com.dataturntable.security
 
 import com.dataturntable.auth.User
 import com.dataturntable.dto.UserDto
+import com.dataturntable.tenant.Membership
+import java.util.UUID
 
 object SecurityUtils {
     
@@ -11,8 +13,8 @@ object SecurityUtils {
              email = user.email ?: "",
              firstName = user.firstName,
              lastName = user.lastName,
-             tenantId = user.tenant?.id.toString(),
-             roleName = user.role?.name,
+             tenantId = user.getPrimaryTenant()?.id.toString(),
+             roleName = user.getMembershipForTenant(user.getPrimaryTenant()?.id ?: UUID.fromString("00000000-0000-0000-0000-000000000001"))?.role?.name,
              abilities = user.getAllAbilities().toList(),
              superadmin = user.isSuperadmin
          )

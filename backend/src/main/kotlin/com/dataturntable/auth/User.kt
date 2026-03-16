@@ -1,10 +1,14 @@
 package com.dataturntable.auth
 
+import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase
 import jakarta.persistence.*
 import java.time.Instant
+import java.util.Collections
+import java.util.HashSet
+import java.util.Set
 import java.util.UUID
 
 @Entity
@@ -15,11 +19,7 @@ open class User : PanacheEntityBase() {
     @GeneratedValue(strategy = GenerationType.UUID)
     var id: UUID? = null
     
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "tenant_id")
-    var tenant: Tenant? = null
-    
-    @Column(nullable = false)
+    @Column(nullable = false, unique = true)
     var email: String? = null
     
     @Column(name = "password_hash", nullable = false)
@@ -31,13 +31,6 @@ open class User : PanacheEntityBase() {
     @Column(name = "last_name")
     var lastName: String? = null
     
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "role_id")
-    var role: Role? = null
-    
-    @Column(name = "abilities", columnDefinition = "text")
-    var abilities: String? = null
-    
     @Column(name = "is_superadmin")
     var isSuperadmin: Boolean = false
     
@@ -48,42 +41,71 @@ open class User : PanacheEntityBase() {
     var lastLoginAt: Instant? = null
     
     @Column(name = "created_at")
-    var createdAt: Instant? = null
+    var createdAt: Instant = Instant.now()
     
     @Column(name = "updated_at")
-    var updatedAt: Instant? = null
+    var updatedAt: Instant = Instant.now()
+    
+    @Column(name = "abilities", columnDefinition = "text")
+    var abilities: String? = null
+    
+    @OneToMany(mappedBy = "authUser", cascade = [CascadeType.ALL], orphanRemoval = true)
+    var memberships: MutableList<Membership> = mutableListOf()
     
     companion object {
         fun findById(id: UUID): User? = 
-            io.quarkus.hibernate.orm.panache.PanacheEntityBase.find<User>("id = ?1", id).firstResult()
+            PanacheEntityBase.find<User>("id = ?1", id).firstResult()
         
         fun findByTenantId(tenantId: UUID): List<User> = 
-            io.quarkus.hibernate.orm.panache.PanacheEntityBase.list<User>("tenant.id = ?1", tenantId)
+            PanacheEntityBase.list<User>(
+                "id in (select m.authUser.id from Membership m where m.tenant.id = ?1)", 
+                tenantId
+            )
         
         fun findByEmail(email: String): User? = 
-            io.quarkus.hibernate.orm.panache.PanacheEntityBase.find<User>("email = ?1", email).firstResult()
+            PanacheEntityBase.find<User>("email = ?1", email).firstResult()
         
         fun findByTenantAndEmail(tenantId: UUID, email: String): User? = 
-            io.quarkus.hibernate.orm.panache.PanacheEntityBase.find<User>("tenant.id = ?1 AND email = ?2", tenantId, email).firstResult()
+            PanacheEntityBase.find<User>("email = ?1 and id in (select m.authUser.id from Membership m where m.tenant.id = ?2)", email, tenantId).firstResult()
         
         @JvmStatic
         fun countUsers(): Long = count()
+    }
+    
+    fun getPrimaryTenant(): Tenant? {
+        return memberships.firstOrNull()?.tenant
+    }
+    
+    fun getMembershipForTenant(tenantId: UUID): Membership? {
+        return memberships.firstOrNull { it.tenant?.id == tenantId }
     }
     
     fun hasAbility(ability: String): Boolean {
         if (isSuperadmin) return true
         if (abilities?.contains("*") == true) return true
         if (abilities?.contains(ability) == true) return true
-        return role?.hasAbility(ability) ?: false
+        
+        // Check role-based abilities
+        val roleAbilities = memberships.map { it.role }.filterNotNull().flatMap { it.getAbilitiesList() }
+        if (roleAbilities.contains("*") || roleAbilities.contains(ability)) return true
+        
+        // Check direct abilities
+        return abilities?.contains(ability) == true
     }
     
     fun getAllAbilities(): Set<String> {
-        val result = mutableSetOf<String>()
+        val result = HashSet<String>()
         if (isSuperadmin || abilities?.contains("*") == true) {
             result.add("*")
             return result
         }
-        role?.getAbilitiesList()?.forEach { result.add(it) }
+        
+        // Add role abilities
+        memberships.forEach { membership ->
+            membership.role?.getAbilitiesList()?.forEach { result.add(it) }
+        }
+        
+        // Add direct abilities
         try {
             abilities?.let {
                 val start = it.indexOf('[')
@@ -96,13 +118,12 @@ open class User : PanacheEntityBase() {
                 }
             }
         } catch (e: Exception) { }
+        
         return result
     }
     
     fun canAccessTenant(tenantId: UUID): Boolean {
         if (isSuperadmin) return true
-        if (tenant?.id == tenantId) return true
-        // Check if target tenant is a descendant of user's tenant
-        return tenant?.isDescendantOf(tenantId) ?: false
+        return memberships.any { it.tenant?.id == tenantId }
     }
 }

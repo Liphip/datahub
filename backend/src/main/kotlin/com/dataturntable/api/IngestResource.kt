@@ -50,7 +50,7 @@ class IngestResource {
         tenantId?.let { enrichedPayload["_tenantId"] = it }
         
         try {
-            kafkaService.sendToPipelineInput(pipeline.id.toString(), enrichedPayload)
+            kafkaService.sendToPipelineSpecificInput(pipeline.id.toString(), enrichedPayload)
             
             return Response.accepted(mapOf(
                 "status" to "accepted",

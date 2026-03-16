@@ -4,3 +4,4 @@ frontend/dist/
 package-lock.json
 .claude/
 reset_docker.sh
+reset_docker.ps1

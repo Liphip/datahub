@@ -108,8 +108,8 @@ class KafkaService {
     fun getPipelineInputTopic(): String = "$topicPrefix.pipelines.input"
     fun getPipelineOutputTopic(): String = "$topicPrefix.pipelines.output"
     
-    fun sendToPipelineInput(pipelineId: String, data: Any) {
-        val topic = getPipelineInputTopic()
+    fun sendToPipelineSpecificInput(pipelineId: String, data: Any) {
+        val topic = getImportTopic(pipelineId)
         
         val jsonData = if (data is String) {
             data
@@ -126,5 +126,9 @@ class KafkaService {
         } else {
             println("WARNING: No Kafka emitter available, data would be lost: $jsonData")
         }
+    }
+    
+    fun sendToPipelineInput(pipelineId: String, data: Any) {
+        sendToPipelineSpecificInput(pipelineId, data)
     }
 }

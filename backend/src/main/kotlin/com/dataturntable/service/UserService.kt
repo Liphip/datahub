@@ -2,13 +2,14 @@ package com.dataturntable.service
 
 import com.dataturntable.auth.User
 import com.dataturntable.dto.UserDto
+import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.transaction.Transactional
 import org.mindrot.jbcrypt.BCrypt
-import java.util.*
+import java.util.UUID
 
 @ApplicationScoped
 class UserService {
@@ -46,17 +47,23 @@ class UserService {
         val role = if (roleId != null) Role.findById(roleId) else Role.findDefaultForTenant(tenantId)
         
         val user = User().apply {
-            this.tenant = tenant
             this.email = email
             this.passwordHash = BCrypt.hashpw(password, BCrypt.gensalt())
             this.firstName = firstName
             this.lastName = lastName
-            this.role = role
-            this.abilities = if (abilities != null) objectMapper.writeValueAsString(abilities) else "[]"
             this.isSuperadmin = isSuperadmin
         }
-        
         user.persist()
+        
+        // Create membership
+        val membership = Membership().apply {
+            this.authUser = user
+            this.tenant = tenant
+            this.role = role
+            this.abilities = if (abilities != null) objectMapper.writeValueAsString(abilities) else "[]"
+        }
+        membership.persist()
+        
         return toDto(user)
     }
     
@@ -73,14 +80,23 @@ class UserService {
         
         firstName?.let { user.firstName = it }
         lastName?.let { user.lastName = it }
-        isActive?.let { user.isActive = it }
         
         if (roleId != null) {
-            user.role = Role.findById(roleId)
+            // Update membership role
+            val membership = user.getMembershipForTenant(user.getPrimaryTenant()?.id ?: UUID.fromString("00000000-0000-0000-0000-000000000001"))
+            if (membership != null) {
+                membership.role = Role.findById(roleId)
+                membership.persist()
+            }
         }
         
         abilities?.let { 
-            user.abilities = objectMapper.writeValueAsString(it)
+            // Update membership abilities
+            val membership = user.getMembershipForTenant(user.getPrimaryTenant()?.id ?: UUID.fromString("00000000-0000-0000-0000-000000000001"))
+            if (membership != null) {
+                membership.abilities = objectMapper.writeValueAsString(it)
+                membership.persist()
+            }
         }
         
         user.updatedAt = java.time.Instant.now()
@@ -92,6 +108,8 @@ class UserService {
     @Transactional
     fun deleteUser(id: UUID): Boolean {
         val user = User.findById(id) ?: return false
+        // Delete memberships first
+        user.memberships.forEach { it.delete() }
         user.delete()
         return true
     }
@@ -117,8 +135,8 @@ class UserService {
              email = user.email ?: "",
              firstName = user.firstName,
              lastName = user.lastName,
-             tenantId = user.tenant?.id.toString(),
-             roleName = user.role?.name,
+             tenantId = user.getPrimaryTenant()?.id.toString(),
+             roleName = user.getMembershipForTenant(user.getPrimaryTenant()?.id)?.role?.name,
              abilities = user.getAllAbilities().toList(),
              superadmin = user.isSuperadmin
          )

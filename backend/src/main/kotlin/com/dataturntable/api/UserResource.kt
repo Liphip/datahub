@@ -1,6 +1,9 @@
 package com.dataturntable.api
 
 import com.dataturntable.auth.User
+import com.dataturntable.tenant.Membership
+import com.dataturntable.tenant.Role
+import com.dataturntable.tenant.Tenant
 import io.quarkus.security.Authenticated
 import jakarta.transaction.Transactional
 import jakarta.ws.rs.*
@@ -17,7 +20,12 @@ class UserResource {
     @GET
     fun list(@QueryParam("tenantId") tenantId: String): Response {
         val users = User.findByTenantId(UUID.fromString(tenantId))
-        return Response.ok(users.map { mapOf("id" to it.id, "email" to it.email, "firstName" to it.firstName) }).build()
+        return Response.ok(users.map { mapOf(
+            "id" to it.id, 
+            "email" to it.email, 
+            "firstName" to it.firstName,
+            "tenantId" to it.getPrimaryTenant()?.id?.toString()
+        ) }).build()
     }
     
     @POST
@@ -27,11 +35,10 @@ class UserResource {
         val email = request["email"] as? String ?: return Response.status(400).entity(mapOf("error" to "Email is required")).build()
         val passwordHash = request["passwordHash"] as? String ?: return Response.status(400).entity(mapOf("error" to "Password hash is required")).build()
         
-        val tenant = com.dataturntable.tenant.Tenant.findById(UUID.fromString(tenantId))
+        val tenant = Tenant.findById(UUID.fromString(tenantId))
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
         
         val user = User().apply {
-            this.tenant = tenant
             this.email = email
             this.passwordHash = passwordHash
             this.firstName = request["firstName"] as? String
@@ -42,6 +49,16 @@ class UserResource {
         }
         user.persist()
         
+        // Create default membership
+        val membership = Membership().apply {
+            this.authUser = user
+            this.tenant = tenant
+            this.role = Role.findDefaultForTenant(tenant?.id ?: UUID.fromString("00000000-0000-0000-0000-000000000001")) ?: Role.findById(UUID.fromString("00000000-0000-0000-0000-000000000002")) // Viewer role
+            this.abilities = "[]"
+            this.createdAt = java.time.Instant.now()
+        }
+        membership.persist()
+        
         return Response.status(201).entity(mapOf("id" to user.id, "email" to user.email)).build()
     }
     
@@ -50,7 +67,12 @@ class UserResource {
     fun get(@PathParam("id") id: String): Response {
         val user = User.findById(UUID.fromString(id))
         return if (user != null) {
-            Response.ok(mapOf("id" to user.id, "email" to user.email, "firstName" to user.firstName)).build()
+            Response.ok(mapOf(
+                "id" to user.id, 
+                "email" to user.email, 
+                "firstName" to user.firstName,
+                "tenantId" to user.getPrimaryTenant()?.id?.toString()
+            )).build()
         } else {
             Response.status(404).entity(mapOf("error" to "User not found")).build()
         }
@@ -62,6 +84,8 @@ class UserResource {
     fun delete(@PathParam("id") id: String): Response {
         val user = User.findById(UUID.fromString(id))
         return if (user != null) {
+            // Delete memberships first
+            user.memberships.forEach { it.delete() }
             user.delete()
             Response.noContent().build()
         } else {
