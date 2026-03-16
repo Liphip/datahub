@@ -1,16 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { sha256 } from '../../utils/crypto'
+import { describe, it, expect, vi } from 'vitest'
 
 vi.stubGlobal('crypto', {
   subtle: {
     digest: vi.fn().mockResolvedValue(new ArrayBuffer(32)),
   },
-})
-
-const mockDigest = vi.fn()
-
-beforeEach(() => {
-  vi.clearAllMocks()
 })
 
 describe('SHA-256 Hash Function', () => {
@@ -19,8 +12,7 @@ describe('SHA-256 Hash Function', () => {
     const testString = 'password123'
     const expectedHash = new Uint8Array([0x12, 0x34, 0x56, 0x78])
     
-    mockDigest.mockResolvedValue(expectedHash)
-    ;(globalThis.crypto.subtle.digest as ReturnType<typeof vi.fn>).mockResolvedValue(expectedHash)
+    vi.mocked(crypto.subtle.digest).mockResolvedValue(expectedHash.buffer)
     
     const msgBuffer = encoder.encode(testString)
     const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer)
@@ -39,7 +31,7 @@ describe('SHA-256 Hash Function', () => {
     const testString = ''
     const expectedHash = new Uint8Array([])
     
-    ;(globalThis.crypto.subtle.digest as ReturnType<typeof vi.fn>).mockResolvedValue(expectedHash)
+    vi.mocked(crypto.subtle.digest).mockResolvedValue(expectedHash.buffer)
     
     const msgBuffer = encoder.encode(testString)
     const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer)
@@ -52,7 +44,7 @@ describe('SHA-256 Hash Function', () => {
     const testString = 'p@$$w0rd!#$%^&*()'
     const expectedHash = new Uint8Array([1, 2, 3, 4])
     
-    ;(globalThis.crypto.subtle.digest as ReturnType<typeof vi.fn>).mockResolvedValue(expectedHash)
+    vi.mocked(crypto.subtle.digest).mockResolvedValue(expectedHash.buffer)
     
     const msgBuffer = encoder.encode(testString)
     const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer)
@@ -65,7 +57,7 @@ describe('SHA-256 Hash Function', () => {
     const testString = 'пароль密码🔐'
     const expectedHash = new Uint8Array([1, 2, 3, 4])
     
-    ;(globalThis.crypto.subtle.digest as ReturnType<typeof vi.fn>).mockResolvedValue(expectedHash)
+    vi.mocked(crypto.subtle.digest).mockResolvedValue(expectedHash.buffer)
     
     const msgBuffer = encoder.encode(testString)
     const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer)

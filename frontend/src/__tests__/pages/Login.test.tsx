@@ -102,8 +102,7 @@ describe('Login Page', () => {
     })
 
     it('shows loading state during login', async () => {
-      let resolveLogin: () => void
-      mockLogin.mockImplementation(() => new Promise((resolve) => { resolveLogin = resolve }))
+      mockLogin.mockImplementation(() => new Promise<void>((resolve) => { setTimeout(() => resolve(), 100) }))
       
       render(
         <BrowserRouter>

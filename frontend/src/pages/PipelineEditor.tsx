@@ -78,7 +78,7 @@ export default function PipelineEditor() {
           isActive,
         });
         navigate(`/pipelines/${newPipeline.id}`);
-      } else {
+      } else if (id) {
         await api.updatePipeline(id, {
           name,
           description,

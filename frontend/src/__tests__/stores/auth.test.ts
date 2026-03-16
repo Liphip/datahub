@@ -58,7 +58,7 @@ describe('Auth Store', () => {
         firstName: 'Test',
         lastName: 'User',
         abilities: ['module:read'],
-        isSuperadmin: false,
+        superadmin: false,
         tenantId: 'tenant-1',
         roleName: 'Viewer',
       }
@@ -80,7 +80,7 @@ describe('Auth Store', () => {
     it('hashes password before sending to API', async () => {
       vi.mocked(api.login).mockResolvedValue({
         token: 'test-token',
-        user: { id: '1', email: 'test@example.com', abilities: [], isSuperadmin: false },
+        user: { id: '1', email: 'test@example.com', abilities: [], superadmin: false },
       })
 
       const { login } = useAuthStore.getState()
@@ -105,7 +105,7 @@ describe('Auth Store', () => {
   describe('logout', () => {
     it('logs out successfully and clears storage', () => {
       useAuthStore.setState({
-        user: { id: '1', email: 'test@example.com', abilities: [], isSuperadmin: false },
+        user: { id: '1', email: 'test@example.com', abilities: [], superadmin: false },
         token: 'test-token',
         isAuthenticated: true,
       })
@@ -127,7 +127,7 @@ describe('Auth Store', () => {
         id: '1',
         email: 'test@example.com',
         abilities: ['module:read'],
-        isSuperadmin: false,
+        superadmin: false,
       }
 
       vi.mocked(api.getCurrentUser).mockResolvedValue(mockUser)
@@ -170,7 +170,7 @@ describe('Auth Store', () => {
   describe('state management', () => {
     it('persists only token to localStorage', () => {
       useAuthStore.setState({
-        user: { id: '1', email: 'test@example.com', abilities: [], isSuperadmin: false },
+        user: { id: '1', email: 'test@example.com', abilities: [], superadmin: false },
         token: 'test-token',
         isAuthenticated: true,
       })

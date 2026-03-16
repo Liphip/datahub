@@ -16,6 +16,10 @@ export default function Alerts() {
   const [newChannelType, setNewChannelType] = useState('WEBHOOK');
   const [newChannelUrl, setNewChannelUrl] = useState('');
   const [creatingChannel, setCreatingChannel] = useState(false);
+  const [newRuleName, setNewRuleName] = useState('');
+  const [newRuleCondition, setNewRuleCondition] = useState('');
+  const [newRuleChannelId, setNewRuleChannelId] = useState('');
+  const [creatingRule, setCreatingRule] = useState(false);
 
   const tenantId = user?.tenantId || user?.id;
 
@@ -61,6 +65,26 @@ export default function Alerts() {
       console.error('Error creating channel:', error);
     } finally {
       setCreatingChannel(false);
+    }
+  };
+
+  const handleCreateRule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tenantId || !newRuleName) return;
+    
+    setCreatingRule(true);
+    try {
+      const condition = JSON.parse(newRuleCondition || '{}');
+      const newRule = await api.createAlertRule(tenantId, newRuleName, condition, newRuleChannelId || undefined);
+      setRules([...rules, newRule]);
+      setShowRuleModal(false);
+      setNewRuleName('');
+      setNewRuleCondition('');
+      setNewRuleChannelId('');
+    } catch (error) {
+      console.error('Error creating rule:', error);
+    } finally {
+      setCreatingRule(false);
     }
   };
 
@@ -245,6 +269,65 @@ export default function Alerts() {
                   className="btn-primary"
                 >
                   {creatingChannel ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showRuleModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h2 className="text-xl font-bold mb-4">Add Alert Rule</h2>
+            <form onSubmit={handleCreateRule}>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <input
+                  type="text"
+                  value={newRuleName}
+                  onChange={(e) => setNewRuleName(e.target.value)}
+                  className="input w-full"
+                  required
+                />
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Channel</label>
+                <select
+                  value={newRuleChannelId}
+                  onChange={(e) => setNewRuleChannelId(e.target.value)}
+                  className="input w-full"
+                >
+                  <option value="">Select channel</option>
+                  {channels.map((channel) => (
+                    <option key={channel.id} value={channel.id}>{channel.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Condition (JSON)</label>
+                <textarea
+                  value={newRuleCondition}
+                  onChange={(e) => setNewRuleCondition(e.target.value)}
+                  className="input w-full"
+                  placeholder='{"field": "temperature", "operator": ">", "value": 100}'
+                  rows={3}
+                />
+              </div>
+              <div className="flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setShowRuleModal(false)}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingRule}
+                  className="btn-primary"
+                >
+                  {creatingRule ? 'Creating...' : 'Create'}
                 </button>
               </div>
             </form>

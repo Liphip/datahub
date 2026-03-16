@@ -12,7 +12,6 @@ export default function Data() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newTableName, setNewTableName] = useState('');
   const [insertingData, setInsertingData] = useState(false);
-  const [insertSampleData, setInsertSampleData] = useState(false);
 
   const tenantId = user?.tenantId || user?.id;
 
