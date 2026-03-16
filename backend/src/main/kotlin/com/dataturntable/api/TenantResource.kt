@@ -87,6 +87,12 @@ class TenantResource {
     fun delete(@PathParam("id") id: String): Response {
         val tenant = em.find(Tenant::class.java, UUID.fromString(id))
         return if (tenant != null) {
+            if (tenant.parent == null) {
+                val rootCount = em.createQuery("SELECT COUNT(t) FROM Tenant t WHERE t.parent IS NULL", java.lang.Long::class.java).singleResult
+                if (rootCount <= 1) {
+                    return Response.status(400).entity(mapOf("error" to "Cannot delete the last root tenant")).build()
+                }
+            }
             em.remove(tenant)
             Response.noContent().build()
         } else {

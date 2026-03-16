@@ -84,6 +84,11 @@ class ApiService {
     await this.client.delete(`/tenants/${id}`);
   }
 
+  async getTenantChildren(parentId: string): Promise<Tenant[]> {
+    const response = await this.client.get<Tenant[]>(`/tenants/${parentId}/children`);
+    return response.data;
+  }
+
   // Users
   async getUsers(tenantId: string): Promise<User[]> {
     const response = await this.client.get<User[]>(`/users?tenantId=${tenantId}`);
