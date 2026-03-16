@@ -8,6 +8,8 @@ export default function Tenants() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingTenant, setEditingTenant] = useState<Tenant | null>(null);
   const [newTenantName, setNewTenantName] = useState('');
   const [newTenantParentId, setNewTenantParentId] = useState('');
   const [creating, setCreating] = useState(false);
@@ -41,6 +43,30 @@ export default function Tenants() {
       setTenants([...tenants, newTenant]);
     } catch (error) {
       console.error('Error creating tenant:', error);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleEditTenant = (tenant: Tenant) => {
+    setEditingTenant(tenant);
+    setNewTenantName(tenant.name);
+    setShowEditModal(true);
+  };
+
+  const handleUpdateTenant = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTenant || !newTenantName) return;
+    
+    setCreating(true);
+    try {
+      await api.updateTenant(editingTenant.id, { name: newTenantName });
+      setTenants(tenants.map(t => t.id === editingTenant.id ? { ...t, name: newTenantName } : t));
+      setShowEditModal(false);
+      setEditingTenant(null);
+      setNewTenantName('');
+    } catch (error) {
+      console.error('Error updating tenant:', error);
     } finally {
       setCreating(false);
     }
@@ -98,7 +124,7 @@ export default function Tenants() {
                   )}
                 </div>
                 <div className="flex space-x-2">
-                  <button className="btn-secondary text-sm">Edit</button>
+                  <button onClick={() => handleEditTenant(tenant)} className="btn-secondary text-sm">Edit</button>
                   <button 
                     onClick={() => handleDeleteTenant(tenant.id)}
                     disabled={deletingId === tenant.id}
@@ -167,6 +193,42 @@ export default function Tenants() {
                   className="btn-primary"
                 >
                   {creating ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showEditModal && editingTenant && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h2 className="text-xl font-bold mb-4">Edit Tenant</h2>
+            <form onSubmit={handleUpdateTenant}>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <input
+                  type="text"
+                  value={newTenantName}
+                  onChange={(e) => setNewTenantName(e.target.value)}
+                  className="input w-full"
+                  required
+                />
+              </div>
+              <div className="flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => { setShowEditModal(false); setEditingTenant(null); }}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creating}
+                  className="btn-primary"
+                >
+                  {creating ? 'Saving...' : 'Save'}
                 </button>
               </div>
             </form>

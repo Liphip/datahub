@@ -34,6 +34,13 @@ class TenantResource {
         val parentId = request["parentId"] as? String
         val parent = parentId?.let { Tenant.findById(UUID.fromString(it)) }
         
+        if (parent == null) {
+            val rootTenants = em.createQuery("SELECT t FROM Tenant t WHERE t.parent IS NULL", Tenant::class.java).resultList
+            if (rootTenants.isNotEmpty()) {
+                return Response.status(400).entity(mapOf("error" to "Root tenant already exists. Create a sub-tenant instead.")).build()
+            }
+        }
+        
         val tenant = Tenant().apply {
             this.name = name
             this.parent = parent
