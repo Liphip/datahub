@@ -5,9 +5,12 @@ import com.dataturntable.module.ModuleVersion
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
-import jakarta.inject.Inject
 import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.jboss.logging.Logger
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 @ApplicationScoped
 class DockerService {
@@ -27,6 +30,9 @@ class DockerService {
     @ConfigProperty(name = "dataturntable.docker.resources.memory-limit", defaultValue = "512m")
     lateinit var memoryLimit: String
     
+    @ConfigProperty(name = "dataturntable.docker.timeout-seconds", defaultValue = "300")
+    var timeoutSeconds: Int = 300
+    
     fun executeModule(
         moduleVersion: ModuleVersion,
         inputData: JsonNode?,
@@ -34,11 +40,160 @@ class DockerService {
         runId: String,
         moduleType: ModuleType
     ): String {
-        LOG.warn("Docker execution not implemented - returning mock result")
-        return "Mock execution result for ${moduleVersion.module?.name}"
+        val containerName = "dt-${pipelineId}-${runId}-${moduleType.name.lowercase()}-${UUID.randomUUID()}"
+        
+        LOG.infof("Executing module %s in container %s", moduleVersion.module?.name, containerName)
+        
+        return try {
+            val code = moduleVersion.code ?: throw IllegalStateException("Module code is empty")
+            val requirements = moduleVersion.requirements ?: ""
+            
+            val result = runContainer(
+                containerName = containerName,
+                code = code,
+                requirements = requirements,
+                inputData = inputData,
+                moduleType = moduleType
+            )
+            
+            cleanupContainer(containerName)
+            
+            result
+        } catch (e: Exception) {
+            LOG.errorf("Module execution failed: %s", e.message)
+            cleanupContainer(containerName)
+            throw RuntimeException("Module execution failed: ${e.message}", e)
+        }
+    }
+    
+    private fun runContainer(
+        containerName: String,
+        code: String,
+        requirements: String,
+        inputData: JsonNode?,
+        moduleType: ModuleType
+    ): String {
+        val scriptContent = buildModuleScript(code, moduleType)
+        
+        val dockerArgs = mutableListOf(
+            "docker", "run",
+            "--rm",
+            "--name", containerName,
+            "--network", networkName,
+            "--cpu-shares", (cpuLimit.toDouble() * 1024).toInt().toString(),
+            "--memory", memoryLimit,
+            "-e", "MODULE_CODE=$scriptContent",
+            "-e", "MODULE_REQUIREMENTS=$requirements",
+            "-e", "MODULE_TYPE=${moduleType.name}"
+        )
+        
+        inputData?.let {
+            dockerArgs.add("-e")
+            dockerArgs.add("INPUT_DATA=${it.toString()}")
+        }
+        
+        dockerArgs.add(baseImage)
+        dockerArgs.add("python3")
+        dockerArgs.add("-c")
+        dockerArgs.add("import sys; exec(__import__('base64').b64decode(__import__('os').environ['MODULE_CODE']).decode())")
+        
+        return try {
+            val processBuilder = ProcessBuilder(dockerArgs)
+            processBuilder.redirectErrorStream(true)
+            val process = processBuilder.start()
+            
+            val output = StringBuilder()
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            
+            val finished = process.waitFor(timeoutSeconds.toLong(), TimeUnit.SECONDS)
+            
+            if (!finished) {
+                process.destroyForcibly()
+                throw RuntimeException("Module execution timed out after $timeoutSeconds seconds")
+            }
+            
+            var line: String? = reader.readLine()
+            while (line != null) {
+                output.append(line).append("\n")
+                line = reader.readLine()
+            }
+            
+            val exitCode = process.exitValue()
+            
+            if (exitCode != 0) {
+                throw RuntimeException("Container exited with code $exitCode: $output")
+            }
+            
+            output.toString().trim()
+        } catch (e: Exception) {
+            throw RuntimeException("Failed to run container: ${e.message}", e)
+        }
+    }
+    
+    private fun buildModuleScript(code: String, moduleType: ModuleType): String {
+        val script = when (moduleType) {
+            ModuleType.IMPORT -> """
+                |import sys
+                |import json
+                |$code
+                |result = fetch() if 'fetch' in dir() else {}
+                |print(json.dumps(result))
+            """.trimMargin()
+            
+            ModuleType.PROCESSING -> """
+                |import sys
+                |import json
+                |input_data = json.loads(__import__('os').environ.get('INPUT_DATA', '{}'))
+                |$code
+                |result = process(input_data) if 'process' in dir() else input_data
+                |print(json.dumps(result))
+            """.trimMargin()
+            
+            ModuleType.EXPORT -> """
+                |import sys
+                |import json
+                |input_data = json.loads(__import__('os').environ.get('INPUT_DATA', '{}'))
+                |$code
+                |send(input_data) if 'send' in dir() else None
+                |print(json.dumps({"status": "sent"}))
+            """.trimMargin()
+        }
+        
+        return java.util.Base64.getEncoder().encodeToString(script.toByteArray())
+    }
+    
+    private fun cleanupContainer(containerName: String) {
+        try {
+            val process = ProcessBuilder("docker", "rm", "-f", containerName)
+                .redirectErrorStream(true)
+                .start()
+            process.waitFor()
+        } catch (e: Exception) {
+            LOG.warnf("Failed to cleanup container %s: %s", containerName, e.message)
+        }
     }
     
     fun stopAllContainers() {
-        LOG.info("Stop all containers called (not implemented)")
+        LOG.info("Stopping all DataTurntable containers")
+        
+        try {
+            val process = ProcessBuilder("docker", "ps", "-aq", "-f", "name=dt-")
+                .redirectErrorStream(true)
+                .start()
+            
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            val containerIds = reader.readLines()
+            
+            containerIds.forEach { containerId ->
+                if (containerId.isNotBlank()) {
+                    ProcessBuilder("docker", "rm", "-f", containerId)
+                        .redirectErrorStream(true)
+                        .start()
+                        .waitFor()
+                }
+            }
+        } catch (e: Exception) {
+            LOG.errorf("Failed to stop containers: %s", e.message)
+        }
     }
 }
