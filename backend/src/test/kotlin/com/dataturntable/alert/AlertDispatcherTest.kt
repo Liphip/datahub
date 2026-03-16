@@ -16,4 +16,9 @@ class AlertDispatcherTest {
     fun testAlertDispatcherInitialization() {
         assertNotNull(alertDispatcher)
     }
+    
+    @Test
+    fun testAlertsEnabledByDefault() {
+        assertTrue(alertDispatcher.alertsEnabled)
+    }
 }
