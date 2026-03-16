@@ -35,11 +35,11 @@ class DockerService {
     
     fun executeModule(
         moduleVersion: ModuleVersion,
-        inputData: JsonNode?,
+        inputData: Any?,
         pipelineId: String,
         runId: String,
         moduleType: ModuleType
-    ): String {
+    ): Any? {
         val containerName = "dt-${pipelineId}-${runId}-${moduleType.name.lowercase()}-${UUID.randomUUID()}"
         
         LOG.infof("Executing module %s in container %s", moduleVersion.module?.name, containerName)
@@ -58,7 +58,15 @@ class DockerService {
             
             cleanupContainer(containerName)
             
-            result
+            if (result.isNotBlank()) {
+                try {
+                    objectMapper.readValue(result, Any::class.java)
+                } catch (e: Exception) {
+                    result
+                }
+            } else {
+                null
+            }
         } catch (e: Exception) {
             LOG.errorf("Module execution failed: %s", e.message)
             cleanupContainer(containerName)
@@ -70,7 +78,7 @@ class DockerService {
         containerName: String,
         code: String,
         requirements: String,
-        inputData: JsonNode?,
+        inputData: Any?,
         moduleType: ModuleType
     ): String {
         val scriptContent = buildModuleScript(code, moduleType)
@@ -147,6 +155,15 @@ class DockerService {
                 |$code
                 |result = process(input_data) if 'process' in dir() else input_data
                 |print(json.dumps(result))
+            """.trimMargin()
+            
+            ModuleType.ALERT -> """
+                |import sys
+                |import json
+                |input_data = json.loads(__import__('os').environ.get('INPUT_DATA', '{}'))
+                |$code
+                |result = evaluate(input_data) if 'evaluate' in dir() else False
+                |print(json.dumps({"alert_fired": result}))
             """.trimMargin()
             
             ModuleType.EXPORT -> """

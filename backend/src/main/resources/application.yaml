@@ -17,6 +17,14 @@ quarkus:
       generation: none
     log:
       sql: false
+    persistence-units:
+      default:
+        packages:
+          - com.dataturntable.tenant
+          - com.dataturntable.auth
+          - com.dataturntable.pipeline
+          - com.dataturntable.module
+          - com.dataturntable.alert
   
   flyway:
     migrate-at-start: true
@@ -30,6 +38,33 @@ quarkus:
     hosts: ${REDIS_HOSTS:redis://localhost:6379}
 
 mp:
+  messaging:
+    outgoing:
+      pipeline-commands:
+        connector: smallrye-kafka
+        topic: dataturntable.system.commands
+        bootstrap:
+          servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+        value:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+      pipeline-output:
+        connector: smallrye-kafka
+        topic: dataturntable.pipelines.output
+        bootstrap:
+          servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+        value:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+    incoming:
+      pipeline-events:
+        connector: smallrye-kafka
+        topic: dataturntable.system.commands
+        bootstrap:
+          servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+        value:
+          deserializer: org.apache.kafka.common.serialization.StringDeserializer
+        auto:
+          offset:
+            reset: earliest
   jwt:
     verify:
       publickey:
@@ -49,10 +84,6 @@ smallrye:
     sign:
       key:
         location: privateKey.pem
-
-jwt:
-  issuer: https://dataturntable.io
-  duration: 3600
 
 jwt:
   issuer: https://dataturntable.io

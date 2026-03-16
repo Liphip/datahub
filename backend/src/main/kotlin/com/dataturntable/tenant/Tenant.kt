@@ -40,10 +40,12 @@ open class Tenant : PanacheEntityBase() {
             PanacheEntityBase.find<Tenant>("id = ?1", id).firstResult()
         
         fun findRootTenants(): List<Tenant> = 
-            PanacheEntityBase.list<Tenant>("parent.id IS NULL")
+            getEntityManager().createQuery("SELECT t FROM Tenant t WHERE t.parent IS NULL", Tenant::class.java).resultList
         
         fun findByParentId(parentId: UUID): List<Tenant> = 
-            PanacheEntityBase.list<Tenant>("parent.id = ?1", parentId)
+            getEntityManager().createQuery("SELECT t FROM Tenant t WHERE t.parent.id = :parentId", Tenant::class.java)
+                .setParameter("parentId", parentId)
+                .resultList
     }
     
     fun isDescendantOf(ancestorId: UUID): Boolean {

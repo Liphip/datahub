@@ -81,7 +81,7 @@ class AuthService {
         }
         em.persist(tenant)
         
-        val password = generateRandomPassword(16)
+        val password = request.password ?: generateRandomPassword(16)
         val passwordHash = hashPassword(password)
         
         val user = User().apply {
@@ -110,7 +110,7 @@ class AuthService {
     private fun hashPassword(password: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
         val hash = digest.digest(password.toByteArray())
-        return Base64.getEncoder().encodeToString(hash)
+        return hash.joinToString("") { "%02x".format(it) }
     }
     
     private fun generateJwtToken(user: User): String {
@@ -129,10 +129,23 @@ class AuthService {
     }
     
     private fun generateRandomPassword(length: Int): String {
-        val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#\$%^&*"
-        return (1..length)
-            .map { chars[secureRandom.nextInt(chars.length)] }
-            .joinToString("")
+        val upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        val lower = "abcdefghijklmnopqrstuvwxyz"
+        val digits = "0123456789"
+        val special = "!@#\$%^&*"
+        
+        val password = StringBuilder()
+        password.append(upper[secureRandom.nextInt(upper.length)])
+        password.append(lower[secureRandom.nextInt(lower.length)])
+        password.append(digits[secureRandom.nextInt(digits.length)])
+        password.append(special[secureRandom.nextInt(special.length)])
+        
+        val allChars = upper + lower + digits + special
+        for (i in 4 until length) {
+            password.append(allChars[secureRandom.nextInt(allChars.length)])
+        }
+        
+        return password.toString().toList().shuffled(secureRandom).joinToString("")
     }
     
     private fun toUserDto(user: User): UserDto {

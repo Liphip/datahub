@@ -13,7 +13,8 @@ class LoginRequest @JsonCreator constructor(
 
 data class SetupRequest(
     @NotBlank
-    val email: String = "admin@example.com"
+    val email: String = "admin@example.com",
+    val password: String? = null
 )
 
 data class SetupResponse(

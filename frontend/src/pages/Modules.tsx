@@ -61,12 +61,14 @@ export default function Modules() {
     IMPORT: 'Import',
     PROCESSING: 'Processing',
     EXPORT: 'Export',
+    ALERT: 'Alert',
   };
 
   const moduleTypeColors: Record<string, string> = {
     IMPORT: 'bg-blue-100 text-blue-800',
     PROCESSING: 'bg-purple-100 text-purple-800',
     EXPORT: 'bg-green-100 text-green-800',
+    ALERT: 'bg-red-100 text-red-800',
   };
 
   return (
@@ -79,7 +81,7 @@ export default function Modules() {
       </div>
 
       <div className="mb-4 flex space-x-2">
-        {['all', 'IMPORT', 'PROCESSING', 'EXPORT'].map((type) => (
+        {['all', 'IMPORT', 'PROCESSING', 'EXPORT', 'ALERT'].map((type) => (
           <button
             key={type}
             onClick={() => setFilter(type)}
@@ -163,6 +165,7 @@ export default function Modules() {
                   <option value="IMPORT">Import</option>
                   <option value="PROCESSING">Processing</option>
                   <option value="EXPORT">Export</option>
+                  <option value="ALERT">Alert</option>
                 </select>
               </div>
               <div className="mb-4">

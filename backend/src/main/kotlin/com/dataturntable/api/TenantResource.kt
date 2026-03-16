@@ -3,6 +3,8 @@ package com.dataturntable.api
 import com.dataturntable.tenant.Tenant
 import com.dataturntable.auth.User
 import io.quarkus.security.Authenticated
+import jakarta.inject.Inject
+import jakarta.persistence.EntityManager
 import jakarta.transaction.Transactional
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
@@ -15,10 +17,33 @@ import java.util.UUID
 @Authenticated
 class TenantResource {
     
+    @Inject
+    lateinit var em: EntityManager
+    
     @GET
     fun list(): Response {
-        val tenants = Tenant.findRootTenants()
+        val tenants = em.createQuery("SELECT t FROM Tenant t WHERE t.parent IS NULL", Tenant::class.java).resultList
         return Response.ok(tenants.map { mapOf("id" to it.id, "name" to it.name) }).build()
+    }
+    
+    @POST
+    @Transactional
+    fun create(request: Map<String, Any>): Response {
+        val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
+        
+        val parentId = request["parentId"] as? String
+        val parent = parentId?.let { Tenant.findById(UUID.fromString(it)) }
+        
+        val tenant = Tenant().apply {
+            this.name = name
+            this.parent = parent
+            this.settings = "{}"
+            this.quota = """{"max_users": 100, "max_pipelines": 50, "max_storage_mb": 10240}"""
+            this.createdAt = java.time.Instant.now()
+            this.updatedAt = java.time.Instant.now()
+        }
+        tenant.persist()
+        return Response.status(201).entity(mapOf("id" to tenant.id, "name" to tenant.name)).build()
     }
     
     @GET
@@ -32,14 +57,21 @@ class TenantResource {
         }
     }
     
-    @POST
+    @PATCH
+    @Path("/{id}")
     @Transactional
-    fun create(request: Map<String, Any>): Response {
-        val tenant = Tenant().apply {
-            name = request["name"] as? String
+    fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
+        val tenant = Tenant.findById(UUID.fromString(id))
+        return if (tenant != null) {
+            request["name"]?.let { tenant.name = it as String }
+            request["settings"]?.let { tenant.settings = it as String }
+            request["quota"]?.let { tenant.quota = it as String }
+            tenant.updatedAt = java.time.Instant.now()
+            tenant.persist()
+            Response.ok(mapOf("id" to tenant.id, "name" to tenant.name)).build()
+        } else {
+            Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
         }
-        tenant.persist()
-        return Response.status(201).entity(mapOf("id" to tenant.id)).build()
     }
     
     @DELETE

@@ -22,6 +22,29 @@ class PipelineResource {
         return Response.ok(pipelines.map { mapOf("id" to it.id, "name" to it.name, "isActive" to it.isActive) }).build()
     }
     
+    @POST
+    @Transactional
+    fun create(request: Map<String, Any>): Response {
+        val tenantId = request["tenantId"] as? String
+        val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
+        
+        val tenant = com.dataturntable.tenant.Tenant.findById(UUID.fromString(tenantId))
+            ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
+        
+        val pipeline = Pipeline().apply {
+            this.name = name
+            this.tenant = tenant
+            this.description = request["description"] as? String
+            this.kafkaConsumerGroup = "pipeline-${java.util.UUID.randomUUID()}"
+            this.isActive = false
+            this.createdAt = java.time.Instant.now()
+            this.updatedAt = java.time.Instant.now()
+        }
+        pipeline.persist()
+        
+        return Response.status(201).entity(mapOf("id" to pipeline.id, "name" to pipeline.name)).build()
+    }
+    
     @GET
     @Path("/{id}")
     fun get(@PathParam("id") id: String): Response {
@@ -41,6 +64,34 @@ class PipelineResource {
         return if (pipeline != null) {
             pipeline.delete()
             Response.noContent().build()
+        } else {
+            Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
+        }
+    }
+    
+    @PATCH
+    @Path("/{id}")
+    @Transactional
+    fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
+        val pipeline = Pipeline.findById(UUID.fromString(id))
+        return if (pipeline != null) {
+            request["name"]?.let { pipeline.name = it as String }
+            request["description"]?.let { pipeline.description = it as String }
+            request["isActive"]?.let { pipeline.isActive = it as Boolean }
+            request["importModuleVersionId"]?.let { pipeline.importModuleVersionId = UUID.fromString(it as String) }
+            request["processingModuleVersionIds"]?.let { 
+                (it as List<*>).let { ids -> 
+                    pipeline.processingModuleVersionIds = ids.map { id -> UUID.fromString(id as String) }.toTypedArray()
+                }
+            }
+            request["exportModuleVersionIds"]?.let { 
+                (it as List<*>).let { ids -> 
+                    pipeline.exportModuleVersionIds = ids.map { id -> UUID.fromString(id as String) }.toTypedArray()
+                }
+            }
+            pipeline.updatedAt = java.time.Instant.now()
+            pipeline.persist()
+            Response.ok(mapOf("id" to pipeline.id, "name" to pipeline.name, "isActive" to pipeline.isActive)).build()
         } else {
             Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
         }

@@ -41,15 +41,40 @@ class PipelineConsumer {
     lateinit var dockerService: DockerService
     
     @Incoming("pipeline-input")
-    @Outgoing("pipeline-processing")
     @Blocking
     @Transactional
     fun consume(message: String): PipelineEvent {
-        LOG.infof("Received pipeline message: %s", message)
+        LOG.infof("Received pipeline message: %s", message.take(200))
         
-        val pipelineMsg: PipelineTriggerMessage
+        val pipelineMsg: PipelineTriggerMessage?
+        var dataPayload: Map<String, Any>? = null
+        var pipelineId: String? = null
+        
         try {
-            pipelineMsg = objectMapper.readValue(message, PipelineTriggerMessage::class.java)
+            pipelineMsg = try {
+                objectMapper.readValue(message, PipelineTriggerMessage::class.java)
+            } catch (e: Exception) {
+                null
+            }
+            
+            if (pipelineMsg != null) {
+                pipelineId = pipelineMsg.pipelineId
+            } else {
+                try {
+                    @Suppress("UNCHECKED_CAST")
+                    dataPayload = objectMapper.readValue(message, Map::class.java) as? Map<String, Any>
+                    pipelineId = dataPayload?.get("_pipelineId") as? String
+                } catch (e: Exception) {
+                    LOG.errorf("Failed to parse pipeline message: %s", e.message)
+                    return PipelineEvent(
+                        runId = "unknown",
+                        pipelineId = "unknown",
+                        stage = "parse",
+                        success = false,
+                        error = e.message
+                    )
+                }
+            }
         } catch (e: Exception) {
             LOG.errorf("Failed to parse pipeline message: %s", e.message)
             return PipelineEvent(
@@ -61,19 +86,31 @@ class PipelineConsumer {
             )
         }
         
-        val pipeline = Pipeline.findById(UUID.fromString(pipelineMsg.pipelineId))
-        if (pipeline == null) {
-            LOG.errorf("Pipeline not found: %s", pipelineMsg.pipelineId)
+        if (pipelineId == null) {
+            LOG.error("No pipeline ID found in message")
             return PipelineEvent(
-                runId = pipelineMsg.runId,
-                pipelineId = pipelineMsg.pipelineId,
+                runId = "unknown",
+                pipelineId = "unknown",
+                stage = "init",
+                success = false,
+                error = "No pipeline ID in message"
+            )
+        }
+        
+        val pipeline = Pipeline.findById(UUID.fromString(pipelineId))
+        if (pipeline == null) {
+            LOG.errorf("Pipeline not found: %s", pipelineId)
+            return PipelineEvent(
+                runId = pipelineMsg?.runId ?: "unknown",
+                pipelineId = pipelineId,
                 stage = "init",
                 success = false,
                 error = "Pipeline not found"
             )
         }
         
-        val run = PipelineRun.findById(UUID.fromString(pipelineMsg.runId))
+        val runId = pipelineMsg?.runId ?: UUID.randomUUID().toString()
+        val run = PipelineRun.findById(UUID.fromString(runId))
         if (run != null) {
             run.status = PipelineRunStatus.RUNNING
             run.startedAt = java.time.Instant.now()
@@ -81,7 +118,7 @@ class PipelineConsumer {
         }
         
         try {
-            val result = executePipeline(pipeline, pipelineMsg)
+            val result = executePipeline(pipeline, runId, dataPayload)
             
             if (run != null) {
                 run.status = PipelineRunStatus.SUCCESS
@@ -90,8 +127,8 @@ class PipelineConsumer {
             }
             
             return PipelineEvent(
-                runId = pipelineMsg.runId,
-                pipelineId = pipelineMsg.pipelineId,
+                runId = runId,
+                pipelineId = pipelineId,
                 stage = "complete",
                 success = true,
                 result = result
@@ -107,8 +144,8 @@ class PipelineConsumer {
             }
             
             return PipelineEvent(
-                runId = pipelineMsg.runId,
-                pipelineId = pipelineMsg.pipelineId,
+                runId = runId,
+                pipelineId = pipelineId,
                 stage = "error",
                 success = false,
                 error = e.message
@@ -116,8 +153,10 @@ class PipelineConsumer {
         }
     }
     
-    private fun executePipeline(pipeline: Pipeline, message: PipelineTriggerMessage): Map<String, Any?> {
+    private fun executePipeline(pipeline: Pipeline, runId: String, inputData: Map<String, Any>?): Map<String, Any?> {
         val results = mutableMapOf<String, Any?>()
+        
+        var data = inputData
         
         pipeline.importModuleVersionId?.let { importId ->
             val importVersion = ModuleVersion.findById(importId)
@@ -125,39 +164,47 @@ class PipelineConsumer {
                 LOG.infof("Executing import module: %s", importVersion.module?.name)
                 val importResult = dockerService.executeModule(
                     importVersion,
-                    null,
+                    data,
                     pipeline.id.toString(),
-                    message.runId,
+                    runId,
                     ModuleType.IMPORT
                 )
                 results["import"] = importResult
+                if (importResult is Map<*, *>) {
+                    @Suppress("UNCHECKED_CAST")
+                    data = importResult as? Map<String, Any>
+                }
             }
         }
         
         pipeline.processingModuleVersionIds.forEachIndexed { index, processingId ->
             val processingVersion = ModuleVersion.findById(processingId)
-            if (processingVersion != null) {
+            if (processingVersion != null && data != null) {
                 LOG.infof("Executing processing module %d: %s", index + 1, processingVersion.module?.name)
                 val processingResult = dockerService.executeModule(
                     processingVersion,
-                    null,
+                    data,
                     pipeline.id.toString(),
-                    message.runId,
+                    runId,
                     ModuleType.PROCESSING
                 )
                 results["processing_${index + 1}"] = processingResult
+                if (processingResult is Map<*, *>) {
+                    @Suppress("UNCHECKED_CAST")
+                    data = processingResult as? Map<String, Any>
+                }
             }
         }
         
         pipeline.exportModuleVersionIds.forEachIndexed { index, exportId ->
             val exportVersion = ModuleVersion.findById(exportId)
-            if (exportVersion != null) {
+            if (exportVersion != null && data != null) {
                 LOG.infof("Executing export module %d: %s", index + 1, exportVersion.module?.name)
                 val exportResult = dockerService.executeModule(
                     exportVersion,
-                    null,
+                    data,
                     pipeline.id.toString(),
-                    message.runId,
+                    runId,
                     ModuleType.EXPORT
                 )
                 results["export_${index + 1}"] = exportResult

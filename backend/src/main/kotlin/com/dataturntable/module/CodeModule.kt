@@ -8,7 +8,7 @@ import java.time.Instant
 import java.util.UUID
 
 enum class ModuleType {
-    IMPORT, PROCESSING, EXPORT
+    IMPORT, PROCESSING, EXPORT, ALERT
 }
 
 @Entity

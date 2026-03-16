@@ -2,6 +2,7 @@ package com.dataturntable.service
 
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.TriggerType
+import com.fasterxml.jackson.databind.ObjectMapper
 import io.smallrye.reactive.messaging.kafka.api.OutgoingKafkaRecordMetadata
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.enterprise.event.Observes
@@ -24,6 +25,7 @@ class KafkaService {
     @Channel("pipeline-commands")
     var commandEmitter: Emitter<String>? = null
     
+    private val objectMapper = ObjectMapper()
     private val activeConsumers = ConcurrentHashMap<String, Boolean>()
     private var kafkaAvailable = false
     
@@ -103,4 +105,26 @@ class KafkaService {
     fun getProcessingTopic(pipelineId: String): String = "$topicPrefix.pipelines.$pipelineId.processing"
     fun getExportTopic(pipelineId: String): String = "$topicPrefix.pipelines.$pipelineId.export"
     fun getAlertsTopic(pipelineId: String): String = "$topicPrefix.pipelines.$pipelineId.alerts"
+    fun getPipelineInputTopic(): String = "$topicPrefix.pipelines.input"
+    fun getPipelineOutputTopic(): String = "$topicPrefix.pipelines.output"
+    
+    fun sendToPipelineInput(pipelineId: String, data: Any) {
+        val topic = getPipelineInputTopic()
+        
+        val jsonData = if (data is String) {
+            data
+        } else {
+            objectMapper.writeValueAsString(data)
+        }
+        
+        val metadata = OutgoingKafkaRecordMetadata.builder<String>()
+            .withTopic(topic)
+            .build()
+        
+        if (commandEmitter != null) {
+            commandEmitter?.send(Message.of(jsonData, Metadata.of(metadata)))
+        } else {
+            println("WARNING: No Kafka emitter available, data would be lost: $jsonData")
+        }
+    }
 }

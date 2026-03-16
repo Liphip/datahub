@@ -34,14 +34,38 @@ class AlertResource {
     @POST
     @Path("/channels")
     @Transactional
-    fun createChannel(@QueryParam("tenantId") tenantId: String, request: Map<String, Any>): Response {
+    fun createChannel(request: Map<String, Any>): Response {
+        val tenantId = request["tenantId"] as? String ?: return Response.status(400).entity(mapOf("error" to "Tenant ID is required")).build()
+        val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
+        val channelType = request["channelType"] as? String ?: return Response.status(400).entity(mapOf("error" to "Channel type is required")).build()
+        
+        val tenant = Tenant.findById(UUID.fromString(tenantId))
+            ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
+        
         val channel = AlertChannel().apply {
-            name = request["name"] as? String
-            channelType = (request["channelType"] as? String)?.let { AlertChannelType.valueOf(it.uppercase()) }
-            config = request["config"]?.toString() ?: "{}"
+            this.name = name
+            this.tenant = tenant
+            this.channelType = AlertChannelType.valueOf(channelType.uppercase())
+            this.config = request["config"]?.toString() ?: "{}"
+            this.isActive = true
+            this.createdAt = java.time.Instant.now()
+            this.updatedAt = java.time.Instant.now()
         }
         channel.persist()
-        return Response.status(201).entity(mapOf("id" to channel.id)).build()
+        return Response.status(201).entity(mapOf("id" to channel.id, "name" to channel.name)).build()
+    }
+    
+    @DELETE
+    @Path("/channels/{id}")
+    @Transactional
+    fun deleteChannel(@PathParam("id") id: String): Response {
+        val channel = AlertChannel.findById(UUID.fromString(id))
+        return if (channel != null) {
+            channel.delete()
+            Response.noContent().build()
+        } else {
+            Response.status(404).entity(mapOf("error" to "Channel not found")).build()
+        }
     }
     
     @GET
@@ -54,13 +78,47 @@ class AlertResource {
     @POST
     @Path("/rules")
     @Transactional
-    fun createRule(@QueryParam("tenantId") tenantId: String, request: Map<String, Any>): Response {
+    fun createRule(request: Map<String, Any>): Response {
+        val tenantId = request["tenantId"] as? String ?: return Response.status(400).entity(mapOf("error" to "Tenant ID is required")).build()
+        val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
+        val condition = request["condition"] as? String ?: return Response.status(400).entity(mapOf("error" to "Condition is required")).build()
+        
+        val tenant = Tenant.findById(UUID.fromString(tenantId))
+            ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
+        
+        val channelId = request["channelId"] as? String
+        val channel = channelId?.let { AlertChannel.findById(UUID.fromString(it)) }
+        
+        val pipelineId = request["pipelineId"] as? String
+        val pipeline = pipelineId?.let { Pipeline.findById(UUID.fromString(it)) }
+        
         val rule = AlertRule().apply {
-            name = request["name"] as? String
-            condition = request["condition"]?.toString() ?: "{}"
+            this.tenant = tenant
+            this.name = name
+            this.description = request["description"] as? String
+            this.condition = condition
+            this.channel = channel
+            this.pipeline = pipeline
+            this.enabled = true
+            this.cooldownSeconds = (request["cooldownSeconds"] as? Int) ?: 60
+            this.createdAt = java.time.Instant.now()
+            this.updatedAt = java.time.Instant.now()
         }
         rule.persist()
-        return Response.status(201).entity(mapOf("id" to rule.id)).build()
+        return Response.status(201).entity(mapOf("id" to rule.id, "name" to rule.name)).build()
+    }
+    
+    @DELETE
+    @Path("/rules/{id}")
+    @Transactional
+    fun deleteRule(@PathParam("id") id: String): Response {
+        val rule = AlertRule.findById(UUID.fromString(id))
+        return if (rule != null) {
+            rule.delete()
+            Response.noContent().build()
+        } else {
+            Response.status(404).entity(mapOf("error" to "Rule not found")).build()
+        }
     }
     
     @GET
