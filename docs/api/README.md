@@ -150,9 +150,11 @@ Content-Type: application/json
 
 {
   "email": "user@example.com",
-  "password": "<sha256-of-password>"
+  "passwordHash": "<sha256-of-password>"
 }
 ```
+
+`password` is accepted as a backward-compatible alias for `passwordHash`.
 
 #### Update Auth User
 

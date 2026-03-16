@@ -29,6 +29,11 @@ class AuthUserResource {
         return if (tid.isNullOrBlank()) null else tid
     }
 
+    private fun extractPasswordHash(request: Map<String, Any>): String? {
+        return (request["passwordHash"] as? String)?.takeIf { it.isNotBlank() }
+            ?: (request["password"] as? String)?.takeIf { it.isNotBlank() }
+    }
+
     @GET
     fun list(@QueryParam("tenantId") tenantId: String?): Response {
         val resolvedTenantId = tenantId ?: getTenantIdFromToken()
@@ -75,7 +80,7 @@ class AuthUserResource {
 
         val email = request["email"] as? String
             ?: return Response.status(400).entity(mapOf("error" to "Email is required")).build()
-        val passwordHash = request["passwordHash"] as? String
+        val passwordHash = extractPasswordHash(request)
             ?: return Response.status(400).entity(mapOf("error" to "Password hash is required")).build()
 
         val existingUser = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User::class.java)
@@ -143,7 +148,7 @@ class AuthUserResource {
         }
 
         request["email"]?.let { user.email = it as String }
-        request["passwordHash"]?.let { user.passwordHash = it as String }
+        extractPasswordHash(request)?.let { user.passwordHash = it }
         request["firstName"]?.let { user.firstName = it as String }
         request["lastName"]?.let { user.lastName = it as String }
         request["isActive"]?.let { user.isActive = it as Boolean }
