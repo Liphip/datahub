@@ -47,6 +47,11 @@ class MembershipResource {
         }
     }
 
+    private fun isRoleAssignableToTenant(role: Role, tenant: Tenant): Boolean {
+        val roleTenantId = role.tenant?.id
+        return roleTenantId == null || roleTenantId == tenant.id
+    }
+
     @GET
     fun list(@PathParam("tenantId") tenantId: String): Response {
         val currentUser = getCurrentUser()
@@ -91,6 +96,9 @@ class MembershipResource {
             ?: return Response.status(404).entity(mapOf("error" to "User not found")).build()
         val role = em.find(Role::class.java, UUID.fromString(roleId))
             ?: return Response.status(404).entity(mapOf("error" to "Role not found")).build()
+        if (!isRoleAssignableToTenant(role, tenant)) {
+            return Response.status(400).entity(mapOf("error" to "Role does not belong to tenant")).build()
+        }
 
         val existingMembership = em.createQuery(
             "SELECT m FROM Membership m WHERE m.authUser.id = :userId AND m.tenant.id = :tenantId",
@@ -134,6 +142,9 @@ class MembershipResource {
 
         val membership = em.find(Membership::class.java, UUID.fromString(id))
             ?: return Response.status(404).entity(mapOf("error" to "Membership not found")).build()
+        if (membership.tenant?.id.toString() != tenantId) {
+            return Response.status(400).entity(mapOf("error" to "Membership does not belong to tenant")).build()
+        }
         membership.delete()
         return Response.noContent().build()
     }
@@ -160,6 +171,9 @@ class MembershipResource {
         request["roleId"]?.let {
             val role = em.find(Role::class.java, UUID.fromString(it as String))
                 ?: return Response.status(404).entity(mapOf("error" to "Role not found")).build()
+            if (!isRoleAssignableToTenant(role, membership.tenant!!)) {
+                return Response.status(400).entity(mapOf("error" to "Role does not belong to tenant")).build()
+            }
             membership.role = role
         }
         request["abilities"]?.let { membership.abilities = it.toString() }
