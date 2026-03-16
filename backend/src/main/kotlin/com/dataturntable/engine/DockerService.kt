@@ -153,10 +153,26 @@ class DockerService {
     }
     
     private fun buildModuleScript(code: String, moduleType: ModuleType): String {
+        // Provide helper functions for modules in the execution environment.
+        // alert_fn and query_fn are no-op stubs here; the platform can upgrade them to call back via APIs or messaging.
+        val helperCode = """
+            |import json
+            |import os
+            |
+            |def alert_fn(severity='info', message='', payload=None):
+            |    # Placeholder: platform should intercept this output and handle alert dispatch.
+            |    print(json.dumps({'__alert__': {'severity': severity, 'message': message, 'payload': payload}}))
+            |
+            |def query_fn(query):
+            |    # Placeholder for querying platform stored data
+            |    return {}
+        """.trimMargin()
+        
         val script = when (moduleType) {
             ModuleType.IMPORT -> """
                 |import sys
                 |import json
+                |$helperCode
                 |$code
                 |result = fetch() if 'fetch' in dir() else {}
                 |print(json.dumps(result))
@@ -165,6 +181,7 @@ class DockerService {
             ModuleType.PROCESSING -> """
                 |import sys
                 |import json
+                |$helperCode
                 |input_data = json.loads(__import__('os').environ.get('INPUT_DATA', '{}'))
                 |$code
                 |result = process(input_data) if 'process' in dir() else input_data
@@ -174,6 +191,7 @@ class DockerService {
             ModuleType.ALERT -> """
                 |import sys
                 |import json
+                |$helperCode
                 |input_data = json.loads(__import__('os').environ.get('INPUT_DATA', '{}'))
                 |$code
                 |result = evaluate(input_data) if 'evaluate' in dir() else False
@@ -183,6 +201,7 @@ class DockerService {
             ModuleType.EXPORT -> """
                 |import sys
                 |import json
+                |$helperCode
                 |input_data = json.loads(__import__('os').environ.get('INPUT_DATA', '{}'))
                 |$code
                 |send(input_data) if 'send' in dir() else None
