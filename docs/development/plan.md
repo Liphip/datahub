@@ -30,6 +30,7 @@ DataTurntable is a high-performance, scalable data hub for IoT/sensor data proce
 - Connector list/create/update reject invalid `connectorType`/`direction` values with `400` instead of server errors.
 - Pipeline create/update accepts `graphDefinition`; IMPORT/EXPORT nodes are validated to require `connectorId` and compatible connector direction.
 - Frontend pipeline editor includes connector pickers for IMPORT/EXPORT nodes and submits connector-aware DAG definitions.
+- Module API now validates `type`/`moduleType` enum values and returns `400` for invalid values.
 
 ## Architecture
 
