@@ -23,10 +23,14 @@ class ModuleResource {
     
     @POST
     @Transactional
-    fun create(request: Map<String, Any>): Response {
-        val tenantId = request["tenantId"] as? String
+    fun create(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
+        val tenantId = tenantIdQuery ?: (request["tenantId"] as? String)
         val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
         val moduleType = request["moduleType"] as? String ?: return Response.status(400).entity(mapOf("error" to "Module type is required")).build()
+        
+        if (tenantId == null) {
+            return Response.status(400).entity(mapOf("error" to "Tenant ID is required")).build()
+        }
         
         val tenant = com.dataturntable.tenant.Tenant.findById(UUID.fromString(tenantId))
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
