@@ -23,6 +23,9 @@ class DockerService {
     
     @ConfigProperty(name = "dataturntable.docker.network", defaultValue = "dataturntable")
     lateinit var networkName: String
+
+    @ConfigProperty(name = "dataturntable.docker.allow-network", defaultValue = "false")
+    var allowNetwork: Boolean = false
     
     @ConfigProperty(name = "dataturntable.docker.resources.cpu-limit", defaultValue = "1.0")
     lateinit var cpuLimit: String
@@ -86,14 +89,25 @@ class DockerService {
         val dockerArgs = mutableListOf(
             "docker", "run",
             "--rm",
-            "--name", containerName,
-            "--network", networkName,
+            "--name", containerName
+        )
+
+        if (allowNetwork) {
+            dockerArgs.addAll(listOf("--network", networkName))
+        } else {
+            dockerArgs.addAll(listOf("--network", "none"))
+        }
+
+        dockerArgs.addAll(listOf(
+            "--user", "1000:1000",
+            "--read-only",
+            "--tmpfs", "/tmp",
             "--cpu-shares", (cpuLimit.toDouble() * 1024).toInt().toString(),
             "--memory", memoryLimit,
             "-e", "MODULE_CODE=$scriptContent",
             "-e", "MODULE_REQUIREMENTS=$requirements",
             "-e", "MODULE_TYPE=${moduleType.name}"
-        )
+        ))
         
         inputData?.let {
             dockerArgs.add("-e")
