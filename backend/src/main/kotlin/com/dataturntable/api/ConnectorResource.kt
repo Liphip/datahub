@@ -5,6 +5,8 @@ import com.dataturntable.connectors.Connector.Direction
 import com.dataturntable.connectors.Connector.ConnectorType
 import com.dataturntable.tenant.Tenant
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.dataturntable.auth.User
+import com.dataturntable.security.SecurityUtils
 import com.dataturntable.security.EncryptionUtils
 import io.quarkus.security.Authenticated
 import jakarta.inject.Inject
@@ -44,6 +46,14 @@ class ConnectorResource {
         val tid = tenantId ?: getTenantIdFromToken() ?: return Response.status(400)
             .entity(mapOf("error" to "tenantId is required"))
             .build()
+
+        val currentUser = try { jwt.subject?.let { User.findById(UUID.fromString(it)) } } catch (_: Exception) { null }
+        if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tid)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        if (!SecurityUtils.hasAbility(currentUser, "read:connector")) {
+            return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
+        }
         
         val tenant = Tenant.findById(UUID.fromString(tid))
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
@@ -104,6 +114,14 @@ class ConnectorResource {
             "{}"
         }
 
+        val currentUser = try { jwt.subject?.let { User.findById(UUID.fromString(it)) } } catch (_: Exception) { null }
+        if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        if (!SecurityUtils.hasAbility(currentUser, "write:connector")) {
+            return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
+        }
+
         val connector = Connector().apply {
             this.name = name
             this.tenant = tenant
@@ -131,8 +149,15 @@ class ConnectorResource {
         val connector = Connector.findById(UUID.fromString(id))
         val tenantId = getTenantIdFromToken()
         return if (connector != null) {
+            val currentUser = try { jwt.subject?.let { User.findById(UUID.fromString(it)) } } catch (_: Exception) { null }
             if (tenantId != null && connector.tenant?.id != tenantId) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+            }
+            if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString())) {
+                return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+            }
+            if (!SecurityUtils.hasAbility(currentUser, "read:connector")) {
+                return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
             }
             val decrypted = EncryptionUtils.decrypt(connector.config ?: "{}")
             val configValue = try {
@@ -162,8 +187,15 @@ class ConnectorResource {
         val connector = Connector.findById(UUID.fromString(id))
         val tenantId = getTenantIdFromToken()
         return if (connector != null) {
+            val currentUser = try { jwt.subject?.let { User.findById(UUID.fromString(it)) } } catch (_: Exception) { null }
             if (tenantId != null && connector.tenant?.id != tenantId) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+            }
+            if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString())) {
+                return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+            }
+            if (!SecurityUtils.hasAbility(currentUser, "write:connector")) {
+                return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
             }
             request["name"]?.let { connector.name = it as String }
             request["connectorType"]?.let { connector.connectorType = ConnectorType.valueOf((it as String).uppercase()) }
@@ -196,8 +228,15 @@ class ConnectorResource {
         val connector = Connector.findById(UUID.fromString(id))
         val tenantId = getTenantIdFromToken()
         return if (connector != null) {
+            val currentUser = try { jwt.subject?.let { User.findById(UUID.fromString(it)) } } catch (_: Exception) { null }
             if (tenantId != null && connector.tenant?.id != tenantId) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+            }
+            if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString())) {
+                return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+            }
+            if (!SecurityUtils.hasAbility(currentUser, "delete:connector")) {
+                return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
             }
             connector.delete()
             Response.noContent().build()
