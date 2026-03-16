@@ -105,6 +105,7 @@ class AuthResourceTest {
             .jsonPath()
         
         val password = setupResponse.getString("password")
+        // Backend stores BCrypt(SHA-256(password))
         val passwordHash = hashPassword(password)
         
         val loginBody = """
@@ -164,6 +165,7 @@ class AuthResourceTest {
             .jsonPath()
         
         val password = setupResponse.getString("password")
+        // Backend stores BCrypt(SHA-256(password))
         val passwordHash = hashPassword(password)
         
         val loginBody = """

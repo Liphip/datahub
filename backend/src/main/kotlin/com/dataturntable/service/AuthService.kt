@@ -39,6 +39,9 @@ class AuthService {
             throw SecurityException("Invalid credentials")
         }
         
+        // Frontend sends SHA-256 hash of password
+        // Backend stores BCrypt hash of SHA-256 hash
+        // Check by hashing incoming hash with BCrypt
         if (!BCrypt.checkpw(request.passwordHash, user.passwordHash)) {
             throw SecurityException("Invalid credentials")
         }

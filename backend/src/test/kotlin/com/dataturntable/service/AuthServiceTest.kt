@@ -69,6 +69,8 @@ class AuthServiceTest {
         val setupRequest = SetupRequest(email = "admin@example.com")
         val setupResponse = authService.setup(setupRequest)
         
+        // Backend stores BCrypt(SHA-256(password))
+        // Frontend sends SHA-256(password), backend checks BCrypt directly
         val passwordHash = hashPassword(setupResponse.password)
         
         val loginRequest = LoginRequest(
@@ -90,9 +92,12 @@ class AuthServiceTest {
         val setupRequest = SetupRequest(email = "admin@example.com")
         authService.setup(setupRequest)
         
+        // Backend double-hashes, so wrong hash should fail
+        val wrongHash = hashPassword("wrongpassword")
+        
         val loginRequest = LoginRequest(
             email = "admin@example.com",
-            passwordHash = "wronghash"
+            passwordHash = wrongHash
         )
         
         assertThrows(SecurityException::class.java) {
