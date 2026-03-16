@@ -36,6 +36,7 @@ DataTurntable is a high-performance, scalable data hub for IoT/sensor data proce
 - Data API now validates `{tenantId}` path UUIDs consistently and returns `400` for malformed tenant IDs.
 - Frontend Alerts page now supports pipeline selection on rule creation and direct delete actions for channels/rules.
 - Frontend Data Explorer now supports time-range/row-limit query controls, table refresh, and table deletion actions.
+- Frontend Connectors page now supports type/direction filtering and edit flow (with optional config override).
 
 ## Architecture
 

@@ -12,6 +12,10 @@ export default function Connectors() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
+  const [editingConnector, setEditingConnector] = useState<Connector | null>(null);
+  const [savingConnector, setSavingConnector] = useState(false);
+  const [filterType, setFilterType] = useState<string>('ALL');
+  const [filterDirection, setFilterDirection] = useState<string>('ALL');
   const [formData, setFormData] = useState({
     name: '',
     connectorType: 'MQTT',
@@ -22,6 +26,13 @@ export default function Connectors() {
 
   const tenantId = user?.tenantId;
 
+  const loadConnectors = async (tid: string) => {
+    const type = filterType === 'ALL' ? undefined : filterType;
+    const direction = filterDirection === 'ALL' ? undefined : filterDirection;
+    const data = await api.getConnectors(tid, type, direction);
+    setConnectors(data);
+  };
+
   useEffect(() => {
     const fetchConnectors = async () => {
       if (!tenantId) {
@@ -30,8 +41,8 @@ export default function Connectors() {
       }
 
       try {
-        const data = await api.getConnectors(tenantId);
-        setConnectors(data);
+        await loadConnectors(tenantId);
+        setError('');
       } catch (err) {
         console.error('Error fetching connectors:', err);
         setError('Failed to load connectors');
@@ -41,31 +52,54 @@ export default function Connectors() {
     };
 
     fetchConnectors();
-  }, [tenantId]);
+  }, [tenantId, filterType, filterDirection]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!tenantId) return;
 
     try {
-      let config: Record<string, unknown> = {};
-      try {
-        config = JSON.parse(formData.config);
-      } catch {
-        setError('Invalid JSON in config field');
-        return;
+      setSavingConnector(true);
+
+      if (editingConnector) {
+        const updatePayload: Partial<Connector> = {
+          name: formData.name,
+          connectorType: formData.connectorType as Connector['connectorType'],
+          direction: formData.direction as Connector['direction'],
+          description: formData.description,
+        };
+
+        if (formData.config.trim()) {
+          try {
+            updatePayload.config = JSON.parse(formData.config);
+          } catch {
+            setError('Invalid JSON in config field');
+            return;
+          }
+        }
+
+        await api.updateConnector(editingConnector.id, updatePayload);
+      } else {
+        let config: Record<string, unknown> = {};
+        try {
+          config = JSON.parse(formData.config);
+        } catch {
+          setError('Invalid JSON in config field');
+          return;
+        }
+
+        await api.createConnector(
+          tenantId,
+          formData.name,
+          formData.connectorType,
+          formData.direction,
+          config,
+          formData.description
+        );
       }
 
-      await api.createConnector(
-        tenantId,
-        formData.name,
-        formData.connectorType,
-        formData.direction,
-        config,
-        formData.description
-      );
-
       setShowModal(false);
+      setEditingConnector(null);
       setFormData({
         name: '',
         connectorType: 'MQTT',
@@ -74,11 +108,13 @@ export default function Connectors() {
         description: ''
       });
 
-      const data = await api.getConnectors(tenantId);
-      setConnectors(data);
+      await loadConnectors(tenantId);
+      setError('');
     } catch (err) {
-      console.error('Error creating connector:', err);
-      setError('Failed to create connector');
+      console.error('Error saving connector:', err);
+      setError(editingConnector ? 'Failed to update connector' : 'Failed to create connector');
+    } finally {
+      setSavingConnector(false);
     }
   };
 
@@ -88,13 +124,37 @@ export default function Connectors() {
     try {
       await api.deleteConnector(id);
       if (tenantId) {
-        const data = await api.getConnectors(tenantId);
-        setConnectors(data);
+        await loadConnectors(tenantId);
       }
+      setError('');
     } catch (err) {
       console.error('Error deleting connector:', err);
       setError('Failed to delete connector');
     }
+  };
+
+  const handleEdit = (connector: Connector) => {
+    setEditingConnector(connector);
+    setFormData({
+      name: connector.name,
+      connectorType: connector.connectorType,
+      direction: connector.direction,
+      config: '',
+      description: connector.description || '',
+    });
+    setShowModal(true);
+  };
+
+  const handleOpenCreate = () => {
+    setEditingConnector(null);
+    setFormData({
+      name: '',
+      connectorType: 'MQTT',
+      direction: 'INPUT',
+      config: '{}',
+      description: '',
+    });
+    setShowModal(true);
   };
 
   const getTypeColor = (type: string) => {
@@ -138,11 +198,34 @@ export default function Connectors() {
           </p>
         </div>
         <button
-          onClick={() => setShowModal(true)}
+          onClick={handleOpenCreate}
           className="btn-primary"
         >
           Create Connector
         </button>
+      </div>
+
+      <div className="card mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Type Filter</label>
+            <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="input">
+              <option value="ALL">All types</option>
+              {connectorTypes.map((type) => (
+                <option key={type} value={type}>{type}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Direction Filter</label>
+            <select value={filterDirection} onChange={(e) => setFilterDirection(e.target.value)} className="input">
+              <option value="ALL">All directions</option>
+              {directions.map((direction) => (
+                <option key={direction} value={direction}>{direction}</option>
+              ))}
+            </select>
+          </div>
+        </div>
       </div>
 
       {error && (
@@ -160,7 +243,7 @@ export default function Connectors() {
           <p className="mt-1 text-sm text-gray-500">Get started by creating your first connector.</p>
           <div className="mt-6">
             <button
-              onClick={() => setShowModal(true)}
+              onClick={handleOpenCreate}
               className="btn-primary"
             >
               Create Connector
@@ -193,6 +276,12 @@ export default function Connectors() {
               
               <div className="flex justify-end space-x-2">
                 <button
+                  onClick={() => handleEdit(connector)}
+                  className="text-blue-600 hover:text-blue-800 text-sm"
+                >
+                  Edit
+                </button>
+                <button
                   onClick={() => handleDelete(connector.id)}
                   className="text-red-600 hover:text-red-800 text-sm"
                 >
@@ -207,7 +296,9 @@ export default function Connectors() {
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h2 className="text-xl font-bold mb-4">Create Connector</h2>
+            <h2 className="text-xl font-bold mb-4">
+              {editingConnector ? 'Edit Connector' : 'Create Connector'}
+            </h2>
             
             <form onSubmit={handleSubmit}>
               <div className="space-y-4">
@@ -257,14 +348,16 @@ export default function Connectors() {
                 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Config (JSON)
+                    {editingConnector ? 'Config Override (JSON)' : 'Config (JSON)'}
                   </label>
                   <textarea
                     value={formData.config}
                     onChange={(e) => setFormData({ ...formData, config: e.target.value })}
                     className="input font-mono text-sm"
                     rows={4}
-                    placeholder='{"broker": "mqtt://localhost:1883", "topic": "sensors/#"}'
+                    placeholder={editingConnector
+                      ? 'Leave empty to keep existing encrypted config'
+                      : '{"broker": "mqtt://localhost:1883", "topic": "sensors/#"}'}
                   />
                 </div>
                 
@@ -285,16 +378,20 @@ export default function Connectors() {
               <div className="mt-6 flex justify-end space-x-3">
                 <button
                   type="button"
-                  onClick={() => setShowModal(false)}
+                  onClick={() => {
+                    setShowModal(false);
+                    setEditingConnector(null);
+                  }}
                   className="btn-secondary"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
+                  disabled={savingConnector}
                   className="btn-primary"
                 >
-                  Create
+                  {savingConnector ? 'Saving...' : editingConnector ? 'Save Changes' : 'Create'}
                 </button>
               </div>
             </form>
