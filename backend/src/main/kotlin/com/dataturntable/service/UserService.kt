@@ -112,15 +112,15 @@ class UserService {
     }
     
     fun toDto(user: User): UserDto {
-        return UserDto(
-            id = user.id.toString(),
-            email = user.email ?: "",
-            firstName = user.firstName,
-            lastName = user.lastName,
-            tenantId = user.tenant?.id.toString(),
-            roleName = user.role?.name,
-            abilities = user.getAllAbilities().toList(),
-            isSuperadmin = user.isSuperadmin
-        )
+         return UserDto(
+             id = user.id.toString(),
+             email = user.email ?: "",
+             firstName = user.firstName,
+             lastName = user.lastName,
+             tenantId = user.tenant?.id.toString(),
+             roleName = user.role?.name,
+             abilities = user.getAllAbilities().toList(),
+             superadmin = user.isSuperadmin
+         )
     }
 }

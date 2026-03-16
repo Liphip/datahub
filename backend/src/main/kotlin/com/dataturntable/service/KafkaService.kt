@@ -4,12 +4,14 @@ import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.TriggerType
 import io.smallrye.reactive.messaging.kafka.api.OutgoingKafkaRecordMetadata
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.enterprise.event.Observes
 import jakarta.inject.Inject
 import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.eclipse.microprofile.reactive.messaging.Channel
 import org.eclipse.microprofile.reactive.messaging.Emitter
 import org.eclipse.microprofile.reactive.messaging.Message
 import org.eclipse.microprofile.reactive.messaging.Metadata
+import org.eclipse.microprofile.reactive.messaging.Incoming
 import java.util.concurrent.ConcurrentHashMap
 
 @ApplicationScoped
@@ -20,9 +22,16 @@ class KafkaService {
     
     @Inject
     @Channel("pipeline-commands")
-    lateinit var commandEmitter: Emitter<String>
+    var commandEmitter: Emitter<String>? = null
     
     private val activeConsumers = ConcurrentHashMap<String, Boolean>()
+    private var kafkaAvailable = false
+    
+    fun onStart(@Observes ev: org.jboss.logging.Logger) {
+        kafkaAvailable = commandEmitter != null
+    }
+    
+    fun isKafkaAvailable(): Boolean = kafkaAvailable
     
     fun createPipelineTopics(pipelineId: String, consumerGroup: String) {
         val topics = listOf(
@@ -53,6 +62,11 @@ class KafkaService {
     }
     
     fun triggerPipeline(pipelineId: String, runId: String, triggerType: TriggerType) {
+        if (commandEmitter == null) {
+            println("Kafka not available, skipping pipeline trigger for: $pipelineId")
+            return
+        }
+        
         val message = """
             {
                 "runId": "$runId",
@@ -66,7 +80,7 @@ class KafkaService {
             .withTopic("$topicPrefix.pipelines.$pipelineId.import")
             .build()
         
-        commandEmitter.send(Message.of(message, Metadata.of(metadata)))
+        commandEmitter?.send(Message.of(message, Metadata.of(metadata)))
     }
     
     fun startPipelineConsumers(pipeline: Pipeline) {

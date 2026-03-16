@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Assertions.*
 
 @QuarkusTest
-@Disabled("Entity registration issue with H2")
+@Disabled("Requires investigation - similar to previous entity issues")
 class TenantServiceTest {
     
     @Inject

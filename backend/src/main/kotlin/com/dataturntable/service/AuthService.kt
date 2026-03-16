@@ -64,7 +64,7 @@ class AuthService {
     
     @Transactional
     fun setup(request: SetupRequest): SetupResponse {
-        val userCount = em.createQuery("SELECT COUNT(u) FROM User u").getSingleResult() as Long
+        val userCount = em.createQuery("SELECT count(u) FROM User u").singleResult as Long
         if (userCount > 0) {
             throw IllegalStateException("Setup already completed. Users exist in the system.")
         }
@@ -76,7 +76,7 @@ class AuthService {
             createdAt = java.time.Instant.now()
             updatedAt = java.time.Instant.now()
         }
-        tenant.persist()
+        em.persist(tenant)
         
         val password = generateRandomPassword(16)
         val passwordHash = hashPassword(password)
@@ -94,6 +94,8 @@ class AuthService {
         }
         
         user.persist()
+        // Flush to ensure the user is visible in the same transaction
+        em.flush()
         
         return SetupResponse(
             email = user.email ?: request.email,
@@ -131,16 +133,16 @@ class AuthService {
     }
     
     private fun toUserDto(user: User): UserDto {
-        return UserDto(
-            id = user.id.toString(),
-            email = user.email ?: "",
-            firstName = user.firstName,
-            lastName = user.lastName,
-            tenantId = user.tenant?.id.toString(),
-            roleName = user.role?.name,
-            abilities = user.getAllAbilities().toList(),
-            isSuperadmin = user.isSuperadmin
-        )
+         return UserDto(
+             id = user.id.toString(),
+             email = user.email ?: "",
+             firstName = user.firstName,
+             lastName = user.lastName,
+             tenantId = user.tenant?.id.toString(),
+             roleName = user.role?.name,
+             abilities = user.getAllAbilities().toList(),
+             superadmin = user.isSuperadmin
+         )
     }
     
     fun getCurrentUser(email: String): UserDto? {
