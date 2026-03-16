@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, AlertChannel, AlertRule, AlertHistory } from '../types';
+import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, AlertChannel, AlertRule, AlertHistory, Connector, Role } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 
@@ -219,6 +219,70 @@ class ApiService {
   async listTables(tenantId: string): Promise<{ tables: { name: string; type: string }[] }> {
     const response = await this.client.get(`/data/${tenantId}/tables`);
     return response.data;
+  }
+
+  // Connectors
+  async getConnectors(tenantId: string, type?: string, direction?: string): Promise<Connector[]> {
+    const params = new URLSearchParams({ tenantId });
+    if (type) params.append('type', type);
+    if (direction) params.append('direction', direction);
+    const response = await this.client.get<Connector[]>(`/connectors?${params}`);
+    return response.data;
+  }
+
+  async getConnector(id: string): Promise<Connector> {
+    const response = await this.client.get<Connector>(`/connectors/${id}`);
+    return response.data;
+  }
+
+  async createConnector(tenantId: string, name: string, connectorType: string, direction: string, config?: Record<string, unknown>, description?: string): Promise<Connector> {
+    const response = await this.client.post<Connector>(`/connectors?tenantId=${tenantId}`, { 
+      name, 
+      connectorType, 
+      direction, 
+      config: config || {},
+      description 
+    });
+    return response.data;
+  }
+
+  async updateConnector(id: string, data: Partial<Connector>): Promise<Connector> {
+    const response = await this.client.patch<Connector>(`/connectors/${id}`, data);
+    return response.data;
+  }
+
+  async deleteConnector(id: string): Promise<void> {
+    await this.client.delete(`/connectors/${id}`);
+  }
+
+  // Roles
+  async getRoles(tenantId?: string): Promise<Role[]> {
+    const params = tenantId ? new URLSearchParams({ tenantId }) : '';
+    const response = await this.client.get<Role[]>(`/roles${params ? `?${params}` : ''}`);
+    return response.data;
+  }
+
+  async getRole(id: string): Promise<Role> {
+    const response = await this.client.get<Role>(`/roles/${id}`);
+    return response.data;
+  }
+
+  async createRole(tenantId: string | undefined, name: string, abilities?: string[], description?: string): Promise<Role> {
+    const response = await this.client.post<Role>(`/roles${tenantId ? `?tenantId=${tenantId}` : ''}`, { 
+      name, 
+      abilities: abilities || [],
+      description 
+    });
+    return response.data;
+  }
+
+  async updateRole(id: string, data: Partial<Role>): Promise<Role> {
+    const response = await this.client.patch<Role>(`/roles/${id}`, data);
+    return response.data;
+  }
+
+  async deleteRole(id: string): Promise<void> {
+    await this.client.delete(`/roles/${id}`);
   }
 }
 

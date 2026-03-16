@@ -7,3 +7,4 @@ docs/
 CONTRIBUTING.md
 LICENSE
 .claude/
+reset_docker.sh

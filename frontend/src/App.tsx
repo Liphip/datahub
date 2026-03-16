@@ -6,6 +6,7 @@ import Modules from './pages/Modules';
 import ModuleEditor from './pages/ModuleEditor';
 import Pipelines from './pages/Pipelines';
 import PipelineEditor from './pages/PipelineEditor';
+import Connectors from './pages/Connectors';
 import Tenants from './pages/Tenants';
 import Users from './pages/Users';
 import Alerts from './pages/Alerts';
@@ -47,6 +48,7 @@ function App() {
                   <Route path="/modules/:id" element={<ModuleEditor />} />
                   <Route path="/pipelines" element={<Pipelines />} />
                   <Route path="/pipelines/:id" element={<PipelineEditor />} />
+                  <Route path="/connectors" element={<Connectors />} />
                   <Route path="/tenants" element={<Tenants />} />
                   <Route path="/users" element={<Users />} />
                   <Route path="/alerts" element={<Alerts />} />

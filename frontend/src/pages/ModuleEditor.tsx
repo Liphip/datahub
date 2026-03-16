@@ -5,13 +5,97 @@ import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { CodeModule } from '../types';
 
+const TEMPLATES = {
+  IMPORT: `class ImportModule:
+    """
+    Receives or fetches data from an external source.
+    Entry node in the pipeline DAG.
+    """
+
+    def connect(self, config: dict):
+        """Initialise connection. Called once on container start."""
+        # Example: self.client = MQTTClient(config['broker'])
+        pass
+
+    def fetch(self) -> dict | pd.DataFrame:
+        """Fetch one record or batch. Called on schedule or in a loop."""
+        # Example: return {"temperature": 23.5, "timestamp": "2024-01-01T00:00:00Z"}
+        pass
+
+    def disconnect(self):
+        """Clean up connection. Called on container stop."""
+        pass
+`,
+  PROCESSING: `class ProcessingModule:
+    """
+    Transform, filter, or enrich incoming data.
+
+    Return the modified data dict or DataFrame to pass it downstream.
+    Return None to drop the message.
+    Raise an exception to route the message to the dead-letter queue.
+    """
+
+    def process(self, data: dict | pd.DataFrame,
+                query_fn=None) -> dict | pd.DataFrame | None:
+        # Example: add a derived field
+        # data["celsius"] = (data["fahrenheit"] - 32) * 5 / 9
+        return data
+`,
+  ALERT: `class AlertModule:
+    """
+    Evaluates conditions and dispatches alerts.
+    Terminal node — does NOT modify or forward the data stream.
+    """
+
+    def __init__(self, config: dict):
+        self.threshold = config.get('threshold', 80)
+        self.severity = config.get('severity', 'warning')
+
+    def evaluate(self, data: dict | pd.DataFrame,
+                 alert_fn=None,
+                 query_fn=None) -> bool:
+        """
+        Evaluate alert condition.
+        Call alert_fn(severity, message, payload) to fire an alert.
+        Return True if alert fired, False otherwise.
+        """
+        # Example:
+        # if data['value'] > self.threshold:
+        #     alert_fn(severity=self.severity,
+        #              message=f"Value {data['value']} exceeds threshold",
+        #              payload=data)
+        #     return True
+        return False
+`,
+  EXPORT: `class ExportModule:
+    """
+    Sends data to external systems or exposes pull endpoints.
+    Terminal node — does not forward data downstream.
+    """
+
+    def connect(self, config: dict):
+        """Open connection or register endpoint."""
+        # Example: self.client = RESTClient(config['url'])
+        pass
+
+    def send(self, data: dict | pd.DataFrame):
+        """Push data to destination or update the exposed endpoint's buffer."""
+        # Example: self.client.post(data)
+        pass
+
+    def disconnect(self):
+        """Clean up or deregister endpoint."""
+        pass
+`
+};
+
 export default function ModuleEditor() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuthStore();
   
   const [module, setModule] = useState<CodeModule | null>(null);
-  const [code, setCode] = useState('# Your Python module code here\n\nclass ProcessingModule:\n    def process(self, data, alert_fn=None):\n        # Transform your data here\n        return data\n');
+  const [code, setCode] = useState('');
   const [requirements, setRequirements] = useState('pandas\nnumpy');
   const [versionTag, setVersionTag] = useState('');
   const [loading, setLoading] = useState(true);
@@ -29,11 +113,15 @@ export default function ModuleEditor() {
         
         // Load latest version code if available
         if (data.versions && data.versions.length > 0) {
-          setCode(data.versions[0].code || '# Your Python code here\n');
+          setCode(data.versions[0].code || TEMPLATES[data.moduleType as keyof typeof TEMPLATES] || TEMPLATES.PROCESSING);
           setRequirements(data.versions[0].requirements || 'pandas\nnumpy');
+        } else {
+          // Set template based on module type
+          setCode(TEMPLATES[data.moduleType as keyof typeof TEMPLATES] || TEMPLATES.PROCESSING);
         }
       } catch (error) {
         console.error('Error fetching module:', error);
+        setCode(TEMPLATES.PROCESSING);
       } finally {
         setLoading(false);
       }
@@ -173,18 +261,27 @@ export default function ModuleEditor() {
 
           <div className="border-t pt-4 mt-4">
             <h4 className="font-medium text-sm mb-2">Module Template</h4>
-            <pre className="text-xs bg-white p-2 rounded border overflow-x-auto">
-{`class ProcessingModule:
-    def process(self, data, alert_fn=None):
-        # data is dict or DataFrame
-        # alert_fn(severity, message, payload)
-        return data
-
-# Or use functional style:
-def process(data):
-    return data
-`}
-            </pre>
+            <p className="text-xs text-gray-600 mb-2">
+              {module.moduleType === 'IMPORT' && 'IMPORT modules receive or fetch data from external sources.'}
+              {module.moduleType === 'PROCESSING' && 'PROCESSING modules transform, filter, or enrich data.'}
+              {module.moduleType === 'ALERT' && 'ALERT modules evaluate conditions and dispatch alerts.'}
+              {module.moduleType === 'EXPORT' && 'EXPORT modules send data to external systems.'}
+            </p>
+            <div className="flex space-x-2 mb-2">
+              {Object.keys(TEMPLATES).map((type) => (
+                <button
+                  key={type}
+                  onClick={() => setCode(TEMPLATES[type as keyof typeof TEMPLATES])}
+                  className={`text-xs px-2 py-1 rounded ${
+                    code === TEMPLATES[type as keyof typeof TEMPLATES]
+                      ? 'bg-primary-100 text-primary-800'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>

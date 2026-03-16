@@ -22,7 +22,7 @@ export interface Tenant {
   quota: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
-  children: Tenant[];
+  children?: Tenant[];
 }
 
 export interface Role {
@@ -40,7 +40,7 @@ export interface CodeModule {
   tenantId?: string;
   name: string;
   description?: string;
-  moduleType: 'IMPORT' | 'PROCESSING' | 'EXPORT';
+  moduleType: 'IMPORT' | 'PROCESSING' | 'ALERT' | 'EXPORT';
   isActive: boolean;
   createdAt: string;
   versions: ModuleVersion[];
@@ -119,4 +119,27 @@ export interface AlertHistory {
   payload?: Record<string, unknown>;
   sentAt: string;
   status: 'PENDING' | 'SENT' | 'FAILED' | 'RETRY';
+}
+
+export interface Connector {
+  id: string;
+  tenantId?: string;
+  name: string;
+  connectorType: 'MQTT' | 'REST' | 'WEBSOCKET' | 'UDP' | 'FILE' | 'CUSTOM';
+  direction: 'INPUT' | 'OUTPUT' | 'BOTH';
+  config: Record<string, unknown>;
+  description?: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface Role {
+  id: string;
+  tenantId?: string;
+  name: string;
+  description?: string;
+  abilities: string[];
+  isDefault: boolean;
+  isSystem: boolean;
+  createdAt: string;
 }

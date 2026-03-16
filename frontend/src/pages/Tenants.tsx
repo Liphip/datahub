@@ -52,7 +52,7 @@ export default function Tenants() {
     setCreating(true);
     setError(null);
     try {
-      const newTenant = await api.createTenant(newTenantName, newTenantParentId || undefined);
+      await api.createTenant(newTenantName, newTenantParentId || undefined);
       setShowCreateModal(false);
       setNewTenantName('');
       setNewTenantParentId('');

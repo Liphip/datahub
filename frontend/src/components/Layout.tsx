@@ -9,6 +9,7 @@ const navigation = [
   { name: 'Dashboard', href: '/' },
   { name: 'Modules', href: '/modules' },
   { name: 'Pipelines', href: '/pipelines' },
+  { name: 'Connectors', href: '/connectors' },
   { name: 'Data', href: '/data' },
   { name: 'Alerts', href: '/alerts' },
   { name: 'Users', href: '/users' },
