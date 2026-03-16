@@ -7,4 +7,3 @@ reset_docker.sh
 reset_docker.ps1
 .vscode/
 scripts/
-scripts/run-tests.ps1

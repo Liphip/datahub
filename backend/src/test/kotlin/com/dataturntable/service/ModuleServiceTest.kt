@@ -4,7 +4,6 @@ import com.dataturntable.auth.User
 import com.dataturntable.dto.CreateModuleRequest
 import com.dataturntable.module.CodeModule
 import com.dataturntable.module.ModuleType
-import com.dataturntable.tenant.Tenant
 import io.quarkus.test.junit.QuarkusTest
 import jakarta.inject.Inject
 import jakarta.transaction.Transactional
@@ -24,13 +23,12 @@ class ModuleServiceTest {
     @Transactional
     fun testCreateModule() {
         // Given
-        val tenant = Tenant().apply {
+        val testTenant = com.dataturntable.tenant.Tenant().apply {
             name = "Test Tenant"
         }
-        tenant.persist()
+        testTenant.persist()
         
         val user = User().apply {
-            this.tenant = tenant
             email = "test@example.com"
         }
         user.persist()
@@ -42,7 +40,7 @@ class ModuleServiceTest {
         )
         
         // When
-        val module = moduleService.createModule(tenant.id!!, request, user)
+        val module = moduleService.createModule(testTenant.id!!, request, user)
         
         // Then
         assertNotNull(module)
@@ -54,20 +52,20 @@ class ModuleServiceTest {
     @Transactional
     fun testGetModules() {
         // Given
-        val tenant = Tenant().apply {
+        val testTenant = com.dataturntable.tenant.Tenant().apply {
             name = "Test Tenant 2"
         }
-        tenant.persist()
+        testTenant.persist()
         
         val module = CodeModule().apply {
-            this.tenant = tenant
+            this.tenant = testTenant
             name = "Test Module 2"
             moduleType = ModuleType.IMPORT
         }
         module.persist()
         
         // When
-        val modules = moduleService.getModules(tenant.id!!)
+        val modules = moduleService.getModules(testTenant.id!!)
         
         // Then
         assertNotNull(modules)
@@ -78,19 +76,18 @@ class ModuleServiceTest {
     @Transactional
     fun testCreateModuleVersion() {
         // Given
-        val tenant = Tenant().apply {
+        val testTenant = com.dataturntable.tenant.Tenant().apply {
             name = "Test Tenant 3"
         }
-        tenant.persist()
+        testTenant.persist()
         
         val user = User().apply {
-            this.tenant = tenant
             email = "test3@example.com"
         }
         user.persist()
         
         val codeModule = CodeModule().apply {
-            this.tenant = tenant
+            this.tenant = testTenant
             name = "Test Module 3"
             moduleType = ModuleType.PROCESSING
         }
@@ -115,19 +112,18 @@ class ModuleServiceTest {
     @Transactional
     fun testModuleVersioning() {
         // Given
-        val tenant = Tenant().apply {
+        val testTenant = com.dataturntable.tenant.Tenant().apply {
             name = "Test Tenant 4"
         }
-        tenant.persist()
+        testTenant.persist()
         
         val user = User().apply {
-            this.tenant = tenant
             email = "test4@example.com"
         }
         user.persist()
         
         val codeModule = CodeModule().apply {
-            this.tenant = tenant
+            this.tenant = testTenant
             name = "Test Module 4"
             moduleType = ModuleType.EXPORT
         }
