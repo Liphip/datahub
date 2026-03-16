@@ -225,7 +225,7 @@ class ConnectorResource {
         val tenantId = getTenantIdFromToken()
         return if (connector != null) {
             val currentUser = try { jwt.subject?.let { User.findById(UUID.fromString(it)) } } catch (_: Exception) { null }
-            if (tenantId != null && connector.tenant?.id != tenantId) {
+            if (tenantId != null && connector.tenant?.id?.toString() != tenantId) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
             if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString())) {
