@@ -4,14 +4,11 @@ import com.dataturntable.alert.AlertChannel
 import com.dataturntable.alert.AlertChannelType
 import com.dataturntable.alert.AlertRule
 import com.dataturntable.alert.AlertHistory
-import com.dataturntable.module.CodeModule
-import com.dataturntable.module.ModuleVersion
 import com.dataturntable.pipeline.Pipeline
-import com.dataturntable.pipeline.PipelineRun
-import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
-import com.dataturntable.auth.User
 import io.quarkus.security.Authenticated
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
@@ -23,11 +20,38 @@ import java.util.UUID
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
 class AlertResource {
+
+    @PersistenceContext
+    lateinit var em: EntityManager
+
+    private fun parseChannelType(value: String): AlertChannelType? {
+        return try {
+            AlertChannelType.valueOf(value.uppercase())
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+    }
+
+    private fun parseUuid(value: String, field: String): UUID {
+        return try {
+            UUID.fromString(value)
+        } catch (_: Exception) {
+            throw WebApplicationException(
+                Response.status(400).entity(mapOf("error" to "Invalid $field")).build()
+            )
+        }
+    }
     
     @GET
     @Path("/channels")
     fun listChannels(@QueryParam("tenantId") tenantId: String): Response {
-        val channels = AlertChannel.findByTenantId(UUID.fromString(tenantId))
+        val tenantUuid = parseUuid(tenantId, "tenantId")
+        val channels = em.createQuery(
+            "SELECT c FROM AlertChannel c WHERE c.tenant.id = :tenantId",
+            AlertChannel::class.java
+        )
+            .setParameter("tenantId", tenantUuid)
+            .resultList
         return Response.ok(channels.map { mapOf("id" to it.id, "name" to it.name, "channelType" to it.channelType?.name) }).build()
     }
     
@@ -38,14 +62,16 @@ class AlertResource {
         val tenantId = request["tenantId"] as? String ?: return Response.status(400).entity(mapOf("error" to "Tenant ID is required")).build()
         val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
         val channelType = request["channelType"] as? String ?: return Response.status(400).entity(mapOf("error" to "Channel type is required")).build()
+        val parsedChannelType = parseChannelType(channelType)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid channel type")).build()
         
-        val tenant = Tenant.findById(UUID.fromString(tenantId))
+        val tenant = em.find(Tenant::class.java, parseUuid(tenantId, "tenantId"))
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
         
         val channel = AlertChannel().apply {
             this.name = name
             this.tenant = tenant
-            this.channelType = AlertChannelType.valueOf(channelType.uppercase())
+            this.channelType = parsedChannelType
             this.config = request["config"]?.toString() ?: "{}"
             this.isActive = true
             this.createdAt = java.time.Instant.now()
@@ -59,7 +85,7 @@ class AlertResource {
     @Path("/channels/{id}")
     @Transactional
     fun deleteChannel(@PathParam("id") id: String): Response {
-        val channel = AlertChannel.findById(UUID.fromString(id))
+        val channel = em.find(AlertChannel::class.java, parseUuid(id, "channel id"))
         return if (channel != null) {
             channel.delete()
             Response.noContent().build()
@@ -71,7 +97,13 @@ class AlertResource {
     @GET
     @Path("/rules")
     fun listRules(@QueryParam("tenantId") tenantId: String): Response {
-        val rules = AlertRule.findByTenantId(UUID.fromString(tenantId))
+        val tenantUuid = parseUuid(tenantId, "tenantId")
+        val rules = em.createQuery(
+            "SELECT r FROM AlertRule r WHERE r.tenant.id = :tenantId",
+            AlertRule::class.java
+        )
+            .setParameter("tenantId", tenantUuid)
+            .resultList
         return Response.ok(rules.map { mapOf("id" to it.id, "name" to it.name, "enabled" to it.enabled) }).build()
     }
     
@@ -83,14 +115,14 @@ class AlertResource {
         val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
         val condition = request["condition"] as? String ?: return Response.status(400).entity(mapOf("error" to "Condition is required")).build()
         
-        val tenant = Tenant.findById(UUID.fromString(tenantId))
+        val tenant = em.find(Tenant::class.java, parseUuid(tenantId, "tenantId"))
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
         
         val channelId = request["channelId"] as? String
-        val channel = channelId?.let { AlertChannel.findById(UUID.fromString(it)) }
+        val channel = channelId?.let { em.find(AlertChannel::class.java, parseUuid(it, "channelId")) }
         
         val pipelineId = request["pipelineId"] as? String
-        val pipeline = pipelineId?.let { Pipeline.findById(UUID.fromString(it)) }
+        val pipeline = pipelineId?.let { em.find(Pipeline::class.java, parseUuid(it, "pipelineId")) }
         
         val rule = AlertRule().apply {
             this.tenant = tenant
@@ -112,7 +144,7 @@ class AlertResource {
     @Path("/rules/{id}")
     @Transactional
     fun deleteRule(@PathParam("id") id: String): Response {
-        val rule = AlertRule.findById(UUID.fromString(id))
+        val rule = em.find(AlertRule::class.java, parseUuid(id, "rule id"))
         return if (rule != null) {
             rule.delete()
             Response.noContent().build()
@@ -124,7 +156,7 @@ class AlertResource {
     @GET
     @Path("/history")
     fun getHistory(@QueryParam("tenantId") tenantId: String, @QueryParam("limit") limit: Int?): Response {
-        val history = AlertHistory.findRecentByTenant(UUID.fromString(tenantId), limit ?: 100)
+        val history = AlertHistory.findRecentByTenant(parseUuid(tenantId, "tenantId"), limit ?: 100)
         return Response.ok(history.map { mapOf("id" to it.id, "title" to it.title, "status" to it.status.name) }).build()
     }
 }
