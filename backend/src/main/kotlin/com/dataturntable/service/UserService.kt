@@ -82,21 +82,25 @@ class UserService {
         firstName?.let { user.firstName = it }
         lastName?.let { user.lastName = it }
         
-        if (roleId != null) {
+        val primaryTenantId = user.getPrimaryTenant()?.id
+
+        if (roleId != null && primaryTenantId != null) {
             // Update membership role
-            val membership = user.getMembershipForTenant(user.getPrimaryTenant()?.id ?: UUID.fromString("00000000-0000-0000-0000-000000000001"))
+            val membership = user.getMembershipForTenant(primaryTenantId)
             if (membership != null) {
                 membership.role = Role.findById(roleId)
                 membership.persist()
             }
         }
         
-        abilities?.let { 
-            // Update membership abilities
-            val membership = user.getMembershipForTenant(user.getPrimaryTenant()?.id ?: UUID.fromString("00000000-0000-0000-0000-000000000001"))
-            if (membership != null) {
-                membership.abilities = objectMapper.writeValueAsString(it)
-                membership.persist()
+        abilities?.let {
+            if (primaryTenantId != null) {
+                // Update membership abilities
+                val membership = user.getMembershipForTenant(primaryTenantId)
+                if (membership != null) {
+                    membership.abilities = objectMapper.writeValueAsString(it)
+                    membership.persist()
+                }
             }
         }
         
