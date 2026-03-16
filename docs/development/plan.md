@@ -32,6 +32,7 @@ DataTurntable is a high-performance, scalable data hub for IoT/sensor data proce
 - Frontend pipeline editor includes connector pickers for IMPORT/EXPORT nodes and submits connector-aware DAG definitions.
 - Module API now validates `type`/`moduleType` enum values and returns `400` for invalid values.
 - Alerts API now validates `tenantId`/`channelId`/`pipelineId` UUIDs and `channelType` enum values with `400` responses.
+- Data API now validates `{tenantId}` path UUIDs consistently and returns `400` for malformed tenant IDs.
 
 ## Architecture
 

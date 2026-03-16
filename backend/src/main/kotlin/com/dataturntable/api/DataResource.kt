@@ -21,6 +21,16 @@ class DataResource {
     lateinit var em: EntityManager
     
     private val objectMapper = ObjectMapper()
+
+    private fun parseTenantUuid(tenantId: String): java.util.UUID {
+        return try {
+            java.util.UUID.fromString(tenantId)
+        } catch (_: Exception) {
+            throw WebApplicationException(
+                Response.status(400).entity(mapOf("error" to "Invalid tenantId")).build()
+            )
+        }
+    }
     
     @GET
     @Path("/{tenantId}/query")
@@ -31,8 +41,10 @@ class DataResource {
         @QueryParam("end") end: String?,
         @QueryParam("limit") limit: Int?
     ): Response {
-        val tenant = Tenant.findById(java.util.UUID.fromString(tenantId))
-            ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+        val tenantUuid = parseTenantUuid(tenantId)
+        if (em.find(Tenant::class.java, tenantUuid) == null) {
+            return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+        }
         
         val tableName = table ?: "measurements"
         val limitValue = limit ?: 100
@@ -57,8 +69,10 @@ class DataResource {
         @QueryParam("table") table: String?,
         data: List<Map<String, Any>>
     ): Response {
-        val tenant = Tenant.findById(java.util.UUID.fromString(tenantId))
-            ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+        val tenantUuid = parseTenantUuid(tenantId)
+        if (em.find(Tenant::class.java, tenantUuid) == null) {
+            return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+        }
         
         val tableName = table ?: "measurements"
         
@@ -81,8 +95,10 @@ class DataResource {
     @GET
     @Path("/{tenantId}/tables")
     fun listTables(@PathParam("tenantId") tenantId: String): Response {
-        val tenant = Tenant.findById(java.util.UUID.fromString(tenantId))
-            ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+        val tenantUuid = parseTenantUuid(tenantId)
+        if (em.find(Tenant::class.java, tenantUuid) == null) {
+            return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+        }
         
         val query = """
             SELECT table_name 
@@ -112,8 +128,10 @@ class DataResource {
         @PathParam("tenantId") tenantId: String,
         @PathParam("table") table: String
     ): Response {
-        val tenant = Tenant.findById(java.util.UUID.fromString(tenantId))
-            ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+        val tenantUuid = parseTenantUuid(tenantId)
+        if (em.find(Tenant::class.java, tenantUuid) == null) {
+            return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+        }
         
         val sanitizedTable = sanitizeTableName(table)
         
