@@ -138,8 +138,8 @@ class AuthService {
         if (user.isSuperAdmin()) groups.add("superadmin")
 
         // Prefer a root-tenant membership if present (superadmin scope), otherwise pick the first membership
-        val primaryMembership = user.getMemberships().firstOrNull { it.tenant?.parent == null }
-            ?: user.getMemberships().firstOrNull()
+        val primaryMembership = user.loadMemberships().firstOrNull { it.tenant?.parent == null }
+            ?: user.loadMemberships().firstOrNull()
 
         primaryMembership?.role?.name?.let { groups.add(it) }
 

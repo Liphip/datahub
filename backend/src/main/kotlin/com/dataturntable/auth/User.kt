@@ -69,23 +69,23 @@ open class User : PanacheEntityBase() {
         fun countUsers(): Long = count()
     }
     
-    fun getMemberships(): List<Membership> {
+    fun loadMemberships(): List<Membership> {
         val userId = this.id ?: return emptyList()
         return Membership.findByUserId(userId)
     }
     
     fun getPrimaryTenant(): Tenant? {
-        return getMemberships().firstOrNull()?.tenant
+        return loadMemberships().firstOrNull()?.tenant
     }
     
     fun getMembershipForTenant(tenantId: UUID): Membership? {
-        return getMemberships().firstOrNull { it.tenant?.id == tenantId }
+        return loadMemberships().firstOrNull { it.tenant?.id == tenantId }
     }
     
     fun isSuperAdmin(): Boolean {
         // Superadmin is defined as having TenantAdmin role in the root tenant
         if (isSuperadmin) return true // backward compatibility
-        return getMemberships().any { membership ->
+        return loadMemberships().any { membership ->
             membership.role?.name == "Tenant Admin" && membership.tenant?.parent == null
         }
     }
@@ -95,7 +95,7 @@ open class User : PanacheEntityBase() {
         if (abilities?.contains("*") == true) return true
         if (abilities?.contains(ability) == true) return true
         
-        val roleAbilities = getMemberships().map { it.role }.filterNotNull().flatMap { it.getAbilitiesList() }
+        val roleAbilities = loadMemberships().map { it.role }.filterNotNull().flatMap { it.getAbilitiesList() }
         if (roleAbilities.contains("*") || roleAbilities.contains(ability)) return true
         
         return abilities?.contains(ability) == true
@@ -108,7 +108,7 @@ open class User : PanacheEntityBase() {
             return result
         }
         
-        getMemberships().forEach { membership ->
+        loadMemberships().forEach { membership ->
             membership.role?.getAbilitiesList()?.forEach { result.add(it) }
         }
         
@@ -131,7 +131,7 @@ open class User : PanacheEntityBase() {
     fun canAccessTenant(tenantId: UUID): Boolean {
         if (isSuperAdmin()) return true
         // Access is granted if the user has a membership for the tenant or any ancestor
-        val memberships = getMemberships()
+        val memberships = loadMemberships()
         return memberships.any { membership ->
             membership.tenant?.let { tenant ->
                 tenant.id == tenantId || tenant.hasDescendant(tenantId)
