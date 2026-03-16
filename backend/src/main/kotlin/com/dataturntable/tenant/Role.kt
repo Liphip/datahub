@@ -7,7 +7,7 @@ import java.util.UUID
 
 @Entity
 @Table(name = "roles")
-class Role : PanacheEntityBase() {
+open class Role : PanacheEntityBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

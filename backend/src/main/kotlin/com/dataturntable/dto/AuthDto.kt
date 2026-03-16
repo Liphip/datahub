@@ -35,5 +35,5 @@ data class UserDto(
     val tenantId: String?,
     val roleName: String?,
     val abilities: List<String>,
-    val isSuperadmin: Boolean
+    val superadmin: Boolean
 )

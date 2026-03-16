@@ -1,0 +1,211 @@
+package com.dataturntable.api
+
+import com.dataturntable.auth.User
+import com.dataturntable.tenant.Tenant
+import io.quarkus.test.junit.QuarkusTest
+import io.restassured.http.ContentType
+import jakarta.inject.Inject
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
+import jakarta.transaction.Transactional
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+
+import io.restassured.RestAssured.given
+import org.hamcrest.CoreMatchers.*
+
+import java.security.MessageDigest
+import java.util.Base64
+
+@QuarkusTest
+class AuthResourceTest {
+    
+    @PersistenceContext
+    lateinit var em: EntityManager
+    
+    @BeforeEach
+    @Transactional
+    fun cleanup() {
+        em.createQuery("DELETE FROM User").executeUpdate()
+        em.createQuery("DELETE FROM Tenant").executeUpdate()
+    }
+    
+    @Test
+    fun testSetupEndpoint() {
+        val requestBody = """
+            {
+                "email": "admin@example.com"
+            }
+        """.trimIndent()
+        
+        given()
+            .contentType(ContentType.JSON)
+            .body(requestBody)
+        .`when`()
+            .post("/api/internal/v1/auth/setup")
+        .then()
+            .statusCode(201)
+            .body("email", equalTo("admin@example.com"))
+            .body("password", notNullValue())
+            .body("user.email", equalTo("admin@example.com"))
+            .body("user.superadmin", equalTo(true))
+    }
+    
+    @Test
+    fun testSetupFailsWhenAlreadyConfigured() {
+        // First setup to configure the system
+        val firstRequestBody = """
+            {
+                "email": "admin@example.com"
+            }
+        """.trimIndent()
+        
+        given()
+            .contentType(ContentType.JSON)
+            .body(firstRequestBody)
+        .`when`()
+            .post("/api/internal/v1/auth/setup")
+        .then()
+            .statusCode(201)
+        
+        // Second setup should fail
+        val secondRequestBody = """
+            {
+                "email": "admin2@example.com"
+            }
+        """.trimIndent()
+        
+        given()
+            .contentType(ContentType.JSON)
+            .body(secondRequestBody)
+        .`when`()
+            .post("/api/internal/v1/auth/setup")
+        .then()
+            .statusCode(403)
+            .body("error", notNullValue())
+    }
+    
+    @Test
+    fun testLoginEndpoint() {
+        val setupBody = """
+            {
+                "email": "admin2@example.com"
+            }
+        """.trimIndent()
+        
+        val setupResponse = given()
+            .contentType(ContentType.JSON)
+            .body(setupBody)
+        .`when`()
+            .post("/api/internal/v1/auth/setup")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+        
+        val password = setupResponse.getString("password")
+        val passwordHash = hashPassword(password)
+        
+        val loginBody = """
+            {
+                "email": "admin2@example.com",
+                "passwordHash": "$passwordHash"
+            }
+        """.trimIndent()
+        
+        given()
+            .contentType(ContentType.JSON)
+            .body(loginBody)
+        .`when`()
+            .post("/api/internal/v1/auth/login")
+        .then()
+            .statusCode(200)
+            .body("token", notNullValue())
+            .body("user.email", equalTo("admin2@example.com"))
+    }
+    
+    @Test
+    fun testLoginWithInvalidCredentials() {
+        val loginBody = """
+            {
+                "email": "admin2@example.com",
+                "passwordHash": "invalidhash"
+            }
+        """.trimIndent()
+        
+        given()
+            .contentType(ContentType.JSON)
+            .body(loginBody)
+        .`when`()
+            .post("/api/internal/v1/auth/login")
+        .then()
+            .statusCode(401)
+            .body("error", equalTo("Invalid credentials"))
+    }
+    
+    @Test
+    fun testMeEndpointWithValidToken() {
+        val setupBody = """
+            {
+                "email": "admin3@example.com"
+            }
+        """.trimIndent()
+        
+        val setupResponse = given()
+            .contentType(ContentType.JSON)
+            .body(setupBody)
+        .`when`()
+            .post("/api/internal/v1/auth/setup")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+        
+        val password = setupResponse.getString("password")
+        val passwordHash = hashPassword(password)
+        
+        val loginBody = """
+            {
+                "email": "admin3@example.com",
+                "passwordHash": "$passwordHash"
+            }
+        """.trimIndent()
+        
+        val token = given()
+            .contentType(ContentType.JSON)
+            .body(loginBody)
+        .`when`()
+            .post("/api/internal/v1/auth/login")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("token")
+        
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/auth/me")
+        .then()
+            .statusCode(200)
+            .body("email", equalTo("admin3@example.com"))
+    }
+    
+    @Test
+    fun testMeEndpointWithoutToken() {
+        given()
+        .`when`()
+            .get("/api/internal/v1/auth/me")
+        .then()
+            .statusCode(401)
+    }
+    
+    private fun hashPassword(password: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val hash = digest.digest(password.toByteArray())
+        return Base64.getEncoder().encodeToString(hash)
+    }
+}

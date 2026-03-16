@@ -15,7 +15,7 @@ enum class TriggerType {
 
 @Entity
 @Table(name = "pipeline_runs")
-class PipelineRun : PanacheEntityBase() {
+open class PipelineRun : PanacheEntityBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

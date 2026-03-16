@@ -9,7 +9,7 @@ import java.util.UUID
 
 @Entity
 @Table(name = "users")
-class User : PanacheEntityBase() {
+open class User : PanacheEntityBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -66,7 +66,8 @@ class User : PanacheEntityBase() {
         fun findByTenantAndEmail(tenantId: UUID, email: String): User? = 
             io.quarkus.hibernate.orm.panache.PanacheEntityBase.find<User>("tenant.id = ?1 AND email = ?2", tenantId, email).firstResult()
         
-        fun countUsers(): Long = io.quarkus.hibernate.orm.panache.PanacheEntityBase.count()
+        @JvmStatic
+        fun countUsers(): Long = count()
     }
     
     fun hasAbility(ability: String): Boolean {
@@ -101,7 +102,7 @@ class User : PanacheEntityBase() {
     fun canAccessTenant(tenantId: UUID): Boolean {
         if (isSuperadmin) return true
         if (tenant?.id == tenantId) return true
-        tenant?.getAncestorIds()?.contains(tenantId)?.let { return it }
-        return false
+        // Check if target tenant is a descendant of user's tenant
+        return tenant?.isDescendantOf(tenantId) ?: false
     }
 }

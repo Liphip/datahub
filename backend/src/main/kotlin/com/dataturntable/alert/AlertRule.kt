@@ -10,7 +10,7 @@ import java.util.UUID
 
 @Entity
 @Table(name = "alert_rules")
-class AlertRule : PanacheEntityBase() {
+open class AlertRule : PanacheEntityBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

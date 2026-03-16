@@ -13,7 +13,7 @@ enum class ModuleType {
 
 @Entity
 @Table(name = "code_modules")
-class CodeModule : PanacheEntityBase() {
+open class CodeModule : PanacheEntityBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

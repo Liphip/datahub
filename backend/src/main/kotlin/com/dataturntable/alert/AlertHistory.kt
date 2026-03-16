@@ -16,7 +16,7 @@ enum class AlertStatus {
 
 @Entity
 @Table(name = "alert_history")
-class AlertHistory : PanacheEntityBase() {
+open class AlertHistory : PanacheEntityBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

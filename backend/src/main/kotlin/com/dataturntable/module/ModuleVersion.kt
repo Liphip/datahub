@@ -9,7 +9,7 @@ import java.util.UUID
 
 @Entity
 @Table(name = "module_versions")
-class ModuleVersion : PanacheEntityBase() {
+open class ModuleVersion : PanacheEntityBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

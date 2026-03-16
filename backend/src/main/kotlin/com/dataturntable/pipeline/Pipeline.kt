@@ -10,7 +10,7 @@ import java.util.UUID
 
 @Entity
 @Table(name = "pipelines")
-class Pipeline : PanacheEntityBase() {
+open class Pipeline : PanacheEntityBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -32,10 +32,10 @@ class Pipeline : PanacheEntityBase() {
     
     var importModuleVersionId: UUID? = null
     
-    @Column(name = "processing_module_version_ids", columnDefinition = "uuid[]")
+    @Column(name = "processing_module_version_ids", columnDefinition = "UUID ARRAY")
     var processingModuleVersionIds: Array<UUID> = emptyArray()
     
-    @Column(name = "export_module_version_ids", columnDefinition = "uuid[]")
+    @Column(name = "export_module_version_ids", columnDefinition = "UUID ARRAY")
     var exportModuleVersionIds: Array<UUID> = emptyArray()
     
     @Column(name = "kafka_consumer_group", unique = true)

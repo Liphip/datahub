@@ -14,7 +14,7 @@ enum class AlertChannelType {
 
 @Entity
 @Table(name = "alert_channels")
-class AlertChannel : PanacheEntityBase() {
+open class AlertChannel : PanacheEntityBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

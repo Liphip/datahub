@@ -7,7 +7,7 @@ import java.util.UUID
 
 @Entity
 @Table(name = "tenants")
-class Tenant : PanacheEntityBase() {
+open class Tenant : PanacheEntityBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -51,6 +51,14 @@ class Tenant : PanacheEntityBase() {
         while (current != null) {
             if (current.id == ancestorId) return true
             current = current.parent
+        }
+        return false
+    }
+    
+    fun hasDescendant(tenantId: UUID): Boolean {
+        if (this.id == tenantId) return true
+        for (child in children) {
+            if (child.id == tenantId || child.hasDescendant(tenantId)) return true
         }
         return false
     }
