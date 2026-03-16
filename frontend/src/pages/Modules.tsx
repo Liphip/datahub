@@ -1,21 +1,32 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { CodeModule } from '../types';
 
 export default function Modules() {
   const { user } = useAuthStore();
+  const navigate = useNavigate();
   const [modules, setModules] = useState<CodeModule[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>('all');
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newModuleName, setNewModuleName] = useState('');
+  const [newModuleType, setNewModuleType] = useState('PROCESSING');
+  const [newModuleDescription, setNewModuleDescription] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  const tenantId = user?.tenantId || user?.id;
 
   useEffect(() => {
     const fetchModules = async () => {
-      if (!user?.tenantId) return;
+      if (!tenantId) {
+        setLoading(false);
+        return;
+      }
       
       try {
-        const data = await api.getModules(user.tenantId, filter === 'all' ? undefined : filter);
+        const data = await api.getModules(tenantId, filter === 'all' ? undefined : filter);
         setModules(data);
       } catch (error) {
         console.error('Error fetching modules:', error);
@@ -25,7 +36,26 @@ export default function Modules() {
     };
     
     fetchModules();
-  }, [user?.tenantId, filter]);
+  }, [tenantId, filter]);
+
+  const handleCreateModule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tenantId || !newModuleName) return;
+    
+    setCreating(true);
+    try {
+      const newModule = await api.createModule(tenantId, newModuleName, newModuleType, newModuleDescription);
+      setShowCreateModal(false);
+      setNewModuleName('');
+      setNewModuleType('PROCESSING');
+      setNewModuleDescription('');
+      navigate(`/modules/${newModule.id}`);
+    } catch (error) {
+      console.error('Error creating module:', error);
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const moduleTypeLabels: Record<string, string> = {
     IMPORT: 'Import',
@@ -43,7 +73,7 @@ export default function Modules() {
     <div className="px-4 py-6 sm:px-0">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Modules</h1>
-        <button className="btn-primary">
+        <button onClick={() => setShowCreateModal(true)} className="btn-primary">
           Create Module
         </button>
       </div>
@@ -73,6 +103,10 @@ export default function Modules() {
             </div>
           ))}
         </div>
+      ) : !tenantId ? (
+        <div className="card text-center py-12">
+          <p className="text-gray-500">No tenant ID found. Please contact support.</p>
+        </div>
       ) : modules.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {modules.map((module) => (
@@ -91,8 +125,8 @@ export default function Modules() {
                 {module.description || 'No description'}
               </p>
               <div className="flex justify-between items-center text-sm text-gray-500">
-                <span>v{module.versions[0]?.version || 1}</span>
-                <span>{module.versions.length} version(s)</span>
+                <span>v{module.versions?.[0]?.version || 1}</span>
+                <span>{module.versions?.length || 0} version(s)</span>
               </div>
             </Link>
           ))}
@@ -100,7 +134,64 @@ export default function Modules() {
       ) : (
         <div className="card text-center py-12">
           <p className="text-gray-500 mb-4">No modules yet</p>
-          <button className="btn-primary">Create Your First Module</button>
+          <button onClick={() => setShowCreateModal(true)} className="btn-primary">Create Your First Module</button>
+        </div>
+      )}
+
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h2 className="text-xl font-bold mb-4">Create Module</h2>
+            <form onSubmit={handleCreateModule}>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <input
+                  type="text"
+                  value={newModuleName}
+                  onChange={(e) => setNewModuleName(e.target.value)}
+                  className="input w-full"
+                  required
+                />
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <select
+                  value={newModuleType}
+                  onChange={(e) => setNewModuleType(e.target.value)}
+                  className="input w-full"
+                >
+                  <option value="IMPORT">Import</option>
+                  <option value="PROCESSING">Processing</option>
+                  <option value="EXPORT">Export</option>
+                </select>
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <textarea
+                  value={newModuleDescription}
+                  onChange={(e) => setNewModuleDescription(e.target.value)}
+                  className="input w-full"
+                  rows={3}
+                />
+              </div>
+              <div className="flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creating}
+                  className="btn-primary"
+                >
+                  {creating ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

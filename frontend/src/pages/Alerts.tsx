@@ -10,16 +10,27 @@ export default function Alerts() {
   const [history, setHistory] = useState<AlertHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'channels' | 'rules' | 'history'>('channels');
+  const [showChannelModal, setShowChannelModal] = useState(false);
+  const [showRuleModal, setShowRuleModal] = useState(false);
+  const [newChannelName, setNewChannelName] = useState('');
+  const [newChannelType, setNewChannelType] = useState('WEBHOOK');
+  const [newChannelUrl, setNewChannelUrl] = useState('');
+  const [creatingChannel, setCreatingChannel] = useState(false);
+
+  const tenantId = user?.tenantId || user?.id;
 
   useEffect(() => {
     const fetchData = async () => {
-      if (!user?.tenantId) return;
+      if (!tenantId) {
+        setLoading(false);
+        return;
+      }
       
       try {
         const [channelsData, rulesData, historyData] = await Promise.all([
-          api.getAlertChannels(user.tenantId),
-          api.getAlertRules(user.tenantId),
-          api.getAlertHistory(user.tenantId, 20),
+          api.getAlertChannels(tenantId),
+          api.getAlertRules(tenantId),
+          api.getAlertHistory(tenantId, 20),
         ]);
         setChannels(channelsData);
         setRules(rulesData);
@@ -32,7 +43,26 @@ export default function Alerts() {
     };
     
     fetchData();
-  }, [user?.tenantId]);
+  }, [tenantId]);
+
+  const handleCreateChannel = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tenantId || !newChannelName) return;
+    
+    setCreatingChannel(true);
+    try {
+      const newChannel = await api.createAlertChannel(tenantId, newChannelName, newChannelType, { url: newChannelUrl });
+      setChannels([...channels, newChannel]);
+      setShowChannelModal(false);
+      setNewChannelName('');
+      setNewChannelType('WEBHOOK');
+      setNewChannelUrl('');
+    } catch (error) {
+      console.error('Error creating channel:', error);
+    } finally {
+      setCreatingChannel(false);
+    }
+  };
 
   return (
     <div className="px-4 py-6 sm:px-0">
@@ -60,12 +90,16 @@ export default function Alerts() {
         <div className="card animate-pulse">
           <div className="h-4 bg-gray-200 rounded w-1/3"></div>
         </div>
+      ) : !tenantId ? (
+        <div className="card text-center py-12">
+          <p className="text-gray-500">No tenant ID found. Please contact support.</p>
+        </div>
       ) : (
         <>
           {activeTab === 'channels' && (
             <div className="space-y-4">
               <div className="flex justify-end">
-                <button className="btn-primary text-sm">Add Channel</button>
+                <button onClick={() => setShowChannelModal(true)} className="btn-primary text-sm">Add Channel</button>
               </div>
               {channels.length > 0 ? (
                 channels.map((channel) => (
@@ -95,7 +129,7 @@ export default function Alerts() {
           {activeTab === 'rules' && (
             <div className="space-y-4">
               <div className="flex justify-end">
-                <button className="btn-primary text-sm">Add Rule</button>
+                <button onClick={() => setShowRuleModal(true)} className="btn-primary text-sm">Add Rule</button>
               </div>
               {rules.length > 0 ? (
                 rules.map((rule) => (
@@ -156,6 +190,66 @@ export default function Alerts() {
             </div>
           )}
         </>
+      )}
+
+      {showChannelModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h2 className="text-xl font-bold mb-4">Add Alert Channel</h2>
+            <form onSubmit={handleCreateChannel}>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <input
+                  type="text"
+                  value={newChannelName}
+                  onChange={(e) => setNewChannelName(e.target.value)}
+                  className="input w-full"
+                  required
+                />
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <select
+                  value={newChannelType}
+                  onChange={(e) => setNewChannelType(e.target.value)}
+                  className="input w-full"
+                >
+                  <option value="WEBHOOK">Webhook</option>
+                  <option value="SLACK">Slack</option>
+                  <option value="EMAIL">Email</option>
+                  <option value="REST">REST</option>
+                  <option value="MQTT">MQTT</option>
+                </select>
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">URL</label>
+                <input
+                  type="url"
+                  value={newChannelUrl}
+                  onChange={(e) => setNewChannelUrl(e.target.value)}
+                  className="input w-full"
+                  placeholder="https://..."
+                />
+              </div>
+              <div className="flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setShowChannelModal(false)}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingChannel}
+                  className="btn-primary"
+                >
+                  {creatingChannel ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -6,7 +6,7 @@ export interface User {
   tenantId?: string;
   roleName?: string;
   abilities: string[];
-  isSuperadmin: boolean;
+  superadmin: boolean;
 }
 
 export interface AuthResponse {
