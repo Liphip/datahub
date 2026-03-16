@@ -556,15 +556,19 @@ Permissions are inherited from parent tenants and can be overridden at any level
 | DELETE | /tenants/{id} | Delete tenant |
 | GET | /tenants/{id}/children | List child tenants |
 
-### Users & Roles
+### Auth Users, Memberships & Roles
 
 | Method | Endpoint | Description |
 | ------ | -------- | ----------- |
-| GET | /users | List users |
-| POST | /users | Create user |
-| GET | /users/{id} | Get user |
-| PATCH | /users/{id} | Update user |
-| DELETE | /users/{id} | Delete user |
+| GET | /auth-users | List auth users |
+| POST | /auth-users | Create auth user |
+| GET | /auth-users/{id} | Get auth user |
+| PATCH | /auth-users/{id} | Update auth user |
+| DELETE | /auth-users/{id} | Delete auth user |
+| GET | /tenants/{tenantId}/memberships | List tenant memberships |
+| POST | /tenants/{tenantId}/memberships | Create tenant membership |
+| PATCH | /tenants/{tenantId}/memberships/{id} | Update tenant membership |
+| DELETE | /tenants/{tenantId}/memberships/{id} | Delete tenant membership |
 | GET | /roles | List roles |
 
 ### Modules

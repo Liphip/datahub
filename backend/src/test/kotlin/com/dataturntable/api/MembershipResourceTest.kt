@@ -12,6 +12,15 @@ import org.hamcrest.Matchers.*
 class MembershipResourceTest {
 
     @Test
+    fun testListMembershipsRequiresAuth() {
+        given()
+        .`when`()
+            .get("/api/internal/v1/tenants/00000000-0000-0000-0000-000000000000/memberships")
+        .then()
+            .statusCode(401)
+    }
+
+    @Test
     fun testCreateAndListMembershipsWithAdminAuth() {
         val token = TestAuthHelpers.createAdminToken()
 

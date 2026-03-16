@@ -5,6 +5,7 @@ import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
 import com.dataturntable.security.SecurityUtils
+import io.quarkus.security.Authenticated
 import org.eclipse.microprofile.jwt.JsonWebToken
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
@@ -18,6 +19,7 @@ import java.util.UUID
 @Path("/tenants/{tenantId}/memberships")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Authenticated
 class MembershipResource {
 
     @Inject
