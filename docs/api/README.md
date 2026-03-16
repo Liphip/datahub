@@ -126,47 +126,152 @@ DELETE /api/internal/v1/tenants/{id}
 ```
 ---
 
-### Users
+### Auth Users
 
-#### List Users
+Login identities are platform-wide (not tenant-scoped). Superadmin = auth user who holds a `TenantAdmin` membership in the root tenant.
+
+#### List Auth Users
 
 ```http
-GET /api/internal/v1/users?tenantId={tenant-uuid}
+GET /api/internal/v1/auth-users
 ```
-#### Get User
+
+#### Get Auth User
 
 ```http
-GET /api/internal/v1/users/{id}
+GET /api/internal/v1/auth-users/{id}
 ```
-#### Create User
+
+#### Create Auth User
 
 ```http
-POST /api/internal/v1/users?tenantId={tenant-uuid}&password={sha256-password}
+POST /api/internal/v1/auth-users
 Content-Type: application/json
 
 {
   "email": "user@example.com",
-  "firstName": "John",
-  "lastName": "Doe",
-  "roleId": "optional-role-uuid"
+  "password": "<sha256-of-password>"
 }
 ```
-#### Update User
+
+#### Update Auth User
 
 ```http
-PATCH /api/internal/v1/users/{id}
+PATCH /api/internal/v1/auth-users/{id}
 Content-Type: application/json
 
 {
-  "firstName": "Jane",
+  "email": "newemail@example.com"
+}
+```
+
+#### Delete Auth User
+
+```http
+DELETE /api/internal/v1/auth-users/{id}
+```
+
+---
+
+### Tenant Memberships
+
+Each auth user may hold at most one membership per tenant. Root-tenant admins cannot hold sub-tenant memberships.
+
+#### List Memberships for Tenant
+
+```http
+GET /api/internal/v1/tenants/{tenantId}/memberships
+```
+
+#### Add Membership
+
+```http
+POST /api/internal/v1/tenants/{tenantId}/memberships
+Content-Type: application/json
+
+{
+  "authUserId": "uuid",
+  "roleId": "optional-role-uuid",
+  "abilities": ["module:read"]
+}
+```
+
+#### Update Membership
+
+```http
+PATCH /api/internal/v1/tenants/{tenantId}/memberships/{id}
+Content-Type: application/json
+
+{
+  "roleId": "uuid",
   "abilities": ["module:read", "module:write"]
 }
 ```
-#### Delete User
+
+#### Remove Membership
 
 ```http
-DELETE /api/internal/v1/users/{id}
+DELETE /api/internal/v1/tenants/{tenantId}/memberships/{id}
 ```
+
+---
+
+### Connectors
+
+Protocol connector/interface definitions are tenant-scoped named entities. Import and Export pipeline nodes reference a connector by `connectorId`.
+
+Supported `connectorType` values: `MQTT`, `REST`, `WEBSOCKET`, `UDP`, `FILE`, `CUSTOM`.
+Supported `direction` values: `INPUT`, `OUTPUT`, `BOTH`.
+
+#### List Connectors
+
+```http
+GET /api/internal/v1/connectors?tenantId={tenant-uuid}&direction=INPUT
+```
+
+#### Get Connector
+
+```http
+GET /api/internal/v1/connectors/{id}
+```
+
+#### Create Connector
+
+```http
+POST /api/internal/v1/connectors?tenantId={tenant-uuid}
+Content-Type: application/json
+
+{
+  "name": "Sensor MQTT Broker",
+  "connectorType": "MQTT",
+  "direction": "INPUT",
+  "config": {
+    "broker": "mqtt://iot-broker:1883",
+    "topic": "sensors/#",
+    "clientId": "dataturntable-import"
+  }
+}
+```
+
+#### Update Connector
+
+```http
+PATCH /api/internal/v1/connectors/{id}
+Content-Type: application/json
+
+{
+  "config": {
+    "topic": "sensors/temperature/#"
+  }
+}
+```
+
+#### Delete Connector
+
+```http
+DELETE /api/internal/v1/connectors/{id}
+```
+
 ---
 
 ### Modules
@@ -242,18 +347,31 @@ GET /api/internal/v1/pipelines/{id}
 ```
 #### Create Pipeline
 
+IMPORT and EXPORT nodes must include a `connectorId` referencing a connector defined at the tenant level. The connector's protocol config is injected into the module at runtime.
+
 ```http
 POST /api/internal/v1/pipelines?tenantId={tenant-uuid}
 Content-Type: application/json
 
 {
   "name": "Temperature Sensor Pipeline",
-  "importModuleVersionId": "uuid",
-  "processingModuleVersionIds": ["uuid1", "uuid2"],
-  "exportModuleVersionIds": ["uuid3", "uuid4"]
+  "graphDefinition": {
+    "nodes": [
+      { "id": "n1", "type": "IMPORT",      "moduleVersionId": "uuid", "connectorId": "connector-uuid" },
+      { "id": "n2", "type": "PROCESSING",  "moduleVersionId": "uuid" },
+      { "id": "n3", "type": "ALERT",       "moduleVersionId": "uuid" },
+      { "id": "n4", "type": "EXPORT",      "moduleVersionId": "uuid", "connectorId": "connector-uuid2" }
+    ],
+    "edges": [
+      { "from": "n1", "to": "n2" },
+      { "from": "n2", "to": "n3" },
+      { "from": "n2", "to": "n4" }
+    ]
+  }
 }
 ```
-> The current implementation stores module version ID arrays. Full graph topology (explicit node/edge definition) is a planned enhancement.
+
+> MVP compatibility: the flat `importModuleVersionId`, `processingModuleVersionIds`, `exportModuleVersionIds` arrays are also accepted and stored alongside `graphDefinition`.
 
 #### Update Pipeline
 
@@ -263,7 +381,7 @@ Content-Type: application/json
 
 {
   "name": "Renamed Pipeline",
-  "processingModuleVersionIds": ["uuid1"]
+  "graphDefinition": { "nodes": [...], "edges": [...] }
 }
 ```
 #### Delete Pipeline
@@ -394,7 +512,28 @@ For streaming protocols, the platform bundles or connects to:
 
 ---
 
-## Roles & Abilities
+## Identity & Roles
+
+### Auth Users vs Tenant Memberships
+
+Login identity (`auth_users`) is separate from per-tenant membership (`tenant_memberships`).
+
+- One `auth_user` record per unique email, platform-wide.
+- An auth user gains access to a tenant by holding a `tenant_membership` for that tenant.
+- Each auth user may hold **at most one membership per tenant**.
+- **Superadmin** = auth user who holds a `TenantAdmin` role membership in the **root tenant** (the single tenant with no parent). There is no `is_superadmin` flag.
+- Root-tenant admins (superadmins) cannot simultaneously hold memberships in sub-tenants.
+
+### Built-in Roles
+
+| Role | Scope | Description |
+| ---- | ----- | ----------- |
+| `TenantAdmin` | Root tenant | Full platform control (superadmin) |
+| `TenantAdmin` | Any tenant | Full control within that tenant and its subtree |
+| `Editor` | Any tenant | Create/edit modules, pipelines, connectors |
+| `Viewer` | Any tenant | Read-only access |
+
+### Abilities
 
 | Ability | Description |
 | ------- | ----------- |
@@ -404,12 +543,14 @@ For streaming protocols, the platform bundles or connects to:
 | `pipeline:read` | View pipelines |
 | `pipeline:write` | Create/edit pipelines |
 | `pipeline:execute` | Run pipelines |
+| `connector:read` | View connectors |
+| `connector:write` | Create/edit connectors |
 | `data:read` | Query time-series data |
 | `data:write` | Insert data |
 | `data:export` | Export data |
 | `alert:read` | View alerts |
 | `alert:configure` | Configure alert channels/rules |
-| `tenant:users` | Manage tenant users |
+| `tenant:users` | Manage tenant memberships |
 | `tenant:manage` | Manage tenant settings |
 
 ---

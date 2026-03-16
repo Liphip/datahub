@@ -162,11 +162,12 @@ System-level topics:
 ### Core Tables (PostgreSQL)
 
 ```sql
--- Tenants (recursive hierarchy)
+-- Tenants (strict tree: each node has exactly one parent, except the root which has parent_id = NULL)
+-- Cycles and multiple parents are forbidden; enforced in application logic.
 CREATE TABLE tenants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
-    parent_id UUID REFERENCES tenants(id),
+    parent_id UUID REFERENCES tenants(id),   -- NULL only for the single root tenant
     settings JSONB DEFAULT '{}',
     quota JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ DEFAULT NOW()
@@ -183,18 +184,42 @@ CREATE TABLE roles (
     UNIQUE(tenant_id, name)
 );
 
--- Users
-CREATE TABLE users (
+-- Login identities (platform-wide, one record per unique email)
+-- Superadmin = auth_user who holds a TenantAdmin membership in the root tenant.
+-- Root-tenant admins cannot simultaneously hold memberships in sub-tenants.
+CREATE TABLE auth_users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,   -- BCrypt of SHA-256 pre-hash
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Per-tenant memberships (max 1 per auth_user per tenant)
+CREATE TABLE tenant_memberships (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    auth_user_id UUID REFERENCES auth_users(id) ON DELETE CASCADE,
+    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+    role_id UUID REFERENCES roles(id),
+    abilities JSONB DEFAULT '[]',          -- per-membership ability overrides
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(auth_user_id, tenant_id)        -- one membership per (user, tenant)
+);
+
+-- Protocol Connectors (tenant-scoped, named interface definitions)
+-- Import/Export module nodes reference a connector by connectorId in graph_definition.
+CREATE TABLE connectors (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
-    email VARCHAR(255) NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,   -- BCrypt of SHA-256 pre-hash
-    role_id UUID REFERENCES roles(id),
-    abilities JSONB DEFAULT '[]',
-    is_superadmin BOOLEAN DEFAULT FALSE,
-    is_active BOOLEAN DEFAULT TRUE,
+    name VARCHAR(255) NOT NULL,
+    connector_type VARCHAR(50) NOT NULL
+        CHECK (connector_type IN ('MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'CUSTOM')),
+    direction VARCHAR(20) NOT NULL
+        CHECK (direction IN ('INPUT', 'OUTPUT', 'BOTH')),
+    config JSONB NOT NULL,   -- type-specific: host, port, topic, credentials, etc.
+    enabled BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(tenant_id, email)
+    UNIQUE(tenant_id, name)
 );
 
 -- Code Modules
@@ -206,7 +231,7 @@ CREATE TABLE code_modules (
         CHECK (module_type IN ('IMPORT', 'PROCESSING', 'ALERT', 'EXPORT')),
     description TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    created_by UUID REFERENCES users(id),
+    created_by UUID REFERENCES auth_users(id),
     UNIQUE(tenant_id, name, module_type)
 );
 
@@ -219,11 +244,13 @@ CREATE TABLE module_versions (
     code TEXT NOT NULL,
     requirements TEXT DEFAULT '',
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    created_by UUID REFERENCES users(id),
+    created_by UUID REFERENCES auth_users(id),
     UNIQUE(module_id, version)
 );
 
 -- Pipelines (graph stored as JSON graph definition; arrays kept for MVP compat)
+-- graph_definition nodes include connectorId for IMPORT/EXPORT nodes:
+--   { "id": "n1", "type": "IMPORT", "moduleVersionId": "uuid", "connectorId": "uuid" }
 CREATE TABLE pipelines (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
@@ -235,7 +262,7 @@ CREATE TABLE pipelines (
     kafka_consumer_group VARCHAR(255) UNIQUE,
     is_active BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    created_by UUID REFERENCES users(id)
+    created_by UUID REFERENCES auth_users(id)
 );
 
 -- Pipeline Runs
@@ -285,7 +312,9 @@ CREATE TABLE alert_history (
 
 ```sql
 CREATE INDEX idx_tenant_parent ON tenants(parent_id);
-CREATE INDEX idx_users_tenant ON users(tenant_id);
+CREATE INDEX idx_memberships_auth_user ON tenant_memberships(auth_user_id);
+CREATE INDEX idx_memberships_tenant ON tenant_memberships(tenant_id);
+CREATE INDEX idx_connectors_tenant ON connectors(tenant_id);
 CREATE INDEX idx_modules_tenant ON code_modules(tenant_id);
 CREATE INDEX idx_pipelines_tenant ON pipelines(tenant_id);
 CREATE INDEX idx_pipeline_runs_pipeline ON pipeline_runs(pipeline_id, started_at DESC);
@@ -397,17 +426,19 @@ class ExportModule:
 ```
 ### Module Config Structure
 
+The platform resolves the referenced connector and injects its config into the module at runtime:
+
 ```python
 # Injected into module __init__ config parameter
 {
-    "source_config": {
-        # MQTT:  {"broker": "...", "topic": "..."}
-        # HTTP:  {"url": "...", "method": "POST"}
-        # UDP:   {"host": "...", "port": 5005}
-        # Custom: user-defined
-    },
-    "destination_config": {
-        # Same structure as source_config
+    "connector": {
+        # Resolved from connectors.config for the referenced connectorId.
+        # MQTT:      {"broker": "mqtt://host:1883", "topic": "sensors/#", "clientId": "..."}
+        # REST:      {"baseUrl": "https://...", "method": "POST", "headers": {...}}
+        # WEBSOCKET: {"url": "wss://...", "path": "/stream"}
+        # UDP:       {"host": "...", "port": 5005}
+        # FILE:      {"path": "/data/input.csv", "format": "csv"}
+        # CUSTOM:    user-defined key/value pairs
     },
     "pipeline_id": "uuid",
     "tenant_id": "uuid",

@@ -14,16 +14,17 @@
 4. [Processing Pipeline Engine](#4-processing-pipeline-engine)
 5. [Python Module System](#5-python-module-system)
 6. [Outbound Data (Export Layer)](#6-outbound-data-export-layer)
-7. [Storage Layer](#7-storage-layer)
-8. [Alerting System](#8-alerting-system)
-9. [Multi-Tenancy & RBAC](#9-multi-tenancy--rbac)
-10. [REST API](#10-rest-api)
-11. [Admin UI](#11-admin-ui)
-12. [Data Flows & Use Cases](#12-data-flows--use-cases)
-13. [Technology Stack](#13-technology-stack)
-14. [Module Contracts](#14-module-contracts)
-15. [Security Model](#15-security-model)
-16. [Deployment Topology](#16-deployment-topology)
+7. [Connectors](#7-connectors)
+8. [Storage Layer](#8-storage-layer)
+9. [Alerting System](#9-alerting-system)
+10. [Multi-Tenancy & RBAC](#10-multi-tenancy--rbac)
+11. [REST API](#11-rest-api)
+12. [Admin UI](#12-admin-ui)
+13. [Data Flows & Use Cases](#13-data-flows--use-cases)
+14. [Technology Stack](#14-technology-stack)
+15. [Module Contracts](#15-module-contracts)
+16. [Security Model](#16-security-model)
+17. [Deployment Topology](#17-deployment-topology)
 
 ---
 
@@ -218,17 +219,19 @@ A PROCESSING module can consume from multiple upstream edge topics and combine t
 ```
 ### 4.4 Pipeline Definition (JSON)
 
+IMPORT and EXPORT nodes must include a `connectorId` referencing a tenant-level connector definition. The platform resolves the connector and injects its config into the module container at runtime.
+
 ```json
 {
   "id": "pipeline-001",
   "name": "Temperature Sensor Pipeline",
   "tenantId": "tenant-uuid",
   "nodes": [
-    { "id": "n1", "type": "IMPORT",     "moduleVersionId": "uuid-import-v1" },
+    { "id": "n1", "type": "IMPORT",     "moduleVersionId": "uuid-import-v1",    "connectorId": "mqtt-broker-001" },
     { "id": "n2", "type": "PROCESSING", "moduleVersionId": "uuid-normalise-v1" },
     { "id": "n3", "type": "ALERT",      "moduleVersionId": "uuid-threshold-v1" },
-    { "id": "n4", "type": "EXPORT",     "moduleVersionId": "uuid-timescale-v1" },
-    { "id": "n5", "type": "EXPORT",     "moduleVersionId": "uuid-mqtt-v1" }
+    { "id": "n4", "type": "EXPORT",     "moduleVersionId": "uuid-timescale-v1", "connectorId": "timescale-writer-001" },
+    { "id": "n5", "type": "EXPORT",     "moduleVersionId": "uuid-mqtt-v1",      "connectorId": "mqtt-dashboard-001" }
   ],
   "edges": [
     { "from": "n1", "to": "n2" },
@@ -238,6 +241,7 @@ A PROCESSING module can consume from multiple upstream edge topics and combine t
   ]
 }
 ```
+
 > **MVP note:** The current database schema stores `importModuleVersionId`, `processingModuleVersionIds[]`, and `exportModuleVersionIds[]` for backward compatibility. Full graph definition (`nodes` + `edges`) is stored in the `graph_definition` JSONB column and is the target model.
 
 ### 4.5 Kafka Topic Naming
@@ -381,9 +385,42 @@ For modules that expose an endpoint (passive mode), the `connect()` method regis
 
 ---
 
-## 7. Storage Layer
+## 7. Connectors
 
-### 7.1 Storage Backends
+### 7.1 Overview
+
+Connectors are named, tenant-scoped entities that describe how to reach a protocol endpoint. They are defined independently of pipelines — a connector can be reused across multiple pipelines.
+
+IMPORT and EXPORT pipeline nodes reference a connector by `connectorId`. At runtime the platform resolves the connector and injects its `config` JSON into the module container, so the module code does not need to hard-code connection parameters.
+
+### 7.2 Supported Connector Types
+
+| Type | Direction | Typical Config Fields |
+| ---- | --------- | --------------------- |
+| `MQTT` | INPUT / OUTPUT / BOTH | `broker`, `port`, `topic`, `clientId`, `username`, `password`, `qos`, `tls` |
+| `REST` | INPUT / OUTPUT / BOTH | `baseUrl`, `method`, `headers`, `authType`, `apiKey` |
+| `WEBSOCKET` | INPUT / OUTPUT / BOTH | `url`, `path`, `headers`, `tls` |
+| `UDP` | INPUT / OUTPUT / BOTH | `host`, `port`, `bindAddress` |
+| `FILE` | INPUT / OUTPUT | `path`, `format` (`csv`, `json`, `parquet`), `watchMode` |
+| `CUSTOM` | INPUT / OUTPUT / BOTH | User-defined key/value pairs |
+
+### 7.3 Connector Lifecycle
+
+1. Admin creates a connector via `POST /api/internal/v1/connectors?tenantId=...`
+2. The connector appears in the Connector Library for the tenant.
+3. When building a pipeline, IMPORT/EXPORT nodes reference a connector from the library by `connectorId`.
+4. At pipeline execution time, the platform resolves the connector config and injects it into the module container as the `connector` block of the module config dict.
+5. Updating a connector's config takes effect on the next pipeline execution — no pipeline restart required.
+
+### 7.4 Connector Security
+
+Connector configs may contain credentials (passwords, API keys). These are stored encrypted at rest and never returned in plaintext via the management API after creation (same pattern as API keys).
+
+---
+
+## 8. Storage Layer
+
+### 8.1 Storage Backends
 
 | Backend | Use Case | Default |
 | ------- | -------- | ------- |
@@ -392,18 +429,31 @@ For modules that expose an endpoint (passive mode), the `connect()` method regis
 | MongoDB | Unstructured/document data, variable-schema payloads | Optional (V2) |
 | MinIO / S3 | Binary files, batch exports, model artefacts | Optional (V2) |
 
-### 7.2 Data Schema (Core Tables — PostgreSQL)
+### 8.2 Data Schema (Core Tables — PostgreSQL)
 
 ```sql
--- Tenant hierarchy (recursive)
+-- Tenant hierarchy (strict tree: one parent per node, root has parent_id = NULL)
 tenants(id, name, parent_id, settings JSONB, quota JSONB, created_at)
 
--- Roles
+-- Roles (tenant-scoped)
 roles(id, tenant_id, name, abilities JSONB, is_default, created_at)
 
--- Users
-users(id, tenant_id, email, password_hash, role_id, abilities JSONB,
-      is_superadmin, is_active, created_at)
+-- Login identities (platform-wide)
+-- Superadmin = auth_user holding TenantAdmin membership in root tenant
+auth_users(id, email UNIQUE, password_hash, is_active, created_at)
+
+-- Per-tenant memberships (max 1 per auth_user per tenant)
+tenant_memberships(id, auth_user_id, tenant_id, role_id,
+                   abilities JSONB, created_at,
+                   UNIQUE(auth_user_id, tenant_id))
+
+-- Protocol connector definitions (tenant-scoped, named interface entities)
+-- IMPORT/EXPORT nodes reference a connector by connectorId in graph_definition
+connectors(id, tenant_id, name,
+           connector_type CHECK IN ('MQTT','REST','WEBSOCKET','UDP','FILE','CUSTOM'),
+           direction CHECK IN ('INPUT','OUTPUT','BOTH'),
+           config JSONB, enabled, created_at,
+           UNIQUE(tenant_id, name))
 
 -- Code modules
 code_modules(id, tenant_id, name,
@@ -414,9 +464,9 @@ code_modules(id, tenant_id, name,
 module_versions(id, module_id, version INT, version_tag,
                 code TEXT, requirements TEXT, created_at, created_by)
 
--- Pipelines
+-- Pipelines (IMPORT/EXPORT nodes include connectorId in graph_definition)
 pipelines(id, tenant_id, name,
-          graph_definition JSONB,              -- DAG: nodes + edges
+          graph_definition JSONB,              -- DAG: nodes + edges; IMPORT/EXPORT nodes include connectorId
           import_module_version_id UUID,       -- MVP compat
           processing_module_version_ids UUID[],
           export_module_version_ids UUID[],
@@ -437,7 +487,7 @@ alert_rules(id, tenant_id, pipeline_id, channel_id, enabled, created_at)
 alert_history(id, tenant_id, rule_id, severity, message,
               payload JSONB, status, sent_at)
 ```
-### 7.3 Time-Series Data (TimescaleDB)
+### 8.3 Time-Series Data (TimescaleDB)
 
 ```sql
 CREATE TABLE readings (
@@ -452,7 +502,7 @@ CREATE TABLE readings (
 SELECT create_hypertable('readings', 'time');
 CREATE INDEX ON readings(tenant_id, metric, time DESC);
 ```
-### 7.4 Data Query API
+### 8.4 Data Query API
 
 ```text
 GET /api/internal/v1/data/{tenantId}/query
@@ -463,15 +513,15 @@ GET /api/internal/v1/data/{tenantId}/query
 ```
 ---
 
-## 8. Alerting System
+## 9. Alerting System
 
-### 8.1 ALERT Module as a First-Class Pipeline Node
+### 9.1 ALERT Module as a First-Class Pipeline Node
 
 An ALERT node is a terminal node in the pipeline DAG. It receives data from upstream nodes, evaluates a condition, and dispatches an alert if the condition is met. It does **not** transform or forward data to downstream nodes.
 
 This separation keeps data processing and alert logic decoupled: a single PROCESSING output can feed both an ALERT node and an EXPORT node simultaneously (fan-out).
 
-### 8.2 Built-in Rule Types
+### 9.2 Built-in Rule Types
 
 | Type | Description | Config Parameters |
 | ---- | ----------- | ----------------- |
@@ -481,7 +531,7 @@ This separation keeps data processing and alert logic decoupled: a single PROCES
 | `absence` | Fire when no data arrives within a timeout | `pipelineId`, `timeoutSeconds` |
 | `custom` | Fire based on Python `AlertModule` logic | `moduleVersionId`, module-specific config |
 
-### 8.3 Alert Channel Types
+### 9.3 Alert Channel Types
 
 | Channel | Required Config |
 | ------- | --------------- |
@@ -491,7 +541,7 @@ This separation keeps data processing and alert logic decoupled: a single PROCES
 | Email (SMTP) | `smtp_host`, `port`, `to`, `subject_template`, `body_template` |
 | Slack | `webhookUrl`, `channel`, `message_template` (Block Kit format) |
 
-### 8.4 Alert Flow
+### 9.4 Alert Flow
 
 ```text
 Data arrives at ALERT node (from upstream PROCESSING fan-out)
@@ -513,7 +563,7 @@ Record written to alert_history table
         ▼
 Metrics counter incremented
 ```
-### 8.5 Alert Configuration Example
+### 9.5 Alert Configuration Example
 
 ```json
 {
@@ -532,11 +582,11 @@ Metrics counter incremented
 ```
 ---
 
-## 9. Multi-Tenancy & RBAC
+## 10. Multi-Tenancy & RBAC
 
-### 9.1 Tenant Hierarchy
+### 10.1 Tenant Hierarchy
 
-Tenants form an arbitrary tree. Resources belong to exactly one node. Permissions granted at a parent node apply to all children.
+Tenants form a **strict tree**: each tenant has exactly one parent, except the single root tenant (parent = NULL). Resources belong to exactly one tenant node. Permissions granted at a parent node apply to all children.
 
 ```text
 Platform (Superadmin)
@@ -549,7 +599,7 @@ Platform (Superadmin)
     └── Tenant: AcmeCorp/AsiaDiv
         └── Tenant: Tokyo
 ```
-### 9.2 Permission Model
+### 10.2 Permission Model
 
 Permissions are `ability:resource` pairs:
 
@@ -565,7 +615,17 @@ Permissions are `ability:resource` pairs:
 | `manage` | `tenant` | Create child tenants, manage users |
 | `*` | `*` | Superadmin — all abilities |
 
-### 9.3 Authentication
+### 10.3 Identity Model
+
+Login identity (`auth_users`) is **separate** from per-tenant membership (`tenant_memberships`):
+
+- One `auth_users` record per unique email address, platform-wide.
+- Access to a tenant requires a `tenant_memberships` record for that (auth_user, tenant) pair.
+- Each auth user may hold **at most one membership per tenant**.
+- **Superadmin** = auth user holding a `TenantAdmin` role membership in the root tenant. There is no `is_superadmin` column.
+- Root-tenant admins (superadmins) cannot simultaneously hold memberships in sub-tenants.
+
+### 10.4 Authentication
 
 **Users:** Email + password → JWT (1-hour access token). Password is SHA-256-hashed client-side before transmission; server stores BCrypt hash of the SHA-256 value.
 
@@ -575,16 +635,16 @@ Permissions are `ability:resource` pairs:
 
 ---
 
-## 10. REST API
+## 11. REST API
 
-### 10.1 API Paths
+### 11.1 API Paths
 
 | Path | Purpose | Auth |
 | ---- | ------- | ---- |
 | `/api/internal/v1/` | Management API | JWT or API key |
 | `/api/v1/` | Public data ingestion | API key per pipeline (or open) |
 
-### 10.2 Management API Endpoint Overview
+### 11.2 Management API Endpoint Overview
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |
@@ -596,11 +656,20 @@ Permissions are `ability:resource` pairs:
 | GET | `/tenants/{id}` | Get tenant details |
 | DELETE | `/tenants/{id}` | Delete tenant |
 | GET | `/tenants/{id}/children` | Get child tenants |
-| GET | `/users` | List users (`?tenantId=`) |
-| GET | `/users/{id}` | Get user |
-| POST | `/users` | Create user |
-| PATCH | `/users/{id}` | Update user |
-| DELETE | `/users/{id}` | Delete user |
+| GET | `/auth-users` | List auth (login) users |
+| GET | `/auth-users/{id}` | Get auth user |
+| POST | `/auth-users` | Create auth user |
+| PATCH | `/auth-users/{id}` | Update auth user |
+| DELETE | `/auth-users/{id}` | Delete auth user |
+| GET | `/tenants/{id}/memberships` | List memberships for a tenant |
+| POST | `/tenants/{id}/memberships` | Add membership (auth user ↔ tenant) |
+| PATCH | `/tenants/{id}/memberships/{mid}` | Update membership role/abilities |
+| DELETE | `/tenants/{id}/memberships/{mid}` | Remove membership |
+| GET | `/connectors` | List connectors (`?tenantId=&direction=`) |
+| GET | `/connectors/{id}` | Get connector |
+| POST | `/connectors` | Create connector |
+| PATCH | `/connectors/{id}` | Update connector |
+| DELETE | `/connectors/{id}` | Delete connector |
 | GET | `/modules` | List modules (`?tenantId=&type=`) |
 | GET | `/modules/{id}` | Get module |
 | POST | `/modules` | Create module |
@@ -626,14 +695,14 @@ Permissions are `ability:resource` pairs:
 | GET | `/q/health` | Platform health check |
 | GET | `/q/metrics` | Prometheus metrics |
 
-### 10.3 Public Ingestion API
+### 11.3 Public Ingestion API
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |
 | POST | `/api/v1/ingest/{pipelineId}` | Push data into a pipeline (any JSON body) |
 | WS | `/api/v1/ws/{pipelineId}` | Stream data into a pipeline over WebSocket |
 
-### 10.4 Standard Response Envelope
+### 11.4 Standard Response Envelope
 
 ```json
 {
@@ -651,15 +720,15 @@ Error responses:
   "error": "Pipeline with ID 'abc' not found in tenant 'xyz'"
 }
 ```
-### 10.5 Rate Limiting
+### 11.5 Rate Limiting
 
 Rate limiting is **not yet implemented** (planned for V2). When implemented, the default will be 100 requests per minute per API key / JWT subject.
 
 ---
 
-## 11. Admin UI
+## 12. Admin UI
 
-### 11.1 Technology
+### 12.1 Technology
 
 - **Framework:** React 18 with TypeScript
 - **Build tool:** Vite 5.x
@@ -669,7 +738,7 @@ Rate limiting is **not yet implemented** (planned for V2). When implemented, the
 - **Charts:** Lightweight chart library (uPlot or Chart.js — to be integrated)
 - **Code editor:** Monaco Editor 4.x (VS Code engine) for Python module editing
 
-### 11.2 UI Route Structure
+### 12.2 UI Route Structure
 
 ```text
 /login                    — Login page
@@ -685,7 +754,7 @@ Rate limiting is **not yet implemented** (planned for V2). When implemented, the
 /alerts                   — Alert channel config, rule config, alert history
 /settings                 — Platform settings
 ```
-### 11.3 Pipeline Builder (MVP)
+### 12.3 Pipeline Builder (MVP)
 
 The MVP pipeline builder is a form-based ordered step list (no drag-and-drop). It represents the pipeline as:
 
@@ -713,7 +782,7 @@ Export Modules:
 ```
 Fan-out and fan-in are represented visually as multiple items in the same section. Full graph editing is a V2 feature.
 
-### 11.4 Module Code Editor
+### 12.4 Module Code Editor
 
 The Monaco-based editor provides:
 
@@ -723,7 +792,7 @@ The Monaco-based editor provides:
 - Save (creates new version), Deploy buttons
 - Version history list
 
-### 11.5 Data Visualisation (Built-in)
+### 12.5 Data Visualisation (Built-in)
 
 Intentionally minimal — for quick sanity checks only:
 
@@ -736,9 +805,9 @@ For production dashboards, use the Grafana datasource EXPORT module or the Thing
 
 ---
 
-## 12. Data Flows & Use Cases
+## 13. Data Flows & Use Cases
 
-### 12.1 MQTT → Transform → Alert + Store + Dashboard (Fan-out)
+### 13.1 MQTT → Transform → Alert + Store + Dashboard (Fan-out)
 
 ```text
 1.  Sensor publishes to MQTT broker:
@@ -766,7 +835,7 @@ For production dashboards, use the Grafana datasource EXPORT module or the Thing
 
 8.  n5 (EXPORT): publishes normalised value to MQTT topic for live dashboard.
 ```
-### 12.2 Two Streams Merged (Fan-in)
+### 13.2 Two Streams Merged (Fan-in)
 
 ```text
 1. HTTP POST /api/v1/ingest/pipeline-merge  →  {"source":"A","temp":22.1}
@@ -780,7 +849,7 @@ For production dashboards, use the Grafana datasource EXPORT module or the Thing
 
 6. EXPORT writes merged result to PostgreSQL.
 ```
-### 12.3 Grafana Pull Integration
+### 13.3 Grafana Pull Integration
 
 ```text
 1.  Data is written to TimescaleDB by EXPORT node during normal pipeline operation.
@@ -794,7 +863,7 @@ For production dashboards, use the Grafana datasource EXPORT module or the Thing
 ```
 ---
 
-## 13. Technology Stack
+## 14. Technology Stack
 
 | Component | Technology | Version | Notes |
 | --------- | ---------- | ------- | ----- |
@@ -817,9 +886,9 @@ For production dashboards, use the Grafana datasource EXPORT module or the Thing
 
 ---
 
-## 14. Module Contracts
+## 15. Module Contracts
 
-### 14.1 IMPORT Module
+### 15.1 IMPORT Module
 
 ```python
 class ImportModule:
@@ -839,7 +908,7 @@ class ImportModule:
         """Clean up connection. Called on container stop."""
         pass
 ```
-### 14.2 PROCESSING Module
+### 15.2 PROCESSING Module
 
 ```python
 class ProcessingModule:
@@ -860,7 +929,7 @@ class ProcessingModule:
         """
         return data
 ```
-### 14.3 ALERT Module
+### 15.3 ALERT Module
 
 ```python
 class AlertModule:
@@ -891,7 +960,7 @@ class AlertModule:
         """
         return False
 ```
-### 14.4 EXPORT Module
+### 15.4 EXPORT Module
 
 ```python
 class ExportModule:
@@ -914,7 +983,7 @@ class ExportModule:
         """Clean up or deregister endpoint."""
         pass
 ```
-### 14.5 Standard Module Metadata
+### 15.5 Standard Module Metadata
 
 Every module must declare:
 
@@ -931,23 +1000,23 @@ MODULE_METADATA = {
 ```
 ---
 
-## 15. Security Model
+## 16. Security Model
 
-### 15.1 Network Security
+### 16.1 Network Security
 
 - All external traffic enters via Nginx reverse proxy (TLS termination in production).
 - Backend services communicate over an internal Docker/Kubernetes network only.
 - Kafka is not exposed externally.
 - Module containers have no network access by default; explicit network grants require TenantAdmin approval.
 
-### 15.2 Authentication & Session
+### 16.2 Authentication & Session
 
 - JWT access tokens expire after 1 hour (3600 s).
 - Passwords are SHA-256-hashed client-side before transmission and BCrypt-hashed server-side for storage.
 - API keys are stored as BCrypt hashes; plaintext is shown only once at creation.
 - Failed login attempts are rate-limited (5 attempts per 15 minutes per IP).
 
-### 15.3 Module Sandboxing
+### 16.3 Module Sandboxing
 
 User Python code runs with:
 
@@ -958,7 +1027,7 @@ User Python code runs with:
 - No access to other containers' namespaces
 - `/tmp` writable; cleared between batch invocations
 
-### 15.4 Audit Logging
+### 16.4 Audit Logging
 
 All state-modifying operations are written to a structured audit trail:
 
@@ -975,9 +1044,9 @@ All state-modifying operations are written to a structured audit trail:
 ```
 ---
 
-## 16. Deployment Topology
+## 17. Deployment Topology
 
-### 16.1 Development (Docker Compose)
+### 17.1 Development (Docker Compose)
 
 ```text
 docker-compose.dev.yml
@@ -989,7 +1058,7 @@ docker-compose.dev.yml
 ├── frontend      (Vite dev server, port 3000)
 └── nginx         (port 80 — /api/* → backend, / → frontend)
 ```
-### 16.2 Production (Kubernetes / Kustomize)
+### 17.2 Production (Kubernetes / Kustomize)
 
 ```text
 k8s/
@@ -1010,7 +1079,7 @@ k8s/
 ```
 Module containers are spawned by the backend using the Docker API (development) or as Kubernetes Jobs (production).
 
-### 16.3 Port Map (Development)
+### 17.3 Port Map (Development)
 
 | Service | Port | Protocol |
 | ------- | ---- | -------- |

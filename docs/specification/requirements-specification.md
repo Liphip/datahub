@@ -50,12 +50,15 @@ Out of scope: DataTurntable is **not** an AI/LLM platform, a BI tool, or a repla
 
 | Term | Definition |
 | ---- | ---------- |
-| Tenant | Organisational unit in the hierarchy; may have child tenants |
+| Tenant | Organisational unit in the strict tree hierarchy; one parent except the root |
+| Auth User | Platform-wide login identity (`auth_users` table); identified by email |
+| Tenant Membership | A record binding one auth user to one tenant with a role/abilities |
+| Superadmin | Auth user holding a TenantAdmin membership in the root tenant |
 | Module | A user-written or official Python component: IMPORT, PROCESSING, ALERT, or EXPORT |
-| Pipeline | A directed acyclic graph (DAG) of modules from data source(s) to data sink(s) |
+| Pipeline | A directed acyclic graph (DAG) of module nodes from data source(s) to data sink(s) |
+| Connector | A named, tenant-scoped protocol interface definition (MQTT, REST, WebSocket, UDP, File, Custom); referenced by IMPORT/EXPORT pipeline nodes |
 | Fan-out | One module's output routed to multiple downstream modules |
 | Fan-in | Multiple upstream module outputs combined by a single downstream (combination) module |
-| Connector | A hot-pluggable module handling a specific protocol (MQTT, HTTP, WS, UDP) |
 | SRS | Software Requirements Specification |
 | MVP | Minimum Viable Product |
 | RBAC | Role-Based Access Control |
@@ -186,7 +189,22 @@ Requirements are tagged: `MVP` = required for initial release; `V2` = planned po
 | EXP-07 | Users shall be able to write custom EXPORT modules in Python. | MVP |
 | EXP-08 | Export connectors shall be hot-pluggable. | MVP |
 
-### 4.6 Storage
+### 4.6 Connectors
+
+Connectors are named, tenant-scoped protocol interface definitions. They describe how to reach a protocol endpoint. IMPORT and EXPORT pipeline nodes reference a connector by ID; the connector's config is injected into the module at runtime.
+
+| ID | Requirement | Priority |
+| -- | ----------- | -------- |
+| CON-01 | The system shall allow tenants to define named connector entities for each supported protocol: MQTT, REST, WebSocket, UDP, File, Custom. | MVP |
+| CON-02 | Each connector shall have a `direction` property: INPUT, OUTPUT, or BOTH. | MVP |
+| CON-03 | IMPORT pipeline nodes shall reference a connector with `direction` INPUT or BOTH. | MVP |
+| CON-04 | EXPORT pipeline nodes shall reference a connector with `direction` OUTPUT or BOTH. | MVP |
+| CON-05 | Connector configuration (host, port, credentials, topic, etc.) shall be stored in a typed JSON config block and injected into the module container at runtime. | MVP |
+| CON-06 | Connectors shall be manageable (create, update, delete, enable/disable) independently of pipelines. | MVP |
+| CON-07 | Connectors shall be hot-pluggable; updating a connector's config shall take effect on the next pipeline execution without restarting the core platform. | MVP |
+| CON-08 | Connector definitions shall be tenant-scoped and not visible to other tenants. | MVP |
+
+### 4.7 Storage
 
 | ID | Requirement | Priority |
 | -- | ----------- | -------- |
@@ -233,11 +251,14 @@ Requirements are tagged: `MVP` = required for initial release; `V2` = planned po
 | ID | Requirement | Priority |
 | -- | ----------- | -------- |
 | TEN-01 | The system shall support a hierarchical tenant model with arbitrary depth (tenant → child tenant → … → workspace). | MVP |
-| TEN-02 | Tenants shall have parent/child relationships; a tenant may have multiple children. | MVP |
+| TEN-02 | Tenants shall form a **strict tree**: each tenant has exactly one parent, except the single root tenant which has no parent. Multiple parents are forbidden. | MVP |
 | TEN-03 | Resources (pipelines, modules, connectors, data) shall be isolated between tenants. | MVP |
 | TEN-04 | Permissions shall be scoped to the level of the hierarchy at which they are granted and inherited by children. | MVP |
-| TEN-05 | A Superadmin shall have global visibility across all tenants. | MVP |
+| TEN-05 | A **Superadmin** shall be defined as an auth user holding a TenantAdmin membership in the root tenant. There is no global `is_superadmin` flag. | MVP |
 | TEN-06 | Tenant-level admins shall have no visibility into sibling tenants. | MVP |
+| TEN-07 | Login identity (`auth_users`) shall be **separate** from per-tenant membership (`tenant_memberships`). One auth user may hold memberships in multiple tenants, with a maximum of one membership per (auth user, tenant) pair. | MVP |
+| TEN-08 | Root-tenant admins (superadmins) shall **not** simultaneously hold memberships in sub-tenants. | MVP |
+| TEN-09 | Protocol connector definitions shall be scoped to a tenant and shall not be visible to other tenants. | MVP |
 
 ---
 
@@ -328,13 +349,13 @@ The platform ships with four built-in system roles per tenant. Admins may define
 
 | Role | Scope | Key Abilities |
 | ---- | ----- | ------------- |
-| Superadmin | Platform | All operations, cross-tenant visibility (global flag on user) |
-| TenantAdmin | Tenant subtree | Manage child tenants, users, resources within their tree |
+| Superadmin | Platform | All operations, cross-tenant visibility — defined as TenantAdmin of root tenant |
+| TenantAdmin | Tenant subtree | Manage child tenants, memberships, resources within their tree |
 | Editor | Workspace | Create/edit/run modules, pipelines, connectors; configure alerts |
 | Viewer | Workspace | Read-only access to pipelines, data, alerts |
 | API Key / Service Account | Configurable scope | Programmatic access with explicit ability set |
 
-Permissions are additive; a user may hold multiple roles across different tenant scopes.
+Permissions are additive; an auth user may hold memberships in multiple tenants, each with its own role. A user's effective abilities at any point in the tree are determined by the most permissive membership in that tenant's ancestor chain.
 
 ---
 
