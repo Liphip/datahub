@@ -10,6 +10,8 @@ import com.dataturntable.security.SecurityUtils
 import com.dataturntable.security.EncryptionUtils
 import io.quarkus.security.Authenticated
 import jakarta.inject.Inject
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
@@ -25,12 +27,38 @@ class ConnectorResource {
     
     @Inject
     lateinit var jwt: JsonWebToken
+
+    @PersistenceContext
+    lateinit var em: EntityManager
     
     private val objectMapper = ObjectMapper()
+
+    private fun getCurrentUser(): User? {
+        val subject = jwt.subject ?: return null
+        val userId = try { UUID.fromString(subject) } catch (_: Exception) { return null }
+        return em.find(User::class.java, userId)
+    }
     
     private fun getTenantIdFromToken(): String? {
         val tid = jwt.getClaim("tenantId") as? String
         return if (tid.isNullOrBlank()) null else tid
+    }
+
+    private fun maskConnectorConfig(rawConfig: Map<*, *>): Map<String, Any?> {
+        val sensitiveFragments = listOf("password", "secret", "token", "apikey", "api_key", "key")
+        val result = mutableMapOf<String, Any?>()
+        rawConfig.forEach { (k, v) ->
+            val key = k?.toString() ?: return@forEach
+            val lowerKey = key.lowercase()
+            val isSensitive = sensitiveFragments.any { lowerKey.contains(it) }
+            result[key] = when {
+                isSensitive && v is String && v.isNotEmpty() -> "********"
+                isSensitive && v != null -> "********"
+                v is Map<*, *> -> maskConnectorConfig(v)
+                else -> v
+            }
+        }
+        return result
     }
     
     @GET
@@ -43,7 +71,7 @@ class ConnectorResource {
             .entity(mapOf("error" to "tenantId is required"))
             .build()
 
-        val currentUser = try { jwt.subject?.let { User.findById(UUID.fromString(it)) } } catch (_: Exception) { null }
+        val currentUser = getCurrentUser()
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tid)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
@@ -51,19 +79,40 @@ class ConnectorResource {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
         
-        val tenant = Tenant.findById(UUID.fromString(tid))
+        val tenant = em.find(Tenant::class.java, UUID.fromString(tid))
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
         
+        val tenantUuid = UUID.fromString(tid)
         val connectors = when {
-            type != null -> Connector.findByTenantAndType(UUID.fromString(tid), ConnectorType.valueOf(type.uppercase()))
-            direction != null -> Connector.findByTenantAndDirection(UUID.fromString(tid), Direction.valueOf(direction.uppercase()))
-            else -> Connector.findByTenantId(UUID.fromString(tid))
+            type != null -> em.createQuery(
+                "SELECT c FROM Connector c WHERE c.tenant.id = :tenantId AND c.connectorType = :type",
+                Connector::class.java
+            )
+                .setParameter("tenantId", tenantUuid)
+                .setParameter("type", ConnectorType.valueOf(type.uppercase()))
+                .resultList
+
+            direction != null -> em.createQuery(
+                "SELECT c FROM Connector c WHERE c.tenant.id = :tenantId AND c.direction = :direction",
+                Connector::class.java
+            )
+                .setParameter("tenantId", tenantUuid)
+                .setParameter("direction", Direction.valueOf(direction.uppercase()))
+                .resultList
+
+            else -> em.createQuery(
+                "SELECT c FROM Connector c WHERE c.tenant.id = :tenantId",
+                Connector::class.java
+            )
+                .setParameter("tenantId", tenantUuid)
+                .resultList
         }
         
         return Response.ok(connectors.map { connector ->
             val decrypted = EncryptionUtils.decrypt(connector.config ?: "{}")
             val configValue = try {
-                objectMapper.readValue(decrypted, Map::class.java)
+                val parsed = objectMapper.readValue(decrypted, Map::class.java)
+                maskConnectorConfig(parsed)
             } catch (_: Exception) {
                 emptyMap<String, Any>()
             }
@@ -100,7 +149,7 @@ class ConnectorResource {
                 .build()
         }
         
-        val tenant = Tenant.findById(UUID.fromString(tenantId))
+        val tenant = em.find(Tenant::class.java, UUID.fromString(tenantId))
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
         
         val configValue = request["config"] ?: emptyMap<String, Any>()
@@ -110,7 +159,7 @@ class ConnectorResource {
             "{}"
         }
 
-        val currentUser = try { jwt.subject?.let { User.findById(UUID.fromString(it)) } } catch (_: Exception) { null }
+        val currentUser = getCurrentUser()
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
@@ -142,10 +191,10 @@ class ConnectorResource {
     @GET
     @Path("/{id}")
     fun get(@PathParam("id") id: String): Response {
-        val connector = Connector.findById(UUID.fromString(id))
+        val connector = em.find(Connector::class.java, UUID.fromString(id))
         val tenantId = getTenantIdFromToken()
         return if (connector != null) {
-            val currentUser = try { jwt.subject?.let { User.findById(UUID.fromString(it)) } } catch (_: Exception) { null }
+            val currentUser = getCurrentUser()
             if (tenantId != null && connector.tenant?.id?.toString() != tenantId) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
@@ -157,7 +206,8 @@ class ConnectorResource {
             }
             val decrypted = EncryptionUtils.decrypt(connector.config ?: "{}")
             val configValue = try {
-                objectMapper.readValue(decrypted, Map::class.java)
+                val parsed = objectMapper.readValue(decrypted, Map::class.java)
+                maskConnectorConfig(parsed)
             } catch (_: Exception) {
                 emptyMap<String, Any>()
             }
@@ -180,10 +230,10 @@ class ConnectorResource {
     @Path("/{id}")
     @Transactional
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
-        val connector = Connector.findById(UUID.fromString(id))
+        val connector = em.find(Connector::class.java, UUID.fromString(id))
         val tenantId = getTenantIdFromToken()
         return if (connector != null) {
-            val currentUser = try { jwt.subject?.let { User.findById(UUID.fromString(it)) } } catch (_: Exception) { null }
+            val currentUser = getCurrentUser()
             if (tenantId != null && connector.tenant?.id?.toString() != tenantId) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
@@ -221,10 +271,10 @@ class ConnectorResource {
     @Path("/{id}")
     @Transactional
     fun delete(@PathParam("id") id: String): Response {
-        val connector = Connector.findById(UUID.fromString(id))
+        val connector = em.find(Connector::class.java, UUID.fromString(id))
         val tenantId = getTenantIdFromToken()
         return if (connector != null) {
-            val currentUser = try { jwt.subject?.let { User.findById(UUID.fromString(it)) } } catch (_: Exception) { null }
+            val currentUser = getCurrentUser()
             if (tenantId != null && connector.tenant?.id?.toString() != tenantId) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }

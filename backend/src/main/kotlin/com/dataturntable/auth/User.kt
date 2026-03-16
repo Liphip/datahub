@@ -50,28 +50,45 @@ open class User : PanacheEntityBase() {
     var memberships: MutableList<Membership> = mutableListOf()
     
     companion object {
-        fun findById(id: UUID): User? = 
-            PanacheEntityBase.find<User>("id = ?1", id).firstResult()
+        fun findById(id: UUID): User? =
+            getEntityManager()
+                .createQuery("SELECT u FROM User u WHERE u.id = :id", User::class.java)
+                .setParameter("id", id)
+                .resultList
+                .firstOrNull()
         
-        fun findByTenantId(tenantId: UUID): List<User> = 
-            PanacheEntityBase.list<User>(
-                "id in (select m.authUser.id from Membership m where m.tenant.id = ?1)", 
-                tenantId
+        fun findByTenantId(tenantId: UUID): List<User> =
+            getEntityManager().createQuery(
+                "SELECT DISTINCT u FROM User u JOIN u.memberships m WHERE m.tenant.id = :tenantId",
+                User::class.java
             )
+                .setParameter("tenantId", tenantId)
+                .resultList
         
-        fun findByEmail(email: String): User? = 
-            PanacheEntityBase.find<User>("email = ?1", email).firstResult()
+        fun findByEmail(email: String): User? =
+            getEntityManager()
+                .createQuery("SELECT u FROM User u WHERE u.email = :email", User::class.java)
+                .setParameter("email", email)
+                .resultList
+                .firstOrNull()
         
-        fun findByTenantAndEmail(tenantId: UUID, email: String): User? = 
-            PanacheEntityBase.find<User>("email = ?1 and id in (select m.authUser.id from Membership m where m.tenant.id = ?2)", email, tenantId).firstResult()
+        fun findByTenantAndEmail(tenantId: UUID, email: String): User? =
+            getEntityManager().createQuery(
+                "SELECT u FROM User u JOIN u.memberships m WHERE u.email = :email AND m.tenant.id = :tenantId",
+                User::class.java
+            )
+                .setParameter("email", email)
+                .setParameter("tenantId", tenantId)
+                .resultList
+                .firstOrNull()
         
         @JvmStatic
-        fun countUsers(): Long = count()
+        fun countUsers(): Long =
+            getEntityManager().createQuery("SELECT COUNT(u) FROM User u", java.lang.Long::class.java).singleResult.toLong()
     }
     
     fun loadMemberships(): List<Membership> {
-        val userId = this.id ?: return emptyList()
-        return Membership.findByUserId(userId)
+        return memberships.toList()
     }
     
     fun getPrimaryTenant(): Tenant? {

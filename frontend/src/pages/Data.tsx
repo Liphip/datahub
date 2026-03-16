@@ -13,7 +13,7 @@ export default function Data() {
   const [newTableName, setNewTableName] = useState('');
   const [insertingData, setInsertingData] = useState(false);
 
-  const tenantId = user?.tenantId || user?.id;
+  const tenantId = user?.tenantId;
 
   useEffect(() => {
     const fetchTables = async () => {

@@ -10,7 +10,7 @@ export default function Dashboard() {
   const [recentRuns, setRecentRuns] = useState<PipelineRun[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const tenantId = user?.tenantId || user?.id;
+  const tenantId = user?.tenantId;
 
   useEffect(() => {
     const fetchData = async () => {

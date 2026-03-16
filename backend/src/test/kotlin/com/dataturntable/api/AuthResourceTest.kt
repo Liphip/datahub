@@ -1,6 +1,8 @@
 package com.dataturntable.api
 
 import com.dataturntable.auth.User
+import com.dataturntable.tenant.Membership
+import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
 import io.quarkus.test.junit.QuarkusTest
 import io.restassured.http.ContentType
@@ -8,6 +10,7 @@ import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
@@ -26,8 +29,16 @@ class AuthResourceTest {
     @BeforeEach
     @Transactional
     fun cleanup() {
+        em.createQuery("DELETE FROM Membership").executeUpdate()
         em.createQuery("DELETE FROM User").executeUpdate()
+        em.createQuery("DELETE FROM Role").executeUpdate()
         em.createQuery("DELETE FROM Tenant").executeUpdate()
+    }
+
+    @AfterEach
+    @Transactional
+    fun cleanupAfter() {
+        cleanup()
     }
     
     @Test
@@ -81,8 +92,40 @@ class AuthResourceTest {
         .`when`()
             .post("/api/internal/v1/auth/setup")
         .then()
-            .statusCode(403)
+            .statusCode(409)
             .body("error", notNullValue())
+    }
+
+    @Test
+    fun testLoginAcceptsHexEncodedSha256Hash() {
+        val setupBody = """
+            {
+                "email": "adminhex@example.com"
+            }
+        """.trimIndent()
+
+        val setupResponse = given()
+            .contentType(ContentType.JSON)
+            .body(setupBody)
+        .`when`()
+            .post("/api/internal/v1/auth/setup")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+
+        val password = setupResponse.getString("password")
+        val passwordHash = hashPasswordHex(password)
+
+        given()
+            .contentType(ContentType.JSON)
+            .body(mapOf("email" to "adminhex@example.com", "passwordHash" to passwordHash))
+        .`when`()
+            .post("/api/internal/v1/auth/login")
+        .then()
+            .statusCode(200)
+            .body("token", notNullValue())
     }
     
     @Test
@@ -209,5 +252,11 @@ class AuthResourceTest {
         val digest = MessageDigest.getInstance("SHA-256")
         val hash = digest.digest(password.toByteArray())
         return Base64.getEncoder().encodeToString(hash)
+    }
+
+    private fun hashPasswordHex(password: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val hash = digest.digest(password.toByteArray())
+        return hash.joinToString("") { "%02x".format(it) }
     }
 }

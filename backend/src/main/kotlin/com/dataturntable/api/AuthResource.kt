@@ -40,7 +40,7 @@ class AuthResource {
             val response = authService.setup(request)
             Response.status(201).entity(response).build()
         } catch (e: IllegalStateException) {
-            Response.status(403).entity(mapOf("error" to (e.message ?: "Setup already completed"))).build()
+            Response.status(409).entity(mapOf("error" to (e.message ?: "Setup already completed"))).build()
         } catch (e: IllegalArgumentException) {
             Response.status(400).entity(mapOf("error" to (e.message ?: "Bad request"))).build()
         }

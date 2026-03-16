@@ -101,7 +101,7 @@ export default function ModuleEditor() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const tenantId = user?.tenantId || user?.id;
+  const tenantId = user?.tenantId;
 
   useEffect(() => {
     const fetchModule = async () => {

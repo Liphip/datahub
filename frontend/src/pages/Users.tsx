@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { User } from '../types';
+import type { Membership, Role, User } from '../types';
 
 export default function Users() {
   const { user } = useAuthStore();
   const [users, setUsers] = useState<User[]>([]);
+  const [memberships, setMemberships] = useState<Membership[]>([]);
+  const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
@@ -15,7 +18,7 @@ export default function Users() {
   const [inviting, setInviting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const tenantId = user?.tenantId || user?.id;
+  const tenantId = user?.tenantId;
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -25,10 +28,17 @@ export default function Users() {
       }
       
       try {
-        const data = await api.getUsers(tenantId);
-        setUsers(data);
+        const [usersData, membershipsData, rolesData] = await Promise.all([
+          api.getUsers(tenantId),
+          api.getTenantMemberships(tenantId),
+          api.getRoles(tenantId),
+        ]);
+        setUsers(usersData);
+        setMemberships(membershipsData);
+        setRoles(rolesData);
       } catch (error) {
         console.error('Error fetching users:', error);
+        setError('Failed to load users and memberships');
       } finally {
         setLoading(false);
       }
@@ -43,36 +53,69 @@ export default function Users() {
     
     setInviting(true);
     try {
-      await api.createUser(tenantId, newUserEmail, newUserPassword, {
+      const createdUser = await api.createUser(tenantId, newUserEmail, newUserPassword, {
         firstName: newUserFirstName,
         lastName: newUserLastName,
       });
+
+      const defaultRole = roles.find((r) => r.isDefault) || roles.find((r) => r.name.toLowerCase().includes('viewer'));
+      if (!defaultRole?.id) {
+        setError('No default role found for tenant. Create a role first.');
+        return;
+      }
+
+      await api.createTenantMembership(tenantId, createdUser.id, defaultRole.id);
+
       setShowInviteModal(false);
       setNewUserEmail('');
       setNewUserPassword('');
       setNewUserFirstName('');
       setNewUserLastName('');
-      // Refresh users list
-      const data = await api.getUsers(tenantId);
-      setUsers(data);
+
+      const [usersData, membershipsData] = await Promise.all([
+        api.getUsers(tenantId),
+        api.getTenantMemberships(tenantId),
+      ]);
+      setUsers(usersData);
+      setMemberships(membershipsData);
     } catch (error) {
       console.error('Error inviting user:', error);
+      setError('Failed to create user or membership');
     } finally {
       setInviting(false);
     }
   };
 
-  const handleDeleteUser = async (userId: string) => {
+  const handleDeleteUser = async (membershipId: string) => {
     if (!confirm('Are you sure you want to delete this user?')) return;
     
-    setDeletingId(userId);
+    setDeletingId(membershipId);
     try {
-      await api.deleteUser(userId);
-      setUsers(users.filter(u => u.id !== userId));
+      await api.deleteTenantMembership(tenantId!, membershipId);
+      const [usersData, membershipsData] = await Promise.all([
+        api.getUsers(tenantId!),
+        api.getTenantMemberships(tenantId!),
+      ]);
+      setUsers(usersData);
+      setMemberships(membershipsData);
     } catch (error) {
       console.error('Error deleting user:', error);
+      setError('Failed to remove membership');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const getMembershipForUser = (userId: string) => memberships.find((m) => m.authUserId === userId);
+  const getRoleForMembership = (membership?: Membership) => roles.find((r) => r.id === membership?.roleId);
+  const parseAbilities = (abilities: Membership['abilities']): string[] => {
+    if (!abilities) return [];
+    if (Array.isArray(abilities)) return abilities;
+    try {
+      const parsed = JSON.parse(abilities);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
     }
   };
 
@@ -84,6 +127,12 @@ export default function Users() {
           Invite User
         </button>
       </div>
+
+      {error && (
+        <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+          {error}
+        </div>
+      )}
 
       {loading ? (
         <div className="space-y-4">
@@ -136,19 +185,19 @@ export default function Users() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className="px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-800">
-                      {u.roleName || 'No Role'}
+                      {getRoleForMembership(getMembershipForUser(u.id))?.name || 'No Role'}
                     </span>
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex flex-wrap gap-1">
-                      {(u.abilities || []).slice(0, 3).map((ability) => (
+                      {parseAbilities(getMembershipForUser(u.id)?.abilities).slice(0, 3).map((ability) => (
                         <span key={ability} className="px-2 py-0.5 text-xs rounded bg-blue-100 text-blue-800">
                           {ability}
                         </span>
                       ))}
-                      {(u.abilities?.length || 0) > 3 && (
+                      {parseAbilities(getMembershipForUser(u.id)?.abilities).length > 3 && (
                         <span className="px-2 py-0.5 text-xs rounded bg-gray-100 text-gray-600">
-                          +{(u.abilities?.length || 0) - 3}
+                          +{parseAbilities(getMembershipForUser(u.id)?.abilities).length - 3}
                         </span>
                       )}
                     </div>
@@ -156,11 +205,16 @@ export default function Users() {
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <button className="text-primary-600 hover:text-primary-900 mr-4">Edit</button>
                     <button 
-                      onClick={() => handleDeleteUser(u.id)}
-                      disabled={deletingId === u.id}
+                      onClick={() => {
+                        const membership = getMembershipForUser(u.id);
+                        if (membership?.id) {
+                          handleDeleteUser(membership.id);
+                        }
+                      }}
+                      disabled={!getMembershipForUser(u.id)?.id || deletingId === getMembershipForUser(u.id)?.id}
                       className="text-red-600 hover:text-red-900"
                     >
-                      {deletingId === u.id ? 'Deleting...' : 'Delete'}
+                      {deletingId === getMembershipForUser(u.id)?.id ? 'Deleting...' : 'Delete'}
                     </button>
                   </td>
                 </tr>

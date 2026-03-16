@@ -49,19 +49,40 @@ class Connector : PanacheEntityBase() {
     
     companion object {
         fun findByTenantId(tenantId: UUID): List<Connector> {
-            return PanacheEntityBase.list<Connector>("tenant.id = ?1", tenantId)
+            return getEntityManager()
+                .createQuery("SELECT c FROM Connector c WHERE c.tenant.id = :tenantId", Connector::class.java)
+                .setParameter("tenantId", tenantId)
+                .resultList
         }
         
         fun findByTenantAndType(tenantId: UUID, type: ConnectorType): List<Connector> {
-            return PanacheEntityBase.list<Connector>("tenant.id = ?1 and connectorType = ?2", tenantId, type)
+            return getEntityManager()
+                .createQuery(
+                    "SELECT c FROM Connector c WHERE c.tenant.id = :tenantId AND c.connectorType = :type",
+                    Connector::class.java
+                )
+                .setParameter("tenantId", tenantId)
+                .setParameter("type", type)
+                .resultList
         }
         
         fun findByTenantAndDirection(tenantId: UUID, direction: Direction): List<Connector> {
-            return PanacheEntityBase.list<Connector>("tenant.id = ?1 and direction = ?2", tenantId, direction)
+            return getEntityManager()
+                .createQuery(
+                    "SELECT c FROM Connector c WHERE c.tenant.id = :tenantId AND c.direction = :direction",
+                    Connector::class.java
+                )
+                .setParameter("tenantId", tenantId)
+                .setParameter("direction", direction)
+                .resultList
         }
         
         fun findById(connectorId: UUID): Connector? {
-            return PanacheEntityBase.find<Connector>("id", connectorId).firstResult()
+            return getEntityManager()
+                .createQuery("SELECT c FROM Connector c WHERE c.id = :id", Connector::class.java)
+                .setParameter("id", connectorId)
+                .resultList
+                .firstOrNull()
         }
     }
     

@@ -46,6 +46,9 @@ open class Pipeline : PanacheEntityBase() {
     
     @Column(columnDefinition = "text")
     var config: String? = null
+
+    @Column(name = "graph_definition", columnDefinition = "text")
+    var graphDefinition: String? = null
     
     @Column(name = "created_at")
     var createdAt: Instant = Instant.now()
@@ -62,17 +65,34 @@ open class Pipeline : PanacheEntityBase() {
     var runs: MutableList<PipelineRun> = mutableListOf()
     
     companion object {
-        fun findById(id: UUID): Pipeline? = 
-            PanacheEntityBase.find<Pipeline>("id = ?1", id).firstResult()
+        fun findById(id: UUID): Pipeline? =
+            getEntityManager()
+                .createQuery("SELECT p FROM Pipeline p WHERE p.id = :id", Pipeline::class.java)
+                .setParameter("id", id)
+                .resultList
+                .firstOrNull()
         
-        fun findByTenantId(tenantId: UUID): List<Pipeline> = 
-            PanacheEntityBase.list<Pipeline>("tenant.id = ?1", tenantId)
+        fun findByTenantId(tenantId: UUID): List<Pipeline> =
+            getEntityManager()
+                .createQuery("SELECT p FROM Pipeline p WHERE p.tenant.id = :tenantId", Pipeline::class.java)
+                .setParameter("tenantId", tenantId)
+                .resultList
         
-        fun findActiveByTenant(tenantId: UUID): List<Pipeline> = 
-            PanacheEntityBase.list<Pipeline>("tenant.id = ?1 AND isActive = ?2", tenantId, true)
+        fun findActiveByTenant(tenantId: UUID): List<Pipeline> =
+            getEntityManager()
+                .createQuery(
+                    "SELECT p FROM Pipeline p WHERE p.tenant.id = :tenantId AND p.isActive = true",
+                    Pipeline::class.java
+                )
+                .setParameter("tenantId", tenantId)
+                .resultList
         
-        fun findByConsumerGroup(group: String): Pipeline? = 
-            PanacheEntityBase.find<Pipeline>("kafkaConsumerGroup = ?1", group).firstResult()
+        fun findByConsumerGroup(group: String): Pipeline? =
+            getEntityManager()
+                .createQuery("SELECT p FROM Pipeline p WHERE p.kafkaConsumerGroup = :group", Pipeline::class.java)
+                .setParameter("group", group)
+                .resultList
+                .firstOrNull()
     }
     
     fun getProcessingVersions(): List<ModuleVersion> {

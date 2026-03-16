@@ -14,7 +14,7 @@ export default function Pipelines() {
   const [newPipelineDescription, setNewPipelineDescription] = useState('');
   const [creating, setCreating] = useState(false);
 
-  const tenantId = user?.tenantId || user?.id;
+  const tenantId = user?.tenantId;
 
   useEffect(() => {
     const fetchPipelines = async () => {

@@ -13,8 +13,11 @@ class LoginRequest @JsonCreator constructor(
 
 data class SetupRequest(
     @NotBlank
+    val tenantName: String = "Root Tenant",
+    @NotBlank
     val email: String = "admin@example.com",
-    val password: String? = null
+    val password: String? = null,
+    val passwordHash: String? = null
 )
 
 data class SetupResponse(

@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, AlertChannel, AlertRule, AlertHistory, Connector, Role } from '../types';
+import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, AlertChannel, AlertRule, AlertHistory, Connector, Role, Membership } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 
@@ -7,7 +7,11 @@ async function sha256(message: string): Promise<string> {
   const msgBuffer = new TextEncoder().encode(message);
   const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
   const hashArray = new Uint8Array(hashBuffer);
-  return Array.from(hashArray).map(b => b.toString(16).padStart(2, '0')).join('');
+  let binary = '';
+  for (let i = 0; i < hashArray.length; i++) {
+    binary += String.fromCharCode(hashArray[i]);
+  }
+  return btoa(binary);
 }
 
 class ApiService {
@@ -91,23 +95,49 @@ class ApiService {
 
   // Users
   async getUsers(tenantId: string): Promise<User[]> {
-    const response = await this.client.get<User[]>(`/users?tenantId=${tenantId}`);
+    const response = await this.client.get<User[]>(`/auth-users?tenantId=${tenantId}`);
     return response.data;
   }
 
-  async createUser(tenantId: string, email: string, password: string, data?: Partial<User>): Promise<User> {
+  async createUser(_tenantId: string, email: string, password: string, data?: Partial<User>): Promise<User> {
     const passwordHash = await sha256(password);
-    const response = await this.client.post<User>(`/users?tenantId=${tenantId}`, { email, passwordHash, ...data });
+    const response = await this.client.post<User>('/auth-users', { email, passwordHash, ...data });
     return response.data;
   }
 
   async updateUser(id: string, data: Partial<User>): Promise<User> {
-    const response = await this.client.patch<User>(`/users/${id}`, data);
+    const response = await this.client.patch<User>(`/auth-users/${id}`, data);
     return response.data;
   }
 
   async deleteUser(id: string): Promise<void> {
-    await this.client.delete(`/users/${id}`);
+    await this.client.delete(`/auth-users/${id}`);
+  }
+
+  async getTenantMemberships(tenantId: string): Promise<Membership[]> {
+    const response = await this.client.get<Membership[]>(`/tenants/${tenantId}/memberships`);
+    return response.data;
+  }
+
+  async createTenantMembership(tenantId: string, authUserId: string, roleId: string, abilities: string[] = []): Promise<Membership> {
+    const response = await this.client.post<Membership>(`/tenants/${tenantId}/memberships`, {
+      authUserId,
+      roleId,
+      abilities,
+    });
+    return response.data;
+  }
+
+  async updateTenantMembership(tenantId: string, membershipId: string, roleId?: string, abilities?: string[]): Promise<Membership> {
+    const response = await this.client.patch<Membership>(`/tenants/${tenantId}/memberships/${membershipId}`, {
+      roleId,
+      abilities,
+    });
+    return response.data;
+  }
+
+  async deleteTenantMembership(tenantId: string, membershipId: string): Promise<void> {
+    await this.client.delete(`/tenants/${tenantId}/memberships/${membershipId}`);
   }
 
   // Modules

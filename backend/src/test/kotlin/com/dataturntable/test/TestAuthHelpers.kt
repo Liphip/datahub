@@ -7,9 +7,13 @@ import java.util.Base64
 
 object TestAuthHelpers {
     fun createAdminToken(): String {
+        val password = "AdminPass!123"
+        val passwordHash = Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(password.toByteArray()))
+
         val setupBody = """
             {
-                "email": "admin@example.com"
+                "email": "admin@example.com",
+                "passwordHash": "$passwordHash"
             }
         """.trimIndent()
 
@@ -19,13 +23,14 @@ object TestAuthHelpers {
         .`when`()
             .post("/api/internal/v1/auth/setup")
         .then()
-            .statusCode(201)
             .extract()
             .body()
             .jsonPath()
 
-        val password = setupResponse.getString("password")
-        val passwordHash = Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(password.toByteArray()))
+        val setupError = setupResponse.getString("error")
+        if (setupError != null && !setupError.contains("already completed", ignoreCase = true)) {
+            throw IllegalStateException("Unable to initialize test admin: $setupError")
+        }
 
         return given()
             .contentType(ContentType.JSON)

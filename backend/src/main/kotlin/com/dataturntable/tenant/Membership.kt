@@ -33,16 +33,34 @@ class Membership : PanacheEntityBase() {
     var createdAt: Instant = Instant.now()
     
     companion object {
-        fun findById(id: UUID): Membership? = 
-            PanacheEntityBase.find<Membership>("id = ?1", id).firstResult()
+        fun findById(id: UUID): Membership? =
+            getEntityManager()
+                .createQuery("SELECT m FROM Membership m WHERE m.id = :id", Membership::class.java)
+                .setParameter("id", id)
+                .resultList
+                .firstOrNull()
         
-        fun findByUserId(userId: UUID): List<Membership> = 
-            PanacheEntityBase.list<Membership>("authUser.id = ?1", userId)
+        fun findByUserId(userId: UUID): List<Membership> =
+            getEntityManager()
+                .createQuery("SELECT m FROM Membership m WHERE m.authUser.id = :userId", Membership::class.java)
+                .setParameter("userId", userId)
+                .resultList
         
-        fun findByTenantId(tenantId: UUID): List<Membership> = 
-            PanacheEntityBase.list<Membership>("tenant.id = ?1", tenantId)
+        fun findByTenantId(tenantId: UUID): List<Membership> =
+            getEntityManager()
+                .createQuery("SELECT m FROM Membership m WHERE m.tenant.id = :tenantId", Membership::class.java)
+                .setParameter("tenantId", tenantId)
+                .resultList
         
-        fun findByUserAndTenant(userId: UUID, tenantId: UUID): Membership? = 
-            PanacheEntityBase.find<Membership>("authUser.id = ?1 AND tenant.id = ?2", userId, tenantId).firstResult()
+        fun findByUserAndTenant(userId: UUID, tenantId: UUID): Membership? =
+            getEntityManager()
+                .createQuery(
+                    "SELECT m FROM Membership m WHERE m.authUser.id = :userId AND m.tenant.id = :tenantId",
+                    Membership::class.java
+                )
+                .setParameter("userId", userId)
+                .setParameter("tenantId", tenantId)
+                .resultList
+                .firstOrNull()
     }
 }

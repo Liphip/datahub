@@ -19,6 +19,14 @@ DataTurntable is a high-performance, scalable data hub for IoT/sensor data proce
 
 ---
 
+## Current Implementation Notes (Users + Connectors)
+
+- Management API now exposes `/auth-users` for platform login identities and `/tenants/{tenantId}/memberships` for tenant access assignments.
+- Membership API supports `PATCH` updates and rejects duplicate `(authUserId, tenantId)` assignments.
+- Root-tenant admins are prevented from receiving sub-tenant memberships.
+- Connector configs remain encrypted at rest and sensitive keys (`password`, `secret`, `token`, `apiKey`, etc.) are masked in list/get responses.
+- Pipeline create/update accepts `graphDefinition`; IMPORT/EXPORT nodes are validated to require `connectorId` and compatible connector direction.
+
 ## Architecture
 
 ### High-Level System Design

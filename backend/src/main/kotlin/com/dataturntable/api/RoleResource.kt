@@ -4,6 +4,8 @@ import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase
 import io.quarkus.security.Authenticated
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
@@ -15,13 +17,15 @@ import java.util.UUID
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
 class RoleResource {
+    @PersistenceContext
+    lateinit var em: EntityManager
     
     @GET
     fun list(@QueryParam("tenantId") tenantId: String?): Response {
         val roles = if (tenantId != null) {
             Role.findByTenantId(UUID.fromString(tenantId))
         } else {
-            PanacheEntityBase.listAll<Role>()
+            PanacheEntityBase.find<Role>("1=1").list()
         }
         
         return Response.ok(roles.map { mapOf(
@@ -45,7 +49,7 @@ class RoleResource {
             .build()
         
         val tenant = if (tenantId != null) {
-            Tenant.findById(UUID.fromString(tenantId))
+            em.find(Tenant::class.java, UUID.fromString(tenantId))
         } else {
             null
         }

@@ -36,8 +36,12 @@ open class Tenant : PanacheEntityBase() {
     var updatedAt: Instant? = null
     
     companion object {
-        fun findById(id: UUID): Tenant? = 
-            PanacheEntityBase.find<Tenant>("id = ?1", id).firstResult()
+        fun findById(id: UUID): Tenant? =
+            getEntityManager()
+                .createQuery("SELECT t FROM Tenant t WHERE t.id = :id", Tenant::class.java)
+                .setParameter("id", id)
+                .resultList
+                .firstOrNull()
         
         fun findRootTenants(): List<Tenant> = 
             getEntityManager().createQuery("SELECT t FROM Tenant t WHERE t.parent IS NULL", Tenant::class.java).resultList

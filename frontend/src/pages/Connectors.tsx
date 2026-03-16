@@ -20,7 +20,7 @@ export default function Connectors() {
     description: ''
   });
 
-  const tenantId = user?.tenantId || user?.id;
+  const tenantId = user?.tenantId;
 
   useEffect(() => {
     const fetchConnectors = async () => {

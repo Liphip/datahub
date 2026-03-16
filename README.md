@@ -49,6 +49,7 @@ Push to WebSocket     ──────────► │   UDP endpoints;    
                                   │  Pipeline Builder │ Code Ed. │
                                   └──────────────────────────────┘
 ```
+
 ## Quick Start
 
 ### Prerequisites
@@ -61,36 +62,45 @@ Push to WebSocket     ──────────► │   UDP endpoints;    
 ### Development Setup
 
 1. Clone the repository:
-```bash
-git clone https://github.com/your-repo/dataturntable.git
-cd dataturntable
-```
+
+    ```bash
+    git clone https://github.com/your-repo/dataturntable.git
+    cd dataturntable
+    ```
+
 2. Start the development environment:
-```bash
-cd docker
-docker-compose -f docker-compose.dev.yml up -d
-```
+
+    ```bash
+    cd docker
+    docker-compose -f docker-compose.dev.yml up -d
+    ```
+
 3. Access the services:
-- Frontend: http://localhost:3000
-- Backend API (management): http://localhost:8080/api/internal/v1
-- Backend API (public ingestion): http://localhost:8080/api/v1
-- PostgreSQL/TimescaleDB: localhost:5432
-- Kafka: localhost:9092
-- MQTT Broker: localhost:1883
+
+    - Frontend: http://localhost:3000
+    - Backend API (management): http://localhost:8080/api/internal/v1
+    - Backend API (public ingestion): http://localhost:8080/api/v1
+    - PostgreSQL/TimescaleDB: localhost:5432
+    - Kafka: localhost:9092
+    - MQTT Broker: localhost:1883
 
 ### Building from Source
 
 Backend:
+
 ```bash
 cd backend
 mvn package
 ```
+
 Frontend:
+
 ```bash
 cd frontend
 npm install
 npm run build
 ```
+
 ## API Paths
 
 | Path | Purpose |
@@ -150,12 +160,20 @@ Pipelines are directed graphs (DAGs), not just linear chains:
 |----------|-------------|
 | POST /auth/login | User authentication |
 | POST /auth/setup | First-run platform setup |
+| GET/POST/PATCH/DELETE /auth-users | Platform auth user management |
+| GET/POST/PATCH/DELETE /tenants/{id}/memberships | Tenant membership management |
+| GET/POST/PATCH/DELETE /connectors | Tenant connector library |
 | GET /tenants | List tenants |
 | GET /modules | List code modules |
 | GET /pipelines | List pipelines |
 | POST /pipelines/{id}/run | Trigger pipeline |
 | GET /data/{tenantId}/query | Query time-series data |
 | GET /alerts/history | Alert history |
+
+Notes:
+- Connector configs are encrypted at rest and sensitive fields are masked in API responses.
+- Frontend auth uses SHA-256 (Base64) client hashing before transmission; server stores BCrypt of that hash.
+- Pipelines support a `graphDefinition` payload; IMPORT/EXPORT nodes must reference compatible connectors by `connectorId`.
 
 See [API Documentation](docs/api/README.md) for full details.
 

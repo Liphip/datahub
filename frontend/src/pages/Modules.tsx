@@ -16,7 +16,7 @@ export default function Modules() {
   const [newModuleDescription, setNewModuleDescription] = useState('');
   const [creating, setCreating] = useState(false);
 
-  const tenantId = user?.tenantId || user?.id;
+  const tenantId = user?.tenantId;
 
   useEffect(() => {
     const fetchModules = async () => {

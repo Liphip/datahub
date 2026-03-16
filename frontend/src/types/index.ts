@@ -9,6 +9,13 @@ export interface User {
   superadmin: boolean;
 }
 
+export interface Membership {
+  id: string;
+  authUserId: string;
+  roleId?: string;
+  abilities?: string[] | string;
+}
+
 export interface AuthResponse {
   token: string;
   user: User;
@@ -23,16 +30,6 @@ export interface Tenant {
   createdAt: string;
   updatedAt: string;
   children?: Tenant[];
-}
-
-export interface Role {
-  id: string;
-  tenantId?: string;
-  name: string;
-  description?: string;
-  abilities: string[];
-  isDefault: boolean;
-  isSystem: boolean;
 }
 
 export interface CodeModule {

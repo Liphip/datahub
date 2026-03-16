@@ -21,7 +21,7 @@ export default function PipelineEditor() {
   const [exportModuleIds, setExportModuleIds] = useState<string[]>([]);
   const [isActive, setIsActive] = useState(false);
 
-  const tenantId = user?.tenantId || user?.id;
+  const tenantId = user?.tenantId;
 
   useEffect(() => {
     const fetchData = async () => {

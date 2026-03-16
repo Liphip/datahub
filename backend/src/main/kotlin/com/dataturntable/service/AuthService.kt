@@ -11,9 +11,7 @@ import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
 import org.eclipse.microprofile.jwt.JsonWebToken
 import org.mindrot.jbcrypt.BCrypt
-import java.security.MessageDigest
 import java.security.SecureRandom
-import java.util.Base64
 import java.util.HashSet
 import java.util.UUID
 
@@ -39,10 +37,9 @@ class AuthService {
             throw SecurityException("Invalid credentials")
         }
         
-        // Frontend sends SHA-256 hash of password
-        // Backend stores BCrypt hash of SHA-256 hash
-        // Check by hashing incoming hash with BCrypt
-        if (!BCrypt.checkpw(request.passwordHash, user.passwordHash)) {
+        val candidateHashes = normalizeClientPasswordHash(request.passwordHash)
+        val valid = candidateHashes.any { BCrypt.checkpw(it, user.passwordHash) }
+        if (!valid) {
             throw SecurityException("Invalid credentials")
         }
         
@@ -77,7 +74,7 @@ class AuthService {
         }
         
         val tenant = Tenant().apply {
-            name = "Root Tenant"
+            name = request.tenantName
             settings = "{}"
             quota = """{"max_users": 100, "max_pipelines": 50, "max_storage_mb": 10240}"""
             createdAt = java.time.Instant.now()
@@ -89,8 +86,9 @@ class AuthService {
         tenantService.createDefaultRoles(tenant)
         em.flush()
         
-        val password = request.password ?: generateRandomPassword(16)
-        val passwordHash = hashPassword(password)
+        val generatedPassword = generateRandomPassword(16)
+        val submittedHash = request.passwordHash ?: request.password
+        val passwordHash = submittedHash ?: hashPasswordForStorage(generatedPassword)
         
         val user = User().apply {
             this.email = request.email
@@ -106,8 +104,14 @@ class AuthService {
         em.flush()
         
         // Assign Tenant Admin membership for the root tenant
-        val adminRole = com.dataturntable.tenant.Role.findByTenantId(tenant.id!!)
-            .firstOrNull { it.name == "Tenant Admin" }
+        val adminRole = em.createQuery(
+            "SELECT r FROM Role r WHERE r.tenant.id = :tenantId AND r.name = :roleName",
+            com.dataturntable.tenant.Role::class.java
+        )
+            .setParameter("tenantId", tenant.id)
+            .setParameter("roleName", "Tenant Admin")
+            .resultList
+            .firstOrNull()
         val membership = com.dataturntable.tenant.Membership().apply {
             this.authUser = user
             this.tenant = tenant
@@ -120,17 +124,29 @@ class AuthService {
 
         return SetupResponse(
             email = user.email ?: request.email,
-            password = password,
+            password = generatedPassword,
             user = toUserDto(user)
         )
     }
-    
-    private fun hashPassword(password: String): String {
-        // The client hashes the plaintext password using SHA-256 and Base64-encodes it before sending.
-        // We replicate that here to ensure consistent hashing when storing and comparing.
-        val digest = MessageDigest.getInstance("SHA-256")
+
+    private fun hashPasswordForStorage(password: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
         val hash = digest.digest(password.toByteArray())
-        return Base64.getEncoder().encodeToString(hash)
+        return java.util.Base64.getEncoder().encodeToString(hash)
+    }
+
+    private fun normalizeClientPasswordHash(passwordHash: String): List<String> {
+        val normalized = mutableSetOf(passwordHash)
+        if (passwordHash.length == 64 && passwordHash.matches(Regex("^[0-9a-fA-F]{64}$"))) {
+            val bytes = ByteArray(passwordHash.length / 2)
+            var i = 0
+            while (i < passwordHash.length) {
+                bytes[i / 2] = passwordHash.substring(i, i + 2).toInt(16).toByte()
+                i += 2
+            }
+            normalized.add(java.util.Base64.getEncoder().encodeToString(bytes))
+        }
+        return normalized.toList()
     }
     
     private fun generateJwtToken(user: User): String {

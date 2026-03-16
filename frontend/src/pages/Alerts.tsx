@@ -21,7 +21,7 @@ export default function Alerts() {
   const [newRuleChannelId, setNewRuleChannelId] = useState('');
   const [creatingRule, setCreatingRule] = useState(false);
 
-  const tenantId = user?.tenantId || user?.id;
+  const tenantId = user?.tenantId;
 
   useEffect(() => {
     const fetchData = async () => {

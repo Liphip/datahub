@@ -48,7 +48,7 @@ class ConnectorResourceTest {
     fun testCreateConnectorStoresJsonConfig() {
         val token = TestAuthHelpers.createAdminToken()
 
-        val config = mapOf("host" to "test.local", "port" to 1883)
+        val config = mapOf("host" to "test.local", "port" to 1883, "password" to "supersecret")
 
         val response = given()
             .header("Authorization", "Bearer $token")
@@ -78,6 +78,7 @@ class ConnectorResourceTest {
             .statusCode(200)
             .body("config.host", equalTo("test.local"))
             .body("config.port", equalTo(1883))
+            .body("config.password", equalTo("********"))
     }
     
     @Test
