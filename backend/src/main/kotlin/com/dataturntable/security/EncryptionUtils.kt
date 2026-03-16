@@ -11,9 +11,30 @@ object EncryptionUtils {
     private const val AES_CBC = "AES/CBC/PKCS5Padding"
 
     private fun getKey(): ByteArray? {
-        val k = System.getenv("CONNECTOR_CONFIG_KEY") ?: System.getProperty("connector.config.key")
-        return k?.toByteArray(Charsets.UTF_8)?.let { bytes ->
-            if (bytes.size >= 16) bytes.copyOf(16) else bytes.copyOf(16)
+        val raw = System.getenv("CONNECTOR_CONFIG_KEY") ?: System.getProperty("connector.config.key")
+        if (raw == null || raw.isBlank()) return null
+
+        // Prefer Base64-encoded key (common for CI / secrets)
+        val decoded: ByteArray? = try {
+            // Try decoding; if it fails, fall back to raw bytes
+            java.util.Base64.getDecoder().decode(raw)
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+
+        val bytes = decoded ?: raw.toByteArray(Charsets.UTF_8)
+
+        // Normalize to 16/24/32 bytes for AES key sizes (prefer 32)
+        return when {
+            bytes.size >= 32 -> bytes.copyOf(32)
+            bytes.size >= 24 -> bytes.copyOf(24)
+            bytes.size >= 16 -> bytes.copyOf(16)
+            else -> {
+                // pad with zeros
+                val padded = ByteArray(16)
+                System.arraycopy(bytes, 0, padded, 0, bytes.size)
+                padded
+            }
         }
     }
 
