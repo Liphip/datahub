@@ -127,7 +127,11 @@ class ConnectorResource {
     @Path("/{id}")
     fun get(@PathParam("id") id: String): Response {
         val connector = Connector.findById(UUID.fromString(id))
+        val tenantId = getTenantIdFromToken()
         return if (connector != null) {
+            if (tenantId != null && connector.tenant?.id != tenantId) {
+                return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+            }
             val configValue = try {
                 objectMapper.readValue(connector.config, Map::class.java)
             } catch (_: Exception) {
@@ -153,7 +157,11 @@ class ConnectorResource {
     @Transactional
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
         val connector = Connector.findById(UUID.fromString(id))
+        val tenantId = getTenantIdFromToken()
         return if (connector != null) {
+            if (tenantId != null && connector.tenant?.id != tenantId) {
+                return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+            }
             request["name"]?.let { connector.name = it as String }
             request["connectorType"]?.let { connector.connectorType = ConnectorType.valueOf((it as String).uppercase()) }
             request["direction"]?.let { connector.direction = Direction.valueOf((it as String).uppercase()) }
@@ -186,7 +194,11 @@ class ConnectorResource {
     @Transactional
     fun delete(@PathParam("id") id: String): Response {
         val connector = Connector.findById(UUID.fromString(id))
+        val tenantId = getTenantIdFromToken()
         return if (connector != null) {
+            if (tenantId != null && connector.tenant?.id != tenantId) {
+                return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+            }
             connector.delete()
             Response.noContent().build()
         } else {
