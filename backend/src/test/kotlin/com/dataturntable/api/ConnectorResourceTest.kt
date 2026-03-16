@@ -1,5 +1,6 @@
 package com.dataturntable.api
 
+import com.dataturntable.test.TestAuthHelpers
 import io.quarkus.test.junit.QuarkusTest
 import org.junit.jupiter.api.Test
 
@@ -9,40 +10,6 @@ import org.hamcrest.CoreMatchers.*
 @QuarkusTest
 class ConnectorResourceTest {
 
-    private fun createAdminToken(): String {
-        val setupBody = """
-            {
-                "email": "admin@example.com"
-            }
-        """.trimIndent()
-
-        val setupResponse = given()
-            .contentType("application/json")
-            .body(setupBody)
-        .`when`()
-            .post("/api/internal/v1/auth/setup")
-        .then()
-            .statusCode(201)
-            .extract()
-            .body()
-            .jsonPath()
-
-        val password = setupResponse.getString("password")
-        val passwordHash = java.util.Base64.getEncoder().encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(password.toByteArray()))
-
-        return given()
-            .contentType("application/json")
-            .body(mapOf("email" to "admin@example.com", "passwordHash" to passwordHash))
-        .`when`()
-            .post("/api/internal/v1/auth/login")
-        .then()
-            .statusCode(200)
-            .extract()
-            .body()
-            .jsonPath()
-            .getString("token")
-    }
-    
     @Test
     fun testListConnectorsRequiresAuth() {
         given()
@@ -79,7 +46,7 @@ class ConnectorResourceTest {
     
     @Test
     fun testCreateConnectorStoresJsonConfig() {
-        val token = createAdminToken()
+        val token = TestAuthHelpers.createAdminToken()
 
         val config = mapOf("host" to "test.local", "port" to 1883)
 
