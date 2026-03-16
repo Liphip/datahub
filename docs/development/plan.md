@@ -19,29 +19,179 @@ DataTurntable is a high-performance, scalable data hub for IoT/sensor data proce
 
 ---
 
-## Current Implementation Notes (Users + Connectors)
+## Ship-Readiness Plan
 
-- Management API now exposes `/auth-users` for platform login identities and `/tenants/{tenantId}/memberships` for tenant access assignments.
-- Legacy `/users` management endpoint has been removed from active API coverage to avoid drift from the auth-user + membership model.
-- Membership API supports `PATCH` updates and rejects duplicate `(authUserId, tenantId)` assignments.
-- Membership role assignment now enforces tenant scoping, and delete/update operations verify the membership belongs to the path tenant.
-- Root-tenant admins are prevented from receiving sub-tenant memberships.
-- Connector configs remain encrypted at rest and sensitive keys (`password`, `secret`, `token`, `apiKey`, etc.) are masked in list/get responses.
-- Connector list/create/update reject invalid `connectorType`/`direction` values with `400` instead of server errors.
-- Pipeline create/update accepts `graphDefinition`; IMPORT/EXPORT nodes are validated to require `connectorId` and compatible connector direction.
-- Frontend pipeline editor includes connector pickers for IMPORT/EXPORT nodes and submits connector-aware DAG definitions.
-- Module API now validates `type`/`moduleType` enum values and returns `400` for invalid values.
-- Alerts API now validates `tenantId`/`channelId`/`pipelineId` UUIDs and `channelType` enum values with `400` responses.
-- Alert create endpoints now accept `tenantId` via query param and request body for compatibility with existing clients.
-- Data API now validates `{tenantId}` path UUIDs consistently and returns `400` for malformed tenant IDs.
-- Frontend Alerts page now supports pipeline selection on rule creation and direct delete actions for channels/rules.
-- Frontend Data Explorer now supports time-range/row-limit query controls, table refresh, and table deletion actions.
-- Frontend Connectors page now supports type/direction filtering and edit flow (with optional config override).
-- Frontend Pipelines page: inline run-history dots, inline delete confirmation, toast notifications.
-- Frontend Users page: role picker on invite, inline role-edit per membership, inline remove confirmation, toast notifications.
-- Frontend Modules page: inline delete confirmation, error/toast banners.
-- Frontend Dashboard: aggregates runs from all pipelines, shows module/connector counts, quick pipeline sidebar list.
+This section catalogues every known gap between the current codebase and a shippable product, grouped by layer, with a clear priority ordering. Items are marked **[BLOCKER]** (product cannot work without it), **[HIGH]** (significantly degrades user experience), or **[LOW]** (nice-to-have / polish).
 
+---
+
+### 1. Authentication & Session
+
+| # | Gap | Priority | Notes |
+|---|-----|----------|-------|
+| A1 | **`/auth/register` endpoint is absent** — the frontend `api.register()` call has no backend handler. There is only `/auth/setup` (first-run) and `/auth/login`. Normal users cannot self-register. | BLOCKER | Either expose `/auth/register` (delegates to auth-user + membership create) or remove it from the frontend and rely entirely on admin-invite flow. |
+| A2 | **JWT `tenantId` claim is set from the user's *first* membership only.** If the user switches tenant context or belongs to many tenants, the token becomes stale. No `/auth/switch-tenant` endpoint exists. | HIGH | Add `POST /auth/switch-tenant` that issues a new short-lived JWT with a different `tenantId` claim, or store tenantId client-side and pass it per-request. |
+| A3 | **`/auth/me` response shape mismatch.** `AuthService.toUserDto` returns `tenantId` as a string that may be `"null"` when the user has no membership. Frontend reads `user.tenantId` and uses it as a required UUID parameter; a `"null"` string breaks every API call. | BLOCKER | Guard `toUserDto` so `tenantId` is `null` (JSON null) not the string `"null"` when absent. |
+| A4 | **Password hash storage is inconsistent.** `AuthUserResource.create` stores the raw client hash (SHA-256 base64) directly as `passwordHash`, while `AuthService.setup` wraps it with `BCrypt.hashpw`. `AuthService.login` calls `BCrypt.checkpw`, so users created via `/auth-users` can never log in. | BLOCKER | `AuthUserResource.create/update` must BCrypt-hash the incoming SHA-256 hash before persisting, same as `AuthService.setup` does. |
+| A5 | **`ModuleEditor` and `PipelineEditor` still call `alert()`/`confirm()`** for save success/failure and run trigger. | HIGH | Replace with inline toast notifications (same pattern as Pipelines page). |
+
+---
+
+### 2. Users (`/auth-users` + Memberships)
+
+| # | Gap | Priority | Notes |
+|---|-----|----------|-------|
+| U1 | **`AuthUserResource.create` uses `getTenantIdFromToken()` for auth context but the frontend does not pass it**; result is a 403 for admins whose token holds the root tenant. The frontend `api.createUser()` call hits `POST /auth-users` without a `tenantId` query param. | BLOCKER | Add `@QueryParam("tenantId")` to `AuthUserResource.create` (same pattern as other resources), or resolve the tenantId from the token more robustly (superadmin can create anywhere). |
+| U2 | **`MembershipResource.list` requires `manage:tenant` ability**, which is correct, but the default Viewer/Editor roles seeded by `TenantService.createDefaultRoles` do NOT include `manage:tenant`. Only `Tenant Admin` does. Any non-admin user who loads the Users page gets a 403, causing the page to show nothing but an error. | HIGH | Document the required role clearly. The frontend Users page should gracefully hide the invite/delete actions for non-admin users rather than showing an error banner for the whole page. |
+| U3 | **Users page re-loads all users via `api.getUsers(tenantId)` after every mutation, but `api.getUsers` calls `GET /auth-users?tenantId=...` which requires `read:user` ability** — this ability is not included in the default Viewer role either. Any non-admin who lands on the Users page gets a wall of 403s. | HIGH | Same fix as U2: ability gate the UI components individually. |
+| U4 | **No way to deactivate/reactivate a user** (set `isActive = false`) from the frontend. The backend `PATCH /auth-users/{id}` supports `isActive`, but the UI has no control for it. | LOW | Add a toggle in the user row. |
+| U5 | **`MembershipResource` returns only `{ id, authUserId, roleId, abilities }` — no `roleName` or `email`.** The Users page joins memberships with the users list client-side using `authUserId`, which requires that `getUsers()` and `getTenantMemberships()` return the same set and that UUIDs align. If a user has no membership (they were created but not yet added), they appear in the users list but have no role displayed. | LOW | Include `roleName` and `authUserEmail` in the membership list response or do the join server-side. |
+
+---
+
+### 3. Modules
+
+| # | Gap | Priority | Notes |
+|---|-----|----------|-------|
+| M1 | **`ModuleResource.get` (GET `/modules/{id}`) returns only `{ id, name, moduleType }` — no `versions`, `description`, or `isActive`.** `ModuleEditor` calls `api.getModule(id)` and then accesses `data.versions[0].code`, which will be `undefined`, so the editor always loads with an empty template instead of the last saved code. | BLOCKER | Extend `ModuleResource.get` to include `description`, `isActive`, and the full version list (or latest version code). |
+| M2 | **`ModuleEditor.handleSave` calls `alert()` on success/failure** — UX regression vs rest of UI. | HIGH | Replace with inline toast. |
+| M3 | **`ModuleVersion` sidebar in `ModuleEditor` renders `data.versions` from the initial `getModule` response.** Because `get` doesn't include versions (see M1), the sidebar always shows "No versions yet" even after saving. | HIGH | Fix M1; additionally refresh the version list after a successful save. |
+| M4 | **No ability to load a previous version** into the editor. The version history sidebar is read-only; clicking a version entry does nothing. | LOW | Add a "Load" button on each version entry to populate the editor. |
+| M5 | **`ModuleResource.list` does not return `description` or `versions`.** The Modules list page shows version count from `module.versions?.length`, which is always `undefined/0` from the API. | LOW | Include `description` and a `versionCount` field in the list response. |
+
+---
+
+### 4. Pipelines
+
+| # | Gap | Priority | Notes |
+|---|-----|----------|-------|
+| P1 | **`PipelineResource.list` and `get` omit `description`, `createdAt`, `importModuleVersionId`, `processingModuleVersionIds`, `exportModuleVersionIds`, `isActive` (only returns `id`, `name`, `isActive`, `graphDefinition`).** `PipelineEditor` reads these fields from `api.getPipeline(id)` and shows blank selectors on load of an existing pipeline. | BLOCKER | Extend `PipelineResource.get` and `list` responses to include all pipeline fields the frontend needs. |
+| P2 | **`PipelineEditor` uses module IDs as `moduleVersionId` values in `graphDefinition` nodes.** The pipeline node schema requires `moduleVersionId` (a module *version* UUID), but the editor `importModules` dropdown options have `value={m.id}` (the *module* UUID). When the pipeline executes, it will look up a non-existent module version. | BLOCKER | The editor must list module versions (via `GET /modules/{id}/versions`), not modules, in its dropdowns. Or the backend must accept module IDs and resolve the latest active version at runtime. |
+| P3 | **`PipelineEditor.handleRun` still calls `alert()`** on success/failure. | HIGH | Replace with inline toast. |
+| P4 | **`PipelineResource.trigger` (`POST /pipelines/{id}/run`) is not `@Transactional`** — the `run.persist()` call will fail silently outside a transaction in many JPA configurations. | HIGH | Add `@Transactional` to the trigger method. |
+| P5 | **`PipelineResource.getRuns` uses `PipelineRun.findByPipelineId(UUID)` which is a Panache static helper** — the same pattern that caused `This method is normally automatically overridden...` errors elsewhere. | HIGH | Replace with `em.createQuery(...)` pattern. |
+| P6 | **The runs response from `GET /pipelines/{id}/runs` omits `triggerType`, `startedAt`, `completedAt`, `errorMessage`** — only `id`, `status`, `startedAt` are returned. The `PipelineRun` type in the frontend expects all of them. | LOW | Extend the runs map response. |
+
+---
+
+### 5. Connectors
+
+| # | Gap | Priority | Notes |
+|---|-----|----------|-------|
+| C1 | **`ConnectorResource` tenant ID is read from query param `tenantId` but is not validated as a UUID** before use in `UUID.fromString` for list/create — an invalid tenant UUID will throw an unhandled 500. | HIGH | Already partially handled for direction/type; add the same UUID validation guard for `tenantId`. |
+| C2 | **`ConnectorResource.get` (GET `/connectors/{id}`) has no authentication or tenancy check** — any authenticated user can read any connector regardless of tenant. | HIGH | Add tenant ownership check: `connector.tenant.id` must match the caller's accessible tenants. |
+| C3 | **Config masking runs at read time but the frontend edit form sends an empty config** when the user edits a connector without filling in the config field, which would overwrite the stored config with an empty object `{}`. | HIGH | Backend `PATCH /connectors/{id}` should ignore/skip a missing config key (already the case for `null`), but it should also treat an empty object `{}` as "no change" rather than overwriting. |
+
+---
+
+### 6. Alerts
+
+| # | Gap | Priority | Notes |
+|---|-----|----------|-------|
+| AL1 | **`AlertResource` has no `PATCH` endpoints for channels or rules** (update/enable/disable). The frontend Alerts page has no edit flow for rules or channels — only create and delete. | HIGH | Add `PATCH /alerts/channels/{id}` and `PATCH /alerts/rules/{id}` for at minimum name/enabled/config updates. |
+| AL2 | **`AlertResource.createRule` stores `condition` as a raw `toString()` of the request object** (e.g., `{field=temperature, operator=>, value=100}`), not as JSON. When the frontend sends a map, `conditionRaw.toString()` produces Kotlin map notation. | BLOCKER | Serialize `conditionRaw` to JSON using `ObjectMapper` before storing. |
+| AL3 | **`AlertDispatcher` exists but has no integration with `AlertRule.condition`** — no dispatcher logic calls conditions against pipeline output. Alerts are purely static records; the evaluation engine is unimplemented. | HIGH | Implement `AlertDispatcher.evaluate(run, data)` that queries enabled rules for the pipeline's tenant and evaluates their conditions. Wire into `PipelineConsumer`. |
+
+---
+
+### 7. Tenants
+
+| # | Gap | Priority | Notes |
+|---|-----|----------|-------|
+| T1 | **`TenantResource` has no authentication or RBAC checks on any endpoint.** Any authenticated user can list, create, update, or delete tenants. Only the frontend guards the Tenants page via `user?.superadmin`. | BLOCKER | Add superadmin/`manage:tenant` checks to `TenantResource`. |
+| T2 | **`TenantResource.create` allows creating a second root tenant** only if called with no `parentId` and the check for existing root tenants is correct, but there is no role seeding for new sub-tenants created via the API directly (only `TenantService.createTenant` calls `createDefaultRoles`, while `TenantResource.create` uses raw `em.persist` without calling the service). New sub-tenants have no roles, so their memberships cannot be created from the frontend. | BLOCKER | `TenantResource.create` must call `tenantService.createDefaultRoles(tenant)` after persisting. |
+| T3 | **`Tenants.tsx` still uses `alert()` and `confirm()`** for delete guard and error. | HIGH | Replace with inline toast/confirm pattern. |
+| T4 | **`TenantResource.list` returns only root tenants (`WHERE t.parent IS NULL`).** `Tenants.tsx` then calls `getTenantChildren` per root tenant. There is no recursive depth — grandchild tenants never appear in the UI. | LOW | Either return the full tree recursively from `GET /tenants`, or add `?recursive=true`. |
+
+---
+
+### 8. Data Explorer
+
+| # | Gap | Priority | Notes |
+|---|-----|----------|-------|
+| D1 | **`DataResource` builds raw SQL queries with string interpolation from user-supplied `table`, `start`, `end`, `limit` parameters** — this is a SQL injection vulnerability. The `tableName` is partially sanitised via `sanitizeTableName`, but `start`, `end`, and `limit` are interpolated directly. | BLOCKER | Use parameterised queries or at minimum validate that `start`/`end` are ISO timestamps and `limit` is an integer before interpolation. |
+| D2 | **`DataResource.queryData` tries to query `tenant_{tenantId}_measurements` using H2 in tests**, but H2 doesn't support `TIMESTAMPTZ`; the create-table query will fail on test environments. The production path (PostgreSQL/TimescaleDB) is fine, but end-to-end tests will break. | LOW | Use Flyway conditional DDL or skip the ensure-table call in the H2 test profile. |
+| D3 | **The "short table name" logic in `Data.tsx`** correctly strips the `tenant_{uuid}_` prefix for display, but passes the short name to `api.deleteTable` and `api.queryData` as the `table` param. The backend builds `tenant_{tenantId}_{table}` from the param, so this round-trips correctly — but only if the frontend-computed prefix matches the backend format exactly. Any UUID with uppercase letters will cause a mismatch (UUIDs from some databases are uppercase). | LOW | Normalise UUID to lowercase consistently on both sides. |
+
+---
+
+### 9. Roles
+
+| # | Gap | Priority | Notes |
+|---|-----|----------|-------|
+| R1 | **`RoleResource` has no RBAC guard on `POST /roles` (create) or `DELETE /roles/{id}`** — any authenticated user can create or delete roles. | HIGH | Add `manage:tenant` ability check on create/delete/update. |
+| R2 | **The default roles seeded in `V1__Initial_schema.sql` use ability strings like `module:read`, `pipeline:write`, etc., but `SecurityUtils.hasAbility` checks for strings like `read:user`, `write:user`, `manage:tenant`.** These are two different namespacing conventions. The RBAC gate on `AuthUserResource` requires `read:user` but no default role grants it — only `module:read` is seeded. This means the Users page 403s for everyone except superadmin.** | BLOCKER | Standardise ability strings across the codebase. Either update all resource ability checks to use `module:read` / `pipeline:write` convention, or update the seeded roles to use `read:user` / `write:user` convention. Then update `TenantService.createDefaultRoles` to match. |
+| R3 | **`RoleResource.create` stores `abilities` as `it.toString()` (a Kotlin list toString like `[manage:tenant, read:user]`)** instead of a JSON array string. The role ability checks later do string contains which might accidentally match partial strings. | HIGH | Serialize `abilities` to JSON array string using `ObjectMapper` in `RoleResource.create`. |
+
+---
+
+### 10. Frontend — Cross-cutting
+
+| # | Gap | Priority | Notes |
+|---|-----|----------|-------|
+| F1 | **No first-run / setup flow in the UI.** `POST /auth/setup` is the only way to create the initial admin user and root tenant, but there is no `/setup` page or route. New deployments require calling the API directly (e.g., via curl). | HIGH | Add a `/setup` route that calls `api.register` (or a dedicated setup call) when no users exist yet. |
+| F2 | **The `401` interceptor in `api.ts` redirects to `/login` on every 401.** If the setup endpoint returns 401 (it doesn't require auth, but the interceptor fires on any 401 response from any call), users will be stuck in a redirect loop on first boot. | HIGH | Exempt the setup/register route from the 401-redirect interceptor. |
+| F3 | **`/api/register` in `api.ts` calls `POST /auth/register` which does not exist** (only `/auth/setup` and `/auth/login`). Clicking any "register" link will 404. | BLOCKER | Wire `api.register` to `/auth/setup` for first-run, or add a proper `/auth/register` endpoint. |
+| F4 | **`PipelineEditor` and `ModuleEditor` navigate to a pipeline/module ID route immediately after creating a new item**, before the server response is confirmed. If save fails, the user is left on a broken route. | LOW | Wait for `navigate()` until after the create call resolves successfully. (Already done for pipelines; ModuleEditor redirects on click of "Back".) |
+| F5 | **No loading/error boundary at the app level.** If an API call fails during initial load (e.g., network error), all pages silently show empty state with no indication of a network problem. | LOW | Add an `ErrorBoundary` wrapper or a global error state that shows a "Failed to connect to API" banner. |
+| F6 | **The `Tenants` page is only visible to `user?.superadmin`, but this flag is derived from the JWT which is set correctly only for the root-tenant admin.** Any regular Tenant Admin of a sub-tenant cannot access tenant management even though sub-tenant management should be permitted. | LOW | Revisit the `user.superadmin` check — perhaps show the page to anyone with `manage:tenant` ability. |
+
+---
+
+### 11. Pipeline Execution Engine
+
+| # | Gap | Priority | Notes |
+|---|-----|----------|-------|
+| E1 | **`PipelineConsumer` and `DockerService` exist but are stub/incomplete.** Triggering a pipeline creates a `PipelineRun` record but does not actually execute any modules. The run stays in `PENDING` status forever. | HIGH | Implement at minimum: (a) update run to `RUNNING` on trigger, (b) call `DockerService` or a mock to execute the graph, (c) update run to `SUCCESS`/`FAILED` with metrics. |
+| E2 | **The `PipelineRun.trigger` endpoint is `POST /pipelines/{id}/run` and is not `@Transactional`** (covered in P4). The `run.persist()` call happens outside a transaction. | HIGH | Add `@Transactional`. |
+| E3 | **`IngestResource` (`POST /api/v1/ingest/{pipelineId}`) and `WebSocketIngestResource` route data to Kafka but `PipelineConsumer` is not connected** (confirmed by the SRMSG00207 warning at startup: "SubscriberMethod has no upstream"). Data pushed via ingest arrives in Kafka but is never consumed by the pipeline. | HIGH | Wire `PipelineConsumer` channel to the correct Kafka topic or fix the messaging config. |
+
+---
+
+### 12. Database Schema Mismatches
+
+| # | Gap | Priority | Notes |
+|---|-----|----------|-------|
+| S1 | **`users` table in `V1__Initial_schema.sql` has `UNIQUE(tenant_id, email)` constraint**, but the `User` entity maps `email` with `unique = true` (column-level unique). The combination means a user's email must be unique globally (JPA constraint), which is correct for the auth-user model, but the SQL constraint is `UNIQUE(tenant_id, email)` — a weaker constraint that allows the same email in different tenants. When two tenants try to register the same email, JPA will reject it but the DB would allow it. | LOW | Align: either drop the compound unique constraint in the SQL, or change the JPA annotation to match. The JPA `unique=true` (global uniqueness) is the correct one for the auth-user model. |
+| S2 | **`memberships` SQL column is `user_id`** but the JPA `Membership` entity maps `@JoinColumn(name = "auth_user_id")` (or similar name — needs verification against the entity definition). If the column names don't match, Hibernate will fail to map the relationship. | BLOCKER | Verify `Membership` entity `@JoinColumn` name matches the SQL `user_id` column in the `memberships` table. Add a Flyway migration if a column rename is needed. |
+| S3 | **`code_modules.module_type` column CHECK constraint uses lowercase** (`'import', 'processing', 'export', 'alert'`) but the JPA `ModuleType` enum is uppercase (`IMPORT`, etc.) with `EnumType.STRING`. PostgreSQL CHECKs are case-sensitive, so inserting `IMPORT` will fail the constraint. | BLOCKER | Fix the CHECK constraint in the migration (or add a `V2` migration) to use uppercase values, OR add `@Column(name="module_type")` with a converter to lowercase. |
+| S4 | **`alert_channels.channel_type` and `alert_history.severity`/`status` CHECK constraints use lowercase**, same issue as S3. The JPA enums are uppercase. | BLOCKER | Same fix as S3. |
+| S5 | **`pipeline_runs.status` and `trigger_type` CHECK constraints use lowercase** (`'pending', 'running'`, etc.) but `PipelineRun` entity uses uppercase enums. | BLOCKER | Same fix as S3. |
+
+---
+
+### Priority Order for Implementation
+
+**Must fix before any user can log in and use the system:**
+1. S2 — `memberships.user_id` vs JPA column name  
+2. S3–S5 — enum case mismatch in DB CHECK constraints  
+3. A4 — password hash not BCrypt-wrapped on user create  
+4. A3 — `tenantId` serialised as `"null"` string  
+5. R2 — ability string convention mismatch (everyone 403s)  
+6. T2 — new tenants missing default roles  
+7. A1/F3 — no `/auth/register` or `/auth/setup` frontend route  
+
+**Must fix before core features work:**
+8. P1 — pipeline get/list missing fields  
+9. P2 — module IDs used where module version IDs are needed  
+10. M1 — module get missing versions  
+11. AL2 — alert condition stored as Kotlin map notation  
+12. T1 — tenant endpoints unprotected  
+13. P4/P5 — pipeline trigger not transactional; getRuns uses static Panache  
+
+**Should fix before release:**
+14. U1–U3 — user management 403s for non-superadmin  
+15. A2 — no tenant-switching mechanism  
+16. AL1 — no rule/channel update endpoints  
+17. AL3 — alert evaluation engine stub  
+18. E1–E3 — pipeline execution engine incomplete  
+19. R1, R3 — role endpoint missing guards and ability serialisation  
+20. C2, C3 — connector tenancy check and empty config overwrite  
+21. D1 — SQL injection in data queries  
+22. F1, F2 — setup page and interceptor loop  
+23. A5, M2, M3, P3, T3 — remaining `alert()`/`confirm()` calls  
+
+---
 
 ## Architecture
 
