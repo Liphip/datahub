@@ -1,5 +1,6 @@
 package com.dataturntable.auth
 
+import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
 import io.quarkus.test.junit.QuarkusTest
@@ -28,18 +29,25 @@ class UserTest {
         role.persist()
         
         val user = User().apply {
-            this.tenant = tenant
             email = "test@example.com"
             passwordHash = "hash"
-            this.role = role
         }
         user.persist()
         
+        val membership = Membership().apply {
+            this.authUser = user
+            this.tenant = tenant
+            this.role = role
+        }
+        membership.persist()
+        
         // Then
-        assertTrue(user.hasAbility("module:read"))
-        assertTrue(user.hasAbility("module:write"))
-        assertTrue(user.hasAbility("pipeline:execute"))
-        assertFalse(user.hasAbility("module:delete"))
+        // Test that user has abilities from membership
+        val abilities = user.getAllAbilities()
+        assertTrue(abilities.contains("module:read"))
+        assertTrue(abilities.contains("module:write"))
+        assertTrue(abilities.contains("pipeline:execute"))
+        assertFalse(abilities.contains("module:delete"))
     }
     
     @Test
@@ -77,17 +85,25 @@ class UserTest {
         role.persist()
         
         val user = User().apply {
-            this.tenant = tenant
             email = "test2@example.com"
             passwordHash = "hash"
-            this.role = role
             abilities = "[\"pipeline:execute\"]"
         }
         user.persist()
         
-        // Then - should have role abilities AND additional abilities
-        assertTrue(user.hasAbility("module:read"))
-        assertTrue(user.hasAbility("pipeline:execute"))
+        val membership = Membership().apply {
+            this.authUser = user
+            this.tenant = tenant
+            this.role = role
+        }
+        membership.persist()
+        
+        // Then
+        // Test that user has abilities from role and direct abilities
+        val abilities = user.getAllAbilities()
+        assertTrue(abilities.contains("module:read"))
+        assertTrue(abilities.contains("pipeline:execute"))
+        assertTrue(abilities.contains("data:write"))
     }
     
     @Test
@@ -124,13 +140,18 @@ class UserTest {
         role.persist()
         
         val user = User().apply {
-            this.tenant = tenant
             email = "test@example.com"
             passwordHash = "hash"
-            this.role = role
             abilities = "[\"data:write\"]"
         }
         user.persist()
+        
+        val membership = Membership().apply {
+            this.authUser = user
+            this.tenant = tenant
+            this.role = role
+        }
+        membership.persist()
         
         // When
         val abilities = user.getAllAbilities()

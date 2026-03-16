@@ -6,9 +6,6 @@ import com.dataturntable.tenant.Tenant
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase
 import jakarta.persistence.*
 import java.time.Instant
-import java.util.Collections
-import java.util.HashSet
-import java.util.Set
 import java.util.UUID
 
 @Entity
@@ -72,40 +69,49 @@ open class User : PanacheEntityBase() {
         fun countUsers(): Long = count()
     }
     
+    fun getMemberships(): List<Membership> {
+        val userId = this.id ?: return emptyList()
+        return Membership.findByUserId(userId)
+    }
+    
     fun getPrimaryTenant(): Tenant? {
-        return memberships.firstOrNull()?.tenant
+        return getMemberships().firstOrNull()?.tenant
     }
     
     fun getMembershipForTenant(tenantId: UUID): Membership? {
-        return memberships.firstOrNull { it.tenant?.id == tenantId }
+        return getMemberships().firstOrNull { it.tenant?.id == tenantId }
+    }
+    
+    fun isSuperAdmin(): Boolean {
+        // Superadmin is defined as having TenantAdmin role in the root tenant
+        if (isSuperadmin) return true // backward compatibility
+        return getMemberships().any { membership ->
+            membership.role?.name == "Tenant Admin" && membership.tenant?.parent == null
+        }
     }
     
     fun hasAbility(ability: String): Boolean {
-        if (isSuperadmin) return true
+        if (isSuperAdmin()) return true
         if (abilities?.contains("*") == true) return true
         if (abilities?.contains(ability) == true) return true
         
-        // Check role-based abilities
-        val roleAbilities = memberships.map { it.role }.filterNotNull().flatMap { it.getAbilitiesList() }
+        val roleAbilities = getMemberships().map { it.role }.filterNotNull().flatMap { it.getAbilitiesList() }
         if (roleAbilities.contains("*") || roleAbilities.contains(ability)) return true
         
-        // Check direct abilities
         return abilities?.contains(ability) == true
     }
     
     fun getAllAbilities(): Set<String> {
-        val result = HashSet<String>()
-        if (isSuperadmin || abilities?.contains("*") == true) {
+        val result = mutableSetOf<String>()
+        if (isSuperAdmin() || abilities?.contains("*") == true) {
             result.add("*")
             return result
         }
         
-        // Add role abilities
-        memberships.forEach { membership ->
+        getMemberships().forEach { membership ->
             membership.role?.getAbilitiesList()?.forEach { result.add(it) }
         }
         
-        // Add direct abilities
         try {
             abilities?.let {
                 val start = it.indexOf('[')
@@ -123,7 +129,13 @@ open class User : PanacheEntityBase() {
     }
     
     fun canAccessTenant(tenantId: UUID): Boolean {
-        if (isSuperadmin) return true
-        return memberships.any { it.tenant?.id == tenantId }
+        if (isSuperAdmin()) return true
+        // Access is granted if the user has a membership for the tenant or any ancestor
+        val memberships = getMemberships()
+        return memberships.any { membership ->
+            membership.tenant?.let { tenant ->
+                tenant.id == tenantId || tenant.hasDescendant(tenantId)
+            } == true
+        }
     }
 }

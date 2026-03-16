@@ -40,7 +40,7 @@ class TenantService {
         return tenant
     }
     
-    private fun createDefaultRoles(tenant: Tenant) {
+    fun createDefaultRoles(tenant: Tenant) {
         val viewerRole = Role().apply {
             this.tenant = tenant
             name = "Viewer"

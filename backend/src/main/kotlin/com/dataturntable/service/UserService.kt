@@ -63,6 +63,7 @@ class UserService {
             this.abilities = if (abilities != null) objectMapper.writeValueAsString(abilities) else "[]"
         }
         membership.persist()
+        user.memberships.add(membership)
         
         return toDto(user)
     }
@@ -136,7 +137,7 @@ class UserService {
              firstName = user.firstName,
              lastName = user.lastName,
              tenantId = user.getPrimaryTenant()?.id.toString(),
-             roleName = user.getMembershipForTenant(user.getPrimaryTenant()?.id)?.role?.name,
+             roleName = user.getMembershipForTenant(user.getPrimaryTenant()?.id ?: UUID.randomUUID())?.role?.name,
              abilities = user.getAllAbilities().toList(),
              superadmin = user.isSuperadmin
          )

@@ -55,7 +55,11 @@ class AuthService {
     
     private fun findUserByEmail(email: String, tenantId: String?): User? {
         val query = if (tenantId != null) {
-            em.createQuery("SELECT u FROM User u WHERE u.email = :email AND u.tenant.id = :tenantId", User::class.java)
+            // Find a user with the given email that has a membership in the requested tenant
+            em.createQuery(
+                "SELECT u FROM User u JOIN u.memberships m WHERE u.email = :email AND m.tenant.id = :tenantId",
+                User::class.java
+            )
                 .setParameter("email", email)
                 .setParameter("tenantId", UUID.fromString(tenantId))
         } else {
@@ -81,38 +85,38 @@ class AuthService {
         }
         em.persist(tenant)
         
+        // Create default roles for the root tenant
+        tenantService.createDefaultRoles(tenant)
+        em.flush()
+        
         val password = request.password ?: generateRandomPassword(16)
         val passwordHash = hashPassword(password)
         
         val user = User().apply {
-            this.tenant = tenant
             this.email = request.email
             this.passwordHash = BCrypt.hashpw(passwordHash, BCrypt.gensalt())
             this.firstName = "Admin"
             this.lastName = "User"
-            this.isSuperadmin = true
             this.isActive = true
             this.createdAt = java.time.Instant.now()
             this.updatedAt = java.time.Instant.now()
         }
         
         user.persist()
-        // Flush to ensure the user is visible in the same transaction
         em.flush()
         
-        // Ensure user has a membership in the tenant
-        val membership = user.getMembershipForTenant(tenant.id)
-        if (membership == null) {
-            // Create default membership
-            val defaultMembership = com.dataturntable.tenant.Membership().apply {
-                this.authUser = user
-                this.tenant = tenant
-                this.role = com.dataturntable.tenant.Role.findDefaultForTenant(tenant.id) ?: com.dataturntable.tenant.Role.findById(UUID.fromString("00000000-0000-0000-0000-000000000002")) // Viewer role
-                this.abilities = "[]"
-                this.createdAt = java.time.Instant.now()
-            }
-            defaultMembership.persist()
+        // Assign Tenant Admin membership for the root tenant
+        val adminRole = com.dataturntable.tenant.Role.findByTenantId(tenant.id!!)
+            .firstOrNull { it.name == "Tenant Admin" }
+        val membership = com.dataturntable.tenant.Membership().apply {
+            this.authUser = user
+            this.tenant = tenant
+            this.role = adminRole
+            this.abilities = "[]"
+            this.createdAt = java.time.Instant.now()
         }
+        membership.persist()
+        user.memberships.add(membership)
 
         return SetupResponse(
             email = user.email ?: request.email,
@@ -122,24 +126,30 @@ class AuthService {
     }
     
     private fun hashPassword(password: String): String {
+        // The client hashes the plaintext password using SHA-256 and Base64-encodes it before sending.
+        // We replicate that here to ensure consistent hashing when storing and comparing.
         val digest = MessageDigest.getInstance("SHA-256")
         val hash = digest.digest(password.toByteArray())
-        return hash.joinToString("") { "%02x".format(it) }
+        return Base64.getEncoder().encodeToString(hash)
     }
     
     private fun generateJwtToken(user: User): String {
         val groups = HashSet<String>()
-        if (user.isSuperadmin) groups.add("superadmin")
-        // Get role from membership
-        user.getPrimaryTenant()?.let { tenant ->
-            user.getMembershipForTenant(tenant.id)?.role?.name?.let { groups.add(it) }
-        }
-        
+        if (user.isSuperAdmin()) groups.add("superadmin")
+
+        // Prefer a root-tenant membership if present (superadmin scope), otherwise pick the first membership
+        val primaryMembership = user.getMemberships().firstOrNull { it.tenant?.parent == null }
+            ?: user.getMemberships().firstOrNull()
+
+        primaryMembership?.role?.name?.let { groups.add(it) }
+
+        val tenantId = primaryMembership?.tenant?.id?.toString()
+
         return Jwt.issuer("https://dataturntable.io")
             .subject(user.id.toString())
             .upn(user.email)
             .groups(groups)
-            .claim("tenantId", user.getPrimaryTenant()?.id?.toString())
+            .claim("tenantId", tenantId)
             .claim("email", user.email)
             .expiresIn(3600L)
             .sign()
@@ -166,15 +176,16 @@ class AuthService {
     }
     
     private fun toUserDto(user: User): UserDto {
+         val primaryTenant = user.getPrimaryTenant()
          return UserDto(
              id = user.id.toString(),
              email = user.email ?: "",
              firstName = user.firstName,
              lastName = user.lastName,
-             tenantId = user.tenant?.id.toString(),
-             roleName = user.role?.name,
+             tenantId = primaryTenant?.id.toString(),
+             roleName = user.getMembershipForTenant(primaryTenant?.id ?: UUID.randomUUID())?.role?.name,
              abilities = user.getAllAbilities().toList(),
-             superadmin = user.isSuperadmin
+             superadmin = user.isSuperAdmin()
          )
     }
     
