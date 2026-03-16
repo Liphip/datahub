@@ -261,8 +261,14 @@ class ApiService {
   }
 
   // Data
-  async queryData(tenantId: string, table: string, params?: Record<string, unknown>): Promise<unknown> {
-    const response = await this.client.get(`/data/${tenantId}/query`, { params: { table, ...params } });
+  async queryData(
+    tenantId: string,
+    table: string,
+    params?: Record<string, unknown>
+  ): Promise<{ data: unknown[]; count: number }> {
+    const response = await this.client.get<{ data: unknown[]; count: number }>(`/data/${tenantId}/query`, {
+      params: { table, ...params },
+    });
     return response.data;
   }
 
@@ -274,6 +280,10 @@ class ApiService {
   async listTables(tenantId: string): Promise<{ tables: { name: string; type: string }[] }> {
     const response = await this.client.get(`/data/${tenantId}/tables`);
     return response.data;
+  }
+
+  async deleteTable(tenantId: string, table: string): Promise<void> {
+    await this.client.delete(`/data/${tenantId}/tables/${encodeURIComponent(table)}`);
   }
 
   // Connectors

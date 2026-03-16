@@ -2,9 +2,15 @@ import { useEffect, useState } from 'react';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 
+type DataTable = {
+  rawName: string;
+  name: string;
+  type: string;
+};
+
 export default function Data() {
   const { user } = useAuthStore();
-  const [tables, setTables] = useState<{ name: string; type: string }[]>([]);
+  const [tables, setTables] = useState<DataTable[]>([]);
   const [selectedTable, setSelectedTable] = useState<string>('');
   const [data, setData] = useState<unknown[]>([]);
   const [loading, setLoading] = useState(true);
@@ -12,30 +18,58 @@ export default function Data() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newTableName, setNewTableName] = useState('');
   const [insertingData, setInsertingData] = useState(false);
+  const [deletingTable, setDeletingTable] = useState(false);
+  const [rowLimit, setRowLimit] = useState(100);
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const [error, setError] = useState('');
 
   const tenantId = user?.tenantId;
 
+  const getShortTableName = (rawName: string, tenant: string) => {
+    const tenantPrefix = `tenant_${tenant.replace(/-/g, '_')}_`;
+    return rawName.startsWith(tenantPrefix) ? rawName.slice(tenantPrefix.length) : rawName;
+  };
+
+  const fetchTables = async (tenant: string) => {
+    const result = await api.listTables(tenant);
+    const nextTables = result.tables.map((table) => ({
+      rawName: table.name,
+      name: getShortTableName(table.name, tenant),
+      type: table.type,
+    }));
+    setTables(nextTables);
+
+    if (nextTables.length === 0) {
+      setSelectedTable('');
+      setData([]);
+      return;
+    }
+
+    if (!nextTables.some((table) => table.name === selectedTable)) {
+      setSelectedTable(nextTables[0].name);
+    }
+  };
+
   useEffect(() => {
-    const fetchTables = async () => {
+    const load = async () => {
       if (!tenantId) {
         setLoading(false);
         return;
       }
       
       try {
-        const result = await api.listTables(tenantId);
-        setTables(result.tables);
-        if (result.tables.length > 0) {
-          setSelectedTable(result.tables[0].name);
-        }
+        await fetchTables(tenantId);
+        setError('');
       } catch (error) {
         console.error('Error fetching tables:', error);
+        setError('Failed to load tables');
       } finally {
         setLoading(false);
       }
     };
     
-    fetchTables();
+    load();
   }, [tenantId]);
 
   const handleQuery = async () => {
@@ -43,10 +77,16 @@ export default function Data() {
     
     setQuerying(true);
     try {
-      const result = await api.queryData(tenantId, selectedTable, { limit: 100 });
-      setData((result as { data: unknown[] }).data || []);
+      const params: Record<string, unknown> = { limit: rowLimit };
+      if (startTime) params.start = new Date(startTime).toISOString();
+      if (endTime) params.end = new Date(endTime).toISOString();
+
+      const result = await api.queryData(tenantId, selectedTable, params);
+      setData(result.data || []);
+      setError('');
     } catch (error) {
       console.error('Error querying data:', error);
+      setError('Failed to query table data');
     } finally {
       setQuerying(false);
     }
@@ -57,7 +97,6 @@ export default function Data() {
     
     setInsertingData(true);
     try {
-      // Create table by inserting sample data
       await api.insertData(tenantId, newTableName, [
         {
           time: new Date().toISOString(),
@@ -66,16 +105,48 @@ export default function Data() {
           tags: { location: 'warehouse' }
         }
       ]);
-      
-      // Refresh tables list
-      const result = await api.listTables(tenantId);
-      setTables(result.tables);
+
+      await fetchTables(tenantId);
+      setSelectedTable(newTableName);
       setShowCreateModal(false);
       setNewTableName('');
+      setError('');
     } catch (error) {
       console.error('Error creating table:', error);
+      setError('Failed to create table');
     } finally {
       setInsertingData(false);
+    }
+  };
+
+  const handleDeleteTable = async () => {
+    if (!tenantId || !selectedTable) return;
+    if (!confirm(`Delete table '${selectedTable}'? This cannot be undone.`)) return;
+
+    setDeletingTable(true);
+    try {
+      await api.deleteTable(tenantId, selectedTable);
+      await fetchTables(tenantId);
+      setError('');
+    } catch (error) {
+      console.error('Error deleting table:', error);
+      setError('Failed to delete table');
+    } finally {
+      setDeletingTable(false);
+    }
+  };
+
+  const handleRefreshTables = async () => {
+    if (!tenantId) return;
+    setLoading(true);
+    try {
+      await fetchTables(tenantId);
+      setError('');
+    } catch (error) {
+      console.error('Error refreshing tables:', error);
+      setError('Failed to refresh tables');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -104,13 +175,24 @@ export default function Data() {
     <div className="px-4 py-6 sm:px-0">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Data Explorer</h1>
-        <button onClick={() => setShowCreateModal(true)} className="btn-primary">
-          Create Table
-        </button>
+        <div className="flex gap-2">
+          <button onClick={handleRefreshTables} className="btn-secondary">
+            Refresh
+          </button>
+          <button onClick={() => setShowCreateModal(true)} className="btn-primary">
+            Create Table
+          </button>
+        </div>
       </div>
 
+      {error && (
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+          {error}
+        </div>
+      )}
+
       <div className="card mb-6">
-        <div className="flex space-x-4 items-end">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
           <div className="flex-1">
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Table
@@ -122,11 +204,40 @@ export default function Data() {
             >
               {tables.length === 0 && <option value="">No tables</option>}
               {tables.map((table) => (
-                <option key={table.name} value={table.name}>
+                <option key={table.rawName} value={table.name}>
                   {table.name} ({table.type})
                 </option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Start</label>
+            <input
+              type="datetime-local"
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
+              className="input"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">End</label>
+            <input
+              type="datetime-local"
+              value={endTime}
+              onChange={(e) => setEndTime(e.target.value)}
+              className="input"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Rows</label>
+            <input
+              type="number"
+              min={1}
+              max={1000}
+              value={rowLimit}
+              onChange={(e) => setRowLimit(Number(e.target.value) || 100)}
+              className="input"
+            />
           </div>
           <button
             onClick={handleQuery}
@@ -134,6 +245,13 @@ export default function Data() {
             className="btn-primary"
           >
             {querying ? 'Querying...' : 'Query'}
+          </button>
+          <button
+            onClick={handleDeleteTable}
+            disabled={!selectedTable || deletingTable}
+            className="btn-secondary border-red-300 text-red-700 hover:bg-red-50"
+          >
+            {deletingTable ? 'Deleting...' : 'Delete Table'}
           </button>
         </div>
       </div>
@@ -147,6 +265,9 @@ export default function Data() {
         <div className="card overflow-hidden">
           {data.length > 0 ? (
             <div className="overflow-x-auto">
+              <div className="px-6 py-3 text-sm text-gray-600 border-b border-gray-200">
+                Showing {Math.min(data.length, rowLimit)} row(s)
+              </div>
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
