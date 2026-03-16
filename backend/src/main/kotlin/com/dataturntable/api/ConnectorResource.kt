@@ -5,6 +5,7 @@ import com.dataturntable.connectors.Connector.Direction
 import com.dataturntable.connectors.Connector.ConnectorType
 import com.dataturntable.tenant.Tenant
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.dataturntable.security.EncryptionUtils
 import io.quarkus.security.Authenticated
 import jakarta.inject.Inject
 import jakarta.transaction.Transactional
@@ -54,8 +55,9 @@ class ConnectorResource {
         }
         
         return Response.ok(connectors.map { connector ->
+            val decrypted = EncryptionUtils.decrypt(connector.config ?: "{}")
             val configValue = try {
-                objectMapper.readValue(connector.config, Map::class.java)
+                objectMapper.readValue(decrypted, Map::class.java)
             } catch (_: Exception) {
                 emptyMap<String, Any>()
             }
@@ -96,7 +98,7 @@ class ConnectorResource {
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
         
         val configValue = request["config"] ?: emptyMap<String, Any>()
-        val configJson = try {
+        val configPlainJson = try {
             objectMapper.writeValueAsString(configValue)
         } catch (_: Exception) {
             "{}"
@@ -107,7 +109,7 @@ class ConnectorResource {
             this.tenant = tenant
             this.connectorType = ConnectorType.valueOf(connectorType.uppercase())
             this.direction = Direction.valueOf(direction.uppercase())
-            this.config = configJson
+            this.config = EncryptionUtils.encrypt(configPlainJson)
             this.description = request["description"] as? String
             this.isActive = true
             this.createdAt = java.time.Instant.now()
@@ -132,8 +134,9 @@ class ConnectorResource {
             if (tenantId != null && connector.tenant?.id != tenantId) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
+            val decrypted = EncryptionUtils.decrypt(connector.config ?: "{}")
             val configValue = try {
-                objectMapper.readValue(connector.config, Map::class.java)
+                objectMapper.readValue(decrypted, Map::class.java)
             } catch (_: Exception) {
                 emptyMap<String, Any>()
             }
@@ -166,11 +169,8 @@ class ConnectorResource {
             request["connectorType"]?.let { connector.connectorType = ConnectorType.valueOf((it as String).uppercase()) }
             request["direction"]?.let { connector.direction = Direction.valueOf((it as String).uppercase()) }
             request["config"]?.let {
-                connector.config = try {
-                    objectMapper.writeValueAsString(it)
-                } catch (_: Exception) {
-                    it.toString()
-                }
+                val plain = try { objectMapper.writeValueAsString(it) } catch (_: Exception) { it.toString() }
+                connector.config = EncryptionUtils.encrypt(plain)
             }
             request["description"]?.let { connector.description = it as String }
             request["isActive"]?.let { connector.isActive = it as Boolean }
