@@ -744,9 +744,11 @@ Rate limiting is **not yet implemented** (planned for V2). When implemented, the
 /login                    — Login page
 /                         — Dashboard (pipeline status, throughput, recent alerts)
 /tenants                  — Tenant hierarchy management
-/users                    — User and API key management
-/modules                  — Python module list
-/modules/:id              — Module editor (Monaco, save/version/deploy)
+/tenants/:id/members      — Tenant membership management (add/remove auth users)
+/auth-users               — Platform auth user management
+/connectors               — Connector library (define protocol interfaces)
+/modules                  — Python module list (type-badged, with empty-state guide)
+/modules/:id              — Module editor (Monaco, boilerplate, save/version/deploy)
 /pipelines                — Pipeline list
 /pipelines/new            — Pipeline builder
 /pipelines/:id            — Pipeline detail, run history, DLQ
@@ -782,17 +784,48 @@ Export Modules:
 ```
 Fan-out and fan-in are represented visually as multiple items in the same section. Full graph editing is a V2 feature.
 
+Each node selector dropdown shows the module name, type badge, and a one-line description to help users pick the right module without needing to open the code editor.
+
 ### 12.4 Module Code Editor
 
 The Monaco-based editor provides:
 
 - Python syntax highlighting
-- Boilerplate template on module type selection (IMPORT / PROCESSING / ALERT / EXPORT)
+- **Boilerplate template** pre-filled when a new module is created — the correct class skeleton (with docstrings and example logic) for the selected module type (IMPORT / PROCESSING / ALERT / EXPORT)
 - Validate button (dry-run syntax check via backend)
 - Save (creates new version), Deploy buttons
 - Version history list
 
-### 12.5 Data Visualisation (Built-in)
+Example boilerplate injected for a new PROCESSING module:
+
+```python
+class ProcessingModule:
+    """
+    Transform, filter, or enrich incoming data.
+
+    Return the modified data dict or DataFrame to pass it downstream.
+    Return None to drop the message.
+    Raise an exception to route the message to the dead-letter queue.
+    """
+
+    def process(self, data: dict, query_fn=None):
+        # Example: add a derived field
+        # data["celsius"] = (data["fahrenheit"] - 32) * 5 / 9
+        return data
+```
+
+### 12.5 Contextual Help & Guided Onboarding
+
+The UI is designed to be **intuitive for first-time users** without requiring external documentation. This is achieved through:
+
+- **Inline example values** on all form fields (e.g. connector config fields show placeholder values like `mqtt://broker:1883`, `sensors/#`)
+- **Inline help text / tooltips** on non-obvious settings (e.g. "Connector Direction: INPUT = this platform receives data; OUTPUT = this platform sends data; BOTH = bidirectional")
+- **Empty-state guidance**: when a list (modules, pipelines, connectors) is empty, show a short description of what the entity is, why it's useful, and a "Create your first X" call-to-action with a link to an example
+- **Boilerplate code** in the module editor (see §12.4)
+- **Example connector configs** shown as collapsible "examples" sections next to config forms (e.g. clicking "MQTT example" fills the form with a commented sample config)
+- **Consistent visual language**: module type badges (colour-coded: IMPORT=blue, PROCESSING=purple, ALERT=orange, EXPORT=green) used everywhere modules appear (lists, pipeline builder, node dropdowns)
+
+### 12.7 Data Visualisation (Built-in)
 
 Intentionally minimal — for quick sanity checks only:
 

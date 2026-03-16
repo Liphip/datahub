@@ -229,6 +229,9 @@ Connectors are named, tenant-scoped protocol interface definitions. They describ
 | UI-07 | The UI shall provide a basic built-in data visualisation view (line/bar charts for quick sanity checks). | MVP |
 | UI-08 | The UI shall provide alert rule configuration, channel management, and alert history views. | MVP |
 | UI-09 | The UI shall be usable from both desktop and tablet form factors. | MVP |
+| UI-12 | The UI shall be **intuitive and easy to understand for new users**, with embedded contextual examples (e.g. boilerplate Python code for each module type, example connector configs, sample pipeline structures). | MVP |
+| UI-13 | All major configuration forms shall include inline help text and/or example values to guide first-time users. | MVP |
+| UI-14 | The module code editor shall show a pre-filled boilerplate template appropriate to the selected module type (IMPORT / PROCESSING / ALERT / EXPORT) when creating a new module. | MVP |
 | UI-10 | The UI shall support both light and dark themes. | V2 |
 | UI-11 | The UI shall provide drag-and-drop node graph pipeline editing. | V2 |
 
