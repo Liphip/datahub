@@ -32,7 +32,7 @@ class TenantResource {
         val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
         
         val parentId = request["parentId"] as? String
-        val parent = parentId?.let { Tenant.findById(UUID.fromString(it)) }
+        val parent = parentId?.let { em.find(Tenant::class.java, UUID.fromString(it)) }
         
         if (parent == null) {
             val rootTenants = em.createQuery("SELECT t FROM Tenant t WHERE t.parent IS NULL", Tenant::class.java).resultList
@@ -49,14 +49,14 @@ class TenantResource {
             this.createdAt = java.time.Instant.now()
             this.updatedAt = java.time.Instant.now()
         }
-        tenant.persist()
+        em.persist(tenant)
         return Response.status(201).entity(mapOf("id" to tenant.id, "name" to tenant.name)).build()
     }
     
     @GET
     @Path("/{id}")
     fun get(@PathParam("id") id: String): Response {
-        val tenant = Tenant.findById(UUID.fromString(id))
+        val tenant = em.find(Tenant::class.java, UUID.fromString(id))
         return if (tenant != null) {
             Response.ok(mapOf("id" to tenant.id, "name" to tenant.name, "settings" to tenant.settings)).build()
         } else {
@@ -68,13 +68,13 @@ class TenantResource {
     @Path("/{id}")
     @Transactional
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
-        val tenant = Tenant.findById(UUID.fromString(id))
+        val tenant = em.find(Tenant::class.java, UUID.fromString(id))
         return if (tenant != null) {
             request["name"]?.let { tenant.name = it as String }
             request["settings"]?.let { tenant.settings = it as String }
             request["quota"]?.let { tenant.quota = it as String }
             tenant.updatedAt = java.time.Instant.now()
-            tenant.persist()
+            em.merge(tenant)
             Response.ok(mapOf("id" to tenant.id, "name" to tenant.name)).build()
         } else {
             Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
@@ -85,9 +85,9 @@ class TenantResource {
     @Path("/{id}")
     @Transactional
     fun delete(@PathParam("id") id: String): Response {
-        val tenant = Tenant.findById(UUID.fromString(id))
+        val tenant = em.find(Tenant::class.java, UUID.fromString(id))
         return if (tenant != null) {
-            tenant.delete()
+            em.remove(tenant)
             Response.noContent().build()
         } else {
             Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
@@ -97,7 +97,9 @@ class TenantResource {
     @GET
     @Path("/{id}/children")
     fun getChildren(@PathParam("id") id: String): Response {
-        val children = Tenant.findByParentId(UUID.fromString(id))
+        val children = em.createQuery("SELECT t FROM Tenant t WHERE t.parent.id = :parentId", Tenant::class.java)
+            .setParameter("parentId", UUID.fromString(id))
+            .resultList
         return Response.ok(children.map { mapOf("id" to it.id, "name" to it.name) }).build()
     }
 }
