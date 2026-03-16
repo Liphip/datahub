@@ -58,8 +58,9 @@ class AlertResource {
     @POST
     @Path("/channels")
     @Transactional
-    fun createChannel(request: Map<String, Any>): Response {
-        val tenantId = request["tenantId"] as? String ?: return Response.status(400).entity(mapOf("error" to "Tenant ID is required")).build()
+    fun createChannel(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
+        val tenantId = tenantIdQuery ?: (request["tenantId"] as? String)
+            ?: return Response.status(400).entity(mapOf("error" to "Tenant ID is required")).build()
         val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
         val channelType = request["channelType"] as? String ?: return Response.status(400).entity(mapOf("error" to "Channel type is required")).build()
         val parsedChannelType = parseChannelType(channelType)
@@ -110,10 +111,15 @@ class AlertResource {
     @POST
     @Path("/rules")
     @Transactional
-    fun createRule(request: Map<String, Any>): Response {
-        val tenantId = request["tenantId"] as? String ?: return Response.status(400).entity(mapOf("error" to "Tenant ID is required")).build()
+    fun createRule(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
+        val tenantId = tenantIdQuery ?: (request["tenantId"] as? String)
+            ?: return Response.status(400).entity(mapOf("error" to "Tenant ID is required")).build()
         val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
-        val condition = request["condition"] as? String ?: return Response.status(400).entity(mapOf("error" to "Condition is required")).build()
+        val conditionRaw = request["condition"] ?: return Response.status(400).entity(mapOf("error" to "Condition is required")).build()
+        val condition = when (conditionRaw) {
+            is String -> conditionRaw
+            else -> conditionRaw.toString()
+        }
         
         val tenant = em.find(Tenant::class.java, parseUuid(tenantId, "tenantId"))
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()

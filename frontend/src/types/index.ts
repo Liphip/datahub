@@ -103,10 +103,10 @@ export interface AlertRule {
   channelId?: string;
   name: string;
   description?: string;
-  condition: Record<string, unknown>;
+  condition?: Record<string, unknown> | string;
   enabled: boolean;
-  cooldownSeconds: number;
-  createdAt: string;
+  cooldownSeconds?: number;
+  createdAt?: string;
 }
 
 export interface AlertHistory {

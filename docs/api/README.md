@@ -458,6 +458,8 @@ Content-Type: application/json
   }
 }
 ```
+
+`tenantId` may be provided either as query param (`?tenantId=...`) or in the request body for compatibility.
 Supported `channelType` values: `MQTT`, `WEBHOOK`, `REST`, `EMAIL`, `SLACK`.
 
 #### List Alert Rules
@@ -482,6 +484,9 @@ Content-Type: application/json
   }
 }
 ```
+
+`tenantId` may be provided either as query param (`?tenantId=...`) or in the request body for compatibility.
+`condition` may be sent as a JSON object (recommended) or as a serialized string.
 #### Get Alert History
 
 ```http

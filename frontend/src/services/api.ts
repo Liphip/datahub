@@ -214,8 +214,17 @@ class ApiService {
   }
 
   async createAlertChannel(tenantId: string, name: string, channelType: string, config?: Record<string, unknown>): Promise<AlertChannel> {
-    const response = await this.client.post<AlertChannel>(`/alerts/channels?tenantId=${tenantId}`, { name, channelType, config });
+    const response = await this.client.post<AlertChannel>(`/alerts/channels?tenantId=${tenantId}`, {
+      tenantId,
+      name,
+      channelType,
+      config,
+    });
     return response.data;
+  }
+
+  async deleteAlertChannel(id: string): Promise<void> {
+    await this.client.delete(`/alerts/channels/${id}`);
   }
 
   async getAlertRules(tenantId: string): Promise<AlertRule[]> {
@@ -223,9 +232,25 @@ class ApiService {
     return response.data;
   }
 
-  async createAlertRule(tenantId: string, name: string, condition: Record<string, unknown>, channelId?: string, pipelineId?: string): Promise<AlertRule> {
-    const response = await this.client.post<AlertRule>(`/alerts/rules?tenantId=${tenantId}`, { name, condition, channelId, pipelineId });
+  async createAlertRule(
+    tenantId: string,
+    name: string,
+    condition: Record<string, unknown> | string,
+    channelId?: string,
+    pipelineId?: string
+  ): Promise<AlertRule> {
+    const response = await this.client.post<AlertRule>(`/alerts/rules?tenantId=${tenantId}`, {
+      tenantId,
+      name,
+      condition,
+      channelId,
+      pipelineId,
+    });
     return response.data;
+  }
+
+  async deleteAlertRule(id: string): Promise<void> {
+    await this.client.delete(`/alerts/rules/${id}`);
   }
 
   async getAlertHistory(tenantId: string, limit?: number): Promise<AlertHistory[]> {

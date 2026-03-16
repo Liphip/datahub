@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { AlertChannel, AlertRule, AlertHistory } from '../types';
+import type { AlertChannel, AlertRule, AlertHistory, Pipeline } from '../types';
 
 export default function Alerts() {
   const { user } = useAuthStore();
   const [channels, setChannels] = useState<AlertChannel[]>([]);
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [history, setHistory] = useState<AlertHistory[]>([]);
+  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<'channels' | 'rules' | 'history'>('channels');
   const [showChannelModal, setShowChannelModal] = useState(false);
   const [showRuleModal, setShowRuleModal] = useState(false);
@@ -19,6 +21,7 @@ export default function Alerts() {
   const [newRuleName, setNewRuleName] = useState('');
   const [newRuleCondition, setNewRuleCondition] = useState('');
   const [newRuleChannelId, setNewRuleChannelId] = useState('');
+  const [newRulePipelineId, setNewRulePipelineId] = useState('');
   const [creatingRule, setCreatingRule] = useState(false);
 
   const tenantId = user?.tenantId;
@@ -31,16 +34,20 @@ export default function Alerts() {
       }
       
       try {
-        const [channelsData, rulesData, historyData] = await Promise.all([
+        const [channelsData, rulesData, historyData, pipelinesData] = await Promise.all([
           api.getAlertChannels(tenantId),
           api.getAlertRules(tenantId),
           api.getAlertHistory(tenantId, 20),
+          api.getPipelines(tenantId),
         ]);
         setChannels(channelsData);
         setRules(rulesData);
         setHistory(historyData);
+        setPipelines(pipelinesData);
+        setError('');
       } catch (error) {
         console.error('Error fetching alerts:', error);
+        setError('Failed to load alerts data');
       } finally {
         setLoading(false);
       }
@@ -55,14 +62,17 @@ export default function Alerts() {
     
     setCreatingChannel(true);
     try {
-      const newChannel = await api.createAlertChannel(tenantId, newChannelName, newChannelType, { url: newChannelUrl });
+      const config = newChannelUrl ? { url: newChannelUrl } : {};
+      const newChannel = await api.createAlertChannel(tenantId, newChannelName, newChannelType, config);
       setChannels([...channels, newChannel]);
       setShowChannelModal(false);
       setNewChannelName('');
       setNewChannelType('WEBHOOK');
       setNewChannelUrl('');
+      setError('');
     } catch (error) {
       console.error('Error creating channel:', error);
+      setError('Failed to create channel');
     } finally {
       setCreatingChannel(false);
     }
@@ -75,16 +85,49 @@ export default function Alerts() {
     setCreatingRule(true);
     try {
       const condition = JSON.parse(newRuleCondition || '{}');
-      const newRule = await api.createAlertRule(tenantId, newRuleName, condition, newRuleChannelId || undefined);
+      const newRule = await api.createAlertRule(
+        tenantId,
+        newRuleName,
+        condition,
+        newRuleChannelId || undefined,
+        newRulePipelineId || undefined
+      );
       setRules([...rules, newRule]);
       setShowRuleModal(false);
       setNewRuleName('');
       setNewRuleCondition('');
       setNewRuleChannelId('');
+      setNewRulePipelineId('');
+      setError('');
     } catch (error) {
       console.error('Error creating rule:', error);
+      setError('Failed to create rule. Check condition JSON and selected references.');
     } finally {
       setCreatingRule(false);
+    }
+  };
+
+  const handleDeleteChannel = async (id: string) => {
+    if (!confirm('Delete this alert channel?')) return;
+    try {
+      await api.deleteAlertChannel(id);
+      setChannels(channels.filter((channel) => channel.id !== id));
+      setError('');
+    } catch (err) {
+      console.error('Error deleting channel:', err);
+      setError('Failed to delete channel');
+    }
+  };
+
+  const handleDeleteRule = async (id: string) => {
+    if (!confirm('Delete this alert rule?')) return;
+    try {
+      await api.deleteAlertRule(id);
+      setRules(rules.filter((rule) => rule.id !== id));
+      setError('');
+    } catch (err) {
+      console.error('Error deleting rule:', err);
+      setError('Failed to delete rule');
     }
   };
 
@@ -93,6 +136,12 @@ export default function Alerts() {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Alerts</h1>
       </div>
+
+      {error && (
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+          {error}
+        </div>
+      )}
 
       <div className="mb-4 flex space-x-2">
         {(['channels', 'rules', 'history'] as const).map((tab) => (
@@ -140,6 +189,14 @@ export default function Alerts() {
                         {channel.isActive ? 'Active' : 'Inactive'}
                       </span>
                     </div>
+                    <div className="mt-4 flex justify-end">
+                      <button
+                        onClick={() => handleDeleteChannel(channel.id)}
+                        className="text-sm text-red-600 hover:text-red-800"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 ))
               ) : (
@@ -163,12 +220,20 @@ export default function Alerts() {
                         <h3 className="text-lg font-semibold">{rule.name}</h3>
                         <p className="text-sm text-gray-500">{rule.description}</p>
                       </div>
-                      <span className={`px-2 py-1 text-xs rounded ${rule.enabled ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
-                        {rule.enabled ? 'Enabled' : 'Disabled'}
-                      </span>
+                        <span className={`px-2 py-1 text-xs rounded ${rule.enabled ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                          {rule.enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
+                      <div className="mt-4 flex justify-end">
+                        <button
+                          onClick={() => handleDeleteRule(rule.id)}
+                          className="text-sm text-red-600 hover:text-red-800"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  ))
               ) : (
                 <div className="card text-center py-8">
                   <p className="text-gray-500">No alert rules configured</p>
@@ -301,6 +366,19 @@ export default function Alerts() {
                   <option value="">Select channel</option>
                   {channels.map((channel) => (
                     <option key={channel.id} value={channel.id}>{channel.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Pipeline (Optional)</label>
+                <select
+                  value={newRulePipelineId}
+                  onChange={(e) => setNewRulePipelineId(e.target.value)}
+                  className="input w-full"
+                >
+                  <option value="">Any pipeline</option>
+                  {pipelines.map((pipeline) => (
+                    <option key={pipeline.id} value={pipeline.id}>{pipeline.name}</option>
                   ))}
                 </select>
               </div>
