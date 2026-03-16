@@ -24,6 +24,15 @@ class PipelineResource {
     @PersistenceContext
     lateinit var em: EntityManager
 
+    private fun parseGraphDefinition(graphDefinition: String?): Any? {
+        if (graphDefinition.isNullOrBlank()) return null
+        return try {
+            objectMapper.readValue(graphDefinition, Map::class.java)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun validateGraphDefinition(tenantId: UUID, graphDefinition: Any?): String? {
         if (graphDefinition !is Map<*, *>) return null
         val nodes = graphDefinition["nodes"] as? List<*> ?: return null
@@ -34,7 +43,7 @@ class PipelineResource {
 
             val connectorId = nodeMap["connectorId"] as? String
                 ?: return "IMPORT and EXPORT nodes require connectorId"
-            val connector = try { Connector.findById(UUID.fromString(connectorId)) } catch (_: Exception) { null }
+            val connector = try { em.find(Connector::class.java, UUID.fromString(connectorId)) } catch (_: Exception) { null }
                 ?: return "Connector not found: $connectorId"
 
             if (connector.tenant?.id != tenantId) {
@@ -65,7 +74,7 @@ class PipelineResource {
                 "id" to it.id,
                 "name" to it.name,
                 "isActive" to it.isActive,
-                "graphDefinition" to it.graphDefinition
+                "graphDefinition" to parseGraphDefinition(it.graphDefinition)
             )
         }).build()
     }
@@ -108,7 +117,7 @@ class PipelineResource {
             mapOf(
                 "id" to pipeline.id,
                 "name" to pipeline.name,
-                "graphDefinition" to pipeline.graphDefinition,
+                "graphDefinition" to parseGraphDefinition(pipeline.graphDefinition),
                 "isActive" to pipeline.isActive
             )
         ).build()
@@ -124,7 +133,7 @@ class PipelineResource {
                     "id" to pipeline.id,
                     "name" to pipeline.name,
                     "isActive" to pipeline.isActive,
-                    "graphDefinition" to pipeline.graphDefinition
+                    "graphDefinition" to parseGraphDefinition(pipeline.graphDefinition)
                 )
             ).build()
         } else {
@@ -182,7 +191,7 @@ class PipelineResource {
                     "id" to pipeline.id,
                     "name" to pipeline.name,
                     "isActive" to pipeline.isActive,
-                    "graphDefinition" to pipeline.graphDefinition
+                    "graphDefinition" to parseGraphDefinition(pipeline.graphDefinition)
                 )
             ).build()
         } else {

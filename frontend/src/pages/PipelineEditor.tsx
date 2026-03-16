@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Pipeline, CodeModule } from '../types';
+import type { Pipeline, CodeModule, Connector } from '../types';
 
 export default function PipelineEditor() {
   const { id } = useParams<{ id: string }>();
@@ -11,14 +11,17 @@ export default function PipelineEditor() {
   
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
   const [modules, setModules] = useState<CodeModule[]>([]);
+  const [connectors, setConnectors] = useState<Connector[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [importModuleId, setImportModuleId] = useState('');
+  const [importConnectorId, setImportConnectorId] = useState('');
   const [processingModuleIds, setProcessingModuleIds] = useState<string[]>([]);
   const [exportModuleIds, setExportModuleIds] = useState<string[]>([]);
+  const [exportConnectorIds, setExportConnectorIds] = useState<string[]>([]);
   const [isActive, setIsActive] = useState(false);
 
   const tenantId = user?.tenantId;
@@ -31,12 +34,14 @@ export default function PipelineEditor() {
       }
       
       try {
-        const [pipelineData, modulesData] = await Promise.all([
+        const [pipelineData, modulesData, connectorsData] = await Promise.all([
           id === 'new' ? Promise.resolve(null) : api.getPipeline(id),
           api.getModules(tenantId),
+          api.getConnectors(tenantId),
         ]);
         
         setModules(modulesData);
+        setConnectors(connectorsData);
         
         if (pipelineData) {
           setPipeline(pipelineData);
@@ -46,12 +51,26 @@ export default function PipelineEditor() {
           setProcessingModuleIds(pipelineData.processingModuleVersionIds || []);
           setExportModuleIds(pipelineData.exportModuleVersionIds || []);
           setIsActive(pipelineData.isActive);
+
+          const graphNodes = pipelineData.graphDefinition?.nodes || [];
+          const importNode = graphNodes.find((node) => node.type === 'IMPORT');
+          if (importNode && typeof importNode.connectorId === 'string') {
+            setImportConnectorId(importNode.connectorId);
+          }
+
+          const exportNodes = graphNodes.filter((node) => node.type === 'EXPORT');
+          const parsedExportConnectorIds = exportNodes.map((node) => (
+            typeof node.connectorId === 'string' ? node.connectorId : ''
+          ));
+          setExportConnectorIds(parsedExportConnectorIds);
         } else {
           setName('New Pipeline');
           setDescription('');
           setImportModuleId('');
+          setImportConnectorId('');
           setProcessingModuleIds([]);
           setExportModuleIds([]);
+          setExportConnectorIds([]);
           setIsActive(false);
         }
       } catch (error) {
@@ -66,6 +85,57 @@ export default function PipelineEditor() {
 
   const handleSave = async () => {
     if (!tenantId || !name) return;
+
+    const graphNodes: Array<Record<string, unknown>> = [];
+    const graphEdges: Array<Record<string, unknown>> = [];
+
+    let importNodeId = '';
+    if (importModuleId) {
+      importNodeId = 'n-import';
+      graphNodes.push({
+        id: importNodeId,
+        type: 'IMPORT',
+        moduleVersionId: importModuleId,
+        connectorId: importConnectorId || undefined,
+      });
+    }
+
+    const processingNodeIds: string[] = [];
+    processingModuleIds.filter(Boolean).forEach((moduleId, index) => {
+      const nodeId = `n-processing-${index + 1}`;
+      processingNodeIds.push(nodeId);
+      graphNodes.push({ id: nodeId, type: 'PROCESSING', moduleVersionId: moduleId });
+    });
+
+    exportModuleIds.filter(Boolean).forEach((moduleId, index) => {
+      const nodeId = `n-export-${index + 1}`;
+      graphNodes.push({
+        id: nodeId,
+        type: 'EXPORT',
+        moduleVersionId: moduleId,
+        connectorId: exportConnectorIds[index] || undefined,
+      });
+    });
+
+    const firstProcessingNodeId = processingNodeIds[0];
+    if (importNodeId && firstProcessingNodeId) {
+      graphEdges.push({ from: importNodeId, to: firstProcessingNodeId });
+    }
+    if (importNodeId && !firstProcessingNodeId) {
+      graphNodes
+        .filter((node) => node.type === 'EXPORT')
+        .forEach((node) => graphEdges.push({ from: importNodeId, to: node.id }));
+    }
+    if (firstProcessingNodeId) {
+      graphNodes
+        .filter((node) => node.type === 'EXPORT')
+        .forEach((node) => graphEdges.push({ from: firstProcessingNodeId, to: node.id }));
+    }
+
+    const graphDefinition = {
+      nodes: graphNodes,
+      edges: graphEdges,
+    };
     
     setSaving(true);
     try {
@@ -75,6 +145,7 @@ export default function PipelineEditor() {
           importModuleVersionId: importModuleId || undefined,
           processingModuleVersionIds: processingModuleIds,
           exportModuleVersionIds: exportModuleIds,
+          graphDefinition,
           isActive,
         });
         navigate(`/pipelines/${newPipeline.id}`);
@@ -85,6 +156,7 @@ export default function PipelineEditor() {
           importModuleVersionId: importModuleId || undefined,
           processingModuleVersionIds: processingModuleIds,
           exportModuleVersionIds: exportModuleIds,
+          graphDefinition,
           isActive,
         });
         alert('Pipeline saved successfully!');
@@ -125,6 +197,7 @@ export default function PipelineEditor() {
 
   const addExportModule = () => {
     setExportModuleIds([...exportModuleIds, '']);
+    setExportConnectorIds([...exportConnectorIds, '']);
   };
 
   const updateExportModule = (index: number, value: string) => {
@@ -135,11 +208,20 @@ export default function PipelineEditor() {
 
   const removeExportModule = (index: number) => {
     setExportModuleIds(exportModuleIds.filter((_, i) => i !== index));
+    setExportConnectorIds(exportConnectorIds.filter((_, i) => i !== index));
+  };
+
+  const updateExportConnector = (index: number, connectorId: string) => {
+    const updated = [...exportConnectorIds];
+    updated[index] = connectorId;
+    setExportConnectorIds(updated);
   };
 
   const importModules = modules.filter(m => m.moduleType === 'IMPORT');
   const processingModules = modules.filter(m => m.moduleType === 'PROCESSING');
   const exportModules = modules.filter(m => m.moduleType === 'EXPORT');
+  const importConnectors = connectors.filter((c) => c.direction === 'INPUT' || c.direction === 'BOTH');
+  const exportConnectors = connectors.filter((c) => c.direction === 'OUTPUT' || c.direction === 'BOTH');
 
   if (loading) {
     return (
@@ -248,6 +330,19 @@ export default function PipelineEditor() {
                 No import modules available. Create one in the Modules section.
               </p>
             )}
+            <div className="mt-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Import Connector</label>
+              <select
+                value={importConnectorId}
+                onChange={(e) => setImportConnectorId(e.target.value)}
+                className="input w-full"
+              >
+                <option value="">Select connector</option>
+                {importConnectors.map((connector) => (
+                  <option key={connector.id} value={connector.id}>{connector.name}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="card">
@@ -304,24 +399,36 @@ export default function PipelineEditor() {
             {exportModuleIds.length > 0 ? (
               <div className="space-y-2">
                 {exportModuleIds.map((moduleId, index) => (
-                  <div key={index} className="flex space-x-2">
+                  <div key={index} className="space-y-2">
+                    <div className="flex space-x-2">
+                      <select
+                        value={moduleId}
+                        onChange={(e) => updateExportModule(index, e.target.value)}
+                        className="input flex-1"
+                      >
+                        <option value="">Select module</option>
+                        {exportModules.map(m => (
+                          <option key={m.id} value={m.id}>{m.name}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => removeExportModule(index)}
+                        className="text-red-600 hover:text-red-700"
+                      >
+                        Remove
+                      </button>
+                    </div>
                     <select
-                      value={moduleId}
-                      onChange={(e) => updateExportModule(index, e.target.value)}
-                      className="input flex-1"
+                      value={exportConnectorIds[index] || ''}
+                      onChange={(e) => updateExportConnector(index, e.target.value)}
+                      className="input w-full"
                     >
-                      <option value="">Select module</option>
-                      {exportModules.map(m => (
-                        <option key={m.id} value={m.id}>{m.name}</option>
+                      <option value="">Select connector</option>
+                      {exportConnectors.map((connector) => (
+                        <option key={connector.id} value={connector.id}>{connector.name}</option>
                       ))}
                     </select>
-                    <button
-                      type="button"
-                      onClick={() => removeExportModule(index)}
-                      className="text-red-600 hover:text-red-700"
-                    >
-                      Remove
-                    </button>
                   </div>
                 ))}
               </div>

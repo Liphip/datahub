@@ -55,4 +55,62 @@ class PipelineResourceTest {
             .body("name", equalTo("QueryParam Pipeline"))
             .body("graphDefinition", notNullValue())
     }
+
+    @Test
+    fun testCreatePipelineRejectsImportNodeWithOutputOnlyConnector() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        val connectorId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(
+                mapOf(
+                    "name" to "Output Connector",
+                    "connectorType" to "MQTT",
+                    "direction" to "OUTPUT",
+                    "config" to mapOf("topic" to "out/topic")
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        val graphDefinition = mapOf(
+            "nodes" to listOf(
+                mapOf(
+                    "id" to "n1",
+                    "type" to "IMPORT",
+                    "moduleVersionId" to "00000000-0000-0000-0000-000000000001",
+                    "connectorId" to connectorId
+                )
+            ),
+            "edges" to emptyList<Any>()
+        )
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("name" to "Invalid Direction Pipeline", "graphDefinition" to graphDefinition))
+        .`when`()
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId")
+        .then()
+            .statusCode(400)
+            .body("error", containsString("INPUT or BOTH"))
+    }
 }

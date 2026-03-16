@@ -26,6 +26,7 @@ DataTurntable is a high-performance, scalable data hub for IoT/sensor data proce
 - Root-tenant admins are prevented from receiving sub-tenant memberships.
 - Connector configs remain encrypted at rest and sensitive keys (`password`, `secret`, `token`, `apiKey`, etc.) are masked in list/get responses.
 - Pipeline create/update accepts `graphDefinition`; IMPORT/EXPORT nodes are validated to require `connectorId` and compatible connector direction.
+- Frontend pipeline editor includes connector pickers for IMPORT/EXPORT nodes and submits connector-aware DAG definitions.
 
 ## Architecture
 

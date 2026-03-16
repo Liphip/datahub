@@ -16,7 +16,7 @@ object SecurityUtils {
              tenantId = user.getPrimaryTenant()?.id.toString(),
              roleName = user.getMembershipForTenant(user.getPrimaryTenant()?.id ?: UUID.fromString("00000000-0000-0000-0000-000000000001"))?.role?.name,
              abilities = user.getAllAbilities().toList(),
-             superadmin = user.isSuperadmin
+             superadmin = user.isSuperAdmin()
          )
     }
     
@@ -27,7 +27,7 @@ object SecurityUtils {
     
     fun canAccessTenant(user: User?, tenantId: String): Boolean {
         if (user == null) return false
-        if (user.isSuperadmin) return true
+        if (user.isSuperAdmin()) return true
         return user.canAccessTenant(java.util.UUID.fromString(tenantId))
     }
 }

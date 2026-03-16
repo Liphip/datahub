@@ -63,6 +63,10 @@ export interface Pipeline {
   importModuleVersionId?: string;
   processingModuleVersionIds: string[];
   exportModuleVersionIds: string[];
+  graphDefinition?: {
+    nodes: Array<Record<string, unknown>>;
+    edges: Array<Record<string, unknown>>;
+  };
   kafkaConsumerGroup?: string;
   isActive: boolean;
   config: Record<string, unknown>;

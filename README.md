@@ -174,6 +174,7 @@ Notes:
 - Connector configs are encrypted at rest and sensitive fields are masked in API responses.
 - Frontend auth uses SHA-256 (Base64) client hashing before transmission; server stores BCrypt of that hash.
 - Pipelines support a `graphDefinition` payload; IMPORT/EXPORT nodes must reference compatible connectors by `connectorId`.
+- The pipeline editor now captures connector selections for IMPORT/EXPORT nodes and sends a DAG `graphDefinition` with connector-aware validation.
 
 See [API Documentation](docs/api/README.md) for full details.
 
