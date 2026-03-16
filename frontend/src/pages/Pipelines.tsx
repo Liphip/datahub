@@ -42,11 +42,11 @@ export default function Pipelines() {
     
     setCreating(true);
     try {
-      const newPipeline = await api.createPipeline(tenantId, newPipelineName, { description: newPipelineDescription });
+      // Navigate to new pipeline editor instead of creating immediately
       setShowCreateModal(false);
       setNewPipelineName('');
       setNewPipelineDescription('');
-      navigate(`/pipelines/${newPipeline.id}`);
+      navigate('/pipelines/new');
     } catch (error) {
       console.error('Error creating pipeline:', error);
     } finally {

@@ -17,6 +17,8 @@ export default function ModuleEditor() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  const tenantId = user?.tenantId || user?.id;
+
   useEffect(() => {
     const fetchModule = async () => {
       if (!id) return;
@@ -26,8 +28,8 @@ export default function ModuleEditor() {
         setModule(data);
         
         // Load latest version code if available
-        if (data.versions.length > 0) {
-          setCode(data.versions[0].code);
+        if (data.versions && data.versions.length > 0) {
+          setCode(data.versions[0].code || '# Your Python code here\n');
           setRequirements(data.versions[0].requirements || 'pandas\nnumpy');
         }
       } catch (error) {
@@ -41,7 +43,7 @@ export default function ModuleEditor() {
   }, [id]);
 
   const handleSave = async () => {
-    if (!id || !user?.tenantId) return;
+    if (!id || !tenantId) return;
     
     setSaving(true);
     try {

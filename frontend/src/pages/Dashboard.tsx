@@ -10,13 +10,18 @@ export default function Dashboard() {
   const [recentRuns, setRecentRuns] = useState<PipelineRun[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const tenantId = user?.tenantId || user?.id;
+
   useEffect(() => {
     const fetchData = async () => {
-      if (!user?.tenantId) return;
+      if (!tenantId) {
+        setLoading(false);
+        return;
+      }
       
       try {
         const [pipelinesData] = await Promise.all([
-          api.getPipelines(user.tenantId),
+          api.getPipelines(tenantId),
         ]);
         setPipelines(pipelinesData);
         
@@ -33,7 +38,7 @@ export default function Dashboard() {
     };
     
     fetchData();
-  }, [user?.tenantId]);
+  }, [tenantId]);
 
   const activePipelines = pipelines.filter(p => p.isActive).length;
   const totalPipelines = pipelines.length;
