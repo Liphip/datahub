@@ -170,6 +170,7 @@ Environment variables for the backend:
 | DB_NAME | Database name | dataturntable |
 | KAFKA_BOOTSTRAP_SERVERS | Kafka servers | kafka:9092 |
 | REDIS_HOSTS | Redis hosts | redis://redis:6379 |
+| DATATURNTABLE_DOCKER_ALLOW_NETWORK | Whether module containers can access network (true/false) | false |
 
 ## Deployment
 
