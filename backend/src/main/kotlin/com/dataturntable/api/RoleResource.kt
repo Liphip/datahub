@@ -76,7 +76,7 @@ class RoleResource {
     @GET
     @Path("/{id}")
     fun get(@PathParam("id") id: String): Response {
-        val role = Role.findById(UUID.fromString(id))
+        val role = em.find(Role::class.java, UUID.fromString(id))
         return if (role != null) {
             Response.ok(mapOf(
                 "id" to role.id,
@@ -97,7 +97,7 @@ class RoleResource {
     @Path("/{id}")
     @Transactional
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
-        val role = Role.findById(UUID.fromString(id))
+        val role = em.find(Role::class.java, UUID.fromString(id))
         return if (role != null) {
             if (role.isSystem) {
                 return Response.status(403)
@@ -126,7 +126,7 @@ class RoleResource {
     @Path("/{id}")
     @Transactional
     fun delete(@PathParam("id") id: String): Response {
-        val role = Role.findById(UUID.fromString(id))
+        val role = em.find(Role::class.java, UUID.fromString(id))
         return if (role != null) {
             if (role.isSystem) {
                 return Response.status(403)

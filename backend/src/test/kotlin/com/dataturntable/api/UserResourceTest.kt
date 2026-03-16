@@ -14,7 +14,7 @@ class UserResourceTest {
         given()
         .queryParam("tenantId", "00000000-0000-0000-0000-000000000000")
         .`when`()
-            .get("/api/internal/v1/users")
+            .get("/api/internal/v1/auth-users")
         .then()
             .statusCode(401)
     }
