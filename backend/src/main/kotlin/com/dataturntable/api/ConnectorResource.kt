@@ -4,11 +4,14 @@ import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.Connector.Direction
 import com.dataturntable.connectors.Connector.ConnectorType
 import com.dataturntable.tenant.Tenant
+import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.security.Authenticated
+import jakarta.inject.Inject
 import jakarta.transaction.Transactional
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
+import org.eclipse.microprofile.jwt.JsonWebToken
 import java.util.UUID
 
 @Path("/connectors")
@@ -17,13 +20,27 @@ import java.util.UUID
 @Authenticated
 class ConnectorResource {
     
+    @Inject
+    lateinit var jwt: JsonWebToken
+    
+    private val objectMapper = ObjectMapper()
+    
+    private fun getTenantIdFromToken(): UUID? {
+        val tid = jwt.getClaim("tenantId") as? String
+        return try {
+            if (tid.isNullOrBlank()) null else UUID.fromString(tid)
+        } catch (_: Exception) {
+            null
+        }
+    }
+    
     @GET
     fun list(
         @QueryParam("tenantId") tenantId: String?,
         @QueryParam("type") type: String?,
         @QueryParam("direction") direction: String?
     ): Response {
-        val tid = tenantId ?: return Response.status(400)
+        val tid = tenantId ?: getTenantIdFromToken() ?: return Response.status(400)
             .entity(mapOf("error" to "tenantId is required"))
             .build()
         
@@ -36,21 +53,29 @@ class ConnectorResource {
             else -> Connector.findByTenantId(UUID.fromString(tid))
         }
         
-        return Response.ok(connectors.map { mapOf(
-            "id" to it.id,
-            "name" to it.name,
-            "connectorType" to it.connectorType?.name,
-            "direction" to it.direction?.name,
-            "description" to it.description,
-            "isActive" to it.isActive,
-            "createdAt" to it.createdAt?.toString()
-        ) }).build()
+        return Response.ok(connectors.map { connector ->
+            val configValue = try {
+                objectMapper.readValue(connector.config, Map::class.java)
+            } catch (_: Exception) {
+                emptyMap<String, Any>()
+            }
+            mapOf(
+                "id" to connector.id,
+                "name" to connector.name,
+                "connectorType" to connector.connectorType?.name,
+                "direction" to connector.direction?.name,
+                "config" to configValue,
+                "description" to connector.description,
+                "isActive" to connector.isActive,
+                "createdAt" to connector.createdAt?.toString()
+            )
+        }).build()
     }
     
     @POST
     @Transactional
     fun create(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
-        val tenantId = tenantIdQuery ?: (request["tenantId"] as? String)
+        val tenantId = tenantIdQuery ?: (request["tenantId"] as? String) ?: getTenantIdFromToken()?.toString()
         val name = request["name"] as? String ?: return Response.status(400)
             .entity(mapOf("error" to "Name is required"))
             .build()
@@ -70,12 +95,19 @@ class ConnectorResource {
         val tenant = Tenant.findById(UUID.fromString(tenantId))
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
         
+        val configValue = request["config"] ?: emptyMap<String, Any>()
+        val configJson = try {
+            objectMapper.writeValueAsString(configValue)
+        } catch (_: Exception) {
+            "{}"
+        }
+
         val connector = Connector().apply {
             this.name = name
             this.tenant = tenant
             this.connectorType = ConnectorType.valueOf(connectorType.uppercase())
             this.direction = Direction.valueOf(direction.uppercase())
-            this.config = (request["config"] ?: emptyMap<String, Any>()).toString()
+            this.config = configJson
             this.description = request["description"] as? String
             this.isActive = true
             this.createdAt = java.time.Instant.now()
@@ -96,12 +128,17 @@ class ConnectorResource {
     fun get(@PathParam("id") id: String): Response {
         val connector = Connector.findById(UUID.fromString(id))
         return if (connector != null) {
+            val configValue = try {
+                objectMapper.readValue(connector.config, Map::class.java)
+            } catch (_: Exception) {
+                emptyMap<String, Any>()
+            }
             Response.ok(mapOf(
                 "id" to connector.id,
                 "name" to connector.name,
                 "connectorType" to connector.connectorType?.name,
                 "direction" to connector.direction?.name,
-                "config" to connector.config,
+                "config" to configValue,
                 "description" to connector.description,
                 "isActive" to connector.isActive,
                 "createdAt" to connector.createdAt?.toString()
@@ -120,7 +157,13 @@ class ConnectorResource {
             request["name"]?.let { connector.name = it as String }
             request["connectorType"]?.let { connector.connectorType = ConnectorType.valueOf((it as String).uppercase()) }
             request["direction"]?.let { connector.direction = Direction.valueOf((it as String).uppercase()) }
-            request["config"]?.let { connector.config = it.toString() }
+            request["config"]?.let {
+                connector.config = try {
+                    objectMapper.writeValueAsString(it)
+                } catch (_: Exception) {
+                    it.toString()
+                }
+            }
             request["description"]?.let { connector.description = it as String }
             request["isActive"]?.let { connector.isActive = it as Boolean }
             connector.updatedAt = java.time.Instant.now()
