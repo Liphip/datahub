@@ -171,6 +171,7 @@ Environment variables for the backend:
 | KAFKA_BOOTSTRAP_SERVERS | Kafka servers | kafka:9092 |
 | REDIS_HOSTS | Redis hosts | redis://redis:6379 |
 | DATATURNTABLE_DOCKER_ALLOW_NETWORK | Whether module containers can access network (true/false) | false |
+| CONNECTOR_CONFIG_KEY | Base64-encoded 32-byte AES key used to encrypt connector configs at rest. Set in production to protect secrets; if unset, configs may be stored unencrypted for local development. | (none) |
 
 ## Deployment
 
