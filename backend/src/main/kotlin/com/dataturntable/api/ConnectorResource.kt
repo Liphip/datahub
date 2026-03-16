@@ -55,10 +55,32 @@ class ConnectorResource {
                 isSensitive && v is String && v.isNotEmpty() -> "********"
                 isSensitive && v != null -> "********"
                 v is Map<*, *> -> maskConnectorConfig(v)
+                v is List<*> -> v.map { item ->
+                    when (item) {
+                        is Map<*, *> -> maskConnectorConfig(item)
+                        else -> item
+                    }
+                }
                 else -> v
             }
         }
         return result
+    }
+
+    private fun parseConnectorType(type: String): ConnectorType? {
+        return try {
+            ConnectorType.valueOf(type.uppercase())
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+    }
+
+    private fun parseDirection(direction: String): Direction? {
+        return try {
+            Direction.valueOf(direction.uppercase())
+        } catch (_: IllegalArgumentException) {
+            null
+        }
     }
     
     @GET
@@ -83,21 +105,30 @@ class ConnectorResource {
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
         
         val tenantUuid = UUID.fromString(tid)
+        val parsedType = type?.let { parseConnectorType(it) }
+        if (type != null && parsedType == null) {
+            return Response.status(400).entity(mapOf("error" to "Invalid connector type")).build()
+        }
+        val parsedDirection = direction?.let { parseDirection(it) }
+        if (direction != null && parsedDirection == null) {
+            return Response.status(400).entity(mapOf("error" to "Invalid direction")).build()
+        }
+
         val connectors = when {
-            type != null -> em.createQuery(
+            parsedType != null -> em.createQuery(
                 "SELECT c FROM Connector c WHERE c.tenant.id = :tenantId AND c.connectorType = :type",
                 Connector::class.java
             )
                 .setParameter("tenantId", tenantUuid)
-                .setParameter("type", ConnectorType.valueOf(type.uppercase()))
+                .setParameter("type", parsedType)
                 .resultList
 
-            direction != null -> em.createQuery(
+            parsedDirection != null -> em.createQuery(
                 "SELECT c FROM Connector c WHERE c.tenant.id = :tenantId AND c.direction = :direction",
                 Connector::class.java
             )
                 .setParameter("tenantId", tenantUuid)
-                .setParameter("direction", Direction.valueOf(direction.uppercase()))
+                .setParameter("direction", parsedDirection)
                 .resultList
 
             else -> em.createQuery(
@@ -142,6 +173,11 @@ class ConnectorResource {
         val direction = request["direction"] as? String ?: return Response.status(400)
             .entity(mapOf("error" to "Direction is required"))
             .build()
+
+        val parsedConnectorType = parseConnectorType(connectorType)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid connector type")).build()
+        val parsedDirection = parseDirection(direction)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid direction")).build()
         
         if (tenantId == null) {
             return Response.status(400)
@@ -170,8 +206,8 @@ class ConnectorResource {
         val connector = Connector().apply {
             this.name = name
             this.tenant = tenant
-            this.connectorType = ConnectorType.valueOf(connectorType.uppercase())
-            this.direction = Direction.valueOf(direction.uppercase())
+            this.connectorType = parsedConnectorType
+            this.direction = parsedDirection
             this.config = EncryptionUtils.encrypt(configPlainJson)
             this.description = request["description"] as? String
             this.isActive = true
@@ -244,8 +280,16 @@ class ConnectorResource {
                 return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
             }
             request["name"]?.let { connector.name = it as String }
-            request["connectorType"]?.let { connector.connectorType = ConnectorType.valueOf((it as String).uppercase()) }
-            request["direction"]?.let { connector.direction = Direction.valueOf((it as String).uppercase()) }
+            request["connectorType"]?.let {
+                val parsed = parseConnectorType(it as String)
+                    ?: return Response.status(400).entity(mapOf("error" to "Invalid connector type")).build()
+                connector.connectorType = parsed
+            }
+            request["direction"]?.let {
+                val parsed = parseDirection(it as String)
+                    ?: return Response.status(400).entity(mapOf("error" to "Invalid direction")).build()
+                connector.direction = parsed
+            }
             request["config"]?.let {
                 val plain = try { objectMapper.writeValueAsString(it) } catch (_: Exception) { it.toString() }
                 connector.config = EncryptionUtils.encrypt(plain)

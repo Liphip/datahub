@@ -48,7 +48,14 @@ class ConnectorResourceTest {
     fun testCreateConnectorStoresJsonConfig() {
         val token = TestAuthHelpers.createAdminToken()
 
-        val config = mapOf("host" to "test.local", "port" to 1883, "password" to "supersecret")
+        val config = mapOf(
+            "host" to "test.local",
+            "port" to 1883,
+            "password" to "supersecret",
+            "auth" to listOf(
+                mapOf("apiKey" to "nested-secret", "enabled" to true)
+            )
+        )
 
         val response = given()
             .header("Authorization", "Bearer $token")
@@ -79,6 +86,21 @@ class ConnectorResourceTest {
             .body("config.host", equalTo("test.local"))
             .body("config.port", equalTo(1883))
             .body("config.password", equalTo("********"))
+            .body("config.auth[0].apiKey", equalTo("********"))
+    }
+
+    @Test
+    fun testListConnectorsRejectsInvalidDirection() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("direction", "sideways")
+        .`when`()
+            .get("/api/internal/v1/connectors")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid direction"))
     }
     
     @Test
