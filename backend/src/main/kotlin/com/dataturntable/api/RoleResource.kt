@@ -2,7 +2,6 @@ package com.dataturntable.api
 
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase
 import io.quarkus.security.Authenticated
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
@@ -25,7 +24,7 @@ class RoleResource {
         val roles = if (tenantId != null) {
             Role.findByTenantId(UUID.fromString(tenantId))
         } else {
-            PanacheEntityBase.find<Role>("1=1").list()
+            em.createQuery("from Role", Role::class.java).resultList
         }
         
         return Response.ok(roles.map { mapOf(
