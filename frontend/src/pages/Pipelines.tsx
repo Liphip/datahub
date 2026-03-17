@@ -5,6 +5,8 @@ import api from '../services/api';
 import type { Pipeline, PipelineRun } from '../types';
 
 type RunMap = Record<string, PipelineRun[]>;
+type HealthFilter = 'ALL' | 'PROBLEMATIC' | 'RUNNING' | 'FAILED' | 'HEALTHY';
+type SortMode = 'RECENT_RUN' | 'NAME';
 
 export default function Pipelines() {
   const { user, selectedTenantId } = useAuthStore();
@@ -21,6 +23,8 @@ export default function Pipelines() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [expandedPipelineId, setExpandedPipelineId] = useState<string | null>(null);
   const [selectedRunIdByPipeline, setSelectedRunIdByPipeline] = useState<Record<string, string>>({});
+  const [healthFilter, setHealthFilter] = useState<HealthFilter>('ALL');
+  const [sortMode, setSortMode] = useState<SortMode>('RECENT_RUN');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [error, setError] = useState('');
 
@@ -32,7 +36,7 @@ export default function Pipelines() {
   };
 
   const loadPipelines = async (tid: string) => {
-    const data = await api.getPipelines(tid);
+    const data = await api.getPipelines(tid, { includeRunSummary: true });
     setPipelines(data);
     return data;
   };
@@ -176,6 +180,35 @@ export default function Pipelines() {
     return new Date(value).toLocaleString();
   };
 
+  const getLatestStatus = (pipeline: Pipeline): PipelineRun['status'] | undefined => {
+    return runsMap[pipeline.id]?.[0]?.status ?? pipeline.latestRunStatus;
+  };
+
+  const getLatestStartedAt = (pipeline: Pipeline): string | undefined => {
+    return runsMap[pipeline.id]?.[0]?.startedAt ?? pipeline.latestRunStartedAt;
+  };
+
+  const isProblematic = (status?: PipelineRun['status']) => {
+    return status === 'FAILED' || status === 'RUNNING' || status === 'PENDING';
+  };
+
+  const displayedPipelines = [...pipelines]
+    .filter((pipeline) => {
+      const status = getLatestStatus(pipeline);
+      if (healthFilter === 'ALL') return true;
+      if (healthFilter === 'PROBLEMATIC') return isProblematic(status);
+      if (healthFilter === 'RUNNING') return status === 'RUNNING' || status === 'PENDING';
+      if (healthFilter === 'FAILED') return status === 'FAILED';
+      if (healthFilter === 'HEALTHY') return status === 'SUCCESS';
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortMode === 'NAME') return a.name.localeCompare(b.name);
+      const aTime = getLatestStartedAt(a) ? new Date(getLatestStartedAt(a) as string).getTime() : 0;
+      const bTime = getLatestStartedAt(b) ? new Date(getLatestStartedAt(b) as string).getTime() : 0;
+      return bTime - aTime;
+    });
+
   return (
     <div className="px-4 py-6 sm:px-0">
       {/* Toast */}
@@ -192,6 +225,28 @@ export default function Pipelines() {
         <button onClick={() => setShowCreateModal(true)} className="btn-primary">
           Create Pipeline
         </button>
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {(['ALL', 'PROBLEMATIC', 'RUNNING', 'FAILED', 'HEALTHY'] as const).map((filter) => (
+          <button
+            key={filter}
+            onClick={() => setHealthFilter(filter)}
+            className={`px-3 py-1.5 text-xs rounded border ${
+              healthFilter === filter ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+            }`}
+          >
+            {filter === 'ALL' ? 'All' : filter === 'PROBLEMATIC' ? 'Problematic' : filter === 'RUNNING' ? 'Running/Pending' : filter === 'FAILED' ? 'Failed' : 'Healthy'}
+          </button>
+        ))}
+        <select
+          value={sortMode}
+          onChange={(e) => setSortMode(e.target.value as SortMode)}
+          className="ml-auto input text-xs max-w-[180px]"
+        >
+          <option value="RECENT_RUN">Sort: Recent Run</option>
+          <option value="NAME">Sort: Name</option>
+        </select>
       </div>
 
       {error && (
@@ -213,13 +268,14 @@ export default function Pipelines() {
         <div className="card text-center py-12">
           <p className="text-gray-500">No tenant ID found.</p>
         </div>
-      ) : pipelines.length > 0 ? (
+      ) : displayedPipelines.length > 0 ? (
         <div className="space-y-4">
-          {pipelines.map((pipeline) => {
+          {displayedPipelines.map((pipeline) => {
             const runs = runsMap[pipeline.id] ?? [];
             const isTriggering = triggeringId === pipeline.id;
             const isDeleting = deletingId === pipeline.id;
             const confirmingDelete = confirmDeleteId === pipeline.id;
+            const latestStatus = getLatestStatus(pipeline);
 
             return (
               <div key={pipeline.id} className="card hover:shadow-md transition-shadow">
@@ -298,6 +354,7 @@ export default function Pipelines() {
                     <span>Edges: {pipeline.graphDefinition.edges.length}</span>
                   )}
                   <span>Runs: {runs.length > 0 ? `${runs.length} recent` : 'None yet'}</span>
+                  {latestStatus && <span>Health: {isProblematic(latestStatus) ? 'Needs attention' : latestStatus}</span>}
                 </div>
 
                 {/* Recent runs strip */}
@@ -390,10 +447,14 @@ export default function Pipelines() {
         </div>
       ) : (
         <div className="card text-center py-12">
-          <p className="text-gray-500 mb-4">No pipelines yet</p>
-          <button onClick={() => setShowCreateModal(true)} className="btn-primary">
-            Create Your First Pipeline
-          </button>
+          <p className="text-gray-500 mb-4">
+            {pipelines.length > 0 ? 'No pipelines match this filter' : 'No pipelines yet'}
+          </p>
+          {pipelines.length === 0 && (
+            <button onClick={() => setShowCreateModal(true)} className="btn-primary">
+              Create Your First Pipeline
+            </button>
+          )}
         </div>
       )}
 

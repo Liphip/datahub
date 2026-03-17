@@ -82,16 +82,48 @@ class PipelineResource {
             "updatedAt" to p.updatedAt
         )
     }
+
+    private fun latestRunSummary(pipelineId: UUID): Map<String, Any?> {
+        val run = em.createQuery(
+            "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId ORDER BY r.startedAt DESC",
+            PipelineRun::class.java
+        )
+            .setParameter("pipelineId", pipelineId)
+            .setMaxResults(1)
+            .resultList
+            .firstOrNull()
+
+        return if (run == null) {
+            emptyMap()
+        } else {
+            mapOf(
+                "latestRunId" to run.id,
+                "latestRunStatus" to run.status.name,
+                "latestRunStartedAt" to run.startedAt,
+                "latestRunTriggerType" to run.triggerType.name
+            )
+        }
+    }
     
     @GET
-    fun list(@QueryParam("tenantId") tenantId: String): Response {
+    fun list(@QueryParam("tenantId") tenantId: String, @QueryParam("includeRunSummary") includeRunSummary: String?): Response {
         val pipelines = em.createQuery(
             "SELECT p FROM Pipeline p WHERE p.tenant.id = :tenantId",
             Pipeline::class.java
         )
             .setParameter("tenantId", UUID.fromString(tenantId))
             .resultList
-        return Response.ok(pipelines.map { pipelineToMap(it) }).build()
+        val withRunSummary = includeRunSummary.equals("true", ignoreCase = true)
+        return Response.ok(
+            pipelines.map {
+                val base = pipelineToMap(it)
+                if (!withRunSummary || it.id == null) {
+                    base
+                } else {
+                    base + latestRunSummary(it.id!!)
+                }
+            }
+        ).build()
     }
     
     @POST

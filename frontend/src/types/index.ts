@@ -82,6 +82,11 @@ export interface Pipeline {
   isActive: boolean;
   config: Record<string, unknown>;
   createdAt: string;
+  updatedAt?: string;
+  latestRunId?: string;
+  latestRunStatus?: PipelineRun['status'];
+  latestRunStartedAt?: string;
+  latestRunTriggerType?: PipelineRun['triggerType'];
   runs: PipelineRun[];
 }
 

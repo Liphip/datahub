@@ -65,6 +65,8 @@ This section catalogues every known gap between the current codebase and a shipp
 - Pipeline runs now persist structured metrics (`executionMs`, result/error payloads, alert evaluation stats) and expose parsed metrics in `/pipelines/{id}/runs` responses.
 - Pipelines list UI now surfaces latest run execution time and alerts-fired counters for quick operational visibility.
 - Pipelines page now has expandable run details (status/timing/error + alert evaluation breakdown + raw result payload) for faster debugging.
+- Pipeline listing now supports health-focused filtering (`problematic`, `running`, `failed`, `healthy`) and sort modes for faster incident triage.
+- Pipeline list API supports optional `includeRunSummary=true` to return latest run status/timestamp metadata.
 
 ---
 

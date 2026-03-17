@@ -188,8 +188,9 @@ class ApiService {
   }
 
   // Pipelines
-  async getPipelines(tenantId: string): Promise<Pipeline[]> {
-    const response = await this.client.get<Pipeline[]>(`/pipelines?tenantId=${tenantId}`);
+  async getPipelines(tenantId: string, options?: { includeRunSummary?: boolean }): Promise<Pipeline[]> {
+    const includeRunSummary = options?.includeRunSummary ? '&includeRunSummary=true' : '';
+    const response = await this.client.get<Pipeline[]>(`/pipelines?tenantId=${tenantId}${includeRunSummary}`);
     return response.data;
   }
 
