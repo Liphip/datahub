@@ -2,7 +2,7 @@ import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Pipeline, PipelineRun, PipelineRunSummary, TenantPipelineRun } from '../types';
+import type { Pipeline, PipelineRun, PipelineRunLineage, PipelineRunSummary, TenantPipelineRun } from '../types';
 
 type RunMap = Record<string, PipelineRun[]>;
 type PipelineRunDetailFilter = {
@@ -47,6 +47,8 @@ export default function Pipelines() {
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [retryingRunId, setRetryingRunId] = useState<string | null>(null);
   const [refreshingRunId, setRefreshingRunId] = useState<string | null>(null);
+  const [lineageByRunId, setLineageByRunId] = useState<Record<string, PipelineRunLineage>>({});
+  const [loadingLineageRunId, setLoadingLineageRunId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [expandedPipelineId, setExpandedPipelineId] = useState<string | null>(null);
@@ -454,6 +456,22 @@ export default function Pipelines() {
       showToast('Failed to refresh run details', 'error');
     } finally {
       setRefreshingRunId(null);
+    }
+  };
+
+  const handleLoadRunLineage = async (pipelineId: string, runId: string) => {
+    if (!canReadPipelines) {
+      showToast('You need pipeline read permission to inspect run lineage', 'error');
+      return;
+    }
+    setLoadingLineageRunId(runId);
+    try {
+      const lineage = await api.getPipelineRunLineage(pipelineId, runId);
+      setLineageByRunId((prev) => ({ ...prev, [runId]: lineage }));
+    } catch {
+      showToast('Failed to load run lineage', 'error');
+    } finally {
+      setLoadingLineageRunId(null);
     }
   };
 
@@ -1800,6 +1818,16 @@ export default function Pipelines() {
                                 >
                                   {refreshingRunId === selectedRun.id ? 'Refreshing...' : 'Refresh run'}
                                 </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    void handleLoadRunLineage(pipeline.id, selectedRun.id);
+                                  }}
+                                  disabled={loadingLineageRunId === selectedRun.id}
+                                  className="px-2 py-0.5 rounded border border-indigo-200 text-indigo-700 bg-white"
+                                >
+                                  {loadingLineageRunId === selectedRun.id ? 'Loading lineage...' : 'Load lineage'}
+                                </button>
                                 {(selectedRun.status === 'RUNNING' || selectedRun.status === 'PENDING') && (
                                   <button
                                     onClick={(e) => {
@@ -1827,6 +1855,50 @@ export default function Pipelines() {
                                   </button>
                                 )}
                               </div>
+                              {lineageByRunId[selectedRun.id] && (
+                                <div className="rounded border border-indigo-100 bg-indigo-50 p-2 text-[11px] text-indigo-900">
+                                  <div className="font-semibold mb-1">Retry Lineage</div>
+                                  <div className="mb-1">
+                                    Ancestors: {lineageByRunId[selectedRun.id].ancestors.length} · Descendants: {lineageByRunId[selectedRun.id].descendants.length}
+                                  </div>
+                                  <div className="flex flex-wrap gap-2">
+                                    {lineageByRunId[selectedRun.id].ancestors.map((run) => (
+                                      <button
+                                        key={`ancestor-${run.id}`}
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          setDetailedRunsMap((prev) => {
+                                            const existing = prev[pipeline.id] ?? [];
+                                            if (existing.some((item) => item.id === run.id)) return prev;
+                                            return { ...prev, [pipeline.id]: [{ ...run, metrics: run.metrics ?? {} }, ...existing] };
+                                          });
+                                          setSelectedRunIdByPipeline((prev) => ({ ...prev, [pipeline.id]: run.id }));
+                                        }}
+                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      >
+                                        Ancestor {run.id.slice(0, 6)}
+                                      </button>
+                                    ))}
+                                    {lineageByRunId[selectedRun.id].descendants.map((run) => (
+                                      <button
+                                        key={`descendant-${run.id}`}
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          setDetailedRunsMap((prev) => {
+                                            const existing = prev[pipeline.id] ?? [];
+                                            if (existing.some((item) => item.id === run.id)) return prev;
+                                            return { ...prev, [pipeline.id]: [{ ...run, metrics: run.metrics ?? {} }, ...existing] };
+                                          });
+                                          setSelectedRunIdByPipeline((prev) => ({ ...prev, [pipeline.id]: run.id }));
+                                        }}
+                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      >
+                                        Descendant {run.id.slice(0, 6)}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                               {alertEvaluation && (
                                 <div className="flex flex-wrap gap-4 text-amber-800">
                                   <span>Rules: <strong>{String(alertEvaluation.evaluatedRules ?? 0)}</strong></span>

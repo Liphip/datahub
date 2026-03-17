@@ -156,6 +156,12 @@ export interface PipelineRunSummary {
   }[];
 }
 
+export interface PipelineRunLineage {
+  run: PipelineRun;
+  ancestors: PipelineRun[];
+  descendants: PipelineRun[];
+}
+
 export interface AlertChannel {
   id: string;
   tenantId?: string;

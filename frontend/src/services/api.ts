@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, TenantPipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, Connector, Role, Membership, TenantContext, BrokerCredential } from '../types';
+import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, Connector, Role, Membership, TenantContext, BrokerCredential } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 export const API_STATUS_EVENT = 'dataturntable:api-status';
@@ -292,6 +292,11 @@ class ApiService {
 
   async getPipelineRun(pipelineId: string, runId: string, includeDetails = true): Promise<PipelineRun> {
     const response = await this.client.get<PipelineRun>(`/pipelines/${pipelineId}/runs/${runId}?includeDetails=${includeDetails}`);
+    return response.data;
+  }
+
+  async getPipelineRunLineage(pipelineId: string, runId: string): Promise<PipelineRunLineage> {
+    const response = await this.client.get<PipelineRunLineage>(`/pipelines/${pipelineId}/runs/${runId}/lineage`);
     return response.data;
   }
 

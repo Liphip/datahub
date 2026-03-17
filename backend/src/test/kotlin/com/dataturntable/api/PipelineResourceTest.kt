@@ -685,6 +685,88 @@ class PipelineResourceTest {
     }
 
     @Test
+    fun testGetPipelineRunLineage() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        val pipelineId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("name" to "Lineage Pipeline", "graphDefinition" to mapOf("nodes" to emptyList<Any>(), "edges" to emptyList<Any>())))
+        .`when`()
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        val ids = QuarkusTransaction.requiringNew().call<Map<String, String>> {
+            val pipeline = em.find(Pipeline::class.java, java.util.UUID.fromString(pipelineId))
+            val root = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.FAILED
+                this.triggerType = TriggerType.MANUAL
+                this.startedAt = java.time.Instant.now().minusSeconds(90)
+                this.completedAt = java.time.Instant.now().minusSeconds(80)
+            }
+            em.persist(root)
+            em.flush()
+
+            val retry = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.SUCCESS
+                this.triggerType = TriggerType.MANUAL
+                this.retryOfRunId = root.id
+                this.startedAt = java.time.Instant.now().minusSeconds(60)
+                this.completedAt = java.time.Instant.now().minusSeconds(50)
+            }
+            em.persist(retry)
+            em.flush()
+
+            val retryChild = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.SUCCESS
+                this.triggerType = TriggerType.MANUAL
+                this.retryOfRunId = retry.id
+                this.startedAt = java.time.Instant.now().minusSeconds(30)
+                this.completedAt = java.time.Instant.now().minusSeconds(20)
+            }
+            em.persist(retryChild)
+            em.flush()
+
+            mapOf(
+                "root" to root.id.toString(),
+                "retry" to retry.id.toString(),
+                "retryChild" to retryChild.id.toString()
+            )
+        }
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/pipelines/$pipelineId/runs/${ids["retry"]}/lineage")
+        .then()
+            .statusCode(200)
+            .body("run.id", equalTo(ids["retry"]))
+            .body("ancestors.size()", equalTo(1))
+            .body("ancestors[0].id", equalTo(ids["root"]))
+            .body("descendants.size()", equalTo(1))
+            .body("descendants[0].id", equalTo(ids["retryChild"]))
+    }
+
+    @Test
     fun testTriggerPipelineTransitionsRunOutOfPending() {
         val token = TestAuthHelpers.createAdminToken()
 

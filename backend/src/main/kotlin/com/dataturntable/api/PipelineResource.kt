@@ -1124,4 +1124,89 @@ class PipelineResource {
             )
         ).build()
     }
+
+    @GET
+    @Path("/{id}/runs/{runId}/lineage")
+    fun getRunLineage(@PathParam("id") id: String, @PathParam("runId") runId: String): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val pipelineId = try {
+            UUID.fromString(id)
+        } catch (_: Exception) {
+            return Response.status(400).entity(mapOf("error" to "Invalid pipeline id")).build()
+        }
+        val runUuid = try {
+            UUID.fromString(runId)
+        } catch (_: Exception) {
+            return Response.status(400).entity(mapOf("error" to "Invalid run id")).build()
+        }
+
+        val pipeline = em.find(Pipeline::class.java, pipelineId)
+            ?: return Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
+        val tenantId = pipeline.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
+        requireTenantAccess(currentUser, tenantId, "pipeline:read")?.let { return it }
+
+        val run = em.find(PipelineRun::class.java, runUuid)
+            ?: return Response.status(404).entity(mapOf("error" to "Run not found")).build()
+        if (run.pipeline?.id != pipeline.id) {
+            return Response.status(404).entity(mapOf("error" to "Run not found for this pipeline")).build()
+        }
+
+        fun runSummary(item: PipelineRun): Map<String, Any?> {
+            val durationMs = if (item.completedAt != null) {
+                java.time.Duration.between(item.startedAt, item.completedAt).toMillis()
+            } else {
+                null
+            }
+            return mapOf(
+                "id" to item.id,
+                "status" to item.status.name,
+                "triggerType" to item.triggerType.name,
+                "retryOfRunId" to item.retryOfRunId,
+                "startedAt" to item.startedAt,
+                "completedAt" to item.completedAt,
+                "durationMs" to durationMs,
+                "errorMessage" to item.errorMessage
+            )
+        }
+
+        val ancestors = mutableListOf<Map<String, Any?>>()
+        var currentRetryId = run.retryOfRunId
+        var guard = 0
+        while (currentRetryId != null && guard < 20) {
+            val ancestor = em.find(PipelineRun::class.java, currentRetryId) ?: break
+            if (ancestor.pipeline?.id != pipeline.id) break
+            ancestors.add(runSummary(ancestor))
+            currentRetryId = ancestor.retryOfRunId
+            guard += 1
+        }
+
+        val descendants = mutableListOf<Map<String, Any?>>()
+        val queue = ArrayDeque<UUID>()
+        run.id?.let { queue.add(it) }
+        var visited = 0
+        while (queue.isNotEmpty() && visited < 100) {
+            val parentId = queue.removeFirst()
+            val children = em.createQuery(
+                "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId AND r.retryOfRunId = :retryOf ORDER BY r.startedAt ASC",
+                PipelineRun::class.java
+            )
+                .setParameter("pipelineId", pipeline.id)
+                .setParameter("retryOf", parentId)
+                .resultList
+            children.forEach { child ->
+                descendants.add(runSummary(child))
+                child.id?.let { queue.add(it) }
+            }
+            visited += 1
+        }
+
+        return Response.ok(
+            mapOf(
+                "run" to runSummary(run),
+                "ancestors" to ancestors,
+                "descendants" to descendants
+            )
+        ).build()
+    }
 }
