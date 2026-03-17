@@ -1,11 +1,18 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Tenant } from '../types';
+import type { Tenant, TenantLineageDefaults } from '../types';
 
 interface TenantWithChildren extends Tenant {
   children?: TenantWithChildren[];
 }
+
+const DEFAULT_TENANT_LINEAGE_DEFAULTS: TenantLineageDefaults = {
+  safeScopePolicy: 'AUTO',
+  defaultFetchMode: 'SUMMARY',
+  defaultDepth: 20,
+  maxDepthCap: 200,
+};
 
 export default function Tenants() {
   const { user } = useAuthStore();
@@ -24,6 +31,10 @@ export default function Tenants() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedTenantIds, setExpandedTenantIds] = useState<Record<string, boolean>>({});
+  const [lineageDefaultsTenantId, setLineageDefaultsTenantId] = useState('');
+  const [lineageDefaults, setLineageDefaults] = useState<TenantLineageDefaults>(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+  const [loadingLineageDefaults, setLoadingLineageDefaults] = useState(false);
+  const [savingLineageDefaults, setSavingLineageDefaults] = useState(false);
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -32,6 +43,9 @@ export default function Tenants() {
 
   const collectTenantIds = (nodes: TenantWithChildren[]): string[] =>
     nodes.flatMap((node) => [node.id, ...collectTenantIds((node.children || []) as TenantWithChildren[])]);
+
+  const flattenTenants = (nodes: TenantWithChildren[]): TenantWithChildren[] =>
+    nodes.flatMap((node) => [node, ...flattenTenants((node.children || []) as TenantWithChildren[])]);
 
   const fetchTenants = async (query?: string) => {
     try {
@@ -63,6 +77,57 @@ export default function Tenants() {
     }, 250);
     return () => window.clearTimeout(timer);
   }, [searchQuery]);
+
+  useEffect(() => {
+    const all = flattenTenants(tenants);
+    if (all.length === 0) {
+      setLineageDefaultsTenantId('');
+      return;
+    }
+    const exists = all.some((t) => t.id === lineageDefaultsTenantId);
+    if (!exists) {
+      setLineageDefaultsTenantId(all[0].id);
+    }
+  }, [tenants, lineageDefaultsTenantId]);
+
+  useEffect(() => {
+    const loadLineageDefaults = async () => {
+      if (!lineageDefaultsTenantId) {
+        setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+        return;
+      }
+      setLoadingLineageDefaults(true);
+      try {
+        const response = await api.getTenantLineageDefaults(lineageDefaultsTenantId);
+        setLineageDefaults(response);
+      } catch {
+        setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+      } finally {
+        setLoadingLineageDefaults(false);
+      }
+    };
+    void loadLineageDefaults();
+  }, [lineageDefaultsTenantId]);
+
+  const saveLineageDefaults = async () => {
+    if (!lineageDefaultsTenantId) return;
+    setSavingLineageDefaults(true);
+    try {
+      const defaultDepth = Math.min(200, Math.max(1, lineageDefaults.defaultDepth));
+      const maxDepthCap = Math.min(200, Math.max(20, Math.max(defaultDepth, lineageDefaults.maxDepthCap)));
+      const updated = await api.updateTenantLineageDefaults(lineageDefaultsTenantId, {
+        ...lineageDefaults,
+        defaultDepth,
+        maxDepthCap,
+      });
+      setLineageDefaults(updated);
+      showToast('Tenant lineage defaults saved', 'success');
+    } catch {
+      showToast('Failed to save tenant lineage defaults', 'error');
+    } finally {
+      setSavingLineageDefaults(false);
+    }
+  };
 
   const handleCreateTenant = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -152,6 +217,9 @@ export default function Tenants() {
       ...(node.children ? flattenTenantOptions(node.children, depth + 1) : []),
     ]);
   };
+
+  const allTenants = flattenTenants(tenants);
+  const selectedLineageDefaultsTenant = allTenants.find((t) => t.id === lineageDefaultsTenantId);
 
   const renderTenantTree = (tenant: TenantWithChildren, depth: number = 0) => {
     const hasChildren = tenant.children && tenant.children.length > 0;
@@ -287,6 +355,101 @@ export default function Tenants() {
           className="input w-full md:max-w-md"
           placeholder="Search tenants by name"
         />
+      </div>
+
+      <div className="card mb-6 border border-indigo-100 bg-indigo-50">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold text-indigo-900">Lineage Defaults</h2>
+            {selectedLineageDefaultsTenant?.updatedAt && (
+              <span className="text-xs text-indigo-700">
+                Tenant updated: {new Date(selectedLineageDefaultsTenant.updatedAt).toLocaleString()}
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-indigo-800">
+            Configure tenant-wide defaults for pipeline lineage triage. These act as baseline behavior across pipelines.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-sm text-indigo-900">
+              Tenant
+              <select
+                className="input mt-1"
+                value={lineageDefaultsTenantId}
+                onChange={(e) => setLineageDefaultsTenantId(e.target.value)}
+              >
+                {flattenTenantOptions(tenants).map((option) => (
+                  <option key={option.id} value={option.id}>{option.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm text-indigo-900">
+              Safe Scope Policy
+              <select
+                className="input mt-1"
+                value={lineageDefaults.safeScopePolicy}
+                onChange={(e) => setLineageDefaults((prev) => ({ ...prev, safeScopePolicy: e.target.value as TenantLineageDefaults['safeScopePolicy'] }))}
+                disabled={loadingLineageDefaults}
+              >
+                <option value="AUTO">AUTO</option>
+                <option value="RUN">RUN</option>
+                <option value="PIPELINE">PIPELINE</option>
+              </select>
+            </label>
+            <label className="text-sm text-indigo-900">
+              Default Fetch Mode
+              <select
+                className="input mt-1"
+                value={lineageDefaults.defaultFetchMode}
+                onChange={(e) => setLineageDefaults((prev) => ({ ...prev, defaultFetchMode: e.target.value as TenantLineageDefaults['defaultFetchMode'] }))}
+                disabled={loadingLineageDefaults}
+              >
+                <option value="SUMMARY">SUMMARY</option>
+                <option value="DETAILS">DETAILS</option>
+              </select>
+            </label>
+            <label className="text-sm text-indigo-900">
+              Default Depth
+              <input
+                type="number"
+                min={1}
+                max={200}
+                className="input mt-1"
+                value={lineageDefaults.defaultDepth}
+                onChange={(e) => setLineageDefaults((prev) => ({ ...prev, defaultDepth: Number(e.target.value || 20) }))}
+                disabled={loadingLineageDefaults}
+              />
+            </label>
+            <label className="text-sm text-indigo-900">
+              Max Depth Cap
+              <input
+                type="number"
+                min={20}
+                max={200}
+                className="input mt-1"
+                value={lineageDefaults.maxDepthCap}
+                onChange={(e) => setLineageDefaults((prev) => ({ ...prev, maxDepthCap: Number(e.target.value || 200) }))}
+                disabled={loadingLineageDefaults}
+              />
+            </label>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="btn-primary"
+              disabled={savingLineageDefaults || loadingLineageDefaults || !lineageDefaultsTenantId}
+              onClick={() => { void saveLineageDefaults(); }}
+            >
+              {savingLineageDefaults ? 'Saving...' : 'Save Defaults'}
+            </button>
+            <button
+              className="btn-secondary"
+              disabled={loadingLineageDefaults}
+              onClick={() => setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS)}
+            >
+              Reset Form
+            </button>
+          </div>
+        </div>
       </div>
 
       {tenants.length === 0 && !loading && (
