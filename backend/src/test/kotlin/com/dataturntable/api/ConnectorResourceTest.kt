@@ -531,4 +531,65 @@ class ConnectorResourceTest {
             .statusCode(200)
             .body("find { it.id == '$credentialId' }.referenceCount", equalTo(1))
     }
+
+    @Test
+    fun testCreateMqttConnectorWithBrokerCredentialStripsInlineSecrets() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        val credentialId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(
+                mapOf(
+                    "name" to "Secret Strip",
+                    "username" to "secret-stripper",
+                    "allowedTopics" to listOf("tenant/$tenantId/secret/#")
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/connectors/mqtt/credentials?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        val connectorId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(
+                mapOf(
+                    "name" to "Credential Bound MQTT",
+                    "connectorType" to "MQTT",
+                    "direction" to "INPUT",
+                    "config" to mapOf(
+                        "broker" to "mqtt://localhost:1883",
+                        "topic" to "tenant/$tenantId/secret/in",
+                        "brokerCredentialId" to credentialId,
+                        "username" to "should-not-persist",
+                        "password" to "should-not-persist"
+                    )
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/connectors/$connectorId")
+        .then()
+            .statusCode(200)
+            .body("config.brokerCredentialId", equalTo(credentialId))
+            .body("config.username", nullValue())
+            .body("config.password", nullValue())
+    }
 }

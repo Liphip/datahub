@@ -284,6 +284,26 @@ export default function Connectors() {
     }));
   };
 
+  const buildConnectorConfig = (): Record<string, unknown> => {
+    const config = Object.entries(formData.config).reduce<Record<string, unknown>>((acc, [key, value]) => {
+      const trimmed = value.trim();
+      if (!trimmed) return acc;
+      if (key === 'port') {
+        const parsed = Number(trimmed);
+        acc[key] = Number.isFinite(parsed) ? parsed : trimmed;
+      } else {
+        acc[key] = trimmed;
+      }
+      return acc;
+    }, {});
+
+    if (formData.connectorType === 'MQTT' && typeof config.brokerCredentialId === 'string' && String(config.brokerCredentialId).trim()) {
+      delete config.username;
+      delete config.password;
+    }
+    return config;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canWriteConnectors) {
@@ -304,17 +324,7 @@ export default function Connectors() {
           return;
         }
 
-        const parsedConfig = Object.entries(formData.config).reduce<Record<string, unknown>>((acc, [key, value]) => {
-          const trimmed = value.trim();
-          if (!trimmed) return acc;
-          if (key === 'port') {
-            const parsed = Number(trimmed);
-            acc[key] = Number.isFinite(parsed) ? parsed : trimmed;
-          } else {
-            acc[key] = trimmed;
-          }
-          return acc;
-        }, {});
+        const parsedConfig = buildConnectorConfig();
 
         const updatePayload: Partial<Connector> = {
           name: formData.name,
@@ -334,17 +344,7 @@ export default function Connectors() {
           return;
         }
 
-        const config = Object.entries(formData.config).reduce<Record<string, unknown>>((acc, [key, value]) => {
-          const trimmed = value.trim();
-          if (!trimmed) return acc;
-          if (key === 'port') {
-            const parsed = Number(trimmed);
-            acc[key] = Number.isFinite(parsed) ? parsed : trimmed;
-          } else {
-            acc[key] = trimmed;
-          }
-          return acc;
-        }, {});
+        const config = buildConnectorConfig();
 
         await api.createConnector(
           tenantId,
@@ -847,6 +847,8 @@ export default function Connectors() {
                                 config: {
                                   ...prev.config,
                                   brokerCredentialId: credentialId,
+                                  username: credentialId ? '' : prev.config.username,
+                                  password: credentialId ? '' : prev.config.password,
                                   topic: prev.config.topic?.trim()
                                     ? prev.config.topic
                                     : (selectedCredential?.allowedTopics?.[0] || prev.config.topic || ''),
@@ -864,6 +866,11 @@ export default function Connectors() {
                           <p className="text-[11px] text-blue-800 dark:text-blue-300 mt-1">
                             Uses tenant-scoped MQTT broker users managed below.
                           </p>
+                          {!!(formData.config.brokerCredentialId || '').trim() && (
+                            <p className="text-[11px] text-blue-800 dark:text-blue-300 mt-1">
+                              Username/password fields are locked and managed by the selected broker credential.
+                            </p>
+                          )}
                         </div>
                       )}
                       <div className="flex flex-wrap gap-2">
@@ -904,6 +911,11 @@ export default function Connectors() {
                           className="input"
                           placeholder={field.placeholder}
                           required={field.required}
+                          disabled={
+                            formData.connectorType === 'MQTT'
+                            && Boolean((formData.config.brokerCredentialId || '').trim())
+                            && (field.key === 'username' || field.key === 'password')
+                          }
                         />
                         {field.hint && <p className="text-xs text-slate-500 mt-1">{field.hint}</p>}
                       </div>

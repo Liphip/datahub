@@ -192,6 +192,18 @@ class ConnectorResource {
         return null
     }
 
+    private fun sanitizeMqttConfig(configMap: Map<*, *>): Map<String, Any?> {
+        val normalized = configMap.entries.associate { (k, v) ->
+            (k?.toString() ?: "") to v
+        }.toMutableMap()
+        val credentialId = normalized["brokerCredentialId"]?.toString()?.trim()
+        if (!credentialId.isNullOrBlank()) {
+            normalized.remove("username")
+            normalized.remove("password")
+        }
+        return normalized.filterKeys { it.isNotBlank() }
+    }
+
     private fun extractBrokerCredentialId(connector: Connector): UUID? {
         val configRaw = try {
             EncryptionUtils.decrypt(connector.config ?: "{}")
@@ -559,11 +571,15 @@ class ConnectorResource {
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
         
         val configValue = request["config"] ?: emptyMap<String, Any>()
-        if (parsedConnectorType == ConnectorType.MQTT && configValue is Map<*, *>) {
-            validateMqttCredentialBinding(tenantUuid, configValue)?.let { return it }
+        val storedConfigValue: Any = if (parsedConnectorType == ConnectorType.MQTT && configValue is Map<*, *>) {
+            val sanitized = sanitizeMqttConfig(configValue)
+            validateMqttCredentialBinding(tenantUuid, sanitized)?.let { return it }
+            sanitized
+        } else {
+            configValue
         }
         val configPlainJson = try {
-            objectMapper.writeValueAsString(configValue)
+            objectMapper.writeValueAsString(storedConfigValue)
         } catch (_: Exception) {
             "{}"
         }
@@ -750,13 +766,16 @@ class ConnectorResource {
                 if (it is Map<*, *> && it.isEmpty()) {
                     return@let
                 }
-                val effectiveType = connector.connectorType
-                if (effectiveType == ConnectorType.MQTT && it is Map<*, *>) {
+                val effectiveConfigValue: Any = if (connector.connectorType == ConnectorType.MQTT && it is Map<*, *>) {
                     val tenantUuid = connector.tenant?.id
                         ?: return Response.status(400).entity(mapOf("error" to "Connector tenant not found")).build()
-                    validateMqttCredentialBinding(tenantUuid, it)?.let { response -> return response }
+                    val sanitized = sanitizeMqttConfig(it)
+                    validateMqttCredentialBinding(tenantUuid, sanitized)?.let { response -> return response }
+                    sanitized
+                } else {
+                    it
                 }
-                val plain = try { objectMapper.writeValueAsString(it) } catch (_: Exception) { it.toString() }
+                val plain = try { objectMapper.writeValueAsString(effectiveConfigValue) } catch (_: Exception) { effectiveConfigValue.toString() }
                 connector.config = EncryptionUtils.encrypt(plain)
             }
             request["description"]?.let { connector.description = it as String }

@@ -136,6 +136,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added broker credential lifecycle guardrails: backend now blocks deletion when a credential is still referenced by tenant MQTT connectors (with reference details), and the Connectors UI shows per-credential usage plus disables delete while in use.
 - Added runtime connector injection for pipeline module execution: import/export node `connectorId` configs are now resolved from graph definition and passed into module containers, with MQTT broker credentials expanded to runtime username/password when `brokerCredentialId` is configured; pipeline run module logs now include connector context in the UI.
 - Improved MQTT broker credential usage visibility: credential list API now returns `referenceCount`, Connectors UI uses backend-provided counts, and connector create/update/delete flows refresh credential usage to keep delete guardrails accurate.
+- Hardened MQTT connector secret handling when broker credentials are bound: backend strips inline `username`/`password` from connector config if `brokerCredentialId` is set, and the Connectors form now auto-clears/disables those fields to prevent conflicting auth sources.
 
 ---
 
