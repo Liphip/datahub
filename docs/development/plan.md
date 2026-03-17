@@ -147,6 +147,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Improved Pipelines page RBAC UX: added explicit read/write/execute permission gating for create/run/delete/cancel actions, disabled unauthorized controls with explanatory tooltips, and added a clear no-access state when users lack `pipeline:*` read scope.
 - Added pipeline run retry workflow: backend now supports `POST /pipelines/{id}/runs/{runId}/retry` (execute-scope auth, in-progress guardrails, retry provenance via `_retryOfRunId`), and the Pipelines run-details panel now offers a `Retry run` action for completed runs to speed operational recovery.
 - Added retry lineage persistence and visibility: `pipeline_runs` now stores `retry_of_run_id` (migration `V4`), run APIs include `retryOfRunId` in responses, and the Pipelines details panel surfaces retry ancestry so operators can track recovery attempts.
+- Added targeted run-detail retrieval: backend now supports `GET /pipelines/{id}/runs/{runId}` (with optional `includeDetails`) and the Pipelines details panel includes a `Refresh run` action that re-fetches only the selected run for lower-noise troubleshooting.
 
 ---
 

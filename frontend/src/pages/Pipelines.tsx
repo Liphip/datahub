@@ -46,6 +46,7 @@ export default function Pipelines() {
   const [triggeringId, setTriggeringId] = useState<string | null>(null);
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [retryingRunId, setRetryingRunId] = useState<string | null>(null);
+  const [refreshingRunId, setRefreshingRunId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [expandedPipelineId, setExpandedPipelineId] = useState<string | null>(null);
@@ -432,6 +433,27 @@ export default function Pipelines() {
       showToast(error?.response?.data?.error || 'Failed to retry run', 'error');
     } finally {
       setRetryingRunId(null);
+    }
+  };
+
+  const handleRefreshRun = async (pipelineId: string, runId: string) => {
+    if (!canReadPipelines) {
+      showToast('You need pipeline read permission to refresh runs', 'error');
+      return;
+    }
+    setRefreshingRunId(runId);
+    try {
+      const run = await api.getPipelineRun(pipelineId, runId, true);
+      setDetailedRunsMap((prev) => {
+        const existing = prev[pipelineId] ?? [];
+        const without = existing.filter((item) => item.id !== run.id);
+        return { ...prev, [pipelineId]: [run, ...without] };
+      });
+      showToast('Run details refreshed', 'success');
+    } catch {
+      showToast('Failed to refresh run details', 'error');
+    } finally {
+      setRefreshingRunId(null);
     }
   };
 
@@ -1768,6 +1790,16 @@ export default function Pipelines() {
                                 )}
                                 <span>Started: <strong>{formatRunTime(selectedRun.startedAt)}</strong></span>
                                 <span>Duration: <strong>{selectedRun.durationMs != null ? `${selectedRun.durationMs} ms` : '-'}</strong></span>
+                                <button
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    void handleRefreshRun(pipeline.id, selectedRun.id);
+                                  }}
+                                  disabled={refreshingRunId === selectedRun.id}
+                                  className="px-2 py-0.5 rounded border border-slate-300 text-slate-700 bg-white"
+                                >
+                                  {refreshingRunId === selectedRun.id ? 'Refreshing...' : 'Refresh run'}
+                                </button>
                                 {(selectedRun.status === 'RUNNING' || selectedRun.status === 'PENDING') && (
                                   <button
                                     onClick={(e) => {

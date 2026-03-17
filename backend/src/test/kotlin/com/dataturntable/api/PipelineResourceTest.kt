@@ -450,6 +450,32 @@ class PipelineResourceTest {
             .statusCode(200)
             .body("size()", equalTo(1))
             .body("[0].status", equalTo("FAILED"))
+
+        val runId = QuarkusTransaction.requiringNew().call<String> {
+            val pipeline = em.find(Pipeline::class.java, java.util.UUID.fromString(pipelineId))
+            val run = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.SUCCESS
+                this.triggerType = TriggerType.MANUAL
+                this.startedAt = java.time.Instant.now().minusSeconds(12)
+                this.completedAt = java.time.Instant.now().minusSeconds(2)
+                this.metrics = "{\"result\":{\"alertsFired\":2}}"
+            }
+            em.persist(run)
+            em.flush()
+            run.id.toString()
+        }
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("includeDetails", true)
+        .`when`()
+            .get("/api/internal/v1/pipelines/$pipelineId/runs/$runId")
+        .then()
+            .statusCode(200)
+            .body("id", equalTo(runId))
+            .body("alertsFired", equalTo(2))
+            .body("metrics.result.alertsFired", equalTo(2))
     }
 
     @Test

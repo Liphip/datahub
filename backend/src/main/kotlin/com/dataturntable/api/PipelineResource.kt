@@ -1045,4 +1045,83 @@ class PipelineResource {
             }
         ).build()
     }
+
+    @GET
+    @Path("/{id}/runs/{runId}")
+    fun getRun(
+        @PathParam("id") id: String,
+        @PathParam("runId") runId: String,
+        @QueryParam("includeDetails") includeDetails: Boolean?
+    ): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val pipelineId = try {
+            UUID.fromString(id)
+        } catch (_: Exception) {
+            return Response.status(400).entity(mapOf("error" to "Invalid pipeline id")).build()
+        }
+        val runUuid = try {
+            UUID.fromString(runId)
+        } catch (_: Exception) {
+            return Response.status(400).entity(mapOf("error" to "Invalid run id")).build()
+        }
+
+        val pipeline = em.find(Pipeline::class.java, pipelineId)
+            ?: return Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
+        val tenantId = pipeline.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
+        requireTenantAccess(currentUser, tenantId, "pipeline:read")?.let { return it }
+
+        val run = em.find(PipelineRun::class.java, runUuid)
+            ?: return Response.status(404).entity(mapOf("error" to "Run not found")).build()
+        if (run.pipeline?.id != pipeline.id) {
+            return Response.status(404).entity(mapOf("error" to "Run not found for this pipeline")).build()
+        }
+
+        val withDetails = includeDetails != false
+        val metrics = if (withDetails) {
+            try {
+                if (run.metrics.isNullOrBlank()) emptyMap<String, Any>()
+                else objectMapper.readValue(run.metrics, Map::class.java)
+            } catch (_: Exception) {
+                mapOf("raw" to run.metrics)
+            }
+        } else {
+            emptyMap<String, Any>()
+        }
+        val durationMs = if (run.completedAt != null) {
+            java.time.Duration.between(run.startedAt, run.completedAt).toMillis()
+        } else {
+            null
+        }
+        val result = if (withDetails) metrics["result"] as? Map<*, *> else null
+        val alertEvaluation = if (withDetails) result?.get("alertEvaluation") else null
+        val alertsFired = if (withDetails) {
+            when (val value = result?.get("alertsFired")) {
+                is Number -> value.toInt()
+                else -> null
+            }
+        } else {
+            null
+        }
+        val moduleLogs = if (withDetails) metrics["moduleLogs"] else null
+        val executionLog = if (withDetails) metrics["executionLog"] else null
+
+        return Response.ok(
+            mapOf(
+                "id" to run.id,
+                "status" to run.status.name,
+                "triggerType" to run.triggerType.name,
+                "retryOfRunId" to run.retryOfRunId,
+                "startedAt" to run.startedAt,
+                "completedAt" to run.completedAt,
+                "durationMs" to durationMs,
+                "errorMessage" to run.errorMessage,
+                "metrics" to metrics,
+                "moduleLogs" to moduleLogs,
+                "executionLog" to executionLog,
+                "alertEvaluation" to alertEvaluation,
+                "alertsFired" to alertsFired
+            )
+        ).build()
+    }
 }
