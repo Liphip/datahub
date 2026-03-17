@@ -113,6 +113,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Extended tenant management auth to allow scoped `manage:tenant` users (while keeping root-tenant create/delete superadmin-only), and updated Tenants navigation/page gating to use tenant-management abilities.
 - Enhanced `ModuleEditor` version-history UX with one-click version loading plus unsaved-change guardrail (inline confirm) and loaded-version indicator.
 - Hardened Role API UUID/error handling and role read access checks (`manage:tenant` + tenant scope), and improved Modules list version counters to use backend `versionCount` metadata.
+- Added module RBAC enforcement in `ModuleResource` (`module:read`/`module:write`/`module:delete` + tenant scope), plus frontend module permission UX (read-only editor mode, gated create/delete actions, and clearer 403 guidance on Modules page).
 
 ---
 

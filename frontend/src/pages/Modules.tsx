@@ -19,6 +19,9 @@ const moduleTypeColors: Record<string, string> = {
 export default function Modules() {
   const { user, selectedTenantId } = useAuthStore();
   const navigate = useNavigate();
+  const canReadModules = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('module:read'));
+  const canWriteModules = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('module:write'));
+  const canDeleteModules = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('module:delete'));
   const [modules, setModules] = useState<CodeModule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -50,8 +53,13 @@ export default function Modules() {
       try {
         await loadModules(tenantId, filter);
         setError('');
-      } catch {
-        setError('Failed to load modules');
+      } catch (err: any) {
+        const status = err?.response?.status;
+        if (status === 403) {
+          setError('You do not have permission to view modules in this tenant.');
+        } else {
+          setError('Failed to load modules');
+        }
       } finally {
         setLoading(false);
       }
@@ -103,8 +111,16 @@ export default function Modules() {
 
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Modules</h1>
-        <button onClick={() => setShowCreateModal(true)} className="btn-primary">Create Module</button>
+        {canWriteModules && (
+          <button onClick={() => setShowCreateModal(true)} className="btn-primary">Create Module</button>
+        )}
       </div>
+
+      {!canReadModules && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          You can not view modules with your current role. Ask a tenant admin to grant module read access.
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded flex justify-between">
@@ -139,6 +155,8 @@ export default function Modules() {
         </div>
       ) : !tenantId ? (
         <div className="card text-center py-12"><p className="text-gray-500">No tenant ID found.</p></div>
+      ) : !canReadModules ? (
+        <div className="card text-center py-12"><p className="text-gray-500">Access denied for module listing.</p></div>
       ) : modules.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {modules.map((module) => {
@@ -167,8 +185,8 @@ export default function Modules() {
 
                 {/* Actions */}
                 <div className="mt-4 pt-3 border-t border-gray-100 flex justify-end items-center space-x-3 text-sm">
-                  <Link to={`/modules/${module.id}`} className="text-primary-600 hover:text-primary-800">Edit</Link>
-                  {isConfirming ? (
+                  <Link to={`/modules/${module.id}`} className="text-primary-600 hover:text-primary-800">Open</Link>
+                  {canDeleteModules && isConfirming ? (
                     <>
                       <span className="text-gray-500 text-xs">Delete?</span>
                       <button
@@ -180,14 +198,14 @@ export default function Modules() {
                       </button>
                       <button onClick={() => setConfirmDeleteId(null)} className="text-gray-500 hover:text-gray-700">No</button>
                     </>
-                  ) : (
+                  ) : canDeleteModules ? (
                     <button
                       onClick={(e) => { e.preventDefault(); setConfirmDeleteId(module.id); }}
                       className="text-red-600 hover:text-red-800"
                     >
                       Delete
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </div>
             );
@@ -196,7 +214,11 @@ export default function Modules() {
       ) : (
         <div className="card text-center py-12">
           <p className="text-gray-500 mb-4">No modules yet</p>
-          <button onClick={() => setShowCreateModal(true)} className="btn-primary">Create Your First Module</button>
+          {canWriteModules ? (
+            <button onClick={() => setShowCreateModal(true)} className="btn-primary">Create Your First Module</button>
+          ) : (
+            <p className="text-sm text-gray-500">You need module write access to create one.</p>
+          )}
         </div>
       )}
 

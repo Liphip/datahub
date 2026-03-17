@@ -93,6 +93,7 @@ export default function ModuleEditor() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user, selectedTenantId } = useAuthStore();
+  const canWriteModules = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('module:write'));
   
   const [module, setModule] = useState<CodeModule | null>(null);
   const [code, setCode] = useState('');
@@ -153,7 +154,7 @@ export default function ModuleEditor() {
   };
 
   const handleSave = async () => {
-    if (!id || !tenantId) return;
+    if (!id || !tenantId || !canWriteModules) return;
     
     setSaving(true);
     try {
@@ -228,6 +229,9 @@ export default function ModuleEditor() {
         <div>
           <h1 className="text-xl font-bold">{module.name}</h1>
           <p className="text-sm text-gray-500">{module.moduleType} Module</p>
+          {!canWriteModules && (
+            <p className="text-xs text-amber-700 mt-1">Read-only mode: no permission to save module versions.</p>
+          )}
           {hasUnsavedChanges && (
             <p className="text-xs text-amber-700 mt-1">Unsaved changes</p>
           )}
@@ -241,8 +245,9 @@ export default function ModuleEditor() {
           </button>
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || !canWriteModules}
             className="btn-primary"
+            title={!canWriteModules ? 'You need module write permission to save versions' : undefined}
           >
             {saving ? 'Saving...' : 'Save Version'}
           </button>
