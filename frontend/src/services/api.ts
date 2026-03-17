@@ -300,11 +300,13 @@ class ApiService {
     runId: string,
     maxDepth = 20,
     direction: 'both' | 'ancestors' | 'descendants' = 'both',
-    statuses?: Array<'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED'>
+    statuses?: Array<'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED'>,
+    statusPreset?: 'all' | 'failures' | 'inflight'
   ): Promise<PipelineRunLineage> {
     const statusQuery = statuses && statuses.length > 0 ? `&statuses=${statuses.join(',')}` : '';
+    const presetQuery = statusPreset ? `&statusPreset=${statusPreset}` : '';
     const response = await this.client.get<PipelineRunLineage>(
-      `/pipelines/${pipelineId}/runs/${runId}/lineage?maxDepth=${Math.max(1, maxDepth)}&direction=${direction}${statusQuery}`
+      `/pipelines/${pipelineId}/runs/${runId}/lineage?maxDepth=${Math.max(1, maxDepth)}&direction=${direction}${statusQuery}${presetQuery}`
     );
     return response.data;
   }

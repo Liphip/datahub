@@ -17,7 +17,7 @@ type SinceHoursFilter = 1 | 24 | 168 | null;
 type BucketSortMode = 'NEWEST' | 'FAILED_FIRST';
 type BucketRunStatusFilter = 'ALL' | 'RUNNING' | 'PENDING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
 type LineageDirection = 'both' | 'ancestors' | 'descendants';
-type LineageStatusFilter = 'ALL' | 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+type LineageStatusFilter = 'ALL' | 'INFLIGHT' | 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
 
 type TriagePreset = {
   name: string;
@@ -29,7 +29,7 @@ type TriagePreset = {
 };
 
 const TRIAGE_PRESETS_KEY = 'pipelines.triage.presets.v1';
-const LINEAGE_STATUS_OPTIONS: LineageStatusFilter[] = ['ALL', 'FAILED', 'RUNNING', 'PENDING', 'SUCCESS', 'CANCELLED'];
+const LINEAGE_STATUS_OPTIONS: LineageStatusFilter[] = ['ALL', 'INFLIGHT', 'FAILED', 'RUNNING', 'PENDING', 'SUCCESS', 'CANCELLED'];
 
 export default function Pipelines() {
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
@@ -99,6 +99,7 @@ export default function Pipelines() {
   const [pendingPresetAction, setPendingPresetAction] = useState<null | { type: 'delete' | 'resetOne' | 'resetAll'; name?: string }>(null);
   const importPresetInputRef = useRef<HTMLInputElement | null>(null);
   const handledFocusRef = useRef<string | null>(null);
+  const handledLineageFocusRef = useRef<string | null>(null);
   const [showShortcutHints, setShowShortcutHints] = useState(() => {
     const stored = localStorage.getItem('pipelines.bucket.shortcuts.hidden');
     return stored !== 'true';
@@ -114,6 +115,17 @@ export default function Pipelines() {
   const bucketStartParam = searchParams.get('bucketStart');
   const focusPipelineIdParam = searchParams.get('focusPipelineId');
   const focusRunIdParam = searchParams.get('focusRunId');
+  const lineageRunIdParam = searchParams.get('lineageRunId');
+  const lineageDepthRaw = Number(searchParams.get('lineageDepth') || '');
+  const lineageDepthParam = Number.isFinite(lineageDepthRaw) && lineageDepthRaw > 0 ? Math.min(200, Math.max(1, Math.floor(lineageDepthRaw))) : null;
+  const lineageDirectionRaw = (searchParams.get('lineageDirection') || '').toLowerCase();
+  const lineageDirectionParam: LineageDirection | null = (['both', 'ancestors', 'descendants'] as const).includes(lineageDirectionRaw as LineageDirection)
+    ? (lineageDirectionRaw as LineageDirection)
+    : null;
+  const lineageStatusRaw = (searchParams.get('lineageStatus') || '').toUpperCase();
+  const lineageStatusParam: LineageStatusFilter | null = (['ALL', 'INFLIGHT', 'FAILED', 'RUNNING', 'PENDING', 'SUCCESS', 'CANCELLED'] as const).includes(lineageStatusRaw as LineageStatusFilter)
+    ? (lineageStatusRaw as LineageStatusFilter)
+    : null;
   const bucketSecondsParam = Number(searchParams.get('bucketSeconds') || '');
   const bucketStart = bucketStartParam ? new Date(bucketStartParam) : null;
   const bucketSeconds = Number.isFinite(bucketSecondsParam) && bucketSecondsParam > 0 ? bucketSecondsParam : null;
@@ -515,18 +527,75 @@ export default function Pipelines() {
       const depth = maxDepth ?? lineageDepthByRunId[runId] ?? 20;
       const requestedDirection = direction ?? lineageDirectionByRunId[runId] ?? 'both';
       const requestedStatus = statusFilter ?? lineageStatusFilterByRunId[runId] ?? 'ALL';
-      const statuses = requestedStatus === 'ALL' ? undefined : [requestedStatus];
-      const lineage = await api.getPipelineRunLineage(pipelineId, runId, depth, requestedDirection, statuses);
+      const statusPreset = requestedStatus === 'INFLIGHT'
+        ? 'inflight'
+        : requestedStatus === 'FAILED'
+          ? 'failures'
+          : requestedStatus === 'ALL'
+            ? 'all'
+            : undefined;
+      const statuses = requestedStatus === 'INFLIGHT' || requestedStatus === 'ALL' || requestedStatus === 'FAILED'
+        ? undefined
+        : [requestedStatus];
+      const lineage = await api.getPipelineRunLineage(pipelineId, runId, depth, requestedDirection, statuses, statusPreset);
       setLineageDepthByRunId((prev) => ({ ...prev, [runId]: depth }));
       setLineageDirectionByRunId((prev) => ({ ...prev, [runId]: requestedDirection }));
       setLineageStatusFilterByRunId((prev) => ({ ...prev, [runId]: requestedStatus }));
       setLineageByRunId((prev) => ({ ...prev, [runId]: lineage }));
+
+      const next = new URLSearchParams(searchParams);
+      next.set('focusPipelineId', pipelineId);
+      next.set('focusRunId', runId);
+      next.set('lineageRunId', runId);
+      next.set('lineageDepth', String(depth));
+      next.set('lineageDirection', requestedDirection);
+      if (requestedStatus === 'ALL') {
+        next.delete('lineageStatus');
+      } else {
+        next.set('lineageStatus', requestedStatus);
+      }
+      setSearchParams(next, { replace: true });
     } catch {
       showToast('Failed to load run lineage', 'error');
     } finally {
       setLoadingLineageRunId(null);
     }
   };
+
+  useEffect(() => {
+    if (!canReadPipelines || !focusPipelineIdParam) return;
+    const selectedRunId = selectedRunIdByPipeline[focusPipelineIdParam];
+    if (!selectedRunId) return;
+    const targetRunId = lineageRunIdParam || focusRunIdParam || selectedRunId;
+    if (selectedRunId !== targetRunId) return;
+
+    const hasLineageQuery = Boolean(lineageRunIdParam || lineageDepthParam || lineageDirectionParam || lineageStatusParam);
+    if (!hasLineageQuery) return;
+
+    const requestedDirection = lineageDirectionParam ?? 'both';
+    const requestedStatus = lineageStatusParam ?? 'ALL';
+    const requestedDepth = lineageDepthParam ?? 20;
+    const signature = `${focusPipelineIdParam}:${targetRunId}:${requestedDirection}:${requestedStatus}:${requestedDepth}`;
+    if (handledLineageFocusRef.current === signature) return;
+    handledLineageFocusRef.current = signature;
+
+    void handleLoadRunLineage(
+      focusPipelineIdParam,
+      targetRunId,
+      requestedDepth,
+      requestedDirection,
+      requestedStatus
+    );
+  }, [
+    canReadPipelines,
+    focusPipelineIdParam,
+    focusRunIdParam,
+    lineageRunIdParam,
+    lineageDepthParam,
+    lineageDirectionParam,
+    lineageStatusParam,
+    selectedRunIdByPipeline,
+  ]);
 
   const runStatusColor: Record<string, string> = {
     SUCCESS: 'bg-green-500',
@@ -1948,6 +2017,11 @@ export default function Pipelines() {
                                       const statusCount = option === 'ALL'
                                         ? (lineageByRunId[selectedRun.id].ancestorsTotal ?? lineageByRunId[selectedRun.id].ancestors.length)
                                           + (lineageByRunId[selectedRun.id].descendantsTotal ?? lineageByRunId[selectedRun.id].descendants.length)
+                                        : option === 'INFLIGHT'
+                                          ? (lineageByRunId[selectedRun.id].ancestorsStatusCounts?.RUNNING ?? 0)
+                                            + (lineageByRunId[selectedRun.id].ancestorsStatusCounts?.PENDING ?? 0)
+                                            + (lineageByRunId[selectedRun.id].descendantsStatusCounts?.RUNNING ?? 0)
+                                            + (lineageByRunId[selectedRun.id].descendantsStatusCounts?.PENDING ?? 0)
                                         : (lineageByRunId[selectedRun.id].ancestorsStatusCounts?.[option] ?? 0)
                                           + (lineageByRunId[selectedRun.id].descendantsStatusCounts?.[option] ?? 0);
                                       const disabled = option !== 'ALL' && statusCount === 0;
@@ -2002,7 +2076,7 @@ export default function Pipelines() {
                                           selectedRun.id,
                                           currentDepth,
                                           lineageDirectionByRunId[selectedRun.id] ?? 'both',
-                                          'RUNNING'
+                                          'INFLIGHT'
                                         );
                                       }}
                                     >

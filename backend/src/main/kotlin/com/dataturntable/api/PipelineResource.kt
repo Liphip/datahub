@@ -1132,7 +1132,8 @@ class PipelineResource {
         @PathParam("runId") runId: String,
         @QueryParam("maxDepth") maxDepth: Int?,
         @QueryParam("direction") direction: String?,
-        @QueryParam("statuses") statuses: String?
+        @QueryParam("statuses") statuses: String?,
+        @QueryParam("statusPreset") statusPreset: String?
     ): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
@@ -1168,9 +1169,15 @@ class PipelineResource {
         }
         val includeAncestors = normalizedDirection != "descendants"
         val includeDescendants = normalizedDirection != "ancestors"
-        val statusFilter: Set<PipelineRunStatus>? = if (statuses.isNullOrBlank()) {
-            null
-        } else {
+        val normalizedStatusPreset = when (statusPreset?.trim()?.lowercase()) {
+            null, "", "all" -> "all"
+            "failures" -> "failures"
+            "inflight" -> "inflight"
+            else -> return Response.status(400)
+                .entity(mapOf("error" to "Invalid statusPreset. Allowed values: all, failures, inflight"))
+                .build()
+        }
+        val statusFilter: Set<PipelineRunStatus>? = if (!statuses.isNullOrBlank()) {
             val parsed = statuses
                 .split(',')
                 .mapNotNull { it.trim().takeIf(String::isNotEmpty) }
@@ -1190,7 +1197,14 @@ class PipelineResource {
                     .build()
             }
             parsed
+        } else {
+            when (normalizedStatusPreset) {
+                "failures" -> setOf(PipelineRunStatus.FAILED)
+                "inflight" -> setOf(PipelineRunStatus.RUNNING, PipelineRunStatus.PENDING)
+                else -> null
+            }
         }
+        val resolvedStatusPreset = if (!statuses.isNullOrBlank()) "custom" else normalizedStatusPreset
 
         fun includeByStatus(status: PipelineRunStatus): Boolean = statusFilter?.contains(status) ?: true
 
@@ -1307,6 +1321,7 @@ class PipelineResource {
                 "maxDepth" to depthLimit,
                 "direction" to normalizedDirection,
                 "statuses" to statusFilter?.map { it.name },
+                "statusPreset" to resolvedStatusPreset,
                 "ancestorsTotal" to ancestorsTotal,
                 "ancestorsStatusCounts" to ancestorsStatusCounts,
                 "descendantsTotal" to descendantsTotal,
