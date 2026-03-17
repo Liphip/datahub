@@ -120,6 +120,8 @@ export default function Connectors() {
   const [impactModal, setImpactModal] = useState<ConnectorImpactSummary | null>(null);
   const [loadingImpactId, setLoadingImpactId] = useState<string | null>(null);
   const [impactWindowHours, setImpactWindowHours] = useState<1 | 24 | 168>(24);
+  const [impactActiveOnly, setImpactActiveOnly] = useState(false);
+  const [impactRiskAtLeast, setImpactRiskAtLeast] = useState<'LOW' | 'MEDIUM' | 'HIGH'>('LOW');
   const [disconnectImpactModal, setDisconnectImpactModal] = useState<ConnectorImpactSummary | null>(null);
   const [pendingDisconnectConnector, setPendingDisconnectConnector] = useState<Connector | null>(null);
   const [brokerForm, setBrokerForm] = useState({
@@ -539,11 +541,22 @@ export default function Connectors() {
     }
   };
 
-  const handleViewImpact = async (connector: Connector, sinceHours: 1 | 24 | 168 = impactWindowHours) => {
+  const handleViewImpact = async (
+    connector: Connector,
+    sinceHours: 1 | 24 | 168 = impactWindowHours,
+    options?: { activeOnly?: boolean; riskAtLeast?: 'LOW' | 'MEDIUM' | 'HIGH' }
+  ) => {
     setLoadingImpactId(connector.id);
     try {
-      const impact = await api.getConnectorImpact(connector.id, sinceHours);
+      const activeOnly = options?.activeOnly ?? impactActiveOnly;
+      const riskAtLeast = options?.riskAtLeast ?? impactRiskAtLeast;
+      const impact = await api.getConnectorImpact(connector.id, sinceHours, {
+        activeOnly,
+        riskAtLeast,
+      });
       setImpactWindowHours(sinceHours);
+      setImpactActiveOnly(activeOnly);
+      setImpactRiskAtLeast(riskAtLeast);
       setImpactModal(impact);
     } catch (err: any) {
       setError(err?.response?.data?.error || 'Failed to load connector impact');
@@ -935,15 +948,46 @@ export default function Connectors() {
                 </button>
                 ))}
             </div>
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-gray-600">Filters:</span>
+              <button
+                className={`px-2 py-0.5 rounded border ${impactActiveOnly ? 'border-indigo-500 text-indigo-700 bg-white' : 'border-slate-300 text-slate-700 bg-slate-50'}`}
+                onClick={async () => {
+                  if (!impactModal) return;
+                  const connector = connectors.find((item) => item.id === impactModal.connectorId);
+                  if (!connector) return;
+                  await handleViewImpact(connector, impactWindowHours, { activeOnly: !impactActiveOnly, riskAtLeast: impactRiskAtLeast });
+                }}
+              >
+                {impactActiveOnly ? 'Active only' : 'All pipelines'}
+              </button>
+              {(['LOW', 'MEDIUM', 'HIGH'] as const).map((level) => (
+                <button
+                  key={level}
+                  className={`px-2 py-0.5 rounded border ${impactRiskAtLeast === level ? 'border-indigo-500 text-indigo-700 bg-white' : 'border-slate-300 text-slate-700 bg-slate-50'}`}
+                  onClick={async () => {
+                    if (!impactModal) return;
+                    const connector = connectors.find((item) => item.id === impactModal.connectorId);
+                    if (!connector) return;
+                    await handleViewImpact(connector, impactWindowHours, { activeOnly: impactActiveOnly, riskAtLeast: level });
+                  }}
+                >
+                  {level}+
+                </button>
+              ))}
+            </div>
             <div className="mb-3 flex flex-wrap gap-3 text-xs text-gray-700">
               <span>
-                High risk: <strong>{impactModal.impactedPipelines.filter((p) => p.riskLevel === 'HIGH').length}</strong>
+                High risk: <strong>{impactModal.highRiskCount ?? impactModal.impactedPipelines.filter((p) => p.riskLevel === 'HIGH').length}</strong>
               </span>
               <span>
-                Medium risk: <strong>{impactModal.impactedPipelines.filter((p) => p.riskLevel === 'MEDIUM').length}</strong>
+                Medium risk: <strong>{impactModal.mediumRiskCount ?? impactModal.impactedPipelines.filter((p) => p.riskLevel === 'MEDIUM').length}</strong>
               </span>
               <span>
-                Low risk: <strong>{impactModal.impactedPipelines.filter((p) => p.riskLevel === 'LOW').length}</strong>
+                Low risk: <strong>{impactModal.lowRiskCount ?? impactModal.impactedPipelines.filter((p) => p.riskLevel === 'LOW').length}</strong>
+              </span>
+              <span>
+                Active impacted: <strong>{impactModal.activeImpactedPipelineCount ?? impactModal.impactedPipelines.filter((p) => p.pipelineIsActive).length}</strong>
               </span>
             </div>
             {impactModal.impactedPipelines.length === 0 ? (

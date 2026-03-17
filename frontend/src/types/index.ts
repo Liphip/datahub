@@ -232,6 +232,7 @@ export interface ConnectorImpactSummary {
   connectorName: string;
   sinceHours?: number;
   activeOnly?: boolean;
+  riskAtLeast?: 'LOW' | 'MEDIUM' | 'HIGH' | string;
   referenceCount: number;
   impactedPipelineCount: number;
   activeImpactedPipelineCount?: number;

@@ -551,12 +551,34 @@ class ConnectorResourceTest {
 
         given()
             .header("Authorization", "Bearer $token")
+            .queryParam("sinceHours", 24)
+            .queryParam("riskAtLeast", "MEDIUM")
+        .`when`()
+            .get("/api/internal/v1/connectors/$connectorId/impact")
+        .then()
+            .statusCode(200)
+            .body("riskAtLeast", equalTo("MEDIUM"))
+            .body("impactedPipelineCount", equalTo(1))
+            .body("impactedPipelines[0].pipelineName", equalTo("Impact Pipeline"))
+
+        given()
+            .header("Authorization", "Bearer $token")
             .queryParam("sinceHours", 5)
         .`when`()
             .get("/api/internal/v1/connectors/$connectorId/impact")
         .then()
             .statusCode(400)
             .body("error", equalTo("Invalid sinceHours"))
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("sinceHours", 24)
+            .queryParam("riskAtLeast", "CRITICAL")
+        .`when`()
+            .get("/api/internal/v1/connectors/$connectorId/impact")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid riskAtLeast"))
     }
 
     @Test

@@ -751,7 +751,8 @@ class ConnectorResource {
     fun getImpact(
         @PathParam("id") id: String,
         @QueryParam("sinceHours") sinceHours: Int?,
-        @QueryParam("activeOnly") activeOnly: Boolean?
+        @QueryParam("activeOnly") activeOnly: Boolean?,
+        @QueryParam("riskAtLeast") riskAtLeast: String?
     ): Response {
         val connectorId = parseUuid(id)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
@@ -768,6 +769,11 @@ class ConnectorResource {
         if (hours !in setOf(1, 24, 168)) {
             return Response.status(400).entity(mapOf("error" to "Invalid sinceHours")).build()
         }
+        val riskThreshold = riskAtLeast?.trim()?.uppercase()?.takeIf { it.isNotBlank() }
+        if (riskThreshold != null && riskThreshold !in setOf("LOW", "MEDIUM", "HIGH")) {
+            return Response.status(400).entity(mapOf("error" to "Invalid riskAtLeast")).build()
+        }
+        val riskRank = mapOf("LOW" to 1, "MEDIUM" to 2, "HIGH" to 3)
         val sinceInstant = java.time.Instant.now().minus(java.time.Duration.ofHours(hours.toLong()))
 
         val references = connector.tenant?.id?.let { connectorReferenceSummaries(it, connectorId) } ?: emptyList()
@@ -845,6 +851,10 @@ class ConnectorResource {
                 "impactPriorityScore" to impactPriorityScore,
                 "riskLevel" to riskLevel
             )
+        }.filter { pipelineImpact ->
+            if (riskThreshold == null) return@filter true
+            val level = (pipelineImpact["riskLevel"]?.toString() ?: "LOW").uppercase()
+            (riskRank[level] ?: 1) >= (riskRank[riskThreshold] ?: 1)
         }.sortedWith(
             compareByDescending<Map<String, Any?>> { (it["impactPriorityScore"] as? Int) ?: 0 }
                 .thenBy { (it["pipelineName"] ?: "").toString() }
@@ -860,6 +870,7 @@ class ConnectorResource {
                 "connectorName" to connector.name,
                 "sinceHours" to hours,
                 "activeOnly" to (activeOnly == true),
+                "riskAtLeast" to riskThreshold,
                 "referenceCount" to references.size,
                 "impactedPipelineCount" to impactedPipelines.size,
                 "activeImpactedPipelineCount" to activeImpactedPipelineCount,

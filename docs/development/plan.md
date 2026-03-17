@@ -161,6 +161,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added connector impact risk scoring: impact endpoint now computes per-pipeline `impactPriorityScore` + `riskLevel` (`HIGH`/`MEDIUM`/`LOW`) and sorts results by priority; Connectors impact modal now visualizes risk badges/scores and aggregate risk counts for faster triage.
 - Added safe-disconnect impact gating: connector impact API now supports `activeOnly=true` and returns aggregate active/risk counters, while Connectors UI now performs pre-disconnect impact checks and shows a confirmation modal with prioritized active pipeline risk before allowing disconnect.
 - Added impact-to-triage deep-linking: connector impact now includes latest failed run metadata, and the Impact modal provides direct `Triage Runs` navigation into the Pipelines run-details view via focus query params (`focusPipelineId`/`focusRunId`) for faster incident handoff.
+- Added impact filtering for focused remediation: impact endpoint now supports `riskAtLeast` (`LOW|MEDIUM|HIGH`) and the Impact modal adds active-only + risk-threshold toggles so operators can quickly isolate high-risk active dependencies.
 
 ---
 
