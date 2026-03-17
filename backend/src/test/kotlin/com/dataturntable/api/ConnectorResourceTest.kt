@@ -325,4 +325,19 @@ class ConnectorResourceTest {
             .statusCode(400)
             .body("missing", hasItem("topic"))
     }
+
+    @Test
+    fun testGetMqttDefaults() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/connectors/mqtt/defaults")
+        .then()
+            .statusCode(200)
+            .body("internalBrokerUrl", notNullValue())
+            .body("externalBrokerUrl", notNullValue())
+            .body("defaultTopic", notNullValue())
+    }
 }

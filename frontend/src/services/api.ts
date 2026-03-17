@@ -378,6 +378,23 @@ class ApiService {
   }
 
   // Connectors
+  async getMqttConnectorDefaults(): Promise<{
+    internalBrokerUrl: string;
+    externalBrokerUrl: string;
+    websocketUrl: string;
+    defaultTopic: string;
+    integratedBrokerLabel: string;
+  }> {
+    const response = await this.client.get<{
+      internalBrokerUrl: string;
+      externalBrokerUrl: string;
+      websocketUrl: string;
+      defaultTopic: string;
+      integratedBrokerLabel: string;
+    }>(`/connectors/mqtt/defaults`);
+    return response.data;
+  }
+
   async getConnectors(tenantId: string, type?: string, direction?: string): Promise<Connector[]> {
     const params = new URLSearchParams({ tenantId });
     if (type) params.append('type', type);

@@ -16,6 +16,7 @@ import jakarta.transaction.Transactional
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
+import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.eclipse.microprofile.jwt.JsonWebToken
 import java.util.UUID
 
@@ -30,6 +31,18 @@ class ConnectorResource {
 
     @PersistenceContext
     lateinit var em: EntityManager
+
+    @ConfigProperty(name = "dataturntable.mqtt.integrated.internal-broker-url", defaultValue = "mqtt://mosquitto:1883")
+    lateinit var mqttInternalBrokerUrl: String
+
+    @ConfigProperty(name = "dataturntable.mqtt.integrated.external-broker-url", defaultValue = "mqtt://localhost:1883")
+    lateinit var mqttExternalBrokerUrl: String
+
+    @ConfigProperty(name = "dataturntable.mqtt.integrated.websocket-url", defaultValue = "ws://localhost:9001")
+    lateinit var mqttWebsocketUrl: String
+
+    @ConfigProperty(name = "dataturntable.mqtt.integrated.default-topic", defaultValue = "dataturntable/events")
+    lateinit var mqttDefaultTopic: String
     
     private val objectMapper = ObjectMapper()
 
@@ -123,6 +136,25 @@ class ConnectorResource {
         )
     }
     
+    @GET
+    @Path("/mqtt/defaults")
+    fun mqttDefaults(): Response {
+        val currentUser = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        if (!SecurityUtils.hasAbility(currentUser, "read:connector")) {
+            return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
+        }
+
+        return Response.ok(
+            mapOf(
+                "internalBrokerUrl" to mqttInternalBrokerUrl,
+                "externalBrokerUrl" to mqttExternalBrokerUrl,
+                "websocketUrl" to mqttWebsocketUrl,
+                "defaultTopic" to mqttDefaultTopic,
+                "integratedBrokerLabel" to "Integrated Mosquitto"
+            )
+        ).build()
+    }
+
     @GET
     fun list(
         @QueryParam("tenantId") tenantId: String?,

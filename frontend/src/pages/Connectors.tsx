@@ -86,6 +86,13 @@ export default function Connectors() {
     config: initialConfigByType('MQTT'),
     description: ''
   });
+  const [mqttDefaults, setMqttDefaults] = useState<{
+    internalBrokerUrl: string;
+    externalBrokerUrl: string;
+    websocketUrl: string;
+    defaultTopic: string;
+    integratedBrokerLabel: string;
+  } | null>(null);
 
   const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
 
@@ -116,6 +123,8 @@ export default function Connectors() {
 
       try {
         await loadConnectors(tenantId);
+        const defaults = await api.getMqttConnectorDefaults().catch(() => null);
+        setMqttDefaults(defaults);
         setError('');
       } catch (err) {
         console.error('Error fetching connectors:', err);
@@ -127,6 +136,22 @@ export default function Connectors() {
 
     fetchConnectors();
   }, [tenantId, filterType, filterDirection, canReadConnectors]);
+
+  const applyMqttPreset = (mode: 'internal' | 'external') => {
+    const broker = mode === 'internal'
+      ? (mqttDefaults?.internalBrokerUrl || 'mqtt://mosquitto:1883')
+      : (mqttDefaults?.externalBrokerUrl || 'mqtt://localhost:1883');
+    const topicBase = mqttDefaults?.defaultTopic || 'dataturntable/events';
+    const topicSuffix = formData.direction === 'OUTPUT' ? '/out' : formData.direction === 'BOTH' ? '/bi' : '/in';
+    setFormData((prev) => ({
+      ...prev,
+      config: {
+        ...prev.config,
+        broker,
+        topic: prev.config.topic?.trim() ? prev.config.topic : `${topicBase}${topicSuffix}`,
+      },
+    }));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -568,6 +593,33 @@ export default function Connectors() {
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
                     {formData.connectorType} Configuration
                   </label>
+                  {formData.connectorType === 'MQTT' && (
+                    <div className="mb-3 rounded border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/30 p-2">
+                      <p className="text-xs text-blue-900 dark:text-blue-200 mb-2">
+                        Quick setup: use the integrated broker or localhost, then adjust as needed.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => applyMqttPreset('internal')}
+                          className="px-2 py-1 text-xs rounded border border-blue-300 text-blue-800 bg-white hover:bg-blue-100"
+                        >
+                          Use {mqttDefaults?.integratedBrokerLabel || 'Integrated Broker'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => applyMqttPreset('external')}
+                          className="px-2 py-1 text-xs rounded border border-blue-300 text-blue-800 bg-white hover:bg-blue-100"
+                        >
+                          Use Localhost
+                        </button>
+                      </div>
+                      <div className="mt-2 text-[11px] text-blue-800 dark:text-blue-300">
+                        <div>Internal: <code>{mqttDefaults?.internalBrokerUrl || 'mqtt://mosquitto:1883'}</code></div>
+                        <div>External: <code>{mqttDefaults?.externalBrokerUrl || 'mqtt://localhost:1883'}</code></div>
+                      </div>
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 gap-3">
                     {(connectorConfigSchema[formData.connectorType] || []).map((field) => (
                       <div key={field.key}>

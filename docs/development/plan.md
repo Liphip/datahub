@@ -129,6 +129,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Refined frontend visual contrast (buttons/inputs/cards/background typography) and added persistent light/dark theme toggle in app layout (`tailwind darkMode='class'`) to improve readability across key workflows.
 - Reworked create/edit dialogs to be entity-type aware: Connectors now use protocol-specific config fields (instead of raw JSON), and Alert Channels now use channel-type-specific config forms with required-field validation.
 - Added pipeline-run module observability: backend now captures per-module stdout/stderr/exit metadata and execution timeline in run metrics, and Pipelines run details now render those logs directly in the frontend.
+- Added integrated MQTT broker assist: backend exposes `/connectors/mqtt/defaults`, and the Connectors MQTT form now offers quick-fill actions for integrated/local broker endpoints while still allowing custom broker configuration.
 
 ---
 
