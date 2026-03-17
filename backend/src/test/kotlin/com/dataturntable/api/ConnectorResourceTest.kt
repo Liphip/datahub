@@ -455,6 +455,7 @@ class ConnectorResourceTest {
             .body("connectorId", equalTo(connectorId))
             .body("referenceCount", equalTo(1))
             .body("references[0].pipelineName", equalTo("Reference Endpoint Pipeline"))
+            .body("references[0].pipelineIsActive", equalTo(false))
             .body("references[0].nodeType", equalTo("IMPORT"))
     }
 

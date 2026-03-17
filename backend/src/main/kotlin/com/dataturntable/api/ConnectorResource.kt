@@ -293,6 +293,7 @@ class ConnectorResource {
                     mapOf(
                         "pipelineId" to pipeline.id,
                         "pipelineName" to pipeline.name,
+                        "pipelineIsActive" to pipeline.isActive,
                         "nodeId" to nodeMap["id"],
                         "nodeType" to nodeMap["type"]
                     )

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { Connector, BrokerCredential, ConnectorReferenceSummary } from '../types';
@@ -59,6 +60,7 @@ const initialConfigByType = (type: ConnectorType, existing?: Record<string, unkn
 };
 
 export default function Connectors() {
+  const navigate = useNavigate();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const abilities = user?.abilities || [];
   const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
@@ -759,8 +761,10 @@ export default function Connectors() {
                   <thead>
                     <tr className="text-left border-b border-gray-200">
                       <th className="py-2 pr-3">Pipeline</th>
+                      <th className="py-2 pr-3">State</th>
                       <th className="py-2 pr-3">Node ID</th>
-                      <th className="py-2">Node Type</th>
+                      <th className="py-2 pr-3">Node Type</th>
+                      <th className="py-2 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -770,8 +774,24 @@ export default function Connectors() {
                           <div className="font-medium text-gray-900">{reference.pipelineName}</div>
                           <div className="text-xs text-gray-500">{reference.pipelineId}</div>
                         </td>
+                        <td className="py-2 pr-3">
+                          <span className={`px-2 py-0.5 rounded text-xs ${reference.pipelineIsActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>
+                            {reference.pipelineIsActive ? 'Active' : 'Inactive'}
+                          </span>
+                        </td>
                         <td className="py-2 pr-3"><code>{reference.nodeId}</code></td>
-                        <td className="py-2">{reference.nodeType}</td>
+                        <td className="py-2 pr-3">{reference.nodeType}</td>
+                        <td className="py-2 text-right">
+                          <button
+                            className="text-indigo-700 hover:text-indigo-900 text-xs"
+                            onClick={() => {
+                              setUsageModal(null);
+                              navigate(`/pipelines/${reference.pipelineId}`);
+                            }}
+                          >
+                            Open Pipeline
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

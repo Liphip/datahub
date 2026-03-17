@@ -215,6 +215,7 @@ export interface Connector {
 export interface ConnectorReference {
   pipelineId: string;
   pipelineName: string;
+  pipelineIsActive?: boolean;
   nodeId: string;
   nodeType: string;
 }
