@@ -68,6 +68,8 @@ export default function Pipelines() {
   const [triagePresetName, setTriagePresetName] = useState('');
   const [triagePresetTag, setTriagePresetTag] = useState('');
   const [triagePresetTagFilter, setTriagePresetTagFilter] = useState('ALL');
+  const [editingPresetName, setEditingPresetName] = useState<string | null>(null);
+  const [editingPresetNextName, setEditingPresetNextName] = useState('');
   const importPresetInputRef = useRef<HTMLInputElement | null>(null);
   const [showShortcutHints, setShowShortcutHints] = useState(() => {
     const stored = localStorage.getItem('pipelines.bucket.shortcuts.hidden');
@@ -583,6 +585,58 @@ export default function Pipelines() {
     showToast('Preset removed', 'success');
   };
 
+  const duplicateTriagePreset = (name: string) => {
+    const original = triagePresets.find((p) => p.name === name);
+    if (!original) return;
+
+    const baseName = `${original.name} Copy`;
+    let copyName = baseName;
+    let counter = 2;
+    while (triagePresets.some((p) => p.name.toLowerCase() === copyName.toLowerCase())) {
+      copyName = `${baseName} ${counter}`;
+      counter += 1;
+    }
+
+    const next = [{ ...original, name: copyName }, ...triagePresets].slice(0, 20);
+    persistTriagePresets(next);
+    showToast('Preset duplicated', 'success');
+  };
+
+  const startRenameTriagePreset = (name: string) => {
+    setEditingPresetName(name);
+    setEditingPresetNextName(name);
+  };
+
+  const confirmRenameTriagePreset = () => {
+    if (!editingPresetName) return;
+    const nextName = editingPresetNextName.trim();
+    if (!nextName) {
+      showToast('Preset name cannot be empty', 'error');
+      return;
+    }
+
+    const duplicateExists = triagePresets.some(
+      (p) => p.name.toLowerCase() === nextName.toLowerCase() && p.name !== editingPresetName
+    );
+    if (duplicateExists) {
+      showToast('A preset with that name already exists', 'error');
+      return;
+    }
+
+    const next = triagePresets.map((preset) =>
+      preset.name === editingPresetName ? { ...preset, name: nextName } : preset
+    );
+    persistTriagePresets(next);
+    setEditingPresetName(null);
+    setEditingPresetNextName('');
+    showToast('Preset renamed', 'success');
+  };
+
+  const cancelRenameTriagePreset = () => {
+    setEditingPresetName(null);
+    setEditingPresetNextName('');
+  };
+
   const toggleFavoritePreset = (name: string) => {
     const next = triagePresets.map((preset) =>
       preset.name === name
@@ -843,10 +897,24 @@ export default function Pipelines() {
                         </button>
                       </>
                     )}
-                    <button onClick={() => applyTriagePreset(preset)} className="text-primary-700 hover:text-primary-900">
-                      {preset.name}
-                    </button>
+                    {editingPresetName === preset.name ? (
+                      <>
+                        <input
+                          value={editingPresetNextName}
+                          onChange={(e) => setEditingPresetNextName(e.target.value)}
+                          className="input text-[11px] px-1 py-0.5 max-w-[140px]"
+                        />
+                        <button onClick={confirmRenameTriagePreset} className="text-green-700 hover:text-green-900" title="Save name">✓</button>
+                        <button onClick={cancelRenameTriagePreset} className="text-gray-500 hover:text-gray-700" title="Cancel rename">✕</button>
+                      </>
+                    ) : (
+                      <button onClick={() => applyTriagePreset(preset)} className="text-primary-700 hover:text-primary-900">
+                        {preset.name}
+                      </button>
+                    )}
                     {preset.tag && <span className="text-gray-500">[{preset.tag}]</span>}
+                    <button onClick={() => duplicateTriagePreset(preset.name)} className="text-gray-500 hover:text-gray-700" title="Duplicate preset">⧉</button>
+                    <button onClick={() => startRenameTriagePreset(preset.name)} className="text-gray-500 hover:text-gray-700" title="Rename preset">✎</button>
                     <button onClick={() => deleteTriagePreset(preset.name)} className="text-gray-500 hover:text-red-600">x</button>
                   </span>
                 ))}
