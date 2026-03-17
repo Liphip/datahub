@@ -5,6 +5,12 @@ import api from '../services/api';
 import type { Pipeline, PipelineRun, PipelineRunSummary, TenantPipelineRun } from '../types';
 
 type RunMap = Record<string, PipelineRun[]>;
+type PipelineRunDetailFilter = {
+  startedFrom?: string;
+  startedTo?: string;
+  runStatus?: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED';
+  label?: string;
+};
 type HealthFilter = 'ALL' | 'PROBLEMATIC' | 'RUNNING' | 'FAILED' | 'HEALTHY';
 type SortMode = 'RECENT_RUN' | 'NAME';
 type SinceHoursFilter = 1 | 24 | 168 | null;
@@ -31,6 +37,7 @@ export default function Pipelines() {
   const [detailedRunsMap, setDetailedRunsMap] = useState<RunMap>({});
   const [pipelineSummaries, setPipelineSummaries] = useState<Record<string, PipelineRunSummary>>({});
   const [summaryWindowByPipeline, setSummaryWindowByPipeline] = useState<Record<string, 1 | 24 | 168>>({});
+  const [detailFiltersByPipeline, setDetailFiltersByPipeline] = useState<Record<string, PipelineRunDetailFilter>>({});
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newPipelineName, setNewPipelineName] = useState('');
@@ -146,6 +153,24 @@ export default function Pipelines() {
     const summary = await api.getPipelineRunSummaryByPipeline(pipelineId, window);
     setPipelineSummaries((prev) => ({ ...prev, [pipelineId]: summary }));
     setSummaryWindowByPipeline((prev) => ({ ...prev, [pipelineId]: window }));
+  };
+
+  const loadDetailedPipelineRuns = async (pipelineId: string, filter?: PipelineRunDetailFilter) => {
+    const runs = await api.getPipelineRuns(pipelineId, {
+      limit: 24,
+      includeDetails: true,
+      startedFrom: filter?.startedFrom,
+      startedTo: filter?.startedTo,
+      runStatus: filter?.runStatus,
+    });
+    setDetailedRunsMap((prev) => ({ ...prev, [pipelineId]: runs }));
+  };
+
+  const bucketRangeForSummary = (summary: PipelineRunSummary, index: number) => {
+    const bucket = summary.trendBuckets[index];
+    const start = new Date(bucket.bucketStart);
+    const end = new Date(start.getTime() + summary.bucketSeconds * 1000);
+    return { start, end, bucket };
   };
 
   useEffect(() => {
@@ -312,8 +337,7 @@ export default function Pipelines() {
       const runs = await api.getPipelineRuns(pipelineId, { limit: 3, includeDetails: false });
       setRunsMap((prev) => ({ ...prev, [pipelineId]: runs }));
       if (expandedPipelineId === pipelineId) {
-        const detailedRuns = await api.getPipelineRuns(pipelineId, { limit: 12, includeDetails: true });
-        setDetailedRunsMap((prev) => ({ ...prev, [pipelineId]: detailedRuns }));
+        await loadDetailedPipelineRuns(pipelineId, detailFiltersByPipeline[pipelineId]);
         try {
           await loadPipelineSummary(pipelineId);
         } catch {
@@ -338,6 +362,7 @@ export default function Pipelines() {
       setDetailedRunsMap((prev) => { const next = { ...prev }; delete next[pipelineId]; return next; });
       setPipelineSummaries((prev) => { const next = { ...prev }; delete next[pipelineId]; return next; });
       setSummaryWindowByPipeline((prev) => { const next = { ...prev }; delete next[pipelineId]; return next; });
+      setDetailFiltersByPipeline((prev) => { const next = { ...prev }; delete next[pipelineId]; return next; });
       setConfirmDeleteId(null);
       showToast('Pipeline deleted', 'success');
     } catch {
@@ -1407,8 +1432,7 @@ export default function Pipelines() {
                             setExpandedPipelineId(nextExpandedId);
                             if (nextExpandedId === pipeline.id && !detailedRunsMap[pipeline.id]) {
                               try {
-                                const detailedRuns = await api.getPipelineRuns(pipeline.id, { limit: 12, includeDetails: true });
-                                setDetailedRunsMap((prev) => ({ ...prev, [pipeline.id]: detailedRuns }));
+                                await loadDetailedPipelineRuns(pipeline.id, detailFiltersByPipeline[pipeline.id]);
                               } catch {
                                 // keep lightweight runs if detailed fetch fails
                               }
@@ -1520,6 +1544,101 @@ export default function Pipelines() {
                             <span>Success rate: <strong>{Math.round((pipelineSummaries[pipeline.id].successRate || 0) * 100)}%</strong></span>
                             <span>Avg duration: <strong>{pipelineSummaries[pipeline.id].avgDurationMs != null ? `${pipelineSummaries[pipeline.id].avgDurationMs} ms` : '-'}</strong></span>
                           </div>
+                          <div className="mt-2">
+                            <div className="text-[11px] text-indigo-800 mb-1">Trend buckets (click to filter run list)</div>
+                            <div className="flex items-end gap-1">
+                              {pipelineSummaries[pipeline.id].trendBuckets.map((bucket, index) => {
+                                const peak = Math.max(...pipelineSummaries[pipeline.id].trendBuckets.map((b) => b.totalRuns || 0), 1);
+                                const height = Math.max(6, Math.round((bucket.totalRuns / peak) * 28));
+                                return (
+                                  <button
+                                    key={`${pipeline.id}-bucket-${bucket.bucketStart}`}
+                                    title={`${new Date(bucket.bucketStart).toLocaleString()} - total ${bucket.totalRuns}, failed ${bucket.failedRuns}`}
+                                    onClick={async (e) => {
+                                      e.preventDefault();
+                                      const range = bucketRangeForSummary(pipelineSummaries[pipeline.id], index);
+                                      const filter = {
+                                        startedFrom: range.start.toISOString(),
+                                        startedTo: range.end.toISOString(),
+                                        label: `${range.start.toLocaleTimeString()}-${range.end.toLocaleTimeString()}`,
+                                      };
+                                      setDetailFiltersByPipeline((prev) => ({ ...prev, [pipeline.id]: filter }));
+                                      try {
+                                        await loadDetailedPipelineRuns(pipeline.id, filter);
+                                      } catch {
+                                        showToast('Failed to load bucket runs', 'error');
+                                      }
+                                    }}
+                                    className={`w-2 rounded-sm ${bucket.failedRuns > 0 ? 'bg-red-500' : bucket.inFlightRuns > 0 ? 'bg-amber-400' : bucket.totalRuns > 0 ? 'bg-emerald-500' : 'bg-indigo-200'}`}
+                                    style={{ height: `${height}px` }}
+                                  />
+                                );
+                              })}
+                            </div>
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                            <button
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                const next: PipelineRunDetailFilter = {
+                                  ...(detailFiltersByPipeline[pipeline.id] || {}),
+                                  runStatus: 'FAILED',
+                                  label: 'Failed runs',
+                                };
+                                setDetailFiltersByPipeline((prev) => ({ ...prev, [pipeline.id]: next }));
+                                try {
+                                  await loadDetailedPipelineRuns(pipeline.id, next);
+                                } catch {
+                                  showToast('Failed to load failed runs', 'error');
+                                }
+                              }}
+                              className="px-2 py-0.5 rounded border border-red-300 text-red-700 bg-white"
+                            >
+                              Failed only
+                            </button>
+                            <button
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                const next: PipelineRunDetailFilter = {
+                                  ...(detailFiltersByPipeline[pipeline.id] || {}),
+                                  runStatus: 'RUNNING',
+                                  label: 'Running runs',
+                                };
+                                setDetailFiltersByPipeline((prev) => ({ ...prev, [pipeline.id]: next }));
+                                try {
+                                  await loadDetailedPipelineRuns(pipeline.id, next);
+                                } catch {
+                                  showToast('Failed to load running runs', 'error');
+                                }
+                              }}
+                              className="px-2 py-0.5 rounded border border-amber-300 text-amber-800 bg-white"
+                            >
+                              Running only
+                            </button>
+                            <button
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                setDetailFiltersByPipeline((prev) => {
+                                  const next = { ...prev };
+                                  delete next[pipeline.id];
+                                  return next;
+                                });
+                                try {
+                                  await loadDetailedPipelineRuns(pipeline.id);
+                                } catch {
+                                  showToast('Failed to clear run filters', 'error');
+                                }
+                              }}
+                              className="px-2 py-0.5 rounded border border-indigo-300 text-indigo-800 bg-white"
+                            >
+                              Clear filters
+                            </button>
+                          </div>
+                          {detailFiltersByPipeline[pipeline.id]?.label && (
+                            <div className="mt-1 text-[11px] text-indigo-900">
+                              Active run filter: <strong>{detailFiltersByPipeline[pipeline.id].label}</strong>
+                            </div>
+                          )}
                         </>
                       ) : (
                         <div className="text-[11px] text-indigo-800">No summary loaded yet.</div>

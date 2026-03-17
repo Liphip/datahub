@@ -264,13 +264,19 @@ class ApiService {
     options?: {
       limit?: number;
       includeDetails?: boolean;
+      startedFrom?: string;
+      startedTo?: string;
+      runStatus?: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED';
     }
   ): Promise<PipelineRun[]> {
-    const limit = options?.limit ? `?limit=${Math.max(1, options.limit)}` : '';
-    const includeDetails = options?.includeDetails === undefined
-      ? ''
-      : `${limit ? '&' : '?'}includeDetails=${options.includeDetails}`;
-    const response = await this.client.get<PipelineRun[]>(`/pipelines/${pipelineId}/runs${limit}${includeDetails}`);
+    const params = new URLSearchParams();
+    if (options?.limit) params.set('limit', String(Math.max(1, options.limit)));
+    if (options?.includeDetails !== undefined) params.set('includeDetails', String(options.includeDetails));
+    if (options?.startedFrom) params.set('startedFrom', options.startedFrom);
+    if (options?.startedTo) params.set('startedTo', options.startedTo);
+    if (options?.runStatus) params.set('runStatus', options.runStatus);
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    const response = await this.client.get<PipelineRun[]>(`/pipelines/${pipelineId}/runs${suffix}`);
     return response.data;
   }
 

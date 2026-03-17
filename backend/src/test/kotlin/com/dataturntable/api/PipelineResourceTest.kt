@@ -412,6 +412,16 @@ class PipelineResourceTest {
                 this.metrics = "{\"result\":{\"alertsFired\":1},\"moduleLogs\":[{\"stage\":\"IMPORT\"}],\"executionLog\":[\"start\",\"done\"]}"
             }
             em.persist(run)
+            val failedRun = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.FAILED
+                this.triggerType = TriggerType.MANUAL
+                this.startedAt = java.time.Instant.now().minusSeconds(20)
+                this.completedAt = java.time.Instant.now().minusSeconds(10)
+                this.errorMessage = "boom"
+                this.metrics = "{}"
+            }
+            em.persist(failedRun)
             em.flush()
         }
 
@@ -425,6 +435,21 @@ class PipelineResourceTest {
             .body("[0].metrics.size()", equalTo(0))
             .body("[0].moduleLogs", nullValue())
             .body("[0].executionLog", nullValue())
+
+        val from = java.time.Instant.now().minusSeconds(30).toString()
+        val to = java.time.Instant.now().toString()
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("includeDetails", true)
+            .queryParam("runStatus", "FAILED")
+            .queryParam("startedFrom", from)
+            .queryParam("startedTo", to)
+        .`when`()
+            .get("/api/internal/v1/pipelines/$pipelineId/runs")
+        .then()
+            .statusCode(200)
+            .body("size()", equalTo(1))
+            .body("[0].status", equalTo("FAILED"))
     }
 
     @Test

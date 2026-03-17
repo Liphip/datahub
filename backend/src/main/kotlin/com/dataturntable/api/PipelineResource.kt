@@ -2,6 +2,7 @@ package com.dataturntable.api
 
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineRun
+import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.connectors.Connector
 import com.dataturntable.engine.PipelineConsumer
@@ -818,7 +819,10 @@ class PipelineResource {
     fun getRuns(
         @PathParam("id") id: String,
         @QueryParam("limit") limit: Int?,
-        @QueryParam("includeDetails") includeDetails: Boolean?
+        @QueryParam("includeDetails") includeDetails: Boolean?,
+        @QueryParam("startedFrom") startedFrom: String?,
+        @QueryParam("startedTo") startedTo: String?,
+        @QueryParam("runStatus") runStatus: String?
     ): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
@@ -834,14 +838,51 @@ class PipelineResource {
         requireTenantAccess(currentUser, tenantId, "pipeline:read")?.let { return it }
         val maxRows = (limit ?: 20).coerceIn(1, 200)
         val withDetails = includeDetails != false
+        val fromInstant = if (startedFrom.isNullOrBlank()) {
+            null
+        } else {
+            try {
+                java.time.Instant.parse(startedFrom)
+            } catch (_: Exception) {
+                return Response.status(400).entity(mapOf("error" to "Invalid startedFrom; expected ISO-8601 timestamp")).build()
+            }
+        }
+        val toInstant = if (startedTo.isNullOrBlank()) {
+            null
+        } else {
+            try {
+                java.time.Instant.parse(startedTo)
+            } catch (_: Exception) {
+                return Response.status(400).entity(mapOf("error" to "Invalid startedTo; expected ISO-8601 timestamp")).build()
+            }
+        }
+        if (fromInstant != null && toInstant != null && fromInstant.isAfter(toInstant)) {
+            return Response.status(400).entity(mapOf("error" to "startedFrom must be before startedTo")).build()
+        }
+        val runStatusEnum = if (runStatus.isNullOrBlank()) {
+            null
+        } else {
+            try {
+                PipelineRunStatus.valueOf(runStatus.uppercase())
+            } catch (_: Exception) {
+                return Response.status(400).entity(mapOf("error" to "Invalid runStatus")).build()
+            }
+        }
 
-        val runs = em.createQuery(
-            "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId ORDER BY r.startedAt DESC",
-            PipelineRun::class.java
-        )
+        val jpql = StringBuilder("SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId")
+        if (fromInstant != null) jpql.append(" AND r.startedAt >= :from")
+        if (toInstant != null) jpql.append(" AND r.startedAt <= :to")
+        if (runStatusEnum != null) jpql.append(" AND r.status = :runStatus")
+        jpql.append(" ORDER BY r.startedAt DESC")
+
+        val query = em.createQuery(jpql.toString(), PipelineRun::class.java)
             .setParameter("pipelineId", pipelineId)
             .setMaxResults(maxRows)
-            .resultList
+        if (fromInstant != null) query.setParameter("from", fromInstant)
+        if (toInstant != null) query.setParameter("to", toInstant)
+        if (runStatusEnum != null) query.setParameter("runStatus", runStatusEnum)
+
+        val runs = query.resultList
         return Response.ok(
             runs.map {
                 val metrics = if (withDetails) {
