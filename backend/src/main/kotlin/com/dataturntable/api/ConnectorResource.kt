@@ -192,7 +192,7 @@ class ConnectorResource {
         return null
     }
 
-    private fun connectorUsesBrokerCredential(connector: Connector, credentialId: UUID): Boolean {
+    private fun extractBrokerCredentialId(connector: Connector): UUID? {
         val configRaw = try {
             EncryptionUtils.decrypt(connector.config ?: "{}")
         } catch (_: Exception) {
@@ -204,7 +204,28 @@ class ConnectorResource {
             emptyMap<String, Any>()
         }
         val configuredId = configMap["brokerCredentialId"]?.toString()?.trim()
-        return configuredId == credentialId.toString()
+        return configuredId?.let { parseUuid(it) }
+    }
+
+    private fun connectorUsesBrokerCredential(connector: Connector, credentialId: UUID): Boolean {
+        return extractBrokerCredentialId(connector) == credentialId
+    }
+
+    private fun brokerCredentialReferenceCounts(tenantUuid: UUID): Map<UUID, Int> {
+        val mqttConnectors = em.createQuery(
+            "SELECT c FROM Connector c WHERE c.tenant.id = :tenantId AND c.connectorType = :connectorType",
+            Connector::class.java
+        )
+            .setParameter("tenantId", tenantUuid)
+            .setParameter("connectorType", ConnectorType.MQTT)
+            .resultList
+
+        val counts = mutableMapOf<UUID, Int>()
+        mqttConnectors.forEach { connector ->
+            val credentialId = extractBrokerCredentialId(connector) ?: return@forEach
+            counts[credentialId] = (counts[credentialId] ?: 0) + 1
+        }
+        return counts
     }
 
     private fun brokerCredentialToMap(credential: BrokerCredential): Map<String, Any?> {
@@ -278,8 +299,14 @@ class ConnectorResource {
         )
             .setParameter("tenantId", tenantUuid)
             .resultList
+        val referenceCounts = brokerCredentialReferenceCounts(tenantUuid)
 
-        return Response.ok(credentials.map { brokerCredentialToMap(it) }).build()
+        return Response.ok(credentials.map { credential ->
+            val credentialId = credential.id
+            brokerCredentialToMap(credential) + mapOf(
+                "referenceCount" to (if (credentialId != null) (referenceCounts[credentialId] ?: 0) else 0)
+            )
+        }).build()
     }
 
     @POST

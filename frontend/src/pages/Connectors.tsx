@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { Connector, BrokerCredential } from '../types';
@@ -111,18 +111,6 @@ export default function Connectors() {
   });
 
   const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
-  const brokerCredentialUsage = useMemo(() => {
-    const usage: Record<string, number> = {};
-    connectors.forEach((connector) => {
-      if (connector.connectorType !== 'MQTT') return;
-      const credentialId = typeof connector.config?.brokerCredentialId === 'string'
-        ? connector.config.brokerCredentialId.trim()
-        : '';
-      if (!credentialId) return;
-      usage[credentialId] = (usage[credentialId] || 0) + 1;
-    });
-    return usage;
-  }, [connectors]);
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -235,6 +223,7 @@ export default function Connectors() {
       }
 
       await loadBrokerCredentials(tenantId);
+      await loadConnectors(tenantId);
       setShowBrokerModal(false);
       setEditingBrokerCredential(null);
       showToast(editingBrokerCredential ? 'Broker credential updated' : 'Broker credential created', 'success');
@@ -247,7 +236,7 @@ export default function Connectors() {
 
   const handleDeleteBrokerCredential = async (id: string) => {
     if (!tenantId) return;
-    const activeReferences = brokerCredentialUsage[id] || 0;
+    const activeReferences = brokerCredentials.find((credential) => credential.id === id)?.referenceCount || 0;
     if (activeReferences > 0) {
       setError('Cannot delete this broker credential while MQTT connectors still reference it');
       return;
@@ -256,6 +245,7 @@ export default function Connectors() {
     try {
       await api.deleteMqttBrokerCredential(id);
       await loadBrokerCredentials(tenantId);
+      await loadConnectors(tenantId);
       showToast('Broker credential deleted', 'success');
     } catch (err: any) {
       setError(err?.response?.data?.error || 'Failed to delete broker credential');
@@ -269,6 +259,7 @@ export default function Connectors() {
     try {
       const rotated = await api.rotateMqttBrokerCredentialPassword(credential.id);
       setRevealedBrokerPassword(rotated.password || '');
+      if (tenantId) await loadBrokerCredentials(tenantId);
       showToast('Broker credential password rotated', 'success');
     } catch (err: any) {
       setError(err?.response?.data?.error || 'Failed to rotate broker credential password');
@@ -376,6 +367,7 @@ export default function Connectors() {
       });
 
       await loadConnectors(tenantId);
+      await loadBrokerCredentials(tenantId);
       setError('');
       showToast(editingConnector ? 'Connector updated' : 'Connector created', 'success');
     } catch (err) {
@@ -396,6 +388,7 @@ export default function Connectors() {
       await api.deleteConnector(id);
       if (tenantId) {
         await loadConnectors(tenantId);
+        await loadBrokerCredentials(tenantId);
       }
       setConfirmDeleteId(null);
       setError('');
@@ -737,7 +730,7 @@ export default function Connectors() {
                           {credential.isActive ? 'Active' : 'Inactive'}
                         </span>
                         <div className="text-xs text-slate-500 mt-1">
-                          In use by {brokerCredentialUsage[credential.id] || 0} connector(s)
+                          In use by {credential.referenceCount || 0} connector(s)
                         </div>
                       </td>
                       <td className="px-3 py-2 text-right space-x-2">
@@ -754,8 +747,8 @@ export default function Connectors() {
                         <button
                           className="text-red-700 hover:text-red-900"
                           onClick={() => handleDeleteBrokerCredential(credential.id)}
-                          disabled={deletingBrokerCredentialId === credential.id || (brokerCredentialUsage[credential.id] || 0) > 0}
-                          title={(brokerCredentialUsage[credential.id] || 0) > 0 ? 'Remove connector references before deleting' : undefined}
+                          disabled={deletingBrokerCredentialId === credential.id || (credential.referenceCount || 0) > 0}
+                          title={(credential.referenceCount || 0) > 0 ? 'Remove connector references before deleting' : undefined}
                         >
                           {deletingBrokerCredentialId === credential.id ? 'Deleting...' : 'Delete'}
                         </button>

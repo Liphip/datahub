@@ -478,4 +478,57 @@ class ConnectorResourceTest {
             .body("referenceCount", equalTo(1))
             .body("references[0].name", equalTo("Guarded Connector"))
     }
+
+    @Test
+    fun testListMqttCredentialsIncludesReferenceCount() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        val credentialId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(
+                mapOf(
+                    "name" to "Usage Counter",
+                    "username" to "usage-counter",
+                    "allowedTopics" to listOf("tenant/$tenantId/usage/#")
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/connectors/mqtt/credentials?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(
+                mapOf(
+                    "name" to "Usage Connector",
+                    "connectorType" to "MQTT",
+                    "direction" to "INPUT",
+                    "config" to mapOf(
+                        "broker" to "mqtt://localhost:1883",
+                        "topic" to "tenant/$tenantId/usage/in",
+                        "brokerCredentialId" to credentialId
+                    )
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/connectors/mqtt/credentials?tenantId=$tenantId")
+        .then()
+            .statusCode(200)
+            .body("find { it.id == '$credentialId' }.referenceCount", equalTo(1))
+    }
 }

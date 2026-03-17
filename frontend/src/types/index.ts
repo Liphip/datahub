@@ -209,6 +209,7 @@ export interface BrokerCredential {
   username: string;
   allowedTopics: string[];
   isActive: boolean;
+  referenceCount?: number;
   createdAt: string;
   updatedAt: string;
 }
