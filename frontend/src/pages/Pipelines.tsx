@@ -15,6 +15,7 @@ type TriagePreset = {
   name: string;
   query: string;
   tag?: string;
+  favorite?: boolean;
 };
 
 const TRIAGE_PRESETS_KEY = 'pipelines.triage.presets.v1';
@@ -545,9 +546,10 @@ export default function Pipelines() {
       return;
     }
     const query = searchParams.toString();
+    const existing = triagePresets.find((p) => p.name.toLowerCase() === name.toLowerCase());
     const deduped = triagePresets.filter((p) => p.name.toLowerCase() !== name.toLowerCase());
     const tag = triagePresetTag.trim();
-    const next = [{ name, query, tag: tag || undefined }, ...deduped].slice(0, 20);
+    const next = [{ name, query, tag: tag || undefined, favorite: existing?.favorite === true }, ...deduped].slice(0, 20);
     persistTriagePresets(next);
     setTriagePresetName('');
     setTriagePresetTag('');
@@ -581,6 +583,15 @@ export default function Pipelines() {
     showToast('Preset removed', 'success');
   };
 
+  const toggleFavoritePreset = (name: string) => {
+    const next = triagePresets.map((preset) =>
+      preset.name === name
+        ? { ...preset, favorite: !preset.favorite }
+        : preset
+    );
+    persistTriagePresets(next);
+  };
+
   const availablePresetTags = Array.from(
     new Set(triagePresets.map((p) => p.tag?.trim()).filter((v): v is string => Boolean(v)))
   ).sort((a, b) => a.localeCompare(b));
@@ -588,6 +599,11 @@ export default function Pipelines() {
   const visibleTriagePresets = triagePresets.filter((preset) => {
     if (triagePresetTagFilter === 'ALL') return true;
     return (preset.tag || '').toLowerCase() === triagePresetTagFilter.toLowerCase();
+  }).sort((a, b) => {
+    if ((a.favorite ? 1 : 0) !== (b.favorite ? 1 : 0)) {
+      return (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0);
+    }
+    return 0;
   });
 
   const exportTriagePresets = () => {
@@ -627,7 +643,14 @@ export default function Pipelines() {
       const text = await file.text();
       const parsed = JSON.parse(text) as { presets?: TriagePreset[] };
       const imported = Array.isArray(parsed?.presets)
-        ? parsed.presets.filter((p) => typeof p?.name === 'string' && typeof p?.query === 'string')
+        ? parsed.presets
+            .filter((p) => typeof p?.name === 'string' && typeof p?.query === 'string')
+            .map((p) => ({
+              name: p.name,
+              query: p.query,
+              tag: typeof p.tag === 'string' ? p.tag : undefined,
+              favorite: p.favorite === true,
+            }))
         : [];
 
       if (imported.length === 0) {
@@ -780,6 +803,13 @@ export default function Pipelines() {
               <div className="flex flex-wrap gap-2">
                 {visibleTriagePresets.slice(0, 8).map((preset) => (
                   <span key={preset.name} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-gray-200 bg-gray-50 text-[11px]">
+                    <button
+                      onClick={() => toggleFavoritePreset(preset.name)}
+                      className={`hover:opacity-80 ${preset.favorite ? 'text-amber-600' : 'text-gray-400'}`}
+                      title={preset.favorite ? 'Unfavorite preset' : 'Favorite preset'}
+                    >
+                      {preset.favorite ? '★' : '☆'}
+                    </button>
                     <button onClick={() => applyTriagePreset(preset)} className="text-primary-700 hover:text-primary-900">
                       {preset.name}
                     </button>
