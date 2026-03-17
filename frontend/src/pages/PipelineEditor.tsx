@@ -117,6 +117,28 @@ export default function PipelineEditor() {
       const processingVersionIds = processingModuleIds.filter(Boolean);
       const exportVersionIds = exportModuleIds.filter(Boolean);
 
+      if (!importVersionId) {
+        showToast('Select an import module version before saving', 'error');
+        return;
+      }
+      if (processingVersionIds.length === 0) {
+        showToast('Add at least one processing module version', 'error');
+        return;
+      }
+      if (exportVersionIds.length === 0) {
+        showToast('Add at least one export module version', 'error');
+        return;
+      }
+      if (!importConnectorId) {
+        showToast('Select an input connector for the import stage', 'error');
+        return;
+      }
+      const missingExportConnectorIndex = exportVersionIds.findIndex((_, index) => !(exportConnectorIds[index] || '').trim());
+      if (missingExportConnectorIndex >= 0) {
+        showToast(`Select an output connector for export module #${missingExportConnectorIndex + 1}`, 'error');
+        return;
+      }
+
       const graphNodes: Array<Record<string, unknown>> = [];
       const graphEdges: Array<Record<string, unknown>> = [];
 
@@ -191,9 +213,9 @@ export default function PipelineEditor() {
         });
         showToast('Pipeline saved successfully', 'success');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving pipeline:', error);
-      showToast('Failed to save pipeline', 'error');
+      showToast(error?.response?.data?.error || 'Failed to save pipeline', 'error');
     } finally {
       setSaving(false);
     }

@@ -71,24 +71,30 @@ class PipelineResource {
         val nodes = graphDefinition["nodes"] as? List<*> ?: return null
         for (node in nodes) {
             val nodeMap = node as? Map<*, *> ?: continue
+            val nodeId = nodeMap["id"]?.toString() ?: "unknown-node"
             val nodeType = (nodeMap["type"] as? String)?.uppercase() ?: continue
             if (nodeType != "IMPORT" && nodeType != "EXPORT") continue
 
             val connectorId = nodeMap["connectorId"] as? String
-                ?: return "IMPORT and EXPORT nodes require connectorId"
-            val connector = try { em.find(Connector::class.java, UUID.fromString(connectorId)) } catch (_: Exception) { null }
-                ?: return "Connector not found: $connectorId"
+                ?: return "Node $nodeId ($nodeType) requires connectorId"
+            val connectorUuid = try {
+                UUID.fromString(connectorId)
+            } catch (_: Exception) {
+                return "Node $nodeId has invalid connectorId: $connectorId"
+            }
+            val connector = em.find(Connector::class.java, connectorUuid)
+                ?: return "Node $nodeId references missing connector: $connectorId"
 
             if (connector.tenant?.id != tenantId) {
-                return "Connector does not belong to pipeline tenant: $connectorId"
+                return "Node $nodeId references connector from another tenant"
             }
 
             val direction = connector.direction?.name
             if (nodeType == "IMPORT" && direction !in setOf("INPUT", "BOTH")) {
-                return "Connector $connectorId must have INPUT or BOTH direction for IMPORT nodes"
+                return "Node $nodeId requires INPUT/BOTH connector direction (found $direction)"
             }
             if (nodeType == "EXPORT" && direction !in setOf("OUTPUT", "BOTH")) {
-                return "Connector $connectorId must have OUTPUT or BOTH direction for EXPORT nodes"
+                return "Node $nodeId requires OUTPUT/BOTH connector direction (found $direction)"
             }
         }
         return null

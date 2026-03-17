@@ -132,6 +132,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added integrated MQTT broker assist: backend exposes `/connectors/mqtt/defaults`, and the Connectors MQTT form now offers quick-fill actions for integrated/local broker endpoints while still allowing custom broker configuration.
 - Added tenant-scoped integrated MQTT broker credential management (separate from auth users) with topic ACL lists, password rotation, and admin-only UI/API controls (`/connectors/mqtt/credentials*`).
 - Linked MQTT connectors to tenant broker credentials via `brokerCredentialId` selection in the UI and backend ACL validation (connector topic must match allowed broker credential topics).
+- Improved pipeline graph guardrails: frontend now blocks save when required import/processing/export connectors/modules are missing and surfaces backend validation messages; backend graph validation errors now include offending node IDs for faster fixes.
 
 ---
 

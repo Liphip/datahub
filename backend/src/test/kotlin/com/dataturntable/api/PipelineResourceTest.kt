@@ -151,7 +151,7 @@ class PipelineResourceTest {
             .post("/api/internal/v1/pipelines?tenantId=$tenantId")
         .then()
             .statusCode(400)
-            .body("error", containsString("INPUT or BOTH"))
+            .body("error", containsString("INPUT/BOTH"))
     }
 
     @Test
