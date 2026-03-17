@@ -44,6 +44,7 @@ export default function Pipelines() {
   const [newPipelineDescription, setNewPipelineDescription] = useState('');
   const [creating, setCreating] = useState(false);
   const [triggeringId, setTriggeringId] = useState<string | null>(null);
+  const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [expandedPipelineId, setExpandedPipelineId] = useState<string | null>(null);
@@ -369,6 +370,22 @@ export default function Pipelines() {
       showToast('Failed to delete pipeline', 'error');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleCancelRun = async (pipelineId: string, runId: string) => {
+    setCancellingRunId(runId);
+    try {
+      await api.cancelPipelineRun(pipelineId, runId);
+      const runs = await api.getPipelineRuns(pipelineId, { limit: 3, includeDetails: false });
+      setRunsMap((prev) => ({ ...prev, [pipelineId]: runs }));
+      await loadDetailedPipelineRuns(pipelineId, detailFiltersByPipeline[pipelineId]);
+      await loadPipelineSummary(pipelineId);
+      showToast('Run cancelled', 'success');
+    } catch (error: any) {
+      showToast(error?.response?.data?.error || 'Failed to cancel run', 'error');
+    } finally {
+      setCancellingRunId(null);
     }
   };
 
@@ -1686,6 +1703,18 @@ export default function Pipelines() {
                                 <span>Trigger: <strong>{selectedRun.triggerType}</strong></span>
                                 <span>Started: <strong>{formatRunTime(selectedRun.startedAt)}</strong></span>
                                 <span>Duration: <strong>{selectedRun.durationMs != null ? `${selectedRun.durationMs} ms` : '-'}</strong></span>
+                                {(selectedRun.status === 'RUNNING' || selectedRun.status === 'PENDING') && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      void handleCancelRun(pipeline.id, selectedRun.id);
+                                    }}
+                                    disabled={cancellingRunId === selectedRun.id}
+                                    className="px-2 py-0.5 rounded border border-red-300 text-red-700 bg-white"
+                                  >
+                                    {cancellingRunId === selectedRun.id ? 'Cancelling...' : 'Cancel run'}
+                                  </button>
+                                )}
                               </div>
                               {alertEvaluation && (
                                 <div className="flex flex-wrap gap-4 text-amber-800">

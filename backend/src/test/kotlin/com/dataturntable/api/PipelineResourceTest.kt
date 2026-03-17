@@ -517,6 +517,69 @@ class PipelineResourceTest {
     }
 
     @Test
+    fun testCancelPipelineRun() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        val pipelineId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("name" to "Cancellable Pipeline", "graphDefinition" to mapOf("nodes" to emptyList<Any>(), "edges" to emptyList<Any>())))
+        .`when`()
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        val runId = QuarkusTransaction.requiringNew().call<String> {
+            val pipeline = em.find(Pipeline::class.java, java.util.UUID.fromString(pipelineId))
+            val run = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.RUNNING
+                this.triggerType = TriggerType.MANUAL
+                this.startedAt = java.time.Instant.now().minusSeconds(15)
+            }
+            em.persist(run)
+            em.flush()
+            run.id.toString()
+        }
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(emptyMap<String, Any>())
+        .`when`()
+            .post("/api/internal/v1/pipelines/$pipelineId/runs/$runId/cancel")
+        .then()
+            .statusCode(200)
+            .body("status", equalTo("CANCELLED"))
+            .body("errorMessage", equalTo("Cancelled by user"))
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(emptyMap<String, Any>())
+        .`when`()
+            .post("/api/internal/v1/pipelines/$pipelineId/runs/$runId/cancel")
+        .then()
+            .statusCode(409)
+            .body("error", containsString("already completed"))
+    }
+
+    @Test
     fun testTriggerPipelineTransitionsRunOutOfPending() {
         val token = TestAuthHelpers.createAdminToken()
 

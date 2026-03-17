@@ -251,6 +251,15 @@ class PipelineConsumer {
         }
         val run = runUuid?.let { PipelineRun.findById(it) }
         if (run != null) {
+            if (run.status == PipelineRunStatus.CANCELLED) {
+                return PipelineEvent(
+                    runId = runId,
+                    pipelineId = pipelineId,
+                    stage = "cancelled",
+                    success = false,
+                    error = "Run cancelled"
+                )
+            }
             run.status = PipelineRunStatus.RUNNING
             run.startedAt = java.time.Instant.now()
             run.persist()
@@ -262,6 +271,16 @@ class PipelineConsumer {
             val executionMs = System.currentTimeMillis() - executionStartedAt
             
             if (run != null) {
+                val currentStatus = run.id?.let { em.find(PipelineRun::class.java, it)?.status } ?: run.status
+                if (currentStatus == PipelineRunStatus.CANCELLED) {
+                    return PipelineEvent(
+                        runId = runId,
+                        pipelineId = pipelineId,
+                        stage = "cancelled",
+                        success = false,
+                        error = "Run cancelled"
+                    )
+                }
                 run.status = PipelineRunStatus.SUCCESS
                 run.completedAt = java.time.Instant.now()
                 run.metrics = objectMapper.writeValueAsString(
@@ -287,6 +306,16 @@ class PipelineConsumer {
             val executionMs = System.currentTimeMillis() - executionStartedAt
             
             if (run != null) {
+                val currentStatus = run.id?.let { em.find(PipelineRun::class.java, it)?.status } ?: run.status
+                if (currentStatus == PipelineRunStatus.CANCELLED) {
+                    return PipelineEvent(
+                        runId = runId,
+                        pipelineId = pipelineId,
+                        stage = "cancelled",
+                        success = false,
+                        error = "Run cancelled"
+                    )
+                }
                 run.status = PipelineRunStatus.FAILED
                 run.completedAt = java.time.Instant.now()
                 run.errorMessage = e.message

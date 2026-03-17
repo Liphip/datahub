@@ -813,6 +813,53 @@ class PipelineResource {
             Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
         }
     }
+
+    @POST
+    @Path("/{id}/runs/{runId}/cancel")
+    @Transactional
+    fun cancelRun(@PathParam("id") id: String, @PathParam("runId") runId: String): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val pipelineId = try {
+            parseUuid(id, "pipeline id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val runUuid = try {
+            parseUuid(runId, "run id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+
+        val pipeline = em.find(Pipeline::class.java, pipelineId)
+            ?: return Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
+        val tenantId = pipeline.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
+        requireTenantAccess(currentUser, tenantId, "pipeline:execute")?.let { return it }
+
+        val run = em.find(PipelineRun::class.java, runUuid)
+            ?: return Response.status(404).entity(mapOf("error" to "Run not found")).build()
+        if (run.pipeline?.id != pipeline.id) {
+            return Response.status(404).entity(mapOf("error" to "Run not found for this pipeline")).build()
+        }
+
+        if (run.status == PipelineRunStatus.SUCCESS || run.status == PipelineRunStatus.FAILED || run.status == PipelineRunStatus.CANCELLED) {
+            return Response.status(409).entity(mapOf("error" to "Run is already completed")).build()
+        }
+
+        run.status = PipelineRunStatus.CANCELLED
+        run.completedAt = java.time.Instant.now()
+        run.errorMessage = "Cancelled by user"
+        run.persist()
+
+        return Response.ok(
+            mapOf(
+                "id" to run.id,
+                "status" to run.status.name,
+                "completedAt" to run.completedAt,
+                "errorMessage" to run.errorMessage
+            )
+        ).build()
+    }
     
     @GET
     @Path("/{id}/runs")
