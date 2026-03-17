@@ -41,6 +41,9 @@ open class PipelineRun : PanacheEntityBase() {
     
     @Column(name = "error_message")
     var errorMessage: String? = null
+
+    @Column(name = "retry_of_run_id")
+    var retryOfRunId: UUID? = null
     
     @Column(columnDefinition = "text")
     var metrics: String? = null

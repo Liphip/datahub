@@ -1564,7 +1564,7 @@ export default function Pipelines() {
                     {runs.map((run) => (
                       <span
                         key={run.id}
-                        title={`${run.status} — ${new Date(run.startedAt).toLocaleString()}`}
+                        title={`${run.status} — ${new Date(run.startedAt).toLocaleString()}${run.retryOfRunId ? ` — retry of ${run.retryOfRunId}` : ''}`}
                         className={`w-3 h-3 rounded-full ${runStatusColor[run.status] ?? 'bg-gray-400'}`}
                       />
                     ))}
@@ -1761,6 +1761,11 @@ export default function Pipelines() {
                               <div className="flex flex-wrap gap-4">
                                 <span>Status: <strong>{selectedRun.status}</strong></span>
                                 <span>Trigger: <strong>{selectedRun.triggerType}</strong></span>
+                                {selectedRun.retryOfRunId && (
+                                  <span>
+                                    Retry of: <strong>{selectedRun.retryOfRunId.slice(0, 8)}</strong>
+                                  </span>
+                                )}
                                 <span>Started: <strong>{formatRunTime(selectedRun.startedAt)}</strong></span>
                                 <span>Duration: <strong>{selectedRun.durationMs != null ? `${selectedRun.durationMs} ms` : '-'}</strong></span>
                                 {(selectedRun.status === 'RUNNING' || selectedRun.status === 'PENDING') && (
@@ -1776,7 +1781,7 @@ export default function Pipelines() {
                                     {cancellingRunId === selectedRun.id ? 'Cancelling...' : 'Cancel run'}
                                   </button>
                                 )}
-                                {(selectedRun.status === 'FAILED' || selectedRun.status === 'CANCELLED' || selectedRun.status === 'SUCCESS') && (
+                                {(selectedRun.status === 'FAILED' || selectedRun.status === 'CANCELLED') && (
                                   <button
                                     onClick={(e) => {
                                       e.preventDefault();

@@ -146,6 +146,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added pipeline run cancellation controls: backend now supports `POST /pipelines/{id}/runs/{runId}/cancel` (with execute-scope auth and completed-run guardrails), `PipelineConsumer` now respects cancelled runs to avoid overriding status, and the Pipelines run-details panel now exposes a `Cancel run` action for `RUNNING`/`PENDING` runs.
 - Improved Pipelines page RBAC UX: added explicit read/write/execute permission gating for create/run/delete/cancel actions, disabled unauthorized controls with explanatory tooltips, and added a clear no-access state when users lack `pipeline:*` read scope.
 - Added pipeline run retry workflow: backend now supports `POST /pipelines/{id}/runs/{runId}/retry` (execute-scope auth, in-progress guardrails, retry provenance via `_retryOfRunId`), and the Pipelines run-details panel now offers a `Retry run` action for completed runs to speed operational recovery.
+- Added retry lineage persistence and visibility: `pipeline_runs` now stores `retry_of_run_id` (migration `V4`), run APIs include `retryOfRunId` in responses, and the Pipelines details panel surfaces retry ancestry so operators can track recovery attempts.
 
 ---
 

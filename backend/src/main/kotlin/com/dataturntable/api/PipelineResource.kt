@@ -759,11 +759,13 @@ class PipelineResource {
     private fun enqueuePipelineRun(
         pipeline: Pipeline,
         triggerType: TriggerType,
-        extraData: Map<String, Any?> = emptyMap()
+        extraData: Map<String, Any?> = emptyMap(),
+        retryOfRunId: UUID? = null
     ): PipelineRun {
         val run = PipelineRun().apply {
             this.pipeline = pipeline
             this.triggerType = triggerType
+            this.retryOfRunId = retryOfRunId
         }
         run.persist()
         em.flush()
@@ -819,7 +821,8 @@ class PipelineResource {
                     "id" to run.id,
                     "status" to run.status.name,
                     "triggerType" to run.triggerType.name,
-                    "startedAt" to run.startedAt
+                    "startedAt" to run.startedAt,
+                    "retryOfRunId" to run.retryOfRunId
                 )
             ).build()
         } else {
@@ -861,7 +864,8 @@ class PipelineResource {
         val retriedRun = enqueuePipelineRun(
             pipeline,
             sourceRun.triggerType,
-            mapOf("_retryOfRunId" to sourceRun.id.toString())
+            mapOf("_retryOfRunId" to sourceRun.id.toString()),
+            sourceRun.id
         )
 
         return Response.status(201).entity(
@@ -917,7 +921,8 @@ class PipelineResource {
                 "id" to run.id,
                 "status" to run.status.name,
                 "completedAt" to run.completedAt,
-                "errorMessage" to run.errorMessage
+                "errorMessage" to run.errorMessage,
+                "retryOfRunId" to run.retryOfRunId
             )
         ).build()
     }
@@ -1026,6 +1031,7 @@ class PipelineResource {
                     "id" to it.id,
                     "status" to it.status.name,
                     "triggerType" to it.triggerType.name,
+                    "retryOfRunId" to it.retryOfRunId,
                     "startedAt" to it.startedAt,
                     "completedAt" to it.completedAt,
                     "durationMs" to durationMs,

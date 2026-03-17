@@ -251,6 +251,10 @@ class PipelineConsumer {
         }
         val run = runUuid?.let { PipelineRun.findById(it) }
         if (run != null) {
+            val retryOfRunId = parseUuid(dataPayload?.get("_retryOfRunId")?.toString())
+            if (retryOfRunId != null && run.retryOfRunId == null) {
+                run.retryOfRunId = retryOfRunId
+            }
             if (run.status == PipelineRunStatus.CANCELLED) {
                 return PipelineEvent(
                     runId = runId,

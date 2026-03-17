@@ -94,6 +94,7 @@ export interface Pipeline {
 export interface PipelineRun {
   id: string;
   pipelineId?: string;
+  retryOfRunId?: string;
   status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
   triggerType: 'MANUAL' | 'SCHEDULED' | 'EVENT' | 'DATA';
   startedAt: string;
