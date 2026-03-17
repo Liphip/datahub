@@ -494,8 +494,14 @@ class ApiService {
     return response.data;
   }
 
-  async getConnectorImpact(id: string, sinceHours: 1 | 24 | 168 = 24): Promise<ConnectorImpactSummary> {
-    const response = await this.client.get<ConnectorImpactSummary>(`/connectors/${id}/impact?sinceHours=${sinceHours}`);
+  async getConnectorImpact(
+    id: string,
+    sinceHours: 1 | 24 | 168 = 24,
+    options?: { activeOnly?: boolean }
+  ): Promise<ConnectorImpactSummary> {
+    const params = new URLSearchParams({ sinceHours: String(sinceHours) });
+    if (options?.activeOnly !== undefined) params.set('activeOnly', String(options.activeOnly));
+    const response = await this.client.get<ConnectorImpactSummary>(`/connectors/${id}/impact?${params.toString()}`);
     return response.data;
   }
 

@@ -120,6 +120,8 @@ export default function Connectors() {
   const [impactModal, setImpactModal] = useState<ConnectorImpactSummary | null>(null);
   const [loadingImpactId, setLoadingImpactId] = useState<string | null>(null);
   const [impactWindowHours, setImpactWindowHours] = useState<1 | 24 | 168>(24);
+  const [disconnectImpactModal, setDisconnectImpactModal] = useState<ConnectorImpactSummary | null>(null);
+  const [pendingDisconnectConnector, setPendingDisconnectConnector] = useState<Connector | null>(null);
   const [brokerForm, setBrokerForm] = useState({
     name: '',
     username: '',
@@ -428,12 +430,7 @@ export default function Connectors() {
     }
   };
 
-  const handleToggleConnection = async (connector: Connector) => {
-    if (!canWriteConnectors) {
-      showToast('You do not have permission to change connector state', 'error');
-      return;
-    }
-
+  const performToggleConnection = async (connector: Connector) => {
     setTogglingId(connector.id);
     try {
       const updated = connector.isActive
@@ -446,6 +443,31 @@ export default function Connectors() {
     } finally {
       setTogglingId(null);
     }
+  };
+
+  const handleToggleConnection = async (connector: Connector) => {
+    if (!canWriteConnectors) {
+      showToast('You do not have permission to change connector state', 'error');
+      return;
+    }
+
+    if (connector.isActive) {
+      setTogglingId(connector.id);
+      try {
+        const impact = await api.getConnectorImpact(connector.id, impactWindowHours, { activeOnly: true });
+        if ((impact.activeImpactedPipelineCount || 0) > 0) {
+          setDisconnectImpactModal(impact);
+          setPendingDisconnectConnector(connector);
+          return;
+        }
+      } catch {
+        // if impact lookup fails, allow direct action and rely on backend safety
+      } finally {
+        setTogglingId(null);
+      }
+    }
+
+    await performToggleConnection(connector);
   };
 
   const handleTestConnection = async (connector: Connector) => {
@@ -1000,6 +1022,58 @@ export default function Connectors() {
                 </table>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {disconnectImpactModal && pendingDisconnectConnector && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4">
+            <h2 className="text-xl font-bold mb-2">Confirm Disconnect</h2>
+            <p className="text-sm text-gray-700 mb-3">
+              Disconnecting <strong>{pendingDisconnectConnector.name}</strong> affects
+              {' '}<strong>{disconnectImpactModal.activeImpactedPipelineCount || 0}</strong> active pipeline(s).
+            </p>
+            <div className="grid grid-cols-3 gap-2 mb-4 text-xs">
+              <div className="rounded border border-red-200 bg-red-50 p-2 text-red-800">
+                High risk: <strong>{disconnectImpactModal.highRiskCount || 0}</strong>
+              </div>
+              <div className="rounded border border-amber-200 bg-amber-50 p-2 text-amber-800">
+                Medium risk: <strong>{disconnectImpactModal.mediumRiskCount || 0}</strong>
+              </div>
+              <div className="rounded border border-emerald-200 bg-emerald-50 p-2 text-emerald-800">
+                Low risk: <strong>{disconnectImpactModal.lowRiskCount || 0}</strong>
+              </div>
+            </div>
+            <div className="max-h-48 overflow-y-auto border border-gray-200 rounded p-2 text-xs text-gray-700 mb-4">
+              {disconnectImpactModal.impactedPipelines.slice(0, 8).map((pipeline) => (
+                <div key={pipeline.pipelineId} className="py-1 border-b border-gray-100 last:border-0">
+                  <strong>{pipeline.pipelineName}</strong> - {pipeline.riskLevel || 'LOW'} risk, latest {pipeline.latestRunStatus || 'N/A'}
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                className="btn-secondary"
+                onClick={() => {
+                  setDisconnectImpactModal(null);
+                  setPendingDisconnectConnector(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-primary bg-red-600 hover:bg-red-700"
+                onClick={async () => {
+                  const target = pendingDisconnectConnector;
+                  setDisconnectImpactModal(null);
+                  setPendingDisconnectConnector(null);
+                  if (target) await performToggleConnection(target);
+                }}
+              >
+                Disconnect Anyway
+              </button>
+            </div>
           </div>
         </div>
       )}

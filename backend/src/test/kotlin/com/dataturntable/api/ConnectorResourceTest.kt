@@ -505,26 +505,48 @@ class ConnectorResourceTest {
                 this.errorMessage = "simulated"
             }
             em.persist(run)
+
+            val inactivePipeline = Pipeline().apply {
+                this.tenant = tenant
+                this.name = "Inactive Impact Pipeline"
+                this.isActive = false
+                this.graphDefinition = "{\"nodes\":[{\"id\":\"n-inactive\",\"type\":\"IMPORT\",\"connectorId\":\"$connectorId\"}],\"edges\":[]}"
+            }
+            em.persist(inactivePipeline)
             em.flush()
         }
 
         given()
             .header("Authorization", "Bearer $token")
             .queryParam("sinceHours", 24)
+            .queryParam("activeOnly", true)
         .`when`()
             .get("/api/internal/v1/connectors/$connectorId/impact")
         .then()
             .statusCode(200)
             .body("connectorId", equalTo(connectorId))
             .body("sinceHours", equalTo(24))
-            .body("referenceCount", equalTo(1))
+            .body("activeOnly", equalTo(true))
+            .body("referenceCount", equalTo(2))
             .body("impactedPipelineCount", equalTo(1))
+            .body("activeImpactedPipelineCount", equalTo(1))
+            .body("highRiskCount", equalTo(1))
             .body("impactedPipelines[0].pipelineName", equalTo("Impact Pipeline"))
             .body("impactedPipelines[0].recentRuns", equalTo(1))
             .body("impactedPipelines[0].recentFailedRuns", equalTo(1))
             .body("impactedPipelines[0].impactPriorityScore", equalTo(100))
             .body("impactedPipelines[0].riskLevel", equalTo("HIGH"))
             .body("impactedPipelines[0].latestRunStatus", equalTo("FAILED"))
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("sinceHours", 24)
+            .queryParam("activeOnly", false)
+        .`when`()
+            .get("/api/internal/v1/connectors/$connectorId/impact")
+        .then()
+            .statusCode(200)
+            .body("impactedPipelineCount", equalTo(2))
 
         given()
             .header("Authorization", "Bearer $token")

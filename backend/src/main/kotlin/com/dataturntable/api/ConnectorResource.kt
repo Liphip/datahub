@@ -748,7 +748,11 @@ class ConnectorResource {
 
     @GET
     @Path("/{id}/impact")
-    fun getImpact(@PathParam("id") id: String, @QueryParam("sinceHours") sinceHours: Int?): Response {
+    fun getImpact(
+        @PathParam("id") id: String,
+        @QueryParam("sinceHours") sinceHours: Int?,
+        @QueryParam("activeOnly") activeOnly: Boolean?
+    ): Response {
         val connectorId = parseUuid(id)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
         val connector = em.find(Connector::class.java, connectorId)
@@ -772,6 +776,7 @@ class ConnectorResource {
         val impactedPipelines = grouped.entries.mapNotNull { entry ->
             val pipelineUuid = parseUuid(entry.key) ?: return@mapNotNull null
             val pipeline = em.find(Pipeline::class.java, pipelineUuid) ?: return@mapNotNull null
+            if (activeOnly == true && !pipeline.isActive) return@mapNotNull null
             val latestRun = em.createQuery(
                 "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId ORDER BY r.startedAt DESC",
                 PipelineRun::class.java
@@ -832,14 +837,23 @@ class ConnectorResource {
             compareByDescending<Map<String, Any?>> { (it["impactPriorityScore"] as? Int) ?: 0 }
                 .thenBy { (it["pipelineName"] ?: "").toString() }
         )
+        val highRiskCount = impactedPipelines.count { (it["riskLevel"]?.toString() ?: "LOW") == "HIGH" }
+        val mediumRiskCount = impactedPipelines.count { (it["riskLevel"]?.toString() ?: "LOW") == "MEDIUM" }
+        val lowRiskCount = impactedPipelines.count { (it["riskLevel"]?.toString() ?: "LOW") == "LOW" }
+        val activeImpactedPipelineCount = impactedPipelines.count { (it["pipelineIsActive"] as? Boolean) == true }
 
         return Response.ok(
             mapOf(
                 "connectorId" to connector.id,
                 "connectorName" to connector.name,
                 "sinceHours" to hours,
+                "activeOnly" to (activeOnly == true),
                 "referenceCount" to references.size,
                 "impactedPipelineCount" to impactedPipelines.size,
+                "activeImpactedPipelineCount" to activeImpactedPipelineCount,
+                "highRiskCount" to highRiskCount,
+                "mediumRiskCount" to mediumRiskCount,
+                "lowRiskCount" to lowRiskCount,
                 "impactedPipelines" to impactedPipelines
             )
         ).build()
