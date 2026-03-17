@@ -12,7 +12,7 @@ type ModuleVersionOption = ModuleVersion & {
 export default function PipelineEditor() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user, selectedTenantId } = useAuthStore();
+  const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const canReadPipelines = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('pipeline:read'));
   const canWritePipelines = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('pipeline:write'));
   const canExecutePipelines = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('pipeline:execute'));
@@ -33,7 +33,7 @@ export default function PipelineEditor() {
   const [exportConnectorIds, setExportConnectorIds] = useState<string[]>([]);
   const [isActive, setIsActive] = useState(false);
 
-  const tenantId = selectedTenantId || user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
 
   useEffect(() => {
     const fetchData = async () => {

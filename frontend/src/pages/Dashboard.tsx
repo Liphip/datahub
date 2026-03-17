@@ -9,7 +9,7 @@ interface TenantNode extends Tenant {
 }
 
 export default function Dashboard() {
-  const { user, selectedTenantId } = useAuthStore();
+  const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const navigate = useNavigate();
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [allRuns, setAllRuns] = useState<(PipelineRun & { pipelineName?: string })[]>([]);
@@ -21,7 +21,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const tenantId = selectedTenantId || user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
 
   useEffect(() => {
     const fetchData = async () => {

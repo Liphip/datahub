@@ -125,6 +125,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Fixed PostgreSQL bootstrap migration for optional Timescale hypertable creation (`PERFORM create_hypertable(...)` in `V1__Initial_schema.sql`) to prevent backend startup failure on empty schemas.
 - Fixed setup-password handling so `/auth/setup` correctly hashes provided plaintext passwords before BCrypt storage (restoring custom-password login compatibility), with regression coverage in `AuthResourceTest`.
 - Fixed pipeline entity mapping regression by binding `importModuleVersionId` to `import_module_version_id` directly (removing duplicate implicit camelCase column selection) to stop `/pipelines?...includeRunSummary=true` SQL 500 errors.
+- Added tenant-context fallback (`selectedTenantId -> user.tenantId -> first auth tenant context`) across core frontend pages so create actions continue to work when JWT `tenantId` is absent/stale.
 
 ---
 

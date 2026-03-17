@@ -92,7 +92,7 @@ const TEMPLATES = {
 export default function ModuleEditor() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user, selectedTenantId } = useAuthStore();
+  const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const canWriteModules = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('module:write'));
   
   const [module, setModule] = useState<CodeModule | null>(null);
@@ -107,7 +107,7 @@ export default function ModuleEditor() {
   const [loadedRequirementsSnapshot, setLoadedRequirementsSnapshot] = useState('');
   const [pendingLoadVersionId, setPendingLoadVersionId] = useState<string | null>(null);
 
-  const tenantId = selectedTenantId || user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
   const hasUnsavedChanges = code !== loadedCodeSnapshot || requirements !== loadedRequirementsSnapshot;
 
   useEffect(() => {

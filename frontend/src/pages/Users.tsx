@@ -9,7 +9,7 @@ interface EditState {
 }
 
 export default function Users() {
-  const { user, selectedTenantId } = useAuthStore();
+  const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const [users, setUsers] = useState<User[]>([]);
   const [memberships, setMemberships] = useState<Membership[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
@@ -32,7 +32,7 @@ export default function Users() {
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
   const [roleFilter, setRoleFilter] = useState<string>('ALL');
 
-  const tenantId = selectedTenantId || user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
   const abilities = user?.abilities || [];
   const hasAbility = (ability: string) => user?.superadmin || abilities.includes('*') || abilities.includes(ability);
   const canReadUsers = hasAbility('read:user');

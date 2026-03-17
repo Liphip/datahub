@@ -7,7 +7,7 @@ const connectorTypes = ['MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'CUSTOM'] as
 const directions = ['INPUT', 'OUTPUT', 'BOTH'] as const;
 
 export default function Connectors() {
-  const { user, selectedTenantId } = useAuthStore();
+  const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const abilities = user?.abilities || [];
   const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
   const canManageTenant = hasAbility('manage:tenant');
@@ -35,7 +35,7 @@ export default function Connectors() {
     description: ''
   });
 
-  const tenantId = selectedTenantId || user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });

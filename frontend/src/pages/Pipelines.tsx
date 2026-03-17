@@ -23,7 +23,7 @@ type TriagePreset = {
 const TRIAGE_PRESETS_KEY = 'pipelines.triage.presets.v1';
 
 export default function Pipelines() {
-  const { user, selectedTenantId } = useAuthStore();
+  const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
@@ -95,7 +95,7 @@ export default function Pipelines() {
   const bucketSeconds = Number.isFinite(bucketSecondsParam) && bucketSecondsParam > 0 ? bucketSecondsParam : null;
   const bucketEnd = bucketStart && bucketSeconds ? new Date(bucketStart.getTime() + bucketSeconds * 1000) : null;
 
-  const tenantId = selectedTenantId || user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });

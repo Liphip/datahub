@@ -4,7 +4,7 @@ import api from '../services/api';
 import type { AlertChannel, AlertRule, AlertHistory, Pipeline } from '../types';
 
 export default function Alerts() {
-  const { user, selectedTenantId } = useAuthStore();
+  const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const abilities = user?.abilities || [];
   const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
   const canReadAlerts = hasAbility('alert:read') || hasAbility('alert:configure');
@@ -46,7 +46,7 @@ export default function Alerts() {
   const [deletingRuleId, setDeletingRuleId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-  const tenantId = selectedTenantId || user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });

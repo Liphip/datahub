@@ -9,7 +9,7 @@ type DataTable = {
 };
 
 export default function Data() {
-  const { user, selectedTenantId } = useAuthStore();
+  const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const abilities = user?.abilities || [];
   const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
   const canReadData = hasAbility('data:read') || hasAbility('data:write');
@@ -30,7 +30,7 @@ export default function Data() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-  const tenantId = selectedTenantId || user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });

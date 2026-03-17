@@ -17,7 +17,7 @@ const moduleTypeColors: Record<string, string> = {
 };
 
 export default function Modules() {
-  const { user, selectedTenantId } = useAuthStore();
+  const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const navigate = useNavigate();
   const canReadModules = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('module:read'));
   const canWriteModules = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('module:write'));
@@ -35,7 +35,7 @@ export default function Modules() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  const tenantId = selectedTenantId || user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
