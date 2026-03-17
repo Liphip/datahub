@@ -41,11 +41,43 @@ class TenantResource {
         }
         return null
     }
+
+    private fun parseUuid(value: String, field: String): UUID {
+        return try {
+            UUID.fromString(value)
+        } catch (_: Exception) {
+            throw WebApplicationException(Response.status(400).entity(mapOf("error" to "Invalid $field")).build())
+        }
+    }
+
+    private fun toTenantMap(tenant: Tenant, children: List<Map<String, Any?>>? = null): Map<String, Any?> {
+        val base = mutableMapOf<String, Any?>(
+            "id" to tenant.id,
+            "name" to tenant.name,
+            "parentId" to tenant.parent?.id
+        )
+        if (children != null) {
+            base["children"] = children
+        }
+        return base
+    }
+
+    private fun buildTenantTree(tenants: List<Tenant>, parentId: UUID?): List<Map<String, Any?>> {
+        val nodes = tenants.filter { it.parent?.id == parentId }
+        return nodes.map { tenant ->
+            toTenantMap(tenant, buildTenantTree(tenants, tenant.id))
+        }
+    }
     
     @GET
-    fun list(): Response {
+    fun list(@QueryParam("recursive") recursive: String?): Response {
+        if (recursive.equals("true", ignoreCase = true)) {
+            val allTenants = em.createQuery("SELECT t FROM Tenant t", Tenant::class.java).resultList
+            return Response.ok(buildTenantTree(allTenants, null)).build()
+        }
+
         val tenants = em.createQuery("SELECT t FROM Tenant t WHERE t.parent IS NULL", Tenant::class.java).resultList
-        return Response.ok(tenants.map { mapOf("id" to it.id, "name" to it.name) }).build()
+        return Response.ok(tenants.map { toTenantMap(it) }).build()
     }
     
     @POST
@@ -56,7 +88,11 @@ class TenantResource {
         val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
         
         val parentId = request["parentId"] as? String
-        val parent = parentId?.let { em.find(Tenant::class.java, UUID.fromString(it)) }
+        val parent = try {
+            parentId?.let { em.find(Tenant::class.java, parseUuid(it, "parentId")) }
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
         
         if (parent == null) {
             val rootTenants = em.createQuery("SELECT t FROM Tenant t WHERE t.parent IS NULL", Tenant::class.java).resultList
@@ -81,7 +117,12 @@ class TenantResource {
     @GET
     @Path("/{id}")
     fun get(@PathParam("id") id: String): Response {
-        val tenant = em.find(Tenant::class.java, UUID.fromString(id))
+        val tenantId = try {
+            parseUuid(id, "tenant id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val tenant = em.find(Tenant::class.java, tenantId)
         return if (tenant != null) {
             Response.ok(mapOf("id" to tenant.id, "name" to tenant.name, "settings" to tenant.settings)).build()
         } else {
@@ -95,7 +136,12 @@ class TenantResource {
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
         requireSuperadmin()?.let { return it }
 
-        val tenant = em.find(Tenant::class.java, UUID.fromString(id))
+        val tenantId = try {
+            parseUuid(id, "tenant id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val tenant = em.find(Tenant::class.java, tenantId)
         return if (tenant != null) {
             request["name"]?.let { tenant.name = it as String }
             request["settings"]?.let { tenant.settings = it as String }
@@ -114,7 +160,12 @@ class TenantResource {
     fun delete(@PathParam("id") id: String): Response {
         requireSuperadmin()?.let { return it }
 
-        val tenant = em.find(Tenant::class.java, UUID.fromString(id))
+        val tenantId = try {
+            parseUuid(id, "tenant id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val tenant = em.find(Tenant::class.java, tenantId)
         return if (tenant != null) {
             if (tenant.parent == null) {
                 val rootCount = em.createQuery("SELECT COUNT(t) FROM Tenant t WHERE t.parent IS NULL", java.lang.Long::class.java).singleResult
@@ -132,9 +183,15 @@ class TenantResource {
     @GET
     @Path("/{id}/children")
     fun getChildren(@PathParam("id") id: String): Response {
+        val parentId = try {
+            parseUuid(id, "tenant id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+
         val children = em.createQuery("SELECT t FROM Tenant t WHERE t.parent.id = :parentId", Tenant::class.java)
-            .setParameter("parentId", UUID.fromString(id))
+            .setParameter("parentId", parentId)
             .resultList
-        return Response.ok(children.map { mapOf("id" to it.id, "name" to it.name) }).build()
+        return Response.ok(children.map { toTenantMap(it) }).build()
     }
 }

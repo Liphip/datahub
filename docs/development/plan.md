@@ -72,6 +72,8 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added backend-supported pipeline health filtering via `GET /pipelines?runHealth=...` and wired frontend list loading to use server-side filters.
 - Added app-level API connectivity banner (network/server outage awareness) with automatic online/offline detection and retry action.
 - Pipeline list API now validates `runHealth` filters and rejects unknown values with `400`.
+- Tenant API now supports `GET /tenants?recursive=true` tree responses and validates tenant UUID path/query inputs with explicit `400` errors.
+- Tenants UI now loads recursive tenant trees in a single request and supports deep parent selection for nested sub-tenant creation.
 
 ---
 

@@ -23,6 +23,7 @@ export default function Layout({ children }: LayoutProps) {
   const { user, logout, tenantContexts, selectedTenantId, switchTenant } = useAuthStore();
   const [switchError, setSwitchError] = useState('');
   const [switchingTenant, setSwitchingTenant] = useState(false);
+  const visibleNavigation = navigation.filter((item) => item.href !== '/tenants' || user?.superadmin);
 
   const handleLogout = () => {
     logout();
@@ -55,7 +56,7 @@ export default function Layout({ children }: LayoutProps) {
                 </Link>
               </div>
               <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
-                {navigation.map((item) => (
+                {visibleNavigation.map((item) => (
                   <Link
                     key={item.name}
                     to={item.href}

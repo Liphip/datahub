@@ -109,6 +109,11 @@ class ApiService {
     return response.data;
   }
 
+  async getTenantsRecursive(): Promise<Tenant[]> {
+    const response = await this.client.get<Tenant[]>('/tenants?recursive=true');
+    return response.data;
+  }
+
   async getTenant(id: string): Promise<Tenant> {
     const response = await this.client.get<Tenant>(`/tenants/${id}`);
     return response.data;

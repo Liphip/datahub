@@ -29,18 +29,8 @@ export default function Tenants() {
 
   const fetchTenants = async () => {
     try {
-      const rootTenants = await api.getTenants();
-      const tenantsWithChildren: TenantWithChildren[] = await Promise.all(
-        rootTenants.map(async (t) => {
-          try {
-            const children = await api.getTenantChildren(t.id);
-            return { ...t, children: children as TenantWithChildren[] };
-          } catch {
-            return { ...t, children: [] };
-          }
-        })
-      );
-      setTenants(tenantsWithChildren);
+      const tree = await api.getTenantsRecursive();
+      setTenants(tree as TenantWithChildren[]);
     } catch (err) {
       console.error('Error fetching tenants:', err);
     } finally {
@@ -100,7 +90,11 @@ export default function Tenants() {
   };
 
   const handleDeleteTenant = async (tenantId: string) => {
-    const tenant = tenants.find(t => t.id === tenantId);
+    const flatten = (nodes: TenantWithChildren[]): TenantWithChildren[] =>
+      nodes.flatMap((n) => [n, ...(n.children ? flatten(n.children) : [])]);
+
+    const allTenants = flatten(tenants);
+    const tenant = allTenants.find(t => t.id === tenantId);
     const isRoot = !tenant?.parentId;
     const rootCount = tenants.length;
     
@@ -128,6 +122,13 @@ export default function Tenants() {
     setNewTenantName('');
     setError(null);
     setShowCreateModal(true);
+  };
+
+  const flattenTenantOptions = (nodes: TenantWithChildren[], depth = 0): { id: string; name: string }[] => {
+    return nodes.flatMap((node) => [
+      { id: node.id, name: `${'  '.repeat(depth)}${depth > 0 ? '- ' : ''}${node.name}` },
+      ...(node.children ? flattenTenantOptions(node.children, depth + 1) : []),
+    ]);
   };
 
   const renderTenantTree = (tenant: TenantWithChildren, depth: number = 0) => {
@@ -271,12 +272,9 @@ export default function Tenants() {
                   className="input w-full"
                 >
                   <option value="">Root Tenant</option>
-                  {tenants.flatMap(t => [
-                    <option key={t.id} value={t.id}>{t.name}</option>,
-                    ...(t.children || []).map(c => (
-                      <option key={c.id} value={c.id}>  - {t.name} / {c.name}</option>
-                    ))
-                  ])}
+                  {flattenTenantOptions(tenants).map((option) => (
+                    <option key={option.id} value={option.id}>{option.name}</option>
+                  ))}
                 </select>
               </div>
               <div className="flex justify-end space-x-2">
