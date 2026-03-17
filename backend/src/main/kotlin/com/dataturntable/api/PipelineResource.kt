@@ -127,7 +127,9 @@ class PipelineResource {
         @QueryParam("tenantId") tenantId: String,
         @QueryParam("from") from: String?,
         @QueryParam("to") to: String?,
-        @QueryParam("limit") limit: Int?
+        @QueryParam("limit") limit: Int?,
+        @QueryParam("runStatus") runStatus: String?,
+        @QueryParam("pipelineId") pipelineId: String?
     ): Response {
         val tenantUuid = try {
             parseUuid(tenantId, "tenantId")
@@ -149,6 +151,26 @@ class PipelineResource {
             return Response.status(400).entity(mapOf("error" to "from must be before to")).build()
         }
 
+        val runStatusEnum = if (runStatus.isNullOrBlank()) {
+            null
+        } else {
+            try {
+                com.dataturntable.pipeline.PipelineRunStatus.valueOf(runStatus.uppercase())
+            } catch (_: Exception) {
+                return Response.status(400).entity(mapOf("error" to "Invalid runStatus")).build()
+            }
+        }
+
+        val pipelineUuid = if (pipelineId.isNullOrBlank()) {
+            null
+        } else {
+            try {
+                parseUuid(pipelineId, "pipelineId")
+            } catch (e: WebApplicationException) {
+                return e.response
+            }
+        }
+
         val maxRows = (limit ?: 50).coerceIn(1, 200)
 
         val jpql = StringBuilder(
@@ -156,6 +178,8 @@ class PipelineResource {
         )
         if (fromInstant != null) jpql.append(" AND r.startedAt >= :from")
         if (toInstant != null) jpql.append(" AND r.startedAt <= :to")
+        if (runStatusEnum != null) jpql.append(" AND r.status = :runStatus")
+        if (pipelineUuid != null) jpql.append(" AND p.id = :pipelineId")
         jpql.append(" ORDER BY r.startedAt DESC")
 
         val query = em.createQuery(jpql.toString(), PipelineRun::class.java)
@@ -163,6 +187,8 @@ class PipelineResource {
             .setMaxResults(maxRows)
         if (fromInstant != null) query.setParameter("from", fromInstant)
         if (toInstant != null) query.setParameter("to", toInstant)
+        if (runStatusEnum != null) query.setParameter("runStatus", runStatusEnum)
+        if (pipelineUuid != null) query.setParameter("pipelineId", pipelineUuid)
 
         val runs = query.resultList
 

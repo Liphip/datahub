@@ -354,4 +354,30 @@ class PipelineResourceTest {
             .statusCode(200)
             .body("size()", notNullValue())
     }
+
+    @Test
+    fun testGetTenantRunsRejectsInvalidRunStatus() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("tenantId", tenantId)
+            .queryParam("runStatus", "BROKEN")
+        .`when`()
+            .get("/api/internal/v1/pipelines/runs")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid runStatus"))
+    }
 }

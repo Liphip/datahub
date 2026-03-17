@@ -9,6 +9,7 @@ type HealthFilter = 'ALL' | 'PROBLEMATIC' | 'RUNNING' | 'FAILED' | 'HEALTHY';
 type SortMode = 'RECENT_RUN' | 'NAME';
 type SinceHoursFilter = 1 | 24 | 168 | null;
 type BucketSortMode = 'NEWEST' | 'FAILED_FIRST';
+type BucketRunStatusFilter = 'ALL' | 'RUNNING' | 'PENDING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
 
 export default function Pipelines() {
   const { user, selectedTenantId } = useAuthStore();
@@ -43,7 +44,15 @@ export default function Pipelines() {
     const raw = (searchParams.get('bucketSort') || '').toUpperCase();
     return raw === 'FAILED_FIRST' ? 'FAILED_FIRST' : 'NEWEST';
   })();
+  const initialBucketStatus = (() => {
+    const raw = (searchParams.get('bucketStatus') || '').toUpperCase();
+    return (['ALL', 'RUNNING', 'PENDING', 'SUCCESS', 'FAILED', 'CANCELLED'] as const).includes(raw as BucketRunStatusFilter)
+      ? (raw as BucketRunStatusFilter)
+      : 'ALL';
+  })();
   const [bucketSortMode, setBucketSortMode] = useState<BucketSortMode>(initialBucketSort);
+  const [bucketStatusFilter, setBucketStatusFilter] = useState<BucketRunStatusFilter>(initialBucketStatus);
+  const [bucketPipelineQuery, setBucketPipelineQuery] = useState(searchParams.get('bucketQ') || '');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [error, setError] = useState('');
   const [bucketRuns, setBucketRuns] = useState<TenantPipelineRun[]>([]);
@@ -72,6 +81,7 @@ export default function Pipelines() {
         from: fromDate.toISOString(),
         to: toDate.toISOString(),
         limit: 40,
+        runStatus: bucketStatusFilter === 'ALL' ? undefined : bucketStatusFilter,
       });
       setBucketRuns(runs);
       setBucketLastRefreshedAt(new Date().toISOString());
@@ -128,7 +138,7 @@ export default function Pipelines() {
       }
     };
     fetchAll();
-  }, [tenantId, healthFilter, sinceHoursFilter, bucketStartParam, bucketSeconds]);
+  }, [tenantId, healthFilter, sinceHoursFilter, bucketStartParam, bucketSeconds, bucketStatusFilter]);
 
   useEffect(() => {
     if (!autoRefreshBucket || !tenantId || !bucketStart || !bucketEnd) return;
@@ -143,7 +153,7 @@ export default function Pipelines() {
     }, 10000);
 
     return () => window.clearInterval(intervalId);
-  }, [autoRefreshBucket, tenantId, bucketStartParam, bucketSeconds]);
+  }, [autoRefreshBucket, tenantId, bucketStartParam, bucketSeconds, bucketStatusFilter]);
 
   useEffect(() => {
     if (!bucketStart || !bucketEnd || !bucketLastRefreshedAt) return;
@@ -335,6 +345,11 @@ export default function Pipelines() {
     return bTime - aTime;
   });
 
+  const visibleBucketRuns = sortedBucketRuns.filter((run) => {
+    if (!bucketPipelineQuery.trim()) return true;
+    return run.pipelineName?.toLowerCase().includes(bucketPipelineQuery.trim().toLowerCase());
+  });
+
   const applyHealthFilter = (filter: HealthFilter) => {
     setHealthFilter(filter);
     const next = new URLSearchParams(searchParams);
@@ -362,6 +377,8 @@ export default function Pipelines() {
     next.delete('bucketStart');
     next.delete('bucketSeconds');
     next.delete('bucketSort');
+    next.delete('bucketStatus');
+    next.delete('bucketQ');
     setSearchParams(next, { replace: true });
   };
 
@@ -388,6 +405,28 @@ export default function Pipelines() {
       next.delete('bucketSort');
     } else {
       next.set('bucketSort', mode);
+    }
+    setSearchParams(next, { replace: true });
+  };
+
+  const applyBucketStatusFilter = (status: BucketRunStatusFilter) => {
+    setBucketStatusFilter(status);
+    const next = new URLSearchParams(searchParams);
+    if (status === 'ALL') {
+      next.delete('bucketStatus');
+    } else {
+      next.set('bucketStatus', status);
+    }
+    setSearchParams(next, { replace: true });
+  };
+
+  const applyBucketPipelineQuery = (query: string) => {
+    setBucketPipelineQuery(query);
+    const next = new URLSearchParams(searchParams);
+    if (!query.trim()) {
+      next.delete('bucketQ');
+    } else {
+      next.set('bucketQ', query.trim());
     }
     setSearchParams(next, { replace: true });
   };
@@ -513,28 +552,40 @@ export default function Pipelines() {
           {bucketRuns.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2 text-xs">
               <button
-                onClick={() => applyHealthFilter('FAILED')}
+                onClick={() => applyBucketStatusFilter('FAILED')}
                 className="px-2 py-1 rounded border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
               >
                 Failed: {bucketStatusCounts.failed}
               </button>
               <button
-                onClick={() => applyHealthFilter('RUNNING')}
+                onClick={() => applyBucketStatusFilter('RUNNING')}
                 className="px-2 py-1 rounded border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
               >
                 Running/Pending: {bucketStatusCounts.running}
               </button>
               <button
-                onClick={() => applyHealthFilter('HEALTHY')}
+                onClick={() => applyBucketStatusFilter('SUCCESS')}
                 className="px-2 py-1 rounded border border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
               >
                 Success: {bucketStatusCounts.success}
               </button>
+              <button
+                onClick={() => applyBucketStatusFilter('ALL')}
+                className="px-2 py-1 rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+              >
+                All statuses
+              </button>
+              <input
+                value={bucketPipelineQuery}
+                onChange={(e) => applyBucketPipelineQuery(e.target.value)}
+                placeholder="Filter pipeline name"
+                className="input text-xs max-w-[190px]"
+              />
             </div>
           )}
           {loadingBucketRuns ? (
             <p className="text-sm text-gray-500">Loading bucket runs...</p>
-          ) : bucketRuns.length > 0 ? (
+          ) : visibleBucketRuns.length > 0 ? (
             <div className="overflow-auto">
               <table className="min-w-full text-xs">
                 <thead>
@@ -546,7 +597,7 @@ export default function Pipelines() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedBucketRuns.slice(0, 12).map((run) => (
+                  {visibleBucketRuns.slice(0, 12).map((run) => (
                     <tr key={run.id} className="border-b border-gray-100">
                       <td className="py-2 pr-3">
                         <Link to={`/pipelines/${run.pipelineId}`} className="text-primary-600 hover:text-primary-800 hover:underline">
@@ -555,7 +606,7 @@ export default function Pipelines() {
                       </td>
                       <td className="py-2 pr-3">
                         <button
-                          onClick={() => applyHealthFilter(run.status === 'FAILED' ? 'FAILED' : (run.status === 'RUNNING' || run.status === 'PENDING') ? 'RUNNING' : 'HEALTHY')}
+                          onClick={() => applyBucketStatusFilter(run.status)}
                           className={`px-2 py-0.5 rounded text-[11px] border ${
                             run.status === 'FAILED'
                               ? 'border-red-200 bg-red-50 text-red-700'
@@ -575,7 +626,9 @@ export default function Pipelines() {
               </table>
             </div>
           ) : (
-            <p className="text-sm text-gray-500">No runs found in this bucket.</p>
+            <p className="text-sm text-gray-500">
+              {bucketRuns.length > 0 ? 'No runs match current bucket filters.' : 'No runs found in this bucket.'}
+            </p>
           )}
         </div>
       )}

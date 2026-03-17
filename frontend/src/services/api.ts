@@ -269,11 +269,22 @@ class ApiService {
     return response.data;
   }
 
-  async getTenantPipelineRuns(tenantId: string, options?: { from?: string; to?: string; limit?: number }): Promise<TenantPipelineRun[]> {
+  async getTenantPipelineRuns(
+    tenantId: string,
+    options?: {
+      from?: string;
+      to?: string;
+      limit?: number;
+      runStatus?: 'RUNNING' | 'PENDING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+      pipelineId?: string;
+    }
+  ): Promise<TenantPipelineRun[]> {
     const from = options?.from ? `&from=${encodeURIComponent(options.from)}` : '';
     const to = options?.to ? `&to=${encodeURIComponent(options.to)}` : '';
     const limit = options?.limit ? `&limit=${options.limit}` : '';
-    const response = await this.client.get<TenantPipelineRun[]>(`/pipelines/runs?tenantId=${tenantId}${from}${to}${limit}`);
+    const runStatus = options?.runStatus ? `&runStatus=${options.runStatus}` : '';
+    const pipelineId = options?.pipelineId ? `&pipelineId=${options.pipelineId}` : '';
+    const response = await this.client.get<TenantPipelineRun[]>(`/pipelines/runs?tenantId=${tenantId}${from}${to}${limit}${runStatus}${pipelineId}`);
     return response.data;
   }
 
