@@ -1024,12 +1024,22 @@ export default function Pipelines() {
         defaultFetchMode: mode,
         defaultDepth: depth,
         maxDepthCap,
-      });
+      }, tenantLineageDefaults.version);
       setTenantLineageDefaults(updated);
       showToast('Tenant lineage defaults updated', 'success');
       await handleLoadRunLineage(pipelineId, runId, depth, undefined, undefined, mode, policy);
-    } catch {
-      showToast('Failed to update tenant lineage defaults', 'error');
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        showToast('Tenant defaults changed elsewhere. Reloading latest defaults.', 'error');
+        try {
+          const latest = await api.getTenantLineageDefaults(tenantId);
+          setTenantLineageDefaults(latest);
+        } catch {
+          // ignore secondary refresh errors
+        }
+      } else {
+        showToast('Failed to update tenant lineage defaults', 'error');
+      }
     } finally {
       setSavingTenantLineageDefaults(false);
     }

@@ -121,10 +121,13 @@ class TenantResource {
         return fields.filter { key -> previous[key] != next[key] }
     }
 
-    private fun buildLineageDefaultsResponse(settingsRaw: String?): Map<String, Any?> {
+    private fun buildLineageDefaultsResponse(settingsRaw: String?, version: String?): Map<String, Any?> {
         val defaults = extractLineageDefaults(settingsRaw)
         val history = extractLineageDefaultsHistory(settingsRaw)
-        return defaults + mapOf("history" to history)
+        return defaults + mapOf(
+            "version" to version,
+            "history" to history
+        )
     }
 
     private fun toTenantMap(tenant: Tenant, children: List<Map<String, Any?>>? = null): Map<String, Any?> {
@@ -372,7 +375,7 @@ class TenantResource {
 
         val tenant = em.find(Tenant::class.java, tenantId)
             ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
-        return Response.ok(buildLineageDefaultsResponse(tenant.settings)).build()
+        return Response.ok(buildLineageDefaultsResponse(tenant.settings, tenant.updatedAt.toString())).build()
     }
 
     @PATCH
@@ -394,6 +397,17 @@ class TenantResource {
 
         val tenant = em.find(Tenant::class.java, tenantId)
             ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+
+        val ifVersion = request["ifVersion"] as? String
+        val currentVersion = tenant.updatedAt.toString()
+        if (!ifVersion.isNullOrBlank() && ifVersion != currentVersion) {
+            return Response.status(409)
+                .entity(mapOf(
+                    "error" to "Lineage defaults were updated by another user. Refresh and retry.",
+                    "currentVersion" to currentVersion
+                ))
+                .build()
+        }
 
         val currentLineageDefaults = extractLineageDefaults(tenant.settings).toMutableMap()
         val merged = currentLineageDefaults.toMutableMap()
@@ -448,6 +462,6 @@ class TenantResource {
         tenant.updatedAt = java.time.Instant.now()
         em.merge(tenant)
 
-        return Response.ok(buildLineageDefaultsResponse(tenant.settings)).build()
+        return Response.ok(buildLineageDefaultsResponse(tenant.settings, tenant.updatedAt.toString())).build()
     }
 }

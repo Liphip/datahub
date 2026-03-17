@@ -71,6 +71,7 @@ export interface TenantLineageDefaultsHistoryEntry {
 }
 
 export interface TenantLineageDefaults {
+  version?: string;
   safeScopePolicy: 'AUTO' | 'RUN' | 'PIPELINE';
   defaultFetchMode: 'SUMMARY' | 'DETAILS';
   defaultDepth: number;

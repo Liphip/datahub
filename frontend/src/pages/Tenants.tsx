@@ -120,11 +120,21 @@ export default function Tenants() {
         defaultFetchMode: lineageDefaults.defaultFetchMode,
         defaultDepth,
         maxDepthCap,
-      });
+      }, lineageDefaults.version);
       setLineageDefaults(updated);
       showToast('Tenant lineage defaults saved', 'success');
-    } catch {
-      showToast('Failed to save tenant lineage defaults', 'error');
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        showToast('Defaults changed by another user. Reloading latest values.', 'error');
+        try {
+          const latest = await api.getTenantLineageDefaults(lineageDefaultsTenantId);
+          setLineageDefaults(latest);
+        } catch {
+          // ignore secondary reload errors
+        }
+      } else {
+        showToast('Failed to save tenant lineage defaults', 'error');
+      }
     } finally {
       setSavingLineageDefaults(false);
     }
@@ -139,11 +149,21 @@ export default function Tenants() {
         defaultFetchMode: defaults.defaultFetchMode,
         defaultDepth: defaults.defaultDepth,
         maxDepthCap: defaults.maxDepthCap,
-      });
+      }, lineageDefaults.version);
       setLineageDefaults(updated);
       showToast('Lineage defaults restored from history', 'success');
-    } catch {
-      showToast('Failed to restore lineage defaults from history', 'error');
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        showToast('Defaults changed by another user. Reloading latest values.', 'error');
+        try {
+          const latest = await api.getTenantLineageDefaults(lineageDefaultsTenantId);
+          setLineageDefaults(latest);
+        } catch {
+          // ignore secondary reload errors
+        }
+      } else {
+        showToast('Failed to restore lineage defaults from history', 'error');
+      }
     } finally {
       setSavingLineageDefaults(false);
     }

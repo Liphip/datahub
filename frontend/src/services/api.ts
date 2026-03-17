@@ -144,8 +144,13 @@ class ApiService {
     return response.data;
   }
 
-  async updateTenantLineageDefaults(tenantId: string, data: Partial<TenantLineageDefaults>): Promise<TenantLineageDefaults> {
-    const response = await this.client.patch<TenantLineageDefaults>(`/tenants/${tenantId}/lineage-defaults`, data);
+  async updateTenantLineageDefaults(
+    tenantId: string,
+    data: Partial<TenantLineageDefaults>,
+    ifVersion?: string
+  ): Promise<TenantLineageDefaults> {
+    const payload = ifVersion ? { ...data, ifVersion } : data;
+    const response = await this.client.patch<TenantLineageDefaults>(`/tenants/${tenantId}/lineage-defaults`, payload);
     return response.data;
   }
 

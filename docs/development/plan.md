@@ -186,6 +186,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added dedicated tenant settings UI for lineage defaults: Tenants page now includes a focused `Lineage Defaults` section with tenant selector, editable defaults form, and save/reset controls so tenant managers can configure baseline lineage behavior directly instead of only deriving defaults from the Pipelines view.
 - Added lineage defaults change history and rollback-friendly UX: tenant lineage defaults responses now include bounded change history metadata (when/who/default snapshot), and the Tenants settings panel now surfaces recent entries with `Apply to form` actions for quick rollback/replay before saving.
 - Enhanced lineage defaults audit ergonomics: history entries now include explicit `changedFields`, and the Tenants lineage defaults panel now highlights changed keys and adds one-click `Restore + Save` so managers can roll back to known-good defaults without manual re-entry.
+- Added optimistic concurrency for lineage defaults updates: tenant lineage defaults responses now include a `version` token and updates accept `ifVersion` to detect concurrent edits (409 on conflict), while Tenants/Pipelines settings flows now pass version tokens and auto-refresh on conflicts to prevent silent overwrite across multiple admins.
 
 ---
 

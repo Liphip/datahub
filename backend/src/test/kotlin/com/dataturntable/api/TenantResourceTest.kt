@@ -439,16 +439,29 @@ class TenantResourceTest {
             .get("/api/internal/v1/tenants/$rootId/lineage-defaults")
         .then()
             .statusCode(200)
+            .body("version", notNullValue())
             .body("safeScopePolicy", equalTo("AUTO"))
             .body("defaultFetchMode", equalTo("SUMMARY"))
             .body("defaultDepth", equalTo(20))
             .body("maxDepthCap", equalTo(200))
             .body("history.size()", equalTo(0))
 
+        val baselineVersion = given()
+            .header("Authorization", "Bearer $managerToken")
+        .`when`()
+            .get("/api/internal/v1/tenants/$rootId/lineage-defaults")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("version")
+
         given()
             .header("Authorization", "Bearer $managerToken")
             .contentType(ContentType.JSON)
             .body(mapOf(
+                "ifVersion" to baselineVersion,
                 "safeScopePolicy" to "PIPELINE",
                 "defaultFetchMode" to "DETAILS",
                 "defaultDepth" to 40,
@@ -462,10 +475,22 @@ class TenantResourceTest {
             .body("defaultFetchMode", equalTo("DETAILS"))
             .body("defaultDepth", equalTo(40))
             .body("maxDepthCap", equalTo(120))
+            .body("version", notNullValue())
             .body("history.size()", equalTo(1))
             .body("history[0].changedByEmail", equalTo("tenant-admin@example.com"))
             .body("history[0].changedFields", hasItems("safeScopePolicy", "defaultFetchMode", "defaultDepth", "maxDepthCap"))
             .body("history[0].defaults.safeScopePolicy", equalTo("PIPELINE"))
+
+        given()
+            .header("Authorization", "Bearer $managerToken")
+            .contentType(ContentType.JSON)
+            .body(mapOf("ifVersion" to baselineVersion, "defaultDepth" to 30))
+        .`when`()
+            .patch("/api/internal/v1/tenants/$rootId/lineage-defaults")
+        .then()
+            .statusCode(409)
+            .body("error", containsString("updated by another user"))
+            .body("currentVersion", notNullValue())
 
         given()
             .header("Authorization", "Bearer $managerToken")
