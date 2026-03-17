@@ -67,6 +67,7 @@ export default function Connectors() {
   const canWriteConnectors = canManageTenant || hasAbility('write:connector');
   const canDeleteConnectors = canManageTenant || hasAbility('delete:connector');
   const canManageBrokerUsers = canManageTenant;
+  const canReadBrokerUsers = canReadConnectors;
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -124,7 +125,7 @@ export default function Connectors() {
   };
 
   const loadBrokerCredentials = async (tid: string) => {
-    if (!canManageBrokerUsers) {
+    if (!canReadBrokerUsers) {
       setBrokerCredentials([]);
       return;
     }
@@ -160,7 +161,7 @@ export default function Connectors() {
     };
 
     fetchConnectors();
-  }, [tenantId, filterType, filterDirection, canReadConnectors, canManageBrokerUsers]);
+  }, [tenantId, filterType, filterDirection, canReadConnectors, canManageBrokerUsers, canReadBrokerUsers]);
 
   const openCreateBrokerCredential = () => {
     setEditingBrokerCredential(null);
@@ -607,6 +608,12 @@ export default function Connectors() {
               {connector.description && (
                 <p className="text-sm text-gray-600 mb-3">{connector.description}</p>
               )}
+
+              {connector.connectorType === 'MQTT' && typeof connector.config?.brokerCredentialId === 'string' && connector.config.brokerCredentialId && (
+                <p className="text-xs text-blue-700 mb-2">
+                  Broker User ID: <code>{connector.config.brokerCredentialId}</code>
+                </p>
+              )}
               
               <div className="text-xs text-gray-500 mb-3">
                 Created: {new Date(connector.createdAt).toLocaleDateString()}
@@ -810,6 +817,41 @@ export default function Connectors() {
                       <p className="text-xs text-blue-900 dark:text-blue-200 mb-2">
                         Quick setup: use the integrated broker or localhost, then adjust as needed.
                       </p>
+                      {brokerCredentials.length > 0 && (
+                        <div className="mb-2">
+                          <label className="block text-xs font-medium text-blue-900 dark:text-blue-200 mb-1">
+                            Broker User Credential
+                          </label>
+                          <select
+                            className="input text-sm"
+                            value={formData.config.brokerCredentialId || ''}
+                            onChange={(e) => {
+                              const credentialId = e.target.value;
+                              const selectedCredential = brokerCredentials.find((c) => c.id === credentialId);
+                              setFormData((prev) => ({
+                                ...prev,
+                                config: {
+                                  ...prev.config,
+                                  brokerCredentialId: credentialId,
+                                  topic: prev.config.topic?.trim()
+                                    ? prev.config.topic
+                                    : (selectedCredential?.allowedTopics?.[0] || prev.config.topic || ''),
+                                },
+                              }));
+                            }}
+                          >
+                            <option value="">No broker credential</option>
+                            {brokerCredentials.map((credential) => (
+                              <option key={credential.id} value={credential.id}>
+                                {credential.name} ({credential.username})
+                              </option>
+                            ))}
+                          </select>
+                          <p className="text-[11px] text-blue-800 dark:text-blue-300 mt-1">
+                            Uses tenant-scoped MQTT broker users managed below.
+                          </p>
+                        </div>
+                      )}
                       <div className="flex flex-wrap gap-2">
                         <button
                           type="button"

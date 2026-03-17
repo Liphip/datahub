@@ -182,6 +182,7 @@ Notes:
 - Connectors can be managed from the Connectors page with explicit Connect/Disconnect/Test actions.
 - MQTT connector forms include quick-fill for the integrated Mosquitto broker (`mqtt://mosquitto:1883`) and localhost (`mqtt://localhost:1883`), while still allowing custom brokers.
 - Integrated broker credentials are tenant-scoped entities (separate from app auth users) with explicit topic ACL lists; only tenant admins/superadmins can manage them.
+- MQTT connectors can bind a `brokerCredentialId` so topic usage is validated against the credential ACL at create/update time.
 - Frontend auth uses SHA-256 (Base64) client hashing before transmission; server stores BCrypt of that hash.
 - Pipelines support a `graphDefinition` payload; IMPORT/EXPORT nodes must reference compatible connectors by `connectorId`.
 - The pipeline editor now captures connector selections for IMPORT/EXPORT nodes and sends a DAG `graphDefinition` with connector-aware validation.

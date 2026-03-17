@@ -143,6 +143,55 @@ class ConnectorResource {
         return currentUser.isSuperAdmin() || SecurityUtils.hasAbility(currentUser, "manage:tenant")
     }
 
+    private fun canReadBrokerCredentials(currentUser: User?, tenantId: String): Boolean {
+        if (currentUser == null) return false
+        if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) return false
+        return SecurityUtils.hasAbility(currentUser, "read:connector")
+    }
+
+    private fun mqttTopicMatches(pattern: String, topic: String): Boolean {
+        val regex = pattern
+            .replace("+", "[^/]+")
+            .replace("#", ".*")
+        return Regex("^$regex$").matches(topic)
+    }
+
+    private fun validateMqttCredentialBinding(
+        tenantUuid: UUID,
+        configMap: Map<*, *>
+    ): Response? {
+        val credentialIdRaw = configMap["brokerCredentialId"]?.toString()?.trim()
+        if (credentialIdRaw.isNullOrBlank()) return null
+        val credentialId = parseUuid(credentialIdRaw)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid brokerCredentialId")).build()
+        val credential = em.find(BrokerCredential::class.java, credentialId)
+            ?: return Response.status(400).entity(mapOf("error" to "Broker credential not found")).build()
+        if (credential.tenant?.id != tenantUuid) {
+            return Response.status(403).entity(mapOf("error" to "Broker credential does not belong to tenant")).build()
+        }
+        if (!credential.isActive) {
+            return Response.status(400).entity(mapOf("error" to "Broker credential is inactive")).build()
+        }
+
+        val topic = configMap["topic"]?.toString()?.trim()
+        if (!topic.isNullOrBlank()) {
+            val allowedTopics = try {
+                objectMapper.readValue(credential.allowedTopics, List::class.java).map { it.toString() }
+            } catch (_: Exception) {
+                emptyList<String>()
+            }
+            if (allowedTopics.isNotEmpty() && allowedTopics.none { mqttTopicMatches(it, topic) }) {
+                return Response.status(400).entity(
+                    mapOf(
+                        "error" to "MQTT topic is not allowed by broker credential",
+                        "allowedTopics" to allowedTopics
+                    )
+                ).build()
+            }
+        }
+        return null
+    }
+
     private fun brokerCredentialToMap(credential: BrokerCredential): Map<String, Any?> {
         val topics = try {
             objectMapper.readValue(credential.allowedTopics, List::class.java)
@@ -204,7 +253,7 @@ class ConnectorResource {
         val tenantUuid = parseUuid(tid)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid tenantId")).build()
         val currentUser = getCurrentUser()
-        if (!canManageBrokerCredentials(currentUser, tid)) {
+        if (!canReadBrokerCredentials(currentUser, tid)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
 
@@ -445,6 +494,9 @@ class ConnectorResource {
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
         
         val configValue = request["config"] ?: emptyMap<String, Any>()
+        if (parsedConnectorType == ConnectorType.MQTT && configValue is Map<*, *>) {
+            validateMqttCredentialBinding(tenantUuid, configValue)?.let { return it }
+        }
         val configPlainJson = try {
             objectMapper.writeValueAsString(configValue)
         } catch (_: Exception) {
@@ -632,6 +684,12 @@ class ConnectorResource {
             request["config"]?.let {
                 if (it is Map<*, *> && it.isEmpty()) {
                     return@let
+                }
+                val effectiveType = connector.connectorType
+                if (effectiveType == ConnectorType.MQTT && it is Map<*, *>) {
+                    val tenantUuid = connector.tenant?.id
+                        ?: return Response.status(400).entity(mapOf("error" to "Connector tenant not found")).build()
+                    validateMqttCredentialBinding(tenantUuid, it)?.let { response -> return response }
                 }
                 val plain = try { objectMapper.writeValueAsString(it) } catch (_: Exception) { it.toString() }
                 connector.config = EncryptionUtils.encrypt(plain)

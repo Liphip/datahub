@@ -377,4 +377,50 @@ class ConnectorResourceTest {
             .statusCode(200)
             .body("password", equalTo("ChangedPass!456"))
     }
+
+    @Test
+    fun testCreateMqttConnectorRejectsTopicOutsideCredentialAcl() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        val credentialId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(
+                mapOf(
+                    "name" to "ACL Guard",
+                    "username" to "acl-guard",
+                    "allowedTopics" to listOf("tenant/$tenantId/ingest/#")
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/connectors/mqtt/credentials?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(
+                mapOf(
+                    "name" to "Bad Topic MQTT",
+                    "connectorType" to "MQTT",
+                    "direction" to "INPUT",
+                    "config" to mapOf(
+                        "broker" to "mqtt://localhost:1883",
+                        "topic" to "other-tenant/topic",
+                        "brokerCredentialId" to credentialId
+                    )
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=$tenantId")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("MQTT topic is not allowed by broker credential"))
+    }
 }
