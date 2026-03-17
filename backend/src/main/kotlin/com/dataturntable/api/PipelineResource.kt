@@ -1131,7 +1131,8 @@ class PipelineResource {
         @PathParam("id") id: String,
         @PathParam("runId") runId: String,
         @QueryParam("maxDepth") maxDepth: Int?,
-        @QueryParam("direction") direction: String?
+        @QueryParam("direction") direction: String?,
+        @QueryParam("statuses") statuses: String?
     ): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
@@ -1167,6 +1168,31 @@ class PipelineResource {
         }
         val includeAncestors = normalizedDirection != "descendants"
         val includeDescendants = normalizedDirection != "ancestors"
+        val statusFilter: Set<PipelineRunStatus>? = if (statuses.isNullOrBlank()) {
+            null
+        } else {
+            val parsed = statuses
+                .split(',')
+                .mapNotNull { it.trim().takeIf(String::isNotEmpty) }
+                .map {
+                    try {
+                        PipelineRunStatus.valueOf(it.uppercase())
+                    } catch (_: IllegalArgumentException) {
+                        return Response.status(400)
+                            .entity(mapOf("error" to "Invalid statuses filter. Allowed values: PENDING, RUNNING, SUCCESS, FAILED, CANCELLED"))
+                            .build()
+                    }
+                }
+                .toSet()
+            if (parsed.isEmpty()) {
+                return Response.status(400)
+                    .entity(mapOf("error" to "Invalid statuses filter. Provide at least one status value"))
+                    .build()
+            }
+            parsed
+        }
+
+        fun includeByStatus(status: PipelineRunStatus): Boolean = statusFilter?.contains(status) ?: true
 
         fun runSummary(item: PipelineRun, lineageDepth: Int? = null): Map<String, Any?> {
             val durationMs = if (item.completedAt != null) {
@@ -1188,6 +1214,7 @@ class PipelineResource {
         }
 
         val ancestors = mutableListOf<Map<String, Any?>>()
+        var ancestorsTotal = 0
         var currentRetryId = run.retryOfRunId
         var ancestorDepth = -1
         var guard = 0
@@ -1196,7 +1223,10 @@ class PipelineResource {
             while (currentRetryId != null && guard < depthLimit) {
                 val ancestor = em.find(PipelineRun::class.java, currentRetryId) ?: break
                 if (ancestor.pipeline?.id != pipeline.id) break
-                ancestors.add(runSummary(ancestor, ancestorDepth))
+                ancestorsTotal += 1
+                if (includeByStatus(ancestor.status)) {
+                    ancestors.add(runSummary(ancestor, ancestorDepth))
+                }
                 currentRetryId = ancestor.retryOfRunId
                 ancestorDepth -= 1
                 guard += 1
@@ -1207,6 +1237,7 @@ class PipelineResource {
         }
 
         val descendants = mutableListOf<Map<String, Any?>>()
+        var descendantsTotal = 0
         var latestDescendant: PipelineRun? = null
         val queue = ArrayDeque<Pair<UUID, Int>>()
         val frontierAtDepthLimit = mutableSetOf<UUID>()
@@ -1228,7 +1259,10 @@ class PipelineResource {
                     .setParameter("retryOf", parentId)
                     .resultList
                 children.forEach { child ->
-                    descendants.add(runSummary(child, parentDepth + 1))
+                    descendantsTotal += 1
+                    if (includeByStatus(child.status)) {
+                        descendants.add(runSummary(child, parentDepth + 1))
+                    }
                     if (latestDescendant == null || child.startedAt.isAfter(latestDescendant?.startedAt)) {
                         latestDescendant = child
                     }
@@ -1268,6 +1302,9 @@ class PipelineResource {
                 "latestDescendantRunId" to latestDescendantRunId,
                 "maxDepth" to depthLimit,
                 "direction" to normalizedDirection,
+                "statuses" to statusFilter?.map { it.name },
+                "ancestorsTotal" to ancestorsTotal,
+                "descendantsTotal" to descendantsTotal,
                 "ancestorsTruncated" to ancestorsTruncated,
                 "descendantsTruncated" to descendantsTruncated,
                 "nextRecommendedDepth" to nextRecommendedDepth
