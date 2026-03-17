@@ -133,6 +133,7 @@ export default function Pipelines() {
     if (!autoRefreshBucket || !tenantId || !bucketStart || !bucketEnd) return;
 
     const intervalId = window.setInterval(async () => {
+      if (document.hidden) return;
       try {
         await refreshBucketRuns(tenantId, bucketStart, bucketEnd, true);
       } catch {
@@ -293,6 +294,18 @@ export default function Pipelines() {
     { failed: 0, running: 0, success: 0 }
   );
 
+  const bucketRefreshAgeSeconds = bucketLastRefreshedAt
+    ? Math.max(0, Math.floor((Date.now() - new Date(bucketLastRefreshedAt).getTime()) / 1000))
+    : null;
+
+  const bucketFreshness = bucketRefreshAgeSeconds == null
+    ? 'unknown'
+    : bucketRefreshAgeSeconds <= 15
+      ? 'fresh'
+      : bucketRefreshAgeSeconds <= 45
+        ? 'aging'
+        : 'stale';
+
   const statusPriority = (status: TenantPipelineRun['status']) => {
     if (status === 'FAILED') return 0;
     if (status === 'RUNNING' || status === 'PENDING') return 1;
@@ -446,9 +459,10 @@ export default function Pipelines() {
               </label>
               <button
                 onClick={handleManualBucketRefresh}
+                disabled={loadingBucketRuns}
                 className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
               >
-                Refresh now
+                {loadingBucketRuns ? 'Refreshing...' : 'Refresh now'}
               </button>
               <button
                 onClick={copyTriageLink}
@@ -468,9 +482,21 @@ export default function Pipelines() {
             </div>
           </div>
           {bucketLastRefreshedAt && (
-            <p className="mb-2 text-[11px] text-gray-500">
-              Last refreshed: {new Date(bucketLastRefreshedAt).toLocaleTimeString()}
-            </p>
+            <div className="mb-2 flex items-center gap-2 text-[11px]">
+              <span className="text-gray-500">
+                Last refreshed: {new Date(bucketLastRefreshedAt).toLocaleTimeString()}
+              </span>
+              <span className={`px-1.5 py-0.5 rounded border ${
+                bucketFreshness === 'fresh'
+                  ? 'border-green-200 bg-green-50 text-green-700'
+                  : bucketFreshness === 'aging'
+                    ? 'border-amber-200 bg-amber-50 text-amber-800'
+                    : 'border-red-200 bg-red-50 text-red-700'
+              }`}>
+                {bucketFreshness === 'fresh' ? 'Fresh' : bucketFreshness === 'aging' ? 'Aging' : 'Stale'}
+                {bucketRefreshAgeSeconds != null ? ` (${bucketRefreshAgeSeconds}s)` : ''}
+              </span>
+            </div>
           )}
           {bucketRuns.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2 text-xs">
