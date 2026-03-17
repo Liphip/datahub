@@ -149,6 +149,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added retry lineage persistence and visibility: `pipeline_runs` now stores `retry_of_run_id` (migration `V4`), run APIs include `retryOfRunId` in responses, and the Pipelines details panel surfaces retry ancestry so operators can track recovery attempts.
 - Added targeted run-detail retrieval: backend now supports `GET /pipelines/{id}/runs/{runId}` (with optional `includeDetails`) and the Pipelines details panel includes a `Refresh run` action that re-fetches only the selected run for lower-noise troubleshooting.
 - Added retry-lineage drilldown: backend now exposes `GET /pipelines/{id}/runs/{runId}/lineage` with ancestor/descendant retry chains, and Pipelines run details now provide on-demand `Load lineage` navigation buttons for faster root-cause and recovery tracing.
+- Improved connector list filtering and scalability: connector list API now supports combined filtering (`type` + `direction` + `isActive` + `q` search), and the Connectors page adds status/search controls backed by server-side filtering for faster large-tenant navigation.
 
 ---
 

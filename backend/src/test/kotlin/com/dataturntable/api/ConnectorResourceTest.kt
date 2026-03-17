@@ -296,6 +296,68 @@ class ConnectorResourceTest {
     }
 
     @Test
+    fun testListConnectorsSupportsCombinedFiltersAndSearch() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Temperature MQTT Input",
+                "connectorType" to "MQTT",
+                "direction" to "INPUT",
+                "description" to "sensor ingress",
+                "config" to mapOf("broker" to "mqtt://localhost:1883", "topic" to "tenant/$tenantId/temp/in")
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+
+        val outputId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Temperature MQTT Output",
+                "connectorType" to "MQTT",
+                "direction" to "OUTPUT",
+                "description" to "sensor egress",
+                "config" to mapOf("broker" to "mqtt://localhost:1883", "topic" to "tenant/$tenantId/temp/out")
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .post("/api/internal/v1/connectors/$outputId/disconnect")
+        .then()
+            .statusCode(200)
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("tenantId", tenantId)
+            .queryParam("type", "MQTT")
+            .queryParam("direction", "OUTPUT")
+            .queryParam("isActive", false)
+            .queryParam("q", "egress")
+        .`when`()
+            .get("/api/internal/v1/connectors")
+        .then()
+            .statusCode(200)
+            .body("size()", equalTo(1))
+            .body("[0].id", equalTo(outputId))
+            .body("[0].name", equalTo("Temperature MQTT Output"))
+    }
+
+    @Test
     fun testTestConnectorValidatesConfig() {
         val token = TestAuthHelpers.createAdminToken()
 

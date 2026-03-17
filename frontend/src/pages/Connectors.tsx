@@ -80,6 +80,8 @@ export default function Connectors() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<string>('ALL');
   const [filterDirection, setFilterDirection] = useState<string>('ALL');
+  const [filterActive, setFilterActive] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
+  const [filterQuery, setFilterQuery] = useState('');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [formData, setFormData] = useState({
     name: '',
@@ -120,7 +122,11 @@ export default function Connectors() {
   const loadConnectors = async (tid: string) => {
     const type = filterType === 'ALL' ? undefined : filterType;
     const direction = filterDirection === 'ALL' ? undefined : filterDirection;
-    const data = await api.getConnectors(tid, type, direction);
+    const isActive = filterActive === 'ALL' ? undefined : filterActive === 'ACTIVE';
+    const data = await api.getConnectors(tid, type, direction, {
+      query: filterQuery,
+      isActive,
+    });
     setConnectors(data);
   };
 
@@ -161,7 +167,7 @@ export default function Connectors() {
     };
 
     fetchConnectors();
-  }, [tenantId, filterType, filterDirection, canReadConnectors, canManageBrokerUsers, canReadBrokerUsers]);
+  }, [tenantId, filterType, filterDirection, filterActive, filterQuery, canReadConnectors, canManageBrokerUsers, canReadBrokerUsers]);
 
   const openCreateBrokerCredential = () => {
     setEditingBrokerCredential(null);
@@ -550,7 +556,7 @@ export default function Connectors() {
       </div>
 
       <div className="card mb-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Type Filter</label>
             <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="input">
@@ -568,6 +574,23 @@ export default function Connectors() {
                 <option key={direction} value={direction}>{direction}</option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Status Filter</label>
+            <select value={filterActive} onChange={(e) => setFilterActive(e.target.value as 'ALL' | 'ACTIVE' | 'INACTIVE')} className="input">
+              <option value="ALL">All statuses</option>
+              <option value="ACTIVE">Active</option>
+              <option value="INACTIVE">Inactive</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
+            <input
+              value={filterQuery}
+              onChange={(e) => setFilterQuery(e.target.value)}
+              className="input"
+              placeholder="Name or description"
+            />
           </div>
         </div>
       </div>

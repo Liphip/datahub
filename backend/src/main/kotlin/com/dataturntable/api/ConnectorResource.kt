@@ -482,7 +482,9 @@ class ConnectorResource {
     fun list(
         @QueryParam("tenantId") tenantId: String?,
         @QueryParam("type") type: String?,
-        @QueryParam("direction") direction: String?
+        @QueryParam("direction") direction: String?,
+        @QueryParam("q") query: String?,
+        @QueryParam("isActive") isActive: Boolean?
     ): Response {
         val tid = tenantId ?: getTenantIdFromToken() ?: return Response.status(400)
             .entity(mapOf("error" to "tenantId is required"))
@@ -511,30 +513,24 @@ class ConnectorResource {
             return Response.status(400).entity(mapOf("error" to "Invalid direction")).build()
         }
 
-        val connectors = when {
-            parsedType != null -> em.createQuery(
-                "SELECT c FROM Connector c WHERE c.tenant.id = :tenantId AND c.connectorType = :type",
-                Connector::class.java
-            )
-                .setParameter("tenantId", tenantUuid)
-                .setParameter("type", parsedType)
-                .resultList
-
-            parsedDirection != null -> em.createQuery(
-                "SELECT c FROM Connector c WHERE c.tenant.id = :tenantId AND c.direction = :direction",
-                Connector::class.java
-            )
-                .setParameter("tenantId", tenantUuid)
-                .setParameter("direction", parsedDirection)
-                .resultList
-
-            else -> em.createQuery(
-                "SELECT c FROM Connector c WHERE c.tenant.id = :tenantId",
-                Connector::class.java
-            )
-                .setParameter("tenantId", tenantUuid)
-                .resultList
+        val normalizedQuery = query?.trim()?.lowercase()
+        val jpql = StringBuilder("SELECT c FROM Connector c WHERE c.tenant.id = :tenantId")
+        if (parsedType != null) jpql.append(" AND c.connectorType = :type")
+        if (parsedDirection != null) jpql.append(" AND c.direction = :direction")
+        if (isActive != null) jpql.append(" AND c.isActive = :isActive")
+        if (!normalizedQuery.isNullOrBlank()) {
+            jpql.append(" AND (LOWER(c.name) LIKE :q OR LOWER(COALESCE(c.description, '')) LIKE :q)")
         }
+        jpql.append(" ORDER BY c.createdAt DESC")
+
+        val connectorQuery = em.createQuery(jpql.toString(), Connector::class.java)
+            .setParameter("tenantId", tenantUuid)
+        if (parsedType != null) connectorQuery.setParameter("type", parsedType)
+        if (parsedDirection != null) connectorQuery.setParameter("direction", parsedDirection)
+        if (isActive != null) connectorQuery.setParameter("isActive", isActive)
+        if (!normalizedQuery.isNullOrBlank()) connectorQuery.setParameter("q", "%$normalizedQuery%")
+
+        val connectors = connectorQuery.resultList
         
         return Response.ok(connectors.map { connectorToMap(it) }).build()
     }

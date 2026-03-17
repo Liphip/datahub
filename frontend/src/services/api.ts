@@ -469,10 +469,17 @@ class ApiService {
     await this.client.delete(`/connectors/mqtt/credentials/${id}`);
   }
 
-  async getConnectors(tenantId: string, type?: string, direction?: string): Promise<Connector[]> {
+  async getConnectors(
+    tenantId: string,
+    type?: string,
+    direction?: string,
+    options?: { query?: string; isActive?: boolean }
+  ): Promise<Connector[]> {
     const params = new URLSearchParams({ tenantId });
     if (type) params.append('type', type);
     if (direction) params.append('direction', direction);
+    if (options?.query?.trim()) params.append('q', options.query.trim());
+    if (options?.isActive !== undefined) params.append('isActive', String(options.isActive));
     const response = await this.client.get<Connector[]>(`/connectors?${params}`);
     return response.data;
   }
