@@ -5,6 +5,7 @@ import com.dataturntable.connectors.Connector.Direction
 import com.dataturntable.connectors.Connector.ConnectorType
 import com.dataturntable.connectors.BrokerCredential
 import com.dataturntable.pipeline.Pipeline
+import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.tenant.Tenant
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.dataturntable.auth.User
@@ -741,6 +742,63 @@ class ConnectorResource {
                 "connectorName" to connector.name,
                 "referenceCount" to references.size,
                 "references" to references
+            )
+        ).build()
+    }
+
+    @GET
+    @Path("/{id}/impact")
+    fun getImpact(@PathParam("id") id: String): Response {
+        val connectorId = parseUuid(id)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
+        val connector = em.find(Connector::class.java, connectorId)
+            ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
+        val tenantId = connector.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Connector tenant not found")).build()
+        val currentUser = getCurrentUser()
+        if (!canReadConnector(currentUser, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        val references = connector.tenant?.id?.let { connectorReferenceSummaries(it, connectorId) } ?: emptyList()
+        val grouped = references.groupBy { it["pipelineId"]?.toString() ?: "" }.filterKeys { it.isNotBlank() }
+
+        val impactedPipelines = grouped.entries.mapNotNull { entry ->
+            val pipelineUuid = parseUuid(entry.key) ?: return@mapNotNull null
+            val pipeline = em.find(Pipeline::class.java, pipelineUuid) ?: return@mapNotNull null
+            val latestRun = em.createQuery(
+                "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId ORDER BY r.startedAt DESC",
+                PipelineRun::class.java
+            )
+                .setParameter("pipelineId", pipelineUuid)
+                .setMaxResults(1)
+                .resultList
+                .firstOrNull()
+
+            mapOf(
+                "pipelineId" to pipeline.id,
+                "pipelineName" to pipeline.name,
+                "pipelineIsActive" to pipeline.isActive,
+                "nodeReferenceCount" to entry.value.size,
+                "nodeReferences" to entry.value.map {
+                    mapOf(
+                        "nodeId" to it["nodeId"],
+                        "nodeType" to it["nodeType"]
+                    )
+                },
+                "latestRunId" to latestRun?.id,
+                "latestRunStatus" to latestRun?.status?.name,
+                "latestRunStartedAt" to latestRun?.startedAt
+            )
+        }.sortedBy { (it["pipelineName"] ?: "").toString() }
+
+        return Response.ok(
+            mapOf(
+                "connectorId" to connector.id,
+                "connectorName" to connector.name,
+                "referenceCount" to references.size,
+                "impactedPipelineCount" to impactedPipelines.size,
+                "impactedPipelines" to impactedPipelines
             )
         ).build()
     }

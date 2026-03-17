@@ -2,6 +2,9 @@ package com.dataturntable.api
 
 import com.dataturntable.auth.User
 import com.dataturntable.pipeline.Pipeline
+import com.dataturntable.pipeline.PipelineRun
+import com.dataturntable.pipeline.PipelineRunStatus
+import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.test.TestAuthHelpers
 import io.quarkus.narayana.jta.QuarkusTransaction
 import io.quarkus.test.junit.QuarkusTest
@@ -457,6 +460,65 @@ class ConnectorResourceTest {
             .body("references[0].pipelineName", equalTo("Reference Endpoint Pipeline"))
             .body("references[0].pipelineIsActive", equalTo(false))
             .body("references[0].nodeType", equalTo("IMPORT"))
+    }
+
+    @Test
+    fun testGetConnectorImpactIncludesLatestRun() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        val connectorId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Impact Connector",
+                "connectorType" to "MQTT",
+                "direction" to "INPUT",
+                "config" to mapOf("broker" to "mqtt://localhost:1883", "topic" to "tenant/$tenantId/impact/in")
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        QuarkusTransaction.requiringNew().run {
+            val tenant = em.find(com.dataturntable.tenant.Tenant::class.java, java.util.UUID.fromString(tenantId))
+            val pipeline = Pipeline().apply {
+                this.tenant = tenant
+                this.name = "Impact Pipeline"
+                this.isActive = true
+                this.graphDefinition = "{\"nodes\":[{\"id\":\"n-in\",\"type\":\"IMPORT\",\"connectorId\":\"$connectorId\"}],\"edges\":[]}"
+            }
+            em.persist(pipeline)
+            em.flush()
+
+            val run = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.FAILED
+                this.triggerType = TriggerType.MANUAL
+                this.startedAt = java.time.Instant.now().minusSeconds(15)
+                this.completedAt = java.time.Instant.now().minusSeconds(5)
+                this.errorMessage = "simulated"
+            }
+            em.persist(run)
+            em.flush()
+        }
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/connectors/$connectorId/impact")
+        .then()
+            .statusCode(200)
+            .body("connectorId", equalTo(connectorId))
+            .body("referenceCount", equalTo(1))
+            .body("impactedPipelineCount", equalTo(1))
+            .body("impactedPipelines[0].pipelineName", equalTo("Impact Pipeline"))
+            .body("impactedPipelines[0].latestRunStatus", equalTo("FAILED"))
     }
 
     @Test

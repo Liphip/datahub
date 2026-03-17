@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Connector, BrokerCredential, ConnectorReferenceSummary } from '../types';
+import type { Connector, BrokerCredential, ConnectorImpactSummary, ConnectorReferenceSummary } from '../types';
 
 const connectorTypes = ['MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'CUSTOM'] as const;
 const directions = ['INPUT', 'OUTPUT', 'BOTH'] as const;
@@ -117,6 +117,8 @@ export default function Connectors() {
   const [revealedBrokerPassword, setRevealedBrokerPassword] = useState<string>('');
   const [usageModal, setUsageModal] = useState<ConnectorReferenceSummary | null>(null);
   const [loadingUsageId, setLoadingUsageId] = useState<string | null>(null);
+  const [impactModal, setImpactModal] = useState<ConnectorImpactSummary | null>(null);
+  const [loadingImpactId, setLoadingImpactId] = useState<string | null>(null);
   const [brokerForm, setBrokerForm] = useState({
     name: '',
     username: '',
@@ -514,6 +516,18 @@ export default function Connectors() {
     }
   };
 
+  const handleViewImpact = async (connector: Connector) => {
+    setLoadingImpactId(connector.id);
+    try {
+      const impact = await api.getConnectorImpact(connector.id);
+      setImpactModal(impact);
+    } catch (err: any) {
+      setError(err?.response?.data?.error || 'Failed to load connector impact');
+    } finally {
+      setLoadingImpactId(null);
+    }
+  };
+
   const handleEdit = (connector: Connector) => {
     if (!canWriteConnectors) return;
     setEditingConnector(connector);
@@ -740,6 +754,13 @@ export default function Connectors() {
                 >
                   {loadingUsageId === connector.id ? 'Loading...' : 'Usage'}
                 </button>
+                <button
+                  onClick={() => handleViewImpact(connector)}
+                  disabled={loadingImpactId === connector.id}
+                  className="text-amber-700 hover:text-amber-900 text-sm disabled:opacity-40"
+                >
+                  {loadingImpactId === connector.id ? 'Loading...' : 'Impact'}
+                </button>
                 {canWriteConnectors && (
                   <button
                     onClick={() => handleToggleConnection(connector)}
@@ -846,6 +867,76 @@ export default function Connectors() {
                             onClick={() => {
                               setUsageModal(null);
                               navigate(`/pipelines/${reference.pipelineId}`);
+                            }}
+                          >
+                            Open Pipeline
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {impactModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-3xl w-full mx-4">
+            <div className="flex items-start justify-between mb-4 gap-3">
+              <div>
+                <h2 className="text-xl font-bold">Connector Impact</h2>
+                <p className="text-sm text-gray-600">
+                  {impactModal.connectorName} impacts {impactModal.impactedPipelineCount} pipeline(s), {impactModal.referenceCount} node reference(s).
+                </p>
+              </div>
+              <button className="btn-secondary" onClick={() => setImpactModal(null)}>Close</button>
+            </div>
+            {impactModal.impactedPipelines.length === 0 ? (
+              <p className="text-sm text-gray-500">No impacted pipelines found.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left border-b border-gray-200">
+                      <th className="py-2 pr-3">Pipeline</th>
+                      <th className="py-2 pr-3">State</th>
+                      <th className="py-2 pr-3">Node refs</th>
+                      <th className="py-2 pr-3">Latest run</th>
+                      <th className="py-2 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {impactModal.impactedPipelines.map((pipeline) => (
+                      <tr key={pipeline.pipelineId} className="border-b border-gray-100 last:border-0">
+                        <td className="py-2 pr-3">
+                          <div className="font-medium text-gray-900">{pipeline.pipelineName}</div>
+                          <div className="text-xs text-gray-500">{pipeline.pipelineId}</div>
+                        </td>
+                        <td className="py-2 pr-3">
+                          <span className={`px-2 py-0.5 rounded text-xs ${pipeline.pipelineIsActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>
+                            {pipeline.pipelineIsActive ? 'Active' : 'Inactive'}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3">{pipeline.nodeReferenceCount}</td>
+                        <td className="py-2 pr-3">
+                          {pipeline.latestRunStatus ? (
+                            <span className="text-xs">
+                              {pipeline.latestRunStatus}
+                              {pipeline.latestRunStartedAt ? ` (${new Date(pipeline.latestRunStartedAt).toLocaleString()})` : ''}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-500">No runs</span>
+                          )}
+                        </td>
+                        <td className="py-2 text-right">
+                          <button
+                            className="text-indigo-700 hover:text-indigo-900 text-xs"
+                            onClick={() => {
+                              setImpactModal(null);
+                              navigate(`/pipelines/${pipeline.pipelineId}`);
                             }}
                           >
                             Open Pipeline

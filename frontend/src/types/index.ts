@@ -227,6 +227,23 @@ export interface ConnectorReferenceSummary {
   references: ConnectorReference[];
 }
 
+export interface ConnectorImpactSummary {
+  connectorId: string;
+  connectorName: string;
+  referenceCount: number;
+  impactedPipelineCount: number;
+  impactedPipelines: Array<{
+    pipelineId: string;
+    pipelineName: string;
+    pipelineIsActive: boolean;
+    nodeReferenceCount: number;
+    nodeReferences: Array<{ nodeId: string; nodeType: string }>;
+    latestRunId?: string;
+    latestRunStatus?: string;
+    latestRunStartedAt?: string;
+  }>;
+}
+
 export interface BrokerCredential {
   id: string;
   tenantId: string;
