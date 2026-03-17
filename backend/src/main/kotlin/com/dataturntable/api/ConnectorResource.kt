@@ -729,6 +729,46 @@ class ConnectorResource {
     }
 
     @POST
+    @Path("/{id}/clone")
+    @Consumes(MediaType.WILDCARD)
+    @Transactional
+    fun cloneConnector(@PathParam("id") id: String, request: Map<String, Any>?): Response {
+        val connectorId = parseUuid(id)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
+        val source = em.find(Connector::class.java, connectorId)
+            ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
+        val tenantId = source.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Connector tenant not found")).build()
+        val currentUser = getCurrentUser()
+        if (!canWriteConnector(currentUser, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        val requestedName = request?.get("name")?.toString()?.trim()
+        val cloneName = if (!requestedName.isNullOrBlank()) requestedName else "${source.name} Copy"
+
+        val clone = Connector().apply {
+            this.name = cloneName
+            this.tenant = source.tenant
+            this.connectorType = source.connectorType
+            this.direction = source.direction
+            this.config = source.config
+            this.description = source.description
+            this.isActive = false
+            this.createdAt = java.time.Instant.now()
+            this.updatedAt = java.time.Instant.now()
+        }
+        clone.persist()
+
+        return Response.status(201).entity(
+            connectorToMap(clone, 0) + mapOf(
+                "clonedFromConnectorId" to source.id,
+                "message" to "Connector cloned in disconnected state"
+            )
+        ).build()
+    }
+
+    @POST
     @Path("/{id}/connect")
     @Consumes(MediaType.WILDCARD)
     @Transactional

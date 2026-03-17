@@ -153,6 +153,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added connector deletion safety against pipeline graph dependencies: connector list responses now include `pipelineReferenceCount`, connector delete rejects with `409` when graph nodes still reference the connector (with reference details), and Connectors UI surfaces usage count + disables delete until references are removed.
 - Added connector usage drilldown API/UI: backend now exposes `GET /connectors/{id}/references` for pipeline/node-level dependency visibility, and Connectors UI provides a `Usage` modal for quick investigation before edit/delete operations.
 - Enhanced connector usage triage UX: usage drilldown now includes pipeline active/inactive state and direct "Open Pipeline" navigation to the referenced pipeline editor for faster dependency cleanup.
+- Added connector cloning workflow: backend now supports `POST /connectors/{id}/clone` (write-scope, tenant-scoped, cloned connector defaults to disconnected), and Connectors UI exposes a `Clone` action for quick safe duplication of connector configs.
 
 ---
 

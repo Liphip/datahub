@@ -79,6 +79,7 @@ export default function Connectors() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [cloningId, setCloningId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<string>('ALL');
   const [filterDirection, setFilterDirection] = useState<string>('ALL');
@@ -453,6 +454,23 @@ export default function Connectors() {
     }
   };
 
+  const handleCloneConnector = async (connector: Connector) => {
+    if (!canWriteConnectors) {
+      showToast('You do not have permission to clone connectors', 'error');
+      return;
+    }
+    setCloningId(connector.id);
+    try {
+      await api.cloneConnector(connector.id, `${connector.name} Copy`);
+      if (tenantId) await loadConnectors(tenantId);
+      showToast('Connector cloned as disconnected copy', 'success');
+    } catch (err: any) {
+      setError(err?.response?.data?.error || 'Failed to clone connector');
+    } finally {
+      setCloningId(null);
+    }
+  };
+
   const handleViewUsage = async (connector: Connector) => {
     setLoadingUsageId(connector.id);
     try {
@@ -698,6 +716,15 @@ export default function Connectors() {
                     className="text-emerald-700 hover:text-emerald-900 text-sm disabled:opacity-40"
                   >
                     {togglingId === connector.id ? 'Working...' : connector.isActive ? 'Disconnect' : 'Connect'}
+                  </button>
+                )}
+                {canWriteConnectors && (
+                  <button
+                    onClick={() => handleCloneConnector(connector)}
+                    disabled={cloningId === connector.id}
+                    className="text-violet-700 hover:text-violet-900 text-sm disabled:opacity-40"
+                  >
+                    {cloningId === connector.id ? 'Cloning...' : 'Clone'}
                   </button>
                 )}
                 {canWriteConnectors && (

@@ -460,6 +460,46 @@ class ConnectorResourceTest {
     }
 
     @Test
+    fun testCloneConnectorCreatesDisconnectedCopy() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        val sourceId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Clone Source",
+                "connectorType" to "MQTT",
+                "direction" to "OUTPUT",
+                "description" to "clone me",
+                "config" to mapOf("broker" to "mqtt://localhost:1883", "topic" to "tenant/$tenantId/clone/out")
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("name" to "Cloned Connector"))
+        .`when`()
+            .post("/api/internal/v1/connectors/$sourceId/clone")
+        .then()
+            .statusCode(201)
+            .body("name", equalTo("Cloned Connector"))
+            .body("isActive", equalTo(false))
+            .body("direction", equalTo("OUTPUT"))
+            .body("clonedFromConnectorId", equalTo(sourceId))
+            .body("description", equalTo("clone me"))
+            .body("config.topic", equalTo("tenant/$tenantId/clone/out"))
+    }
+
+    @Test
     fun testTestConnectorValidatesConfig() {
         val token = TestAuthHelpers.createAdminToken()
 
