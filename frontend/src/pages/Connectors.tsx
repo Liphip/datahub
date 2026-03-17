@@ -389,6 +389,11 @@ export default function Connectors() {
       showToast('You do not have permission to delete connectors', 'error');
       return;
     }
+    const referenceCount = connectors.find((connector) => connector.id === id)?.pipelineReferenceCount || 0;
+    if (referenceCount > 0) {
+      setError(`Connector is referenced by ${referenceCount} pipeline node(s). Remove those references before deleting.`);
+      return;
+    }
     setDeletingId(id);
     try {
       await api.deleteConnector(id);
@@ -399,9 +404,9 @@ export default function Connectors() {
       setConfirmDeleteId(null);
       setError('');
       showToast('Connector deleted', 'success');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error deleting connector:', err);
-      setError('Failed to delete connector');
+      setError(err?.response?.data?.error || 'Failed to delete connector');
     } finally {
       setDeletingId(null);
     }
@@ -650,6 +655,9 @@ export default function Connectors() {
               
               <div className="text-xs text-gray-500 mb-3">
                 Created: {new Date(connector.createdAt).toLocaleDateString()}
+                <div>
+                  Used in {connector.pipelineReferenceCount || 0} pipeline node(s)
+                </div>
               </div>
               
               <div className="flex justify-end space-x-2">
@@ -697,6 +705,8 @@ export default function Connectors() {
                 ) : (
                   <button
                     onClick={() => setConfirmDeleteId(connector.id)}
+                    disabled={(connector.pipelineReferenceCount || 0) > 0}
+                    title={(connector.pipelineReferenceCount || 0) > 0 ? 'Remove pipeline references before deleting this connector' : undefined}
                     className="text-red-600 hover:text-red-800 text-sm"
                   >
                     Delete

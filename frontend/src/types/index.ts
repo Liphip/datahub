@@ -208,6 +208,7 @@ export interface Connector {
   config: Record<string, unknown>;
   description?: string;
   isActive: boolean;
+  pipelineReferenceCount?: number;
   createdAt: string;
 }
 

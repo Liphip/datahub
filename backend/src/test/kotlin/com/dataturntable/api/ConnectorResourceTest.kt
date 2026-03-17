@@ -1,6 +1,7 @@
 package com.dataturntable.api
 
 import com.dataturntable.auth.User
+import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.test.TestAuthHelpers
 import io.quarkus.narayana.jta.QuarkusTransaction
 import io.quarkus.test.junit.QuarkusTest
@@ -355,6 +356,60 @@ class ConnectorResourceTest {
             .body("size()", equalTo(1))
             .body("[0].id", equalTo(outputId))
             .body("[0].name", equalTo("Temperature MQTT Output"))
+    }
+
+    @Test
+    fun testDeleteConnectorRejectsWhenReferencedByPipelineGraph() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        val connectorId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Graph Referenced Connector",
+                "connectorType" to "MQTT",
+                "direction" to "INPUT",
+                "config" to mapOf("broker" to "mqtt://localhost:1883", "topic" to "tenant/$tenantId/graph/in")
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        QuarkusTransaction.requiringNew().run {
+            val tenant = em.find(com.dataturntable.tenant.Tenant::class.java, java.util.UUID.fromString(tenantId))
+            val pipeline = Pipeline().apply {
+                this.tenant = tenant
+                this.name = "Connector Reference Pipeline"
+                this.graphDefinition = "{\"nodes\":[{\"id\":\"n-import\",\"type\":\"IMPORT\",\"connectorId\":\"$connectorId\"}],\"edges\":[]}"
+            }
+            em.persist(pipeline)
+            em.flush()
+        }
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("tenantId", tenantId)
+        .`when`()
+            .get("/api/internal/v1/connectors")
+        .then()
+            .statusCode(200)
+            .body("find { it.id == '$connectorId' }.pipelineReferenceCount", equalTo(1))
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .delete("/api/internal/v1/connectors/$connectorId")
+        .then()
+            .statusCode(409)
+            .body("error", equalTo("Connector is used by pipeline graphs"))
+            .body("referenceCount", equalTo(1))
+            .body("references[0].pipelineName", equalTo("Connector Reference Pipeline"))
     }
 
     @Test

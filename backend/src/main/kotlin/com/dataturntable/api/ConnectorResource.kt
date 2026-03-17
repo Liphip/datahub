@@ -4,6 +4,7 @@ import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.Connector.Direction
 import com.dataturntable.connectors.Connector.ConnectorType
 import com.dataturntable.connectors.BrokerCredential
+import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.tenant.Tenant
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.dataturntable.auth.User
@@ -117,7 +118,7 @@ class ConnectorResource {
         return SecurityUtils.hasAbility(currentUser, "write:connector")
     }
 
-    private fun connectorToMap(connector: Connector): Map<String, Any?> {
+    private fun connectorToMap(connector: Connector, pipelineReferenceCount: Int? = null): Map<String, Any?> {
         val decrypted = EncryptionUtils.decrypt(connector.config ?: "{}")
         val configValue = try {
             val parsed = objectMapper.readValue(decrypted, Map::class.java)
@@ -133,6 +134,7 @@ class ConnectorResource {
             "config" to configValue,
             "description" to connector.description,
             "isActive" to connector.isActive,
+            "pipelineReferenceCount" to pipelineReferenceCount,
             "createdAt" to connector.createdAt?.toString()
         )
     }
@@ -238,6 +240,66 @@ class ConnectorResource {
             counts[credentialId] = (counts[credentialId] ?: 0) + 1
         }
         return counts
+    }
+
+    private fun connectorReferenceCounts(tenantUuid: UUID): Map<UUID, Int> {
+        val pipelines = em.createQuery(
+            "SELECT p FROM Pipeline p WHERE p.tenant.id = :tenantId",
+            Pipeline::class.java
+        )
+            .setParameter("tenantId", tenantUuid)
+            .resultList
+
+        val counts = mutableMapOf<UUID, Int>()
+        pipelines.forEach { pipeline ->
+            val graphDefinition = pipeline.graphDefinition ?: return@forEach
+            val graphMap = try {
+                objectMapper.readValue(graphDefinition, Map::class.java) as? Map<*, *> ?: emptyMap<String, Any>()
+            } catch (_: Exception) {
+                emptyMap<String, Any>()
+            }
+            val nodes = graphMap["nodes"] as? List<*> ?: emptyList<Any>()
+            nodes.forEach { node ->
+                val nodeMap = node as? Map<*, *> ?: return@forEach
+                val connectorId = nodeMap["connectorId"]?.toString()?.trim()?.let { parseUuid(it) } ?: return@forEach
+                counts[connectorId] = (counts[connectorId] ?: 0) + 1
+            }
+        }
+        return counts
+    }
+
+    private fun connectorReferenceSummaries(tenantUuid: UUID, connectorId: UUID): List<Map<String, Any?>> {
+        val pipelines = em.createQuery(
+            "SELECT p FROM Pipeline p WHERE p.tenant.id = :tenantId",
+            Pipeline::class.java
+        )
+            .setParameter("tenantId", tenantUuid)
+            .resultList
+
+        val references = mutableListOf<Map<String, Any?>>()
+        pipelines.forEach { pipeline ->
+            val graphDefinition = pipeline.graphDefinition ?: return@forEach
+            val graphMap = try {
+                objectMapper.readValue(graphDefinition, Map::class.java) as? Map<*, *> ?: emptyMap<String, Any>()
+            } catch (_: Exception) {
+                emptyMap<String, Any>()
+            }
+            val nodes = graphMap["nodes"] as? List<*> ?: emptyList<Any>()
+            nodes.forEach { node ->
+                val nodeMap = node as? Map<*, *> ?: return@forEach
+                val nodeConnectorId = nodeMap["connectorId"]?.toString()?.trim()?.let { parseUuid(it) } ?: return@forEach
+                if (nodeConnectorId != connectorId) return@forEach
+                references.add(
+                    mapOf(
+                        "pipelineId" to pipeline.id,
+                        "pipelineName" to pipeline.name,
+                        "nodeId" to nodeMap["id"],
+                        "nodeType" to nodeMap["type"]
+                    )
+                )
+            }
+        }
+        return references
     }
 
     private fun brokerCredentialToMap(credential: BrokerCredential): Map<String, Any?> {
@@ -532,7 +594,14 @@ class ConnectorResource {
 
         val connectors = connectorQuery.resultList
         
-        return Response.ok(connectors.map { connectorToMap(it) }).build()
+        val referenceCounts = connectorReferenceCounts(tenantUuid)
+        return Response.ok(connectors.map { connector ->
+            val connectorId = connector.id
+            connectorToMap(
+                connector,
+                if (connectorId != null) (referenceCounts[connectorId] ?: 0) else 0
+            )
+        }).build()
     }
     
     @POST
@@ -809,6 +878,18 @@ class ConnectorResource {
             }
             if (!SecurityUtils.hasAbility(currentUser, "delete:connector")) {
                 return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
+            }
+            val connectorTenantId = connector.tenant?.id
+                ?: return Response.status(400).entity(mapOf("error" to "Connector tenant not found")).build()
+            val references = connectorReferenceSummaries(connectorTenantId, connectorId)
+            if (references.isNotEmpty()) {
+                return Response.status(409).entity(
+                    mapOf(
+                        "error" to "Connector is used by pipeline graphs",
+                        "referenceCount" to references.size,
+                        "references" to references.take(20)
+                    )
+                ).build()
             }
             connector.delete()
             Response.noContent().build()
