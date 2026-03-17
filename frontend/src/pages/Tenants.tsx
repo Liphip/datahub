@@ -162,6 +162,33 @@ export default function Tenants() {
     });
   };
 
+  const copyLineageDefaultsDiagnostics = async () => {
+    if (!lineageDefaultsTenantId) return;
+    const telemetry = conflictTelemetryByTenant[lineageDefaultsTenantId];
+    const payload = {
+      tenantId: lineageDefaultsTenantId,
+      pollStatus: lineagePollStatus,
+      pollCheckedAt: lineagePollCheckedAt,
+      pollIntervalMs: lineagePollIntervalMs,
+      pollOfflineFailures: lineagePollOfflineFailures,
+      pollPausedUntil: lineagePollPausedUntil > Date.now() ? new Date(lineagePollPausedUntil).toISOString() : null,
+      checkCooldownSeconds: lineagePollCooldownUntil > Date.now() ? Math.ceil((lineagePollCooldownUntil - Date.now()) / 1000) : 0,
+      defaultsVersion: lineageDefaults.version,
+      defaultsEtag: lineageDefaultsEtag,
+      staleLatestVersion: lineageDefaultsStaleLatest?.version,
+      conflictCount: telemetry?.count ?? 0,
+      lastConflictAt: telemetry?.lastConflictAt,
+      isDirty: isLineageDefaultsDirty,
+      generatedAt: new Date().toISOString(),
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      showToast('Lineage defaults diagnostics copied', 'success');
+    } catch {
+      showToast('Failed to copy diagnostics', 'error');
+    }
+  };
+
   const collectTenantIds = (nodes: TenantWithChildren[]): string[] =>
     nodes.flatMap((node) => [node.id, ...collectTenantIds((node.children || []) as TenantWithChildren[])]);
 
@@ -756,6 +783,13 @@ export default function Tenants() {
                 onClick={() => setShowLineagePollDebug((prev) => !prev)}
               >
                 {showLineagePollDebug ? 'Hide poll details' : 'Poll details'}
+              </button>
+              <button
+                className="text-indigo-700 hover:text-indigo-900"
+                disabled={!lineageDefaultsTenantId}
+                onClick={() => { void copyLineageDefaultsDiagnostics(); }}
+              >
+                Copy diagnostics
               </button>
               {selectedTenantConflictTelemetry && (
                 <>

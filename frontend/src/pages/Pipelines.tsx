@@ -256,6 +256,34 @@ export default function Pipelines() {
     });
   };
 
+  const copyTenantDefaultsDiagnostics = async (pipelineId: string, runId: string) => {
+    if (!tenantId) return;
+    const telemetry = tenantDefaultsConflictTelemetry[tenantId];
+    const payload = {
+      tenantId,
+      pipelineId,
+      runId,
+      pollStatus: tenantDefaultsPollStatus,
+      pollCheckedAt: tenantDefaultsPollCheckedAt,
+      pollIntervalMs: tenantDefaultsPollIntervalMs,
+      pollOfflineFailures: tenantDefaultsPollOfflineFailures,
+      pollPausedUntil: tenantDefaultsPollPausedUntil > Date.now() ? new Date(tenantDefaultsPollPausedUntil).toISOString() : null,
+      checkCooldownSeconds: tenantDefaultsPollCooldownUntil > Date.now() ? Math.ceil((tenantDefaultsPollCooldownUntil - Date.now()) / 1000) : 0,
+      defaultsVersion: tenantLineageDefaults.version,
+      defaultsEtag: tenantLineageDefaultsEtag,
+      staleLatestVersion: tenantDefaultsStaleLatest?.version,
+      conflictCount: telemetry?.count ?? 0,
+      lastConflictAt: telemetry?.lastConflictAt,
+      generatedAt: new Date().toISOString(),
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      showToast('Tenant defaults diagnostics copied', 'success');
+    } catch {
+      showToast('Failed to copy tenant diagnostics', 'error');
+    }
+  };
+
   const buildTenantDefaultsConflict = (
     pipelineId: string,
     runId: string,
@@ -2939,6 +2967,15 @@ export default function Pipelines() {
                                       }}
                                     >
                                       {showTenantPollDebug ? 'Hide poll details' : 'Poll details'}
+                                    </button>
+                                    <button
+                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        void copyTenantDefaultsDiagnostics(pipeline.id, selectedRun.id);
+                                      }}
+                                    >
+                                      Copy diagnostics
                                     </button>
                                     {tenantDefaultsStaleLatest && (
                                       <>
