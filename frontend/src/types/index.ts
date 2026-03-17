@@ -163,6 +163,9 @@ export interface PipelineRunLineage {
   descendants: PipelineRun[];
   rootRunId?: string;
   latestDescendantRunId?: string;
+  maxDepth?: number;
+  ancestorsTruncated?: boolean;
+  descendantsTruncated?: boolean;
 }
 
 export interface AlertChannel {

@@ -755,19 +755,97 @@ class PipelineResourceTest {
 
         given()
             .header("Authorization", "Bearer $token")
+            .queryParam("maxDepth", 20)
         .`when`()
             .get("/api/internal/v1/pipelines/$pipelineId/runs/${ids["retry"]}/lineage")
         .then()
             .statusCode(200)
             .body("run.id", equalTo(ids["retry"]))
+            .body("maxDepth", equalTo(20))
             .body("rootRunId", equalTo(ids["root"]))
             .body("latestDescendantRunId", equalTo(ids["retryChild"]))
             .body("ancestors.size()", equalTo(1))
             .body("ancestors[0].id", equalTo(ids["root"]))
             .body("ancestors[0].lineageDepth", equalTo(-1))
+            .body("ancestorsTruncated", equalTo(false))
             .body("descendants.size()", equalTo(1))
             .body("descendants[0].lineageDepth", equalTo(1))
+            .body("descendantsTruncated", equalTo(false))
             .body("descendants[0].id", equalTo(ids["retryChild"]))
+    }
+
+    @Test
+    fun testGetPipelineRunLineageSupportsMaxDepthTruncation() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        val pipelineId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("name" to "Lineage Depth Pipeline", "graphDefinition" to mapOf("nodes" to emptyList<Any>(), "edges" to emptyList<Any>())))
+        .`when`()
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        val leafId = QuarkusTransaction.requiringNew().call<String> {
+            val pipeline = em.find(Pipeline::class.java, java.util.UUID.fromString(pipelineId))
+            val r1 = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.FAILED
+                this.triggerType = TriggerType.MANUAL
+                this.startedAt = java.time.Instant.now().minusSeconds(120)
+                this.completedAt = java.time.Instant.now().minusSeconds(110)
+            }
+            em.persist(r1)
+            em.flush()
+            val r2 = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.SUCCESS
+                this.triggerType = TriggerType.MANUAL
+                this.retryOfRunId = r1.id
+                this.startedAt = java.time.Instant.now().minusSeconds(90)
+                this.completedAt = java.time.Instant.now().minusSeconds(80)
+            }
+            em.persist(r2)
+            em.flush()
+            val r3 = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.SUCCESS
+                this.triggerType = TriggerType.MANUAL
+                this.retryOfRunId = r2.id
+                this.startedAt = java.time.Instant.now().minusSeconds(60)
+                this.completedAt = java.time.Instant.now().minusSeconds(50)
+            }
+            em.persist(r3)
+            em.flush()
+            r3.id.toString()
+        }
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("maxDepth", 1)
+        .`when`()
+            .get("/api/internal/v1/pipelines/$pipelineId/runs/$leafId/lineage")
+        .then()
+            .statusCode(200)
+            .body("maxDepth", equalTo(1))
+            .body("ancestors.size()", equalTo(1))
+            .body("ancestorsTruncated", equalTo(true))
     }
 
     @Test

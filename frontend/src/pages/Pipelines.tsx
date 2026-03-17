@@ -49,6 +49,7 @@ export default function Pipelines() {
   const [refreshingRunId, setRefreshingRunId] = useState<string | null>(null);
   const [lineageByRunId, setLineageByRunId] = useState<Record<string, PipelineRunLineage>>({});
   const [loadingLineageRunId, setLoadingLineageRunId] = useState<string | null>(null);
+  const [lineageDepthByRunId, setLineageDepthByRunId] = useState<Record<string, number>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [expandedPipelineId, setExpandedPipelineId] = useState<string | null>(null);
@@ -493,14 +494,16 @@ export default function Pipelines() {
     }
   };
 
-  const handleLoadRunLineage = async (pipelineId: string, runId: string) => {
+  const handleLoadRunLineage = async (pipelineId: string, runId: string, maxDepth?: number) => {
     if (!canReadPipelines) {
       showToast('You need pipeline read permission to inspect run lineage', 'error');
       return;
     }
     setLoadingLineageRunId(runId);
     try {
-      const lineage = await api.getPipelineRunLineage(pipelineId, runId);
+      const depth = maxDepth ?? lineageDepthByRunId[runId] ?? 20;
+      const lineage = await api.getPipelineRunLineage(pipelineId, runId, depth);
+      setLineageDepthByRunId((prev) => ({ ...prev, [runId]: depth }));
       setLineageByRunId((prev) => ({ ...prev, [runId]: lineage }));
     } catch {
       showToast('Failed to load run lineage', 'error');
@@ -1860,7 +1863,7 @@ export default function Pipelines() {
                                   disabled={loadingLineageRunId === selectedRun.id}
                                   className="px-2 py-0.5 rounded border border-indigo-200 text-indigo-700 bg-white"
                                 >
-                                  {loadingLineageRunId === selectedRun.id ? 'Loading lineage...' : 'Load lineage'}
+                                  {loadingLineageRunId === selectedRun.id ? 'Loading lineage...' : `Load lineage (d${lineageDepthByRunId[selectedRun.id] ?? 20})`}
                                 </button>
                                 {(selectedRun.status === 'RUNNING' || selectedRun.status === 'PENDING') && (
                                   <button
@@ -1939,6 +1942,22 @@ export default function Pipelines() {
                                       </button>
                                     )}
                                   </div>
+                                  {(lineageByRunId[selectedRun.id].ancestorsTruncated || lineageByRunId[selectedRun.id].descendantsTruncated) && (
+                                    <div className="mb-2 flex items-center gap-2">
+                                      <span className="text-xs text-indigo-800">Lineage truncated at depth {lineageByRunId[selectedRun.id].maxDepth ?? lineageDepthByRunId[selectedRun.id] ?? 20}</span>
+                                      <button
+                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
+                                          const nextDepth = Math.min(200, currentDepth + 20);
+                                          void handleLoadRunLineage(pipeline.id, selectedRun.id, nextDepth);
+                                        }}
+                                      >
+                                        Load deeper
+                                      </button>
+                                    </div>
+                                  )}
                                   <div className="flex flex-wrap gap-2">
                                     {lineageByRunId[selectedRun.id].ancestors.map((run) => (
                                       <button

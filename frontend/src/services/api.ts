@@ -295,8 +295,8 @@ class ApiService {
     return response.data;
   }
 
-  async getPipelineRunLineage(pipelineId: string, runId: string): Promise<PipelineRunLineage> {
-    const response = await this.client.get<PipelineRunLineage>(`/pipelines/${pipelineId}/runs/${runId}/lineage`);
+  async getPipelineRunLineage(pipelineId: string, runId: string, maxDepth = 20): Promise<PipelineRunLineage> {
+    const response = await this.client.get<PipelineRunLineage>(`/pipelines/${pipelineId}/runs/${runId}/lineage?maxDepth=${Math.max(1, maxDepth)}`);
     return response.data;
   }
 
