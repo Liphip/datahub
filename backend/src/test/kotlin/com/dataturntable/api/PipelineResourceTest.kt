@@ -169,6 +169,32 @@ class PipelineResourceTest {
     }
 
     @Test
+    fun testPipelineListRejectsInvalidRunHealthFilter() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("tenantId", tenantId)
+            .queryParam("runHealth", "UNKNOWN")
+        .`when`()
+            .get("/api/internal/v1/pipelines")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid runHealth"))
+    }
+
+    @Test
     fun testPipelineEndpointsRejectInvalidPipelineId() {
         val token = TestAuthHelpers.createAdminToken()
 

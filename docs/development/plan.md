@@ -70,6 +70,8 @@ This section catalogues every known gap between the current codebase and a shipp
 - Dashboard now highlights "Problem Pipelines" with direct links and a one-click jump to the pipelines triage view (`/pipelines?health=PROBLEMATIC`).
 - Pipeline API now validates tenant/pipeline UUID inputs consistently (returns `400` instead of unhandled parse errors).
 - Added backend-supported pipeline health filtering via `GET /pipelines?runHealth=...` and wired frontend list loading to use server-side filters.
+- Added app-level API connectivity banner (network/server outage awareness) with automatic online/offline detection and retry action.
+- Pipeline list API now validates `runHealth` filters and rejects unknown values with `400`.
 
 ---
 

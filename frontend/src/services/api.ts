@@ -2,6 +2,18 @@ import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, AlertChannel, AlertRule, AlertHistory, Connector, Role, Membership, TenantContext } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
+export const API_STATUS_EVENT = 'dataturntable:api-status';
+
+type ApiStatusDetail = {
+  available: boolean;
+  status?: number;
+  message?: string;
+};
+
+function emitApiStatus(detail: ApiStatusDetail): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent<ApiStatusDetail>(API_STATUS_EVENT, { detail }));
+}
 
 async function sha256(message: string): Promise<string> {
   const msgBuffer = new TextEncoder().encode(message);
@@ -34,12 +46,25 @@ class ApiService {
     });
 
     this.client.interceptors.response.use(
-      (response) => response,
+      (response) => {
+        emitApiStatus({ available: true, status: response.status });
+        return response;
+      },
       (error) => {
         const requestUrl = String(error.config?.url || '');
         const isPublicAuthCall = requestUrl.includes('/auth/login')
           || requestUrl.includes('/auth/register')
           || requestUrl.includes('/auth/setup');
+
+        const status = error.response?.status as number | undefined;
+        const isConnectivityError = !error.response || (typeof status === 'number' && status >= 500);
+        if (isConnectivityError) {
+          emitApiStatus({
+            available: false,
+            status,
+            message: !error.response ? 'Network request failed' : `Server error (${status})`,
+          });
+        }
 
         if (error.response?.status === 401 && !isPublicAuthCall) {
           localStorage.removeItem('token');

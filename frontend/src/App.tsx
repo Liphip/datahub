@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './stores/auth';
+import { API_STATUS_EVENT } from './services/api';
 import Login from './pages/Login';
 import Setup from './pages/Setup';
 import Dashboard from './pages/Dashboard';
@@ -33,8 +35,51 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 function App() {
+  const [apiAvailable, setApiAvailable] = useState(true);
+  const [apiStatusMessage, setApiStatusMessage] = useState('');
+
+  useEffect(() => {
+    const onStatus = (event: Event) => {
+      const detail = (event as CustomEvent<{ available: boolean; message?: string }>).detail;
+      if (!detail) return;
+      setApiAvailable(detail.available);
+      setApiStatusMessage(detail.message || 'API connection issue detected');
+    };
+
+    const onOffline = () => {
+      setApiAvailable(false);
+      setApiStatusMessage('Network offline. Reconnect to continue syncing data.');
+    };
+
+    const onOnline = () => {
+      setApiAvailable(true);
+      setApiStatusMessage('');
+    };
+
+    window.addEventListener(API_STATUS_EVENT, onStatus as EventListener);
+    window.addEventListener('offline', onOffline);
+    window.addEventListener('online', onOnline);
+
+    return () => {
+      window.removeEventListener(API_STATUS_EVENT, onStatus as EventListener);
+      window.removeEventListener('offline', onOffline);
+      window.removeEventListener('online', onOnline);
+    };
+  }, []);
+
   return (
     <BrowserRouter>
+      {!apiAvailable && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2 text-sm flex items-center justify-between">
+          <span>{apiStatusMessage || 'API unavailable. Some data may be outdated.'}</span>
+          <button
+            onClick={() => window.location.reload()}
+            className="ml-4 px-2 py-1 rounded border border-amber-400 hover:bg-amber-100"
+          >
+            Retry
+          </button>
+        </div>
+      )}
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/setup" element={<Setup />} />

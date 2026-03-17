@@ -133,6 +133,10 @@ class PipelineResource {
             .resultList
         val withRunSummary = includeRunSummary.equals("true", ignoreCase = true)
         val requestedHealth = runHealth?.uppercase()
+        val allowedHealthFilters = setOf("ALL", "PROBLEMATIC", "RUNNING", "FAILED", "HEALTHY")
+        if (requestedHealth != null && requestedHealth !in allowedHealthFilters) {
+            return Response.status(400).entity(mapOf("error" to "Invalid runHealth")).build()
+        }
 
         return Response.ok(
             pipelines.map {
