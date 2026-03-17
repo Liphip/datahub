@@ -27,6 +27,7 @@ export default function Users() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [editState, setEditState] = useState<EditState | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
 
   const tenantId = selectedTenantId || user?.tenantId;
   const abilities = user?.abilities || [];
@@ -163,6 +164,24 @@ export default function Users() {
     }
   };
 
+  const handleToggleUserActive = async (target: User) => {
+    if (!canWriteUsers) {
+      showToast('You do not have permission to update users', 'error');
+      return;
+    }
+    setTogglingUserId(target.id);
+    try {
+      const nextActive = !(target.isActive ?? true);
+      await api.updateUser(target.id, { isActive: nextActive });
+      setUsers((prev) => prev.map((u) => (u.id === target.id ? { ...u, isActive: nextActive } : u)));
+      showToast(nextActive ? 'User activated' : 'User deactivated', 'success');
+    } catch {
+      showToast('Failed to update user status', 'error');
+    } finally {
+      setTogglingUserId(null);
+    }
+  };
+
   return (
     <div className="px-4 py-6 sm:px-0">
       {/* Toast */}
@@ -216,6 +235,7 @@ export default function Users() {
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Abilities</th>
                 {canManageTenant && (
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
@@ -286,6 +306,11 @@ export default function Users() {
                       )}
                     </td>
                     <td className="px-6 py-4">
+                      <span className={`px-2 py-1 text-xs font-medium rounded ${(u.isActive ?? true) ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-700'}`}>
+                        {(u.isActive ?? true) ? 'Active' : 'Inactive'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
                       <div className="flex flex-wrap gap-1">
                         {abilities.slice(0, 3).map((a) => (
                           <span key={a} className="px-2 py-0.5 text-xs rounded bg-blue-100 text-blue-800">{a}</span>
@@ -319,6 +344,15 @@ export default function Users() {
                                 className="text-primary-600 hover:text-primary-900"
                               >
                                 Edit Role
+                              </button>
+                            )}
+                            {canWriteUsers && (
+                              <button
+                                onClick={() => handleToggleUserActive(u)}
+                                disabled={togglingUserId === u.id}
+                                className="text-amber-700 hover:text-amber-900 disabled:opacity-40"
+                              >
+                                {togglingUserId === u.id ? 'Saving...' : ((u.isActive ?? true) ? 'Deactivate' : 'Activate')}
                               </button>
                             )}
                             <button

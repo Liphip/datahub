@@ -39,10 +39,23 @@ class AuthUserResource {
         return BCrypt.hashpw(passwordHash, BCrypt.gensalt())
     }
 
+    private fun parseUuid(value: String, field: String): UUID {
+        return try {
+            UUID.fromString(value)
+        } catch (_: Exception) {
+            throw WebApplicationException(Response.status(400).entity(mapOf("error" to "Invalid $field")).build())
+        }
+    }
+
     @GET
     fun list(@QueryParam("tenantId") tenantId: String?): Response {
         val resolvedTenantId = tenantId ?: getTenantIdFromToken()
             ?: return Response.status(400).entity(mapOf("error" to "tenantId is required")).build()
+        val tenantUuid = try {
+            parseUuid(resolvedTenantId, "tenantId")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
 
         val currentUser = try { jwt.subject?.let { em.find(User::class.java, UUID.fromString(it)) } } catch (_: Exception) { null }
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, resolvedTenantId)) {
@@ -56,7 +69,7 @@ class AuthUserResource {
             "SELECT DISTINCT u FROM User u JOIN u.memberships m WHERE m.tenant.id = :tenantId",
             User::class.java
         )
-            .setParameter("tenantId", UUID.fromString(resolvedTenantId))
+            .setParameter("tenantId", tenantUuid)
             .resultList
         return Response.ok(
             users.map {
@@ -113,7 +126,12 @@ class AuthUserResource {
     @GET
     @Path("/{id}")
     fun get(@PathParam("id") id: String): Response {
-        val user = em.find(User::class.java, UUID.fromString(id))
+        val userId = try {
+            parseUuid(id, "user id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val user = em.find(User::class.java, userId)
             ?: return Response.status(404).entity(mapOf("error" to "User not found")).build()
 
         val tenantId = getTenantIdFromToken()
@@ -140,7 +158,12 @@ class AuthUserResource {
     @Path("/{id}")
     @Transactional
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
-        val user = em.find(User::class.java, UUID.fromString(id))
+        val userId = try {
+            parseUuid(id, "user id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val user = em.find(User::class.java, userId)
             ?: return Response.status(404).entity(mapOf("error" to "User not found")).build()
 
         val tenantId = getTenantIdFromToken()
@@ -167,7 +190,12 @@ class AuthUserResource {
     @Path("/{id}")
     @Transactional
     fun delete(@PathParam("id") id: String): Response {
-        val user = em.find(User::class.java, UUID.fromString(id))
+        val userId = try {
+            parseUuid(id, "user id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val user = em.find(User::class.java, userId)
             ?: return Response.status(404).entity(mapOf("error" to "User not found")).build()
 
         val tenantId = getTenantIdFromToken()
