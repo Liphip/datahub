@@ -144,6 +144,24 @@ class ApiService {
     return response.data;
   }
 
+  async getTenantLineageDefaultsIfChanged(
+    tenantId: string,
+    etag?: string
+  ): Promise<{ notModified: boolean; data?: TenantLineageDefaults; etag?: string }> {
+    const response = await this.client.get<TenantLineageDefaults>(`/tenants/${tenantId}/lineage-defaults`, {
+      headers: etag ? { 'If-None-Match': etag } : undefined,
+      validateStatus: (status) => (status >= 200 && status < 300) || status === 304,
+    });
+    if (response.status === 304) {
+      return { notModified: true, etag: (response.headers?.etag as string | undefined) || etag };
+    }
+    return {
+      notModified: false,
+      data: response.data,
+      etag: response.headers?.etag as string | undefined,
+    };
+  }
+
   async updateTenantLineageDefaults(
     tenantId: string,
     data: Partial<TenantLineageDefaults>,

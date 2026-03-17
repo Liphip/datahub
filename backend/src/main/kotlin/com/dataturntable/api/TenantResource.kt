@@ -130,6 +130,8 @@ class TenantResource {
         )
     }
 
+    private fun lineageDefaultsEtag(version: String): String = "W/\"$version\""
+
     private fun toTenantMap(tenant: Tenant, children: List<Map<String, Any?>>? = null): Map<String, Any?> {
         val base = mutableMapOf<String, Any?>(
             "id" to tenant.id,
@@ -359,7 +361,10 @@ class TenantResource {
 
     @GET
     @Path("/{id}/lineage-defaults")
-    fun getLineageDefaults(@PathParam("id") id: String): Response {
+    fun getLineageDefaults(
+        @PathParam("id") id: String,
+        @HeaderParam("If-None-Match") ifNoneMatch: String?
+    ): Response {
         val (currentUser, denial) = requireTenantManager()
         denial?.let { return it }
         val user = currentUser ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
@@ -375,7 +380,17 @@ class TenantResource {
 
         val tenant = em.find(Tenant::class.java, tenantId)
             ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
-        return Response.ok(buildLineageDefaultsResponse(tenant.settings, tenant.updatedAt.toString())).build()
+        val currentVersion = tenant.updatedAt.toString()
+        val etag = lineageDefaultsEtag(currentVersion)
+        val matches = ifNoneMatch?.contains(currentVersion) == true || ifNoneMatch?.contains(etag) == true
+        if (matches) {
+            return Response.notModified()
+                .header("ETag", etag)
+                .build()
+        }
+        return Response.ok(buildLineageDefaultsResponse(tenant.settings, currentVersion))
+            .header("ETag", etag)
+            .build()
     }
 
     @PATCH
@@ -462,6 +477,9 @@ class TenantResource {
         tenant.updatedAt = java.time.Instant.now()
         em.merge(tenant)
 
-        return Response.ok(buildLineageDefaultsResponse(tenant.settings, tenant.updatedAt.toString())).build()
+        val updatedVersion = tenant.updatedAt.toString()
+        return Response.ok(buildLineageDefaultsResponse(tenant.settings, updatedVersion))
+            .header("ETag", lineageDefaultsEtag(updatedVersion))
+            .build()
     }
 }

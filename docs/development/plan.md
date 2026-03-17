@@ -191,6 +191,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Extended conflict-resolution parity to Pipelines: `Save current as tenant defaults` now uses the same interactive merge workflow (latest vs pending with per-field choices and `Use Latest` / `Reapply Mine` / `Merge And Save`) so both tenant-default entry points provide consistent concurrent-edit handling.
 - Added tenant-default conflict telemetry in UI sessions: Tenants and Pipelines now track per-tenant conflict counts and last-conflict timestamps in local storage, surface these metrics inline near lineage defaults controls, and allow clearing conflict stats to aid operational triage and UX tuning.
 - Added proactive stale-default warnings: Tenants now polls tenant lineage defaults version while forms are dirty and surfaces `Defaults may be stale` guidance before save; Pipelines now also polls tenant-default version and shows stale badges with `Refresh latest` / `Resolve now` actions to reduce avoidable conflict-modal interrupts.
+- Added conditional lineage-default reads for cheaper polling: tenant lineage defaults GET now supports `If-None-Match` with `ETag`/`304 Not Modified`, and frontend stale-check polling now uses conditional requests (`getTenantLineageDefaultsIfChanged`) to avoid re-downloading unchanged payloads while retaining early stale warnings.
 
 ---
 

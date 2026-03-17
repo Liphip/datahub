@@ -47,6 +47,7 @@ export default function Tenants() {
   const [expandedTenantIds, setExpandedTenantIds] = useState<Record<string, boolean>>({});
   const [lineageDefaultsTenantId, setLineageDefaultsTenantId] = useState('');
   const [lineageDefaults, setLineageDefaults] = useState<TenantLineageDefaults>(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+  const [lineageDefaultsEtag, setLineageDefaultsEtag] = useState<string | undefined>(undefined);
   const [lineageDefaultsBase, setLineageDefaultsBase] = useState<TenantLineageDefaultsConfig>(DEFAULT_TENANT_LINEAGE_DEFAULTS);
   const [loadingLineageDefaults, setLoadingLineageDefaults] = useState(false);
   const [savingLineageDefaults, setSavingLineageDefaults] = useState(false);
@@ -167,13 +168,17 @@ export default function Tenants() {
       }
       setLoadingLineageDefaults(true);
       try {
-        const response = await api.getTenantLineageDefaults(lineageDefaultsTenantId);
-        setLineageDefaults(response);
-        setLineageDefaultsBase(toLineageDefaultsConfig(response));
+        const response = await api.getTenantLineageDefaultsIfChanged(lineageDefaultsTenantId);
+        if (!response.notModified && response.data) {
+          setLineageDefaults(response.data);
+          setLineageDefaultsBase(toLineageDefaultsConfig(response.data));
+          setLineageDefaultsEtag(response.etag);
+        }
         setLineageDefaultsStaleLatest(null);
       } catch {
         setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
         setLineageDefaultsBase(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+        setLineageDefaultsEtag(undefined);
         setLineageDefaultsStaleLatest(null);
       } finally {
         setLoadingLineageDefaults(false);
@@ -189,6 +194,7 @@ export default function Tenants() {
   useEffect(() => {
     setLineageDefaultsConflict(null);
     setLineageDefaultsStaleLatest(null);
+    setLineageDefaultsEtag(undefined);
   }, [lineageDefaultsTenantId]);
 
   const isLineageDefaultsDirty = !isSameLineageConfig(toLineageDefaultsConfig(lineageDefaults), lineageDefaultsBase);
@@ -197,18 +203,21 @@ export default function Tenants() {
     if (!lineageDefaultsTenantId || !isLineageDefaultsDirty || savingLineageDefaults) return;
     const timer = window.setInterval(async () => {
       try {
-        const latest = await api.getTenantLineageDefaults(lineageDefaultsTenantId);
-        if (latest.version && lineageDefaults.version && latest.version !== lineageDefaults.version) {
-          setLineageDefaultsStaleLatest(latest);
-        } else {
-          setLineageDefaultsStaleLatest(null);
+        const latestResponse = await api.getTenantLineageDefaultsIfChanged(lineageDefaultsTenantId, lineageDefaultsEtag);
+        if (!latestResponse.notModified && latestResponse.data) {
+          setLineageDefaultsEtag(latestResponse.etag);
+          if (latestResponse.data.version && lineageDefaults.version && latestResponse.data.version !== lineageDefaults.version) {
+            setLineageDefaultsStaleLatest(latestResponse.data);
+          } else {
+            setLineageDefaultsStaleLatest(null);
+          }
         }
       } catch {
         // ignore stale check errors
       }
     }, 30000);
     return () => window.clearInterval(timer);
-  }, [lineageDefaultsTenantId, isLineageDefaultsDirty, savingLineageDefaults, lineageDefaults.version]);
+  }, [lineageDefaultsTenantId, isLineageDefaultsDirty, savingLineageDefaults, lineageDefaults.version, lineageDefaultsEtag]);
 
   const saveLineageDefaults = async () => {
     if (!lineageDefaultsTenantId) return;
@@ -225,6 +234,7 @@ export default function Tenants() {
       const updated = await api.updateTenantLineageDefaults(lineageDefaultsTenantId, pending, lineageDefaults.version);
       setLineageDefaults(updated);
       setLineageDefaultsBase(toLineageDefaultsConfig(updated));
+      setLineageDefaultsEtag(undefined);
       setLineageDefaultsStaleLatest(null);
       showToast('Tenant lineage defaults saved', 'success');
     } catch (err: any) {
@@ -241,6 +251,7 @@ export default function Tenants() {
             defaultDepth,
             maxDepthCap,
           };
+          setLineageDefaultsEtag(undefined);
           setLineageDefaultsStaleLatest(latest);
           setLineageDefaultsConflict(buildConflictState(pending, latest));
         } catch {
@@ -267,6 +278,7 @@ export default function Tenants() {
       const updated = await api.updateTenantLineageDefaults(lineageDefaultsTenantId, pending, lineageDefaults.version);
       setLineageDefaults(updated);
       setLineageDefaultsBase(toLineageDefaultsConfig(updated));
+      setLineageDefaultsEtag(undefined);
       setLineageDefaultsStaleLatest(null);
       showToast('Lineage defaults restored from history', 'success');
     } catch (err: any) {
@@ -281,6 +293,7 @@ export default function Tenants() {
             defaultDepth: defaults.defaultDepth,
             maxDepthCap: defaults.maxDepthCap,
           };
+          setLineageDefaultsEtag(undefined);
           setLineageDefaultsStaleLatest(latest);
           setLineageDefaultsConflict(buildConflictState(pending, latest));
         } catch {
@@ -391,6 +404,7 @@ export default function Tenants() {
     if (!lineageDefaultsConflict) return;
     setLineageDefaults(lineageDefaultsConflict.latest);
     setLineageDefaultsBase(toLineageDefaultsConfig(lineageDefaultsConflict.latest));
+    setLineageDefaultsEtag(undefined);
     setLineageDefaultsStaleLatest(null);
     setLineageDefaultsConflict(null);
     showToast('Loaded latest server values', 'success');
@@ -407,6 +421,7 @@ export default function Tenants() {
       );
       setLineageDefaults(updated);
       setLineageDefaultsBase(toLineageDefaultsConfig(updated));
+      setLineageDefaultsEtag(undefined);
       setLineageDefaultsStaleLatest(null);
       setLineageDefaultsConflict(null);
       showToast('Reapplied your defaults successfully', 'success');
@@ -434,6 +449,7 @@ export default function Tenants() {
       );
       setLineageDefaults(updated);
       setLineageDefaultsBase(toLineageDefaultsConfig(updated));
+      setLineageDefaultsEtag(undefined);
       setLineageDefaultsStaleLatest(null);
       setLineageDefaultsConflict(null);
       showToast('Saved merged defaults', 'success');

@@ -84,6 +84,7 @@ export default function Pipelines() {
   const [lineageSafeScopePolicyByRunId, setLineageSafeScopePolicyByRunId] = useState<Record<string, LineageSafeScopePolicy>>({});
   const [lineagePerfHistoryByRunId, setLineagePerfHistoryByRunId] = useState<Record<string, LineagePerfSample[]>>({});
   const [tenantLineageDefaults, setTenantLineageDefaults] = useState<TenantLineageDefaults>(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+  const [tenantLineageDefaultsEtag, setTenantLineageDefaultsEtag] = useState<string | undefined>(undefined);
   const [savingTenantLineageDefaults, setSavingTenantLineageDefaults] = useState(false);
   const [tenantDefaultsConflict, setTenantDefaultsConflict] = useState<TenantLineageDefaultsConflict | null>(null);
   const [tenantDefaultsStaleLatest, setTenantDefaultsStaleLatest] = useState<TenantLineageDefaults | null>(null);
@@ -314,21 +315,27 @@ export default function Pipelines() {
     const loadTenantLineageDefaults = async () => {
       if (!tenantId || !canReadPipelines) {
         setTenantLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+        setTenantLineageDefaultsEtag(undefined);
         setTenantDefaultsStaleLatest(null);
         return;
       }
       try {
-        const defaults = await api.getTenantLineageDefaults(tenantId);
-        setTenantLineageDefaults({
-          ...defaults,
-          safeScopePolicy: defaults.safeScopePolicy ?? 'AUTO',
-          defaultFetchMode: defaults.defaultFetchMode ?? 'SUMMARY',
-          defaultDepth: defaults.defaultDepth ?? 20,
-          maxDepthCap: defaults.maxDepthCap ?? 200,
-        });
+        const response = await api.getTenantLineageDefaultsIfChanged(tenantId);
+        if (!response.notModified && response.data) {
+          const defaults = response.data;
+          setTenantLineageDefaults({
+            ...defaults,
+            safeScopePolicy: defaults.safeScopePolicy ?? 'AUTO',
+            defaultFetchMode: defaults.defaultFetchMode ?? 'SUMMARY',
+            defaultDepth: defaults.defaultDepth ?? 20,
+            maxDepthCap: defaults.maxDepthCap ?? 200,
+          });
+          setTenantLineageDefaultsEtag(response.etag);
+        }
         setTenantDefaultsStaleLatest(null);
       } catch {
         setTenantLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+        setTenantLineageDefaultsEtag(undefined);
         setTenantDefaultsStaleLatest(null);
       }
     };
@@ -337,24 +344,29 @@ export default function Pipelines() {
 
   useEffect(() => {
     setTenantDefaultsConflict(null);
+    setTenantLineageDefaultsEtag(undefined);
   }, [tenantId]);
 
   useEffect(() => {
     if (!tenantId || !canManageTenantSettings) return;
     const timer = window.setInterval(async () => {
       try {
-        const latest = await api.getTenantLineageDefaults(tenantId);
-        if (latest.version && tenantLineageDefaults.version && latest.version !== tenantLineageDefaults.version) {
-          setTenantDefaultsStaleLatest(latest);
-        } else {
-          setTenantDefaultsStaleLatest(null);
+        const latestResponse = await api.getTenantLineageDefaultsIfChanged(tenantId, tenantLineageDefaultsEtag);
+        if (!latestResponse.notModified && latestResponse.data) {
+          setTenantLineageDefaultsEtag(latestResponse.etag);
+          const latest = latestResponse.data;
+          if (latest.version && tenantLineageDefaults.version && latest.version !== tenantLineageDefaults.version) {
+            setTenantDefaultsStaleLatest(latest);
+          } else {
+            setTenantDefaultsStaleLatest(null);
+          }
         }
       } catch {
         // ignore background stale checks
       }
     }, 30000);
     return () => window.clearInterval(timer);
-  }, [tenantId, canManageTenantSettings, tenantLineageDefaults.version]);
+  }, [tenantId, canManageTenantSettings, tenantLineageDefaults.version, tenantLineageDefaultsEtag]);
 
   const refreshBucketRuns = async (tid: string, fromDate: Date, toDate: Date, silent = false) => {
     if (!silent) setLoadingBucketRuns(true);
@@ -1114,6 +1126,7 @@ export default function Pipelines() {
     try {
       const updated = await api.updateTenantLineageDefaults(tenantId, pending, tenantLineageDefaults.version);
       setTenantLineageDefaults(updated);
+      setTenantLineageDefaultsEtag(undefined);
       setTenantDefaultsStaleLatest(null);
       showToast('Tenant lineage defaults updated', 'success');
       await handleLoadRunLineage(pipelineId, runId, depth, undefined, undefined, mode, policy);
@@ -1123,6 +1136,7 @@ export default function Pipelines() {
         trackTenantDefaultsConflict(tenantId);
         try {
           const latest = await api.getTenantLineageDefaults(tenantId);
+          setTenantLineageDefaultsEtag(undefined);
           setTenantDefaultsStaleLatest(latest);
           setTenantDefaultsConflict(buildTenantDefaultsConflict(pipelineId, runId, pending, latest));
         } catch {
@@ -1139,6 +1153,7 @@ export default function Pipelines() {
   const resolveTenantDefaultsConflictUseLatest = () => {
     if (!tenantDefaultsConflict) return;
     setTenantLineageDefaults(tenantDefaultsConflict.latest);
+    setTenantLineageDefaultsEtag(undefined);
     setTenantDefaultsStaleLatest(null);
     setTenantDefaultsConflict(null);
     showToast('Loaded latest tenant defaults', 'success');
@@ -1154,6 +1169,7 @@ export default function Pipelines() {
         tenantDefaultsConflict.latest.version
       );
       setTenantLineageDefaults(updated);
+      setTenantLineageDefaultsEtag(undefined);
       setTenantDefaultsStaleLatest(null);
       const { pipelineId, runId, pending } = tenantDefaultsConflict;
       setTenantDefaultsConflict(null);
@@ -1198,6 +1214,7 @@ export default function Pipelines() {
         tenantDefaultsConflict.latest.version
       );
       setTenantLineageDefaults(updated);
+      setTenantLineageDefaultsEtag(undefined);
       setTenantDefaultsStaleLatest(null);
       const { pipelineId, runId } = tenantDefaultsConflict;
       setTenantDefaultsConflict(null);
