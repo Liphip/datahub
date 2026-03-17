@@ -70,7 +70,9 @@ class WebSocketIngestResource {
             enrichedPayload["_runId"] = run.id.toString()
             
             kafkaService.sendToPipelineSpecificInput(pipelineId, enrichedPayload)
-            pipelineConsumer.consume(objectMapper.writeValueAsString(enrichedPayload))
+            if (!kafkaService.isKafkaAvailable()) {
+                pipelineConsumer.consume(objectMapper.writeValueAsString(enrichedPayload))
+            }
             
             LOG.debugf("WebSocket message queued for pipeline %s", pipelineId)
         } catch (e: Exception) {

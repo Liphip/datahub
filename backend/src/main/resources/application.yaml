@@ -42,7 +42,7 @@ mp:
     outgoing:
       pipeline-commands:
         connector: smallrye-kafka
-        topic: dataturntable.system.commands
+        topic: dataturntable.pipelines.input
         bootstrap:
           servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
         value:
@@ -55,9 +55,9 @@ mp:
         value:
           serializer: org.apache.kafka.common.serialization.StringSerializer
     incoming:
-      pipeline-events:
+      pipeline-input:
         connector: smallrye-kafka
-        topic: dataturntable.system.commands
+        topic: dataturntable.pipelines.input
         bootstrap:
           servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
         value:

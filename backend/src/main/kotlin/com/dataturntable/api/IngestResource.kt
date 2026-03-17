@@ -70,7 +70,9 @@ class IngestResource {
         
         try {
             kafkaService.sendToPipelineSpecificInput(pipeline.id.toString(), enrichedPayload)
-            pipelineConsumer.consume(objectMapper.writeValueAsString(enrichedPayload))
+            if (!kafkaService.isKafkaAvailable()) {
+                pipelineConsumer.consume(objectMapper.writeValueAsString(enrichedPayload))
+            }
             
             return Response.accepted(mapOf(
                 "status" to "accepted",
@@ -79,6 +81,8 @@ class IngestResource {
                 "message" to "Data queued for processing"
             )).build()
         } catch (e: Exception) {
+            run.markFailed(e.message)
+            run.persist()
             return Response.status(500)
                 .entity(mapOf("error" to "Failed to queue data: ${e.message}"))
                 .build()

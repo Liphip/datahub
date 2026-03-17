@@ -5,7 +5,6 @@ import com.dataturntable.pipeline.TriggerType
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.smallrye.reactive.messaging.kafka.api.OutgoingKafkaRecordMetadata
 import jakarta.enterprise.context.ApplicationScoped
-import jakarta.enterprise.event.Observes
 import jakarta.inject.Inject
 import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.eclipse.microprofile.reactive.messaging.Channel
@@ -27,13 +26,8 @@ class KafkaService {
     
     private val objectMapper = ObjectMapper()
     private val activeConsumers = ConcurrentHashMap<String, Boolean>()
-    private var kafkaAvailable = false
-    
-    fun onStart(@Observes ev: org.jboss.logging.Logger) {
-        kafkaAvailable = commandEmitter != null
-    }
-    
-    fun isKafkaAvailable(): Boolean = kafkaAvailable
+
+    fun isKafkaAvailable(): Boolean = commandEmitter != null
     
     fun createPipelineTopics(pipelineId: String, consumerGroup: String) {
         val topics = listOf(
@@ -79,7 +73,7 @@ class KafkaService {
         """.trimIndent()
         
         val metadata = OutgoingKafkaRecordMetadata.builder<String>()
-            .withTopic("$topicPrefix.pipelines.$pipelineId.import")
+            .withTopic(getPipelineInputTopic())
             .build()
         
         commandEmitter?.send(Message.of(message, Metadata.of(metadata)))
@@ -109,7 +103,7 @@ class KafkaService {
     fun getPipelineOutputTopic(): String = "$topicPrefix.pipelines.output"
     
     fun sendToPipelineSpecificInput(pipelineId: String, data: Any) {
-        val topic = getImportTopic(pipelineId)
+        val topic = getPipelineInputTopic()
         
         val jsonData = if (data is String) {
             data
