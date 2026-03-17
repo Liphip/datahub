@@ -1359,6 +1359,7 @@ class PipelineResource {
         }
         val lineageBuildMs = (System.nanoTime() - buildStartedNs) / 1_000_000
         val lineageTotalMs = (System.nanoTime() - lineageStartedNs) / 1_000_000
+        val lineageMeasuredAt = java.time.Instant.now()
 
         return Response.ok(
             mapOf(
@@ -1382,6 +1383,7 @@ class PipelineResource {
                 "lineageQueryMs" to lineageQueryMs,
                 "lineageBuildMs" to lineageBuildMs,
                 "lineageTotalMs" to lineageTotalMs,
+                "lineageMeasuredAt" to lineageMeasuredAt,
                 "ancestorsTotal" to ancestorsTotal,
                 "ancestorsStatusCounts" to ancestorsStatusCounts,
                 "descendantsTotal" to descendantsTotal,

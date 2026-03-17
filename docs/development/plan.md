@@ -175,6 +175,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added lineage fetch-mode controls for scalability: lineage API now supports optional `includeDetails=true` and echoes it in the response; Pipelines run-details lineage UI now offers `Summary only` vs `Include details` mode toggles (persisted in shareable URL state) so large retry chains can stay lightweight by default while still allowing deep inspection on demand.
 - Added lineage payload guidance for operators: lineage API now returns estimated response size metadata (`estimatedNodesInResponse`, `estimatedPayloadBytes`, `estimatedPayloadClass`), and the lineage panel now surfaces a human-readable payload hint with a one-click fallback to summary mode when a detailed lineage view is large.
 - Added lineage timing observability for triage: lineage API now returns server-side timing metadata (`lineageQueryMs`, `lineageBuildMs`, `lineageTotalMs`), and the lineage panel surfaces these timings inline so operators can quickly identify expensive lineage requests while debugging.
+- Added lightweight lineage performance trend visibility: lineage API now includes `lineageMeasuredAt`, and the lineage panel keeps a short in-memory history of recent loads with compact timing/payload micro-bars so operators can quickly spot regressions while changing depth, filters, and fetch mode.
 
 ---
 

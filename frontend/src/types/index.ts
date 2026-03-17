@@ -178,6 +178,7 @@ export interface PipelineRunLineage {
   lineageQueryMs?: number;
   lineageBuildMs?: number;
   lineageTotalMs?: number;
+  lineageMeasuredAt?: string;
   ancestorsTotal?: number;
   ancestorsStatusCounts?: Partial<Record<'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED', number>>;
   descendantsTotal?: number;

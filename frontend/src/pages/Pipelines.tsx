@@ -19,6 +19,7 @@ type BucketRunStatusFilter = 'ALL' | 'RUNNING' | 'PENDING' | 'SUCCESS' | 'FAILED
 type LineageDirection = 'both' | 'ancestors' | 'descendants';
 type LineageStatusFilter = 'ALL' | 'INFLIGHT' | 'TERMINAL' | 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
 type LineageFetchMode = 'SUMMARY' | 'DETAILS';
+type LineagePerfSample = { totalMs: number; payloadBytes: number; measuredAt?: string };
 
 type TriagePreset = {
   name: string;
@@ -57,6 +58,7 @@ export default function Pipelines() {
   const [lineageDirectionByRunId, setLineageDirectionByRunId] = useState<Record<string, LineageDirection>>({});
   const [lineageStatusFilterByRunId, setLineageStatusFilterByRunId] = useState<Record<string, LineageStatusFilter>>({});
   const [lineageFetchModeByRunId, setLineageFetchModeByRunId] = useState<Record<string, LineageFetchMode>>({});
+  const [lineagePerfHistoryByRunId, setLineagePerfHistoryByRunId] = useState<Record<string, LineagePerfSample[]>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [expandedPipelineId, setExpandedPipelineId] = useState<string | null>(null);
@@ -570,6 +572,16 @@ export default function Pipelines() {
       setLineageStatusFilterByRunId((prev) => ({ ...prev, [runId]: requestedStatus }));
       setLineageFetchModeByRunId((prev) => ({ ...prev, [runId]: requestedFetchMode }));
       setLineageByRunId((prev) => ({ ...prev, [runId]: lineage }));
+      setLineagePerfHistoryByRunId((prev) => {
+        const existing = prev[runId] ?? [];
+        const nextSample: LineagePerfSample = {
+          totalMs: lineage.lineageTotalMs ?? 0,
+          payloadBytes: lineage.estimatedPayloadBytes ?? 0,
+          measuredAt: lineage.lineageMeasuredAt,
+        };
+        const next = [...existing, nextSample].slice(-8);
+        return { ...prev, [runId]: next };
+      });
 
       const next = new URLSearchParams(searchParams);
       next.set('focusPipelineId', pipelineId);
@@ -2119,6 +2131,27 @@ export default function Pipelines() {
                                     <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">query {lineageByRunId[selectedRun.id].lineageQueryMs ?? 0} ms</span>
                                     <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">build {lineageByRunId[selectedRun.id].lineageBuildMs ?? 0} ms</span>
                                     <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">total {lineageByRunId[selectedRun.id].lineageTotalMs ?? 0} ms</span>
+                                  </div>
+                                  <div className="mb-2 flex flex-wrap items-end gap-2 text-[11px] text-indigo-800">
+                                    <span>Recent loads:</span>
+                                    <div className="flex items-end gap-1 rounded border border-indigo-200 bg-white px-2 py-1">
+                                      {(lineagePerfHistoryByRunId[selectedRun.id] ?? []).map((sample, index, arr) => {
+                                        const maxMs = Math.max(1, ...arr.map((item) => item.totalMs || 0));
+                                        const maxBytes = Math.max(1, ...arr.map((item) => item.payloadBytes || 0));
+                                        const timingHeight = Math.max(2, Math.round((sample.totalMs / maxMs) * 16));
+                                        const payloadHeight = Math.max(2, Math.round((sample.payloadBytes / maxBytes) * 16));
+                                        return (
+                                          <div key={`${selectedRun.id}-lineage-sample-${index}`} className="flex items-end gap-[2px]" title={`Load ${index + 1}: ${sample.totalMs} ms, ~${formatApproxBytes(sample.payloadBytes)}`}>
+                                            <span className="w-[3px] rounded-sm bg-indigo-500" style={{ height: `${timingHeight}px` }} />
+                                            <span className="w-[3px] rounded-sm bg-sky-400" style={{ height: `${payloadHeight}px` }} />
+                                          </div>
+                                        );
+                                      })}
+                                      {(lineagePerfHistoryByRunId[selectedRun.id] ?? []).length === 0 && (
+                                        <span className="text-slate-500">no history yet</span>
+                                      )}
+                                    </div>
+                                    <span className="text-slate-600">indigo=timing, blue=payload</span>
                                   </div>
                                   <div className="mb-2 flex flex-wrap items-center gap-2">
                                     <span className="text-[11px] text-indigo-800">Fetch mode:</span>
