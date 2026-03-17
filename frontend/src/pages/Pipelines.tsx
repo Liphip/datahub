@@ -389,6 +389,10 @@ export default function Pipelines() {
     return run.pipelineName?.toLowerCase().includes(bucketPipelineQuery.trim().toLowerCase());
   });
 
+  const pinnedPipelineName = bucketPipelineIdFilter
+    ? bucketRuns.find((run) => run.pipelineId === bucketPipelineIdFilter)?.pipelineName
+    : null;
+
   const applyHealthFilter = (filter: HealthFilter) => {
     setHealthFilter(filter);
     const next = new URLSearchParams(searchParams);
@@ -600,6 +604,15 @@ export default function Pipelines() {
               >
                 {showShortcutHints ? 'Hide shortcuts' : 'Show shortcuts'}
               </button>
+              {bucketPipelineIdFilter && (
+                <button
+                  onClick={() => navigate(`/pipelines/${bucketPipelineIdFilter}`)}
+                  className="px-2 py-1 rounded border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs"
+                  title={pinnedPipelineName ? `Open ${pinnedPipelineName}` : 'Open pinned pipeline'}
+                >
+                  Open pinned
+                </button>
+              )}
             </div>
           </div>
           {showShortcutHints && (
