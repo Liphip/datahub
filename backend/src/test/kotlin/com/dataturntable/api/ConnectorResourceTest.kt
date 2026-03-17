@@ -255,4 +255,74 @@ class ConnectorResourceTest {
             .statusCode(403)
             .body("error", equalTo("Forbidden"))
     }
+
+    @Test
+    fun testConnectAndDisconnectConnector() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val connectorId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Lifecycle Connector",
+                "connectorType" to "REST",
+                "direction" to "OUTPUT",
+                "config" to mapOf("baseUrl" to "https://example.com")
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .post("/api/internal/v1/connectors/$connectorId/disconnect")
+        .then()
+            .statusCode(200)
+            .body("isActive", equalTo(false))
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .post("/api/internal/v1/connectors/$connectorId/connect")
+        .then()
+            .statusCode(200)
+            .body("isActive", equalTo(true))
+    }
+
+    @Test
+    fun testTestConnectorValidatesConfig() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val connectorId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Bad MQTT Config",
+                "connectorType" to "MQTT",
+                "direction" to "INPUT",
+                "config" to mapOf("broker" to "mqtt://localhost:1883")
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .post("/api/internal/v1/connectors/$connectorId/test")
+        .then()
+            .statusCode(400)
+            .body("missing", hasItem("topic"))
+    }
 }

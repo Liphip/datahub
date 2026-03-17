@@ -163,6 +163,9 @@ Pipelines are directed graphs (DAGs), not just linear chains:
 | GET/POST/PATCH/DELETE /auth-users | Platform auth user management |
 | GET/POST/PATCH/DELETE /tenants/{id}/memberships | Tenant membership management |
 | GET/POST/PATCH/DELETE /connectors | Tenant connector library |
+| POST /connectors/{id}/connect | Mark connector connected/enabled |
+| POST /connectors/{id}/disconnect | Mark connector disconnected/disabled |
+| POST /connectors/{id}/test | Validate connector config |
 | GET /tenants | List tenants |
 | GET /modules | List code modules |
 | GET /pipelines | List pipelines |
@@ -172,6 +175,7 @@ Pipelines are directed graphs (DAGs), not just linear chains:
 
 Notes:
 - Connector configs are encrypted at rest and sensitive fields are masked in API responses.
+- Connectors can be managed from the Connectors page with explicit Connect/Disconnect/Test actions.
 - Frontend auth uses SHA-256 (Base64) client hashing before transmission; server stores BCrypt of that hash.
 - Pipelines support a `graphDefinition` payload; IMPORT/EXPORT nodes must reference compatible connectors by `connectorId`.
 - The pipeline editor now captures connector selections for IMPORT/EXPORT nodes and sends a DAG `graphDefinition` with connector-aware validation.

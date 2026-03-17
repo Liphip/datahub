@@ -90,6 +90,38 @@ class ConnectorResource {
             null
         }
     }
+
+    private fun canReadConnector(currentUser: User?, tenantId: String): Boolean {
+        if (currentUser == null) return false
+        if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) return false
+        return SecurityUtils.hasAbility(currentUser, "read:connector")
+    }
+
+    private fun canWriteConnector(currentUser: User?, tenantId: String): Boolean {
+        if (currentUser == null) return false
+        if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) return false
+        return SecurityUtils.hasAbility(currentUser, "write:connector")
+    }
+
+    private fun connectorToMap(connector: Connector): Map<String, Any?> {
+        val decrypted = EncryptionUtils.decrypt(connector.config ?: "{}")
+        val configValue = try {
+            val parsed = objectMapper.readValue(decrypted, Map::class.java)
+            maskConnectorConfig(parsed)
+        } catch (_: Exception) {
+            emptyMap<String, Any>()
+        }
+        return mapOf(
+            "id" to connector.id,
+            "name" to connector.name,
+            "connectorType" to connector.connectorType?.name,
+            "direction" to connector.direction?.name,
+            "config" to configValue,
+            "description" to connector.description,
+            "isActive" to connector.isActive,
+            "createdAt" to connector.createdAt?.toString()
+        )
+    }
     
     @GET
     fun list(
@@ -149,25 +181,7 @@ class ConnectorResource {
                 .resultList
         }
         
-        return Response.ok(connectors.map { connector ->
-            val decrypted = EncryptionUtils.decrypt(connector.config ?: "{}")
-            val configValue = try {
-                val parsed = objectMapper.readValue(decrypted, Map::class.java)
-                maskConnectorConfig(parsed)
-            } catch (_: Exception) {
-                emptyMap<String, Any>()
-            }
-            mapOf(
-                "id" to connector.id,
-                "name" to connector.name,
-                "connectorType" to connector.connectorType?.name,
-                "direction" to connector.direction?.name,
-                "config" to configValue,
-                "description" to connector.description,
-                "isActive" to connector.isActive,
-                "createdAt" to connector.createdAt?.toString()
-            )
-        }).build()
+        return Response.ok(connectors.map { connectorToMap(it) }).build()
     }
     
     @POST
@@ -255,26 +269,105 @@ class ConnectorResource {
             if (!SecurityUtils.hasAbility(currentUser, "read:connector")) {
                 return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
             }
-            val decrypted = EncryptionUtils.decrypt(connector.config ?: "{}")
-            val configValue = try {
-                val parsed = objectMapper.readValue(decrypted, Map::class.java)
-                maskConnectorConfig(parsed)
-            } catch (_: Exception) {
-                emptyMap<String, Any>()
-            }
-            Response.ok(mapOf(
-                "id" to connector.id,
-                "name" to connector.name,
-                "connectorType" to connector.connectorType?.name,
-                "direction" to connector.direction?.name,
-                "config" to configValue,
-                "description" to connector.description,
-                "isActive" to connector.isActive,
-                "createdAt" to connector.createdAt?.toString()
-            )).build()
+            Response.ok(connectorToMap(connector)).build()
         } else {
             Response.status(404).entity(mapOf("error" to "Connector not found")).build()
         }
+    }
+
+    @POST
+    @Path("/{id}/connect")
+    @Consumes(MediaType.WILDCARD)
+    @Transactional
+    fun connect(@PathParam("id") id: String): Response {
+        val connectorId = parseUuid(id)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
+        val connector = em.find(Connector::class.java, connectorId)
+            ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
+        val tenantId = connector.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Connector tenant not found")).build()
+        val currentUser = getCurrentUser()
+        if (!canWriteConnector(currentUser, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        connector.isActive = true
+        connector.updatedAt = java.time.Instant.now()
+        connector.persist()
+        return Response.ok(connectorToMap(connector) + mapOf("message" to "Connector connected")).build()
+    }
+
+    @POST
+    @Path("/{id}/disconnect")
+    @Consumes(MediaType.WILDCARD)
+    @Transactional
+    fun disconnect(@PathParam("id") id: String): Response {
+        val connectorId = parseUuid(id)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
+        val connector = em.find(Connector::class.java, connectorId)
+            ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
+        val tenantId = connector.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Connector tenant not found")).build()
+        val currentUser = getCurrentUser()
+        if (!canWriteConnector(currentUser, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        connector.isActive = false
+        connector.updatedAt = java.time.Instant.now()
+        connector.persist()
+        return Response.ok(connectorToMap(connector) + mapOf("message" to "Connector disconnected")).build()
+    }
+
+    @POST
+    @Path("/{id}/test")
+    @Consumes(MediaType.WILDCARD)
+    fun testConnection(@PathParam("id") id: String): Response {
+        val connectorId = parseUuid(id)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
+        val connector = em.find(Connector::class.java, connectorId)
+            ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
+        val tenantId = connector.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Connector tenant not found")).build()
+        val currentUser = getCurrentUser()
+        if (!canReadConnector(currentUser, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        val decrypted = EncryptionUtils.decrypt(connector.config ?: "{}")
+        val configValue = try {
+            objectMapper.readValue(decrypted, Map::class.java) as? Map<*, *> ?: emptyMap<String, Any>()
+        } catch (_: Exception) {
+            return Response.status(400).entity(mapOf("error" to "Connector config is not valid JSON")).build()
+        }
+
+        val requiredKeys = when (connector.connectorType) {
+            ConnectorType.MQTT -> listOf("broker", "topic")
+            ConnectorType.REST -> listOf("baseUrl")
+            ConnectorType.WEBSOCKET -> listOf("url")
+            ConnectorType.UDP -> listOf("host", "port")
+            ConnectorType.FILE -> listOf("path")
+            ConnectorType.CUSTOM -> emptyList()
+            null -> emptyList()
+        }
+        val missing = requiredKeys.filter { key ->
+            val value = configValue[key]
+            value == null || (value is String && value.isBlank())
+        }
+        if (missing.isNotEmpty()) {
+            return Response.status(400).entity(
+                mapOf("error" to "Connector config missing required fields", "missing" to missing)
+            ).build()
+        }
+
+        return Response.ok(mapOf(
+            "ok" to true,
+            "message" to "Connector configuration validated",
+            "connectorId" to connector.id,
+            "connectorType" to connector.connectorType?.name,
+            "direction" to connector.direction?.name,
+            "isActive" to connector.isActive
+        )).build()
     }
     
     @PATCH

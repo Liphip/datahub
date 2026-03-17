@@ -411,6 +411,21 @@ class ApiService {
     await this.client.delete(`/connectors/${id}`);
   }
 
+  async connectConnector(id: string): Promise<Connector> {
+    const response = await this.client.post<Connector>(`/connectors/${id}/connect`);
+    return response.data;
+  }
+
+  async disconnectConnector(id: string): Promise<Connector> {
+    const response = await this.client.post<Connector>(`/connectors/${id}/disconnect`);
+    return response.data;
+  }
+
+  async testConnector(id: string): Promise<{ ok: boolean; message: string; missing?: string[] }> {
+    const response = await this.client.post<{ ok: boolean; message: string; missing?: string[] }>(`/connectors/${id}/test`);
+    return response.data;
+  }
+
   // Roles
   async getRoles(tenantId?: string): Promise<Role[]> {
     const params = tenantId ? new URLSearchParams({ tenantId }) : '';

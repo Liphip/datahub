@@ -20,6 +20,8 @@ export default function Connectors() {
   const [editingConnector, setEditingConnector] = useState<Connector | null>(null);
   const [savingConnector, setSavingConnector] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [testingId, setTestingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<string>('ALL');
   const [filterDirection, setFilterDirection] = useState<string>('ALL');
@@ -161,6 +163,43 @@ export default function Connectors() {
       setError('Failed to delete connector');
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleToggleConnection = async (connector: Connector) => {
+    if (!canWriteConnectors) {
+      showToast('You do not have permission to change connector state', 'error');
+      return;
+    }
+
+    setTogglingId(connector.id);
+    try {
+      const updated = connector.isActive
+        ? await api.disconnectConnector(connector.id)
+        : await api.connectConnector(connector.id);
+      setConnectors((prev) => prev.map((c) => (c.id === connector.id ? { ...c, ...updated } : c)));
+      showToast(connector.isActive ? 'Connector disconnected' : 'Connector connected', 'success');
+    } catch {
+      showToast(connector.isActive ? 'Failed to disconnect connector' : 'Failed to connect connector', 'error');
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
+  const handleTestConnection = async (connector: Connector) => {
+    setTestingId(connector.id);
+    try {
+      const result = await api.testConnector(connector.id);
+      showToast(result.message || 'Connector test succeeded', 'success');
+    } catch (err: any) {
+      const missing = err?.response?.data?.missing;
+      if (Array.isArray(missing) && missing.length > 0) {
+        showToast(`Missing config: ${missing.join(', ')}`, 'error');
+      } else {
+        showToast(err?.response?.data?.error || 'Connector test failed', 'error');
+      }
+    } finally {
+      setTestingId(null);
     }
   };
 
@@ -318,6 +357,9 @@ export default function Connectors() {
                   <span className={`px-2 py-1 text-xs font-medium rounded ${getDirectionColor(connector.direction)}`}>
                     {connector.direction}
                   </span>
+                  <span className={`px-2 py-1 text-xs font-medium rounded ${connector.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-700'}`}>
+                    {connector.isActive ? 'Connected' : 'Disconnected'}
+                  </span>
                 </div>
               </div>
               
@@ -330,6 +372,22 @@ export default function Connectors() {
               </div>
               
               <div className="flex justify-end space-x-2">
+                <button
+                  onClick={() => handleTestConnection(connector)}
+                  disabled={testingId === connector.id}
+                  className="text-indigo-600 hover:text-indigo-800 text-sm disabled:opacity-40"
+                >
+                  {testingId === connector.id ? 'Testing...' : 'Test'}
+                </button>
+                {canWriteConnectors && (
+                  <button
+                    onClick={() => handleToggleConnection(connector)}
+                    disabled={togglingId === connector.id}
+                    className="text-emerald-700 hover:text-emerald-900 text-sm disabled:opacity-40"
+                  >
+                    {togglingId === connector.id ? 'Working...' : connector.isActive ? 'Disconnect' : 'Connect'}
+                  </button>
+                )}
                 {canWriteConnectors && (
                   <button
                     onClick={() => handleEdit(connector)}
