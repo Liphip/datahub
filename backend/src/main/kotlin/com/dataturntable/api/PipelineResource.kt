@@ -712,7 +712,11 @@ class PipelineResource {
     
     @GET
     @Path("/{id}/runs")
-    fun getRuns(@PathParam("id") id: String): Response {
+    fun getRuns(
+        @PathParam("id") id: String,
+        @QueryParam("limit") limit: Int?,
+        @QueryParam("includeDetails") includeDetails: Boolean?
+    ): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
             UUID.fromString(id)
@@ -725,20 +729,27 @@ class PipelineResource {
         val tenantId = pipeline.tenant?.id?.toString()
             ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
         requireTenantAccess(currentUser, tenantId, "pipeline:read")?.let { return it }
+        val maxRows = (limit ?: 20).coerceIn(1, 200)
+        val withDetails = includeDetails != false
 
         val runs = em.createQuery(
             "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId ORDER BY r.startedAt DESC",
             PipelineRun::class.java
         )
             .setParameter("pipelineId", pipelineId)
+            .setMaxResults(maxRows)
             .resultList
         return Response.ok(
             runs.map {
-                val metrics = try {
-                    if (it.metrics.isNullOrBlank()) emptyMap<String, Any>()
-                    else objectMapper.readValue(it.metrics, Map::class.java)
-                } catch (_: Exception) {
-                    mapOf("raw" to it.metrics)
+                val metrics = if (withDetails) {
+                    try {
+                        if (it.metrics.isNullOrBlank()) emptyMap<String, Any>()
+                        else objectMapper.readValue(it.metrics, Map::class.java)
+                    } catch (_: Exception) {
+                        mapOf("raw" to it.metrics)
+                    }
+                } else {
+                    emptyMap<String, Any>()
                 }
                 val durationMs = if (it.completedAt != null) {
                     java.time.Duration.between(it.startedAt, it.completedAt).toMillis()
@@ -746,14 +757,18 @@ class PipelineResource {
                     null
                 }
 
-                val result = metrics["result"] as? Map<*, *>
-                val alertEvaluation = result?.get("alertEvaluation")
-                val alertsFired = when (val value = result?.get("alertsFired")) {
-                    is Number -> value.toInt()
-                    else -> null
+                val result = if (withDetails) metrics["result"] as? Map<*, *> else null
+                val alertEvaluation = if (withDetails) result?.get("alertEvaluation") else null
+                val alertsFired = if (withDetails) {
+                    when (val value = result?.get("alertsFired")) {
+                        is Number -> value.toInt()
+                        else -> null
+                    }
+                } else {
+                    null
                 }
-                val moduleLogs = metrics["moduleLogs"]
-                val executionLog = metrics["executionLog"]
+                val moduleLogs = if (withDetails) metrics["moduleLogs"] else null
+                val executionLog = if (withDetails) metrics["executionLog"] else null
 
                 mapOf(
                     "id" to it.id,

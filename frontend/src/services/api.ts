@@ -259,8 +259,18 @@ class ApiService {
     return response.data;
   }
 
-  async getPipelineRuns(pipelineId: string): Promise<PipelineRun[]> {
-    const response = await this.client.get<PipelineRun[]>(`/pipelines/${pipelineId}/runs`);
+  async getPipelineRuns(
+    pipelineId: string,
+    options?: {
+      limit?: number;
+      includeDetails?: boolean;
+    }
+  ): Promise<PipelineRun[]> {
+    const limit = options?.limit ? `?limit=${Math.max(1, options.limit)}` : '';
+    const includeDetails = options?.includeDetails === undefined
+      ? ''
+      : `${limit ? '&' : '?'}includeDetails=${options.includeDetails}`;
+    const response = await this.client.get<PipelineRun[]>(`/pipelines/${pipelineId}/runs${limit}${includeDetails}`);
     return response.data;
   }
 

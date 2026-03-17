@@ -28,6 +28,7 @@ export default function Pipelines() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [runsMap, setRunsMap] = useState<RunMap>({});
+  const [detailedRunsMap, setDetailedRunsMap] = useState<RunMap>({});
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newPipelineName, setNewPipelineName] = useState('');
@@ -147,8 +148,8 @@ export default function Pipelines() {
         const runsEntries = await Promise.all(
           data.map(async (p) => {
             try {
-              const runs = await api.getPipelineRuns(p.id);
-              return [p.id, runs.slice(0, 3)] as [string, PipelineRun[]];
+              const runs = await api.getPipelineRuns(p.id, { limit: 3, includeDetails: false });
+              return [p.id, runs] as [string, PipelineRun[]];
             } catch {
               return [p.id, []] as [string, PipelineRun[]];
             }
@@ -261,8 +262,8 @@ export default function Pipelines() {
       const entries = await Promise.all(
         pipelines.map(async (p) => {
           try {
-            const runs = await api.getPipelineRuns(p.id);
-            return [p.id, runs.slice(0, 3)] as [string, PipelineRun[]];
+            const runs = await api.getPipelineRuns(p.id, { limit: 3, includeDetails: false });
+            return [p.id, runs] as [string, PipelineRun[]];
           } catch {
             return [p.id, runsMap[p.id] ?? []] as [string, PipelineRun[]];
           }
@@ -299,8 +300,12 @@ export default function Pipelines() {
       await api.triggerPipeline(pipelineId);
       showToast('Pipeline triggered successfully', 'success');
       // Refresh runs for this pipeline
-      const runs = await api.getPipelineRuns(pipelineId);
-      setRunsMap((prev) => ({ ...prev, [pipelineId]: runs.slice(0, 3) }));
+      const runs = await api.getPipelineRuns(pipelineId, { limit: 3, includeDetails: false });
+      setRunsMap((prev) => ({ ...prev, [pipelineId]: runs }));
+      if (expandedPipelineId === pipelineId) {
+        const detailedRuns = await api.getPipelineRuns(pipelineId, { limit: 12, includeDetails: true });
+        setDetailedRunsMap((prev) => ({ ...prev, [pipelineId]: detailedRuns }));
+      }
     } catch {
       showToast('Failed to trigger pipeline', 'error');
     } finally {
@@ -316,6 +321,7 @@ export default function Pipelines() {
       await api.deletePipeline(pipelineId);
       if (tenantId) await loadPipelines(tenantId, healthFilter);
       setRunsMap((prev) => { const next = { ...prev }; delete next[pipelineId]; return next; });
+      setDetailedRunsMap((prev) => { const next = { ...prev }; delete next[pipelineId]; return next; });
       setConfirmDeleteId(null);
       showToast('Pipeline deleted', 'success');
     } catch {
@@ -1379,9 +1385,18 @@ export default function Pipelines() {
                     ) : (
                       <>
                         <button
-                          onClick={(e) => {
+                          onClick={async (e) => {
                             e.preventDefault();
-                            setExpandedPipelineId((prev) => (prev === pipeline.id ? null : pipeline.id));
+                            const nextExpandedId = expandedPipelineId === pipeline.id ? null : pipeline.id;
+                            setExpandedPipelineId(nextExpandedId);
+                            if (nextExpandedId === pipeline.id && !detailedRunsMap[pipeline.id]) {
+                              try {
+                                const detailedRuns = await api.getPipelineRuns(pipeline.id, { limit: 12, includeDetails: true });
+                                setDetailedRunsMap((prev) => ({ ...prev, [pipeline.id]: detailedRuns }));
+                              } catch {
+                                // keep lightweight runs if detailed fetch fails
+                              }
+                            }
                             if (!selectedRunIdByPipeline[pipeline.id] && runs[0]?.id) {
                               setSelectedRunIdByPipeline((prev) => ({ ...prev, [pipeline.id]: runs[0].id }));
                             }
@@ -1444,12 +1459,15 @@ export default function Pipelines() {
                 {expandedPipelineId === pipeline.id && (
                   <div className="mt-4 rounded border border-gray-200 bg-gray-50 p-3">
                     <div className="text-xs font-semibold text-gray-700 mb-2">Run Details</div>
-                    {runs.length === 0 ? (
+                    {(() => {
+                      const detailRuns = detailedRunsMap[pipeline.id] ?? runs;
+                      return detailRuns.length === 0;
+                    })() ? (
                       <p className="text-sm text-gray-500">No runs available yet.</p>
                     ) : (
                       <>
                         <div className="flex flex-wrap gap-2 mb-3">
-                          {runs.map((run) => (
+                          {(detailedRunsMap[pipeline.id] ?? runs).map((run) => (
                             <button
                               key={run.id}
                               onClick={(e) => {
@@ -1457,7 +1475,7 @@ export default function Pipelines() {
                                 setSelectedRunIdByPipeline((prev) => ({ ...prev, [pipeline.id]: run.id }));
                               }}
                               className={`px-2 py-1 text-xs rounded border ${
-                                (selectedRunIdByPipeline[pipeline.id] ?? runs[0].id) === run.id
+                                (selectedRunIdByPipeline[pipeline.id] ?? (detailedRunsMap[pipeline.id] ?? runs)[0].id) === run.id
                                   ? 'bg-white border-primary-500 text-primary-700'
                                   : 'bg-gray-100 border-gray-300 text-gray-700'
                               }`}
@@ -1468,8 +1486,9 @@ export default function Pipelines() {
                         </div>
 
                         {(() => {
-                          const selectedRunId = selectedRunIdByPipeline[pipeline.id] ?? runs[0].id;
-                          const selectedRun = runs.find((r) => r.id === selectedRunId) ?? runs[0];
+                          const detailRuns = detailedRunsMap[pipeline.id] ?? runs;
+                          const selectedRunId = selectedRunIdByPipeline[pipeline.id] ?? detailRuns[0].id;
+                          const selectedRun = detailRuns.find((r) => r.id === selectedRunId) ?? detailRuns[0];
                           const resultPayload = (selectedRun.metrics?.result as Record<string, unknown> | undefined) ?? selectedRun.metrics;
                           const alertEvaluation = (selectedRun.alertEvaluation as Record<string, unknown> | undefined)
                             ?? (resultPayload?.alertEvaluation as Record<string, unknown> | undefined);

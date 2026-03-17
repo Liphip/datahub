@@ -1,6 +1,10 @@
 package com.dataturntable.api
 
 import com.dataturntable.auth.User
+import com.dataturntable.pipeline.Pipeline
+import com.dataturntable.pipeline.PipelineRun
+import com.dataturntable.pipeline.PipelineRunStatus
+import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.test.TestAuthHelpers
 import io.quarkus.narayana.jta.QuarkusTransaction
 import io.quarkus.test.junit.QuarkusTest
@@ -367,6 +371,60 @@ class PipelineResourceTest {
         .then()
             .statusCode(400)
             .body("error", containsString("contains a cycle"))
+    }
+
+    @Test
+    fun testGetPipelineRunsSupportsLimitAndLightweightMode() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        val pipelineId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("name" to "Runs Lightweight Pipeline", "graphDefinition" to mapOf("nodes" to emptyList<Any>(), "edges" to emptyList<Any>())))
+        .`when`()
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        QuarkusTransaction.requiringNew().run {
+            val pipeline = em.find(Pipeline::class.java, java.util.UUID.fromString(pipelineId))
+            val run = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.SUCCESS
+                this.triggerType = TriggerType.MANUAL
+                this.startedAt = java.time.Instant.now().minusSeconds(5)
+                this.completedAt = java.time.Instant.now()
+                this.metrics = "{\"result\":{\"alertsFired\":1},\"moduleLogs\":[{\"stage\":\"IMPORT\"}],\"executionLog\":[\"start\",\"done\"]}"
+            }
+            em.persist(run)
+            em.flush()
+        }
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/pipelines/$pipelineId/runs?limit=1&includeDetails=false")
+        .then()
+            .statusCode(200)
+            .body("size()", equalTo(1))
+            .body("[0].metrics.size()", equalTo(0))
+            .body("[0].moduleLogs", nullValue())
+            .body("[0].executionLog", nullValue())
     }
 
     @Test
