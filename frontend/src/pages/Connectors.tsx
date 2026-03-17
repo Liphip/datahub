@@ -911,7 +911,18 @@ export default function Connectors() {
                 >
                   {hours === 1 ? '1h' : hours === 24 ? '24h' : '7d'}
                 </button>
-              ))}
+                ))}
+            </div>
+            <div className="mb-3 flex flex-wrap gap-3 text-xs text-gray-700">
+              <span>
+                High risk: <strong>{impactModal.impactedPipelines.filter((p) => p.riskLevel === 'HIGH').length}</strong>
+              </span>
+              <span>
+                Medium risk: <strong>{impactModal.impactedPipelines.filter((p) => p.riskLevel === 'MEDIUM').length}</strong>
+              </span>
+              <span>
+                Low risk: <strong>{impactModal.impactedPipelines.filter((p) => p.riskLevel === 'LOW').length}</strong>
+              </span>
             </div>
             {impactModal.impactedPipelines.length === 0 ? (
               <p className="text-sm text-gray-500">No impacted pipelines found.</p>
@@ -921,6 +932,7 @@ export default function Connectors() {
                   <thead>
                     <tr className="text-left border-b border-gray-200">
                       <th className="py-2 pr-3">Pipeline</th>
+                      <th className="py-2 pr-3">Risk</th>
                       <th className="py-2 pr-3">State</th>
                       <th className="py-2 pr-3">Node refs</th>
                       <th className="py-2 pr-3">Recent health</th>
@@ -934,6 +946,20 @@ export default function Connectors() {
                         <td className="py-2 pr-3">
                           <div className="font-medium text-gray-900">{pipeline.pipelineName}</div>
                           <div className="text-xs text-gray-500">{pipeline.pipelineId}</div>
+                        </td>
+                        <td className="py-2 pr-3">
+                          <div className="flex items-center gap-1">
+                            <span className={`px-2 py-0.5 rounded text-xs ${
+                              pipeline.riskLevel === 'HIGH'
+                                ? 'bg-red-100 text-red-800'
+                                : pipeline.riskLevel === 'MEDIUM'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-emerald-100 text-emerald-800'
+                            }`}>
+                              {pipeline.riskLevel || 'LOW'}
+                            </span>
+                            <span className="text-xs text-gray-500">{pipeline.impactPriorityScore ?? 0}</span>
+                          </div>
                         </td>
                         <td className="py-2 pr-3">
                           <span className={`px-2 py-0.5 rounded text-xs ${pipeline.pipelineIsActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>

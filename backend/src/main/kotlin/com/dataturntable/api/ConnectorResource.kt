@@ -793,6 +793,18 @@ class ConnectorResource {
             val recentSuccess = recentRuns.count { it.status.name == "SUCCESS" }
             val recentInFlight = recentRuns.count { it.status.name == "RUNNING" || it.status.name == "PENDING" }
             val recentSuccessRate = if (recentTotal > 0) recentSuccess.toDouble() / recentTotal else 0.0
+            var impactPriorityScore = 0
+            if (pipeline.isActive) impactPriorityScore += 40
+            if (recentFailed > 0) impactPriorityScore += 25
+            if (latestRun?.status?.name == "FAILED") impactPriorityScore += 15
+            if (recentInFlight > 0) impactPriorityScore += 10
+            if (recentTotal > 0 && recentSuccessRate < 0.5) impactPriorityScore += 15
+            impactPriorityScore += kotlin.math.min(20, entry.value.size * 5)
+            val riskLevel = when {
+                impactPriorityScore >= 70 -> "HIGH"
+                impactPriorityScore >= 40 -> "MEDIUM"
+                else -> "LOW"
+            }
 
             mapOf(
                 "pipelineId" to pipeline.id,
@@ -812,9 +824,14 @@ class ConnectorResource {
                 "recentRuns" to recentTotal,
                 "recentFailedRuns" to recentFailed,
                 "recentInFlightRuns" to recentInFlight,
-                "recentSuccessRate" to recentSuccessRate
+                "recentSuccessRate" to recentSuccessRate,
+                "impactPriorityScore" to impactPriorityScore,
+                "riskLevel" to riskLevel
             )
-        }.sortedBy { (it["pipelineName"] ?: "").toString() }
+        }.sortedWith(
+            compareByDescending<Map<String, Any?>> { (it["impactPriorityScore"] as? Int) ?: 0 }
+                .thenBy { (it["pipelineName"] ?: "").toString() }
+        )
 
         return Response.ok(
             mapOf(

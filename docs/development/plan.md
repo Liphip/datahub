@@ -158,6 +158,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Expanded connector clone ergonomics: clone API now accepts optional `direction` and `description` overrides with validation, and Connectors UI now uses a dedicated clone modal (name/direction/description + keep-secrets toggle) instead of one-click cloning for safer operator control.
 - Added connector impact analysis endpoint/UI: backend now exposes `GET /connectors/{id}/impact` with impacted pipelines and latest run status context, and Connectors UI adds an `Impact` modal to prioritize dependency remediation.
 - Expanded connector impact analysis with time-windowed health: impact endpoint now accepts `sinceHours` (`1|24|168`) and returns recent run stats per impacted pipeline (runs/failed/in-flight/success rate); Connectors impact modal now supports window toggles and displays operational health columns.
+- Added connector impact risk scoring: impact endpoint now computes per-pipeline `impactPriorityScore` + `riskLevel` (`HIGH`/`MEDIUM`/`LOW`) and sorts results by priority; Connectors impact modal now visualizes risk badges/scores and aggregate risk counts for faster triage.
 
 ---
 

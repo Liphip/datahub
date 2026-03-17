@@ -247,6 +247,8 @@ export interface ConnectorImpactSummary {
     recentFailedRuns?: number;
     recentInFlightRuns?: number;
     recentSuccessRate?: number;
+    impactPriorityScore?: number;
+    riskLevel?: 'HIGH' | 'MEDIUM' | 'LOW' | string;
   }>;
 }
 
