@@ -1513,6 +1513,15 @@ export default function Pipelines() {
                                         {moduleLog.durationMs != null && <span>Duration: <strong>{moduleLog.durationMs} ms</strong></span>}
                                         {moduleLog.exitCode != null && <span>Exit: <strong>{moduleLog.exitCode}</strong></span>}
                                       </div>
+                                      {moduleLog.connector && (
+                                        <div className="mb-2 rounded border border-blue-100 bg-blue-50 px-2 py-1 text-[11px] text-blue-900">
+                                          <span className="mr-3">Connector: <strong>{moduleLog.connector.name || moduleLog.connector.id || 'unknown'}</strong></span>
+                                          {moduleLog.connector.connectorType && <span className="mr-3">Type: <strong>{moduleLog.connector.connectorType}</strong></span>}
+                                          {moduleLog.connector.direction && <span className="mr-3">Direction: <strong>{moduleLog.connector.direction}</strong></span>}
+                                          {moduleLog.connector.topic && <span className="mr-3">Topic: <strong>{moduleLog.connector.topic}</strong></span>}
+                                          {moduleLog.connector.username && <span>User: <strong>{moduleLog.connector.username}</strong></span>}
+                                        </div>
+                                      )}
                                       {moduleLog.error && <div className="text-red-700 mb-1">Error: {moduleLog.error}</div>}
                                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                                         <div>

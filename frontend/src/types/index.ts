@@ -113,6 +113,17 @@ export interface PipelineRun {
     exitCode?: number;
     durationMs?: number;
     error?: string;
+    connector?: {
+      id?: string;
+      name?: string;
+      connectorType?: string;
+      direction?: string;
+      broker?: string;
+      topic?: string;
+      username?: string;
+      brokerCredentialId?: string;
+      brokerCredentialName?: string;
+    };
   }>;
   executionLog?: string[];
   metrics: Record<string, unknown>;

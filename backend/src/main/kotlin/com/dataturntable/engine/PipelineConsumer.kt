@@ -6,13 +6,17 @@ import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.alert.AlertDispatcher
+import com.dataturntable.connectors.BrokerCredential
+import com.dataturntable.connectors.Connector
+import com.dataturntable.security.EncryptionUtils
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.smallrye.reactive.messaging.annotations.Blocking
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
 import org.eclipse.microprofile.reactive.messaging.Incoming
-import org.eclipse.microprofile.reactive.messaging.Outgoing
 import org.jboss.logging.Logger
 import java.util.UUID
 
@@ -48,6 +52,94 @@ class PipelineConsumer {
 
     @Inject
     lateinit var alertDispatcher: AlertDispatcher
+
+    @PersistenceContext
+    lateinit var em: EntityManager
+
+    private data class ResolvedConnector(
+        val config: Map<String, Any?>,
+        val summary: Map<String, Any?>
+    )
+
+    private fun parseJsonMap(raw: String?): Map<String, Any?> {
+        if (raw.isNullOrBlank()) return emptyMap()
+        return try {
+            objectMapper.readValue(raw, Map::class.java) as? Map<String, Any?> ?: emptyMap()
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    private fun parseUuid(value: String?): UUID? {
+        if (value.isNullOrBlank()) return null
+        return try {
+            UUID.fromString(value)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun resolveConnectorConfigsByModuleVersion(pipeline: Pipeline): Map<UUID, ResolvedConnector> {
+        val tenantId = pipeline.tenant?.id ?: return emptyMap()
+        val graph = parseJsonMap(pipeline.graphDefinition)
+        val nodes = graph["nodes"] as? List<*> ?: return emptyMap()
+        val resolved = mutableMapOf<UUID, ResolvedConnector>()
+
+        nodes.forEach { node ->
+            val nodeMap = node as? Map<*, *> ?: return@forEach
+            val nodeType = nodeMap["type"]?.toString()?.uppercase() ?: return@forEach
+            if (nodeType != "IMPORT" && nodeType != "EXPORT") return@forEach
+
+            val moduleVersionId = parseUuid(nodeMap["moduleVersionId"]?.toString()) ?: return@forEach
+            val connectorId = parseUuid(nodeMap["connectorId"]?.toString()) ?: return@forEach
+            val connector = em.find(Connector::class.java, connectorId) ?: return@forEach
+            if (connector.tenant?.id != tenantId) return@forEach
+
+            val rawConfig = try {
+                EncryptionUtils.decrypt(connector.config)
+            } catch (_: Exception) {
+                "{}"
+            }
+            val config = parseJsonMap(rawConfig).toMutableMap()
+
+            if (connector.connectorType == Connector.ConnectorType.MQTT) {
+                val brokerCredentialId = parseUuid(config["brokerCredentialId"]?.toString())
+                if (brokerCredentialId != null) {
+                    val credential = em.find(BrokerCredential::class.java, brokerCredentialId)
+                    if (credential != null && credential.tenant?.id == tenantId && credential.isActive) {
+                        config["username"] = credential.username
+                        val password = credential.passwordEncrypted?.let {
+                            try {
+                                EncryptionUtils.decrypt(it)
+                            } catch (_: Exception) {
+                                null
+                            }
+                        }
+                        if (!password.isNullOrBlank()) {
+                            config["password"] = password
+                        }
+                        config["brokerCredentialName"] = credential.name
+                    }
+                }
+            }
+
+            val summary = mapOf(
+                "id" to connector.id?.toString(),
+                "name" to connector.name,
+                "connectorType" to connector.connectorType?.name,
+                "direction" to connector.direction?.name,
+                "broker" to config["broker"],
+                "topic" to config["topic"],
+                "username" to config["username"],
+                "brokerCredentialId" to config["brokerCredentialId"],
+                "brokerCredentialName" to config["brokerCredentialName"]
+            ).filterValues { it != null }
+
+            resolved[moduleVersionId] = ResolvedConnector(config = config, summary = summary)
+        }
+
+        return resolved
+    }
     
     @Incoming("pipeline-input")
     @Blocking
@@ -213,12 +305,14 @@ class PipelineConsumer {
         val results = mutableMapOf<String, Any?>()
         val moduleLogs = mutableListOf<Map<String, Any?>>()
         val executionLog = mutableListOf<String>()
+        val connectorConfigsByVersion = resolveConnectorConfigsByModuleVersion(pipeline)
         
         var data = inputData
         
         pipeline.importModuleVersionId?.let { importId ->
             val importVersion = ModuleVersion.findById(importId)
             if (importVersion != null) {
+                val connectorContext = importVersion.id?.let { connectorConfigsByVersion[it] }
                 LOG.infof("Executing import module: %s", importVersion.module?.name)
                 executionLog.add("START IMPORT ${importVersion.module?.name ?: importVersion.id}")
                 try {
@@ -227,7 +321,8 @@ class PipelineConsumer {
                         data,
                         pipeline.id.toString(),
                         runId,
-                        ModuleType.IMPORT
+                        ModuleType.IMPORT,
+                        connectorContext?.config
                     )
                     val importResult = importOutput.result
                     results["import"] = importResult
@@ -239,7 +334,8 @@ class PipelineConsumer {
                         "stdout" to trimLog(importOutput.stdout),
                         "stderr" to trimLog(importOutput.stderr),
                         "exitCode" to importOutput.exitCode,
-                        "durationMs" to importOutput.durationMs
+                        "durationMs" to importOutput.durationMs,
+                        "connector" to connectorContext?.summary
                     ))
                     executionLog.add("DONE IMPORT ${importVersion.module?.name ?: importVersion.id} (${importOutput.durationMs}ms)")
                     if (importResult is Map<*, *>) {
@@ -255,7 +351,8 @@ class PipelineConsumer {
                         "stdout" to trimLog(e.stdout),
                         "stderr" to trimLog(e.stderr),
                         "exitCode" to e.exitCode,
-                        "error" to e.message
+                        "error" to e.message,
+                        "connector" to connectorContext?.summary
                     ))
                     executionLog.add("FAIL IMPORT ${importVersion.module?.name ?: importVersion.id}: ${e.message}")
                     throw e
@@ -315,6 +412,7 @@ class PipelineConsumer {
         pipeline.exportModuleVersionIds.forEachIndexed { index, exportId ->
             val exportVersion = ModuleVersion.findById(exportId)
             if (exportVersion != null && data != null) {
+                val connectorContext = exportVersion.id?.let { connectorConfigsByVersion[it] }
                 LOG.infof("Executing export module %d: %s", index + 1, exportVersion.module?.name)
                 executionLog.add("START EXPORT #${index + 1} ${exportVersion.module?.name ?: exportVersion.id}")
                 try {
@@ -323,7 +421,8 @@ class PipelineConsumer {
                         data,
                         pipeline.id.toString(),
                         runId,
-                        ModuleType.EXPORT
+                        ModuleType.EXPORT,
+                        connectorContext?.config
                     )
                     val exportResult = exportOutput.result
                     results["export_${index + 1}"] = exportResult
@@ -336,7 +435,8 @@ class PipelineConsumer {
                         "stdout" to trimLog(exportOutput.stdout),
                         "stderr" to trimLog(exportOutput.stderr),
                         "exitCode" to exportOutput.exitCode,
-                        "durationMs" to exportOutput.durationMs
+                        "durationMs" to exportOutput.durationMs,
+                        "connector" to connectorContext?.summary
                     ))
                     executionLog.add("DONE EXPORT #${index + 1} ${exportVersion.module?.name ?: exportVersion.id} (${exportOutput.durationMs}ms)")
                 } catch (e: ModuleExecutionException) {
@@ -349,7 +449,8 @@ class PipelineConsumer {
                         "stdout" to trimLog(e.stdout),
                         "stderr" to trimLog(e.stderr),
                         "exitCode" to e.exitCode,
-                        "error" to e.message
+                        "error" to e.message,
+                        "connector" to connectorContext?.summary
                     ))
                     executionLog.add("FAIL EXPORT #${index + 1} ${exportVersion.module?.name ?: exportVersion.id}: ${e.message}")
                     throw e

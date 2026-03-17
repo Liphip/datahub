@@ -2,7 +2,6 @@ package com.dataturntable.engine
 
 import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
-import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
 import org.eclipse.microprofile.config.inject.ConfigProperty
@@ -64,7 +63,8 @@ class DockerService {
         inputData: Any?,
         pipelineId: String,
         runId: String,
-        moduleType: ModuleType
+        moduleType: ModuleType,
+        connectorConfig: Map<String, Any?>? = null
     ): ModuleExecutionOutput {
         val containerName = "dt-${pipelineId}-${runId}-${moduleType.name.lowercase()}-${UUID.randomUUID()}"
         
@@ -79,7 +79,8 @@ class DockerService {
                 code = code,
                 requirements = requirements,
                 inputData = inputData,
-                moduleType = moduleType
+                moduleType = moduleType,
+                connectorConfig = connectorConfig
             )
             
             cleanupContainer(containerName)
@@ -128,7 +129,8 @@ class DockerService {
         code: String,
         requirements: String,
         inputData: Any?,
-        moduleType: ModuleType
+        moduleType: ModuleType,
+        connectorConfig: Map<String, Any?>?
     ): RawContainerResult {
         val scriptContent = buildModuleScript(code, moduleType)
         
@@ -158,6 +160,11 @@ class DockerService {
         inputData?.let {
             dockerArgs.add("-e")
             dockerArgs.add("INPUT_DATA=${it.toString()}")
+        }
+
+        connectorConfig?.takeIf { it.isNotEmpty() }?.let {
+            dockerArgs.add("-e")
+            dockerArgs.add("CONNECTOR_CONFIG=${objectMapper.writeValueAsString(it)}")
         }
         
         dockerArgs.add(baseImage)
@@ -233,6 +240,7 @@ class DockerService {
         val helperCode = """
             |import json
             |import os
+            |import inspect
             |
             |def alert_fn(severity='info', message='', payload=None):
             |    # Placeholder: platform should intercept this output and handle alert dispatch.
@@ -241,6 +249,23 @@ class DockerService {
             |def query_fn(query):
             |    # Placeholder for querying platform stored data
             |    return {}
+            |
+            |def _connector_data():
+            |    try:
+            |        return json.loads(os.environ.get('CONNECTOR_CONFIG', '{}'))
+            |    except Exception:
+            |        return {}
+            |
+            |def _supports_args(fn, count):
+            |    try:
+            |        sig = inspect.signature(fn)
+            |        params = [p for p in sig.parameters.values() if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+            |        has_varargs = any(p.kind == p.VAR_POSITIONAL for p in sig.parameters.values())
+            |        if has_varargs:
+            |            return True
+            |        return len(params) >= count
+            |    except Exception:
+            |        return False
         """.trimMargin()
         
         val script = when (moduleType) {
@@ -248,8 +273,13 @@ class DockerService {
                 |import sys
                 |import json
                 |$helperCode
+                |connector_data = _connector_data()
                 |$code
-                |result = fetch() if 'fetch' in dir() else {}
+                |if 'connect' in dir() and callable(connect):
+                |    connect(connector_data) if _supports_args(connect, 1) else connect()
+                |result = {}
+                |if 'fetch' in dir() and callable(fetch):
+                |    result = fetch(connector_data) if _supports_args(fetch, 1) else fetch()
                 |print(json.dumps(result))
             """.trimMargin()
             
@@ -258,8 +288,16 @@ class DockerService {
                 |import json
                 |$helperCode
                 |input_data = json.loads(__import__('os').environ.get('INPUT_DATA', '{}'))
+                |connector_data = _connector_data()
                 |$code
-                |result = process(input_data) if 'process' in dir() else input_data
+                |result = input_data
+                |if 'process' in dir() and callable(process):
+                |    if _supports_args(process, 2):
+                |        result = process(input_data, connector_data)
+                |    elif _supports_args(process, 1):
+                |        result = process(input_data)
+                |    else:
+                |        result = process()
                 |print(json.dumps(result))
             """.trimMargin()
             
@@ -268,8 +306,16 @@ class DockerService {
                 |import json
                 |$helperCode
                 |input_data = json.loads(__import__('os').environ.get('INPUT_DATA', '{}'))
+                |connector_data = _connector_data()
                 |$code
-                |result = evaluate(input_data) if 'evaluate' in dir() else False
+                |result = False
+                |if 'evaluate' in dir() and callable(evaluate):
+                |    if _supports_args(evaluate, 2):
+                |        result = evaluate(input_data, connector_data)
+                |    elif _supports_args(evaluate, 1):
+                |        result = evaluate(input_data)
+                |    else:
+                |        result = evaluate()
                 |print(json.dumps({"alert_fired": result}))
             """.trimMargin()
             
@@ -278,8 +324,19 @@ class DockerService {
                 |import json
                 |$helperCode
                 |input_data = json.loads(__import__('os').environ.get('INPUT_DATA', '{}'))
+                |connector_data = _connector_data()
                 |$code
-                |send(input_data) if 'send' in dir() else None
+                |if 'connect' in dir() and callable(connect):
+                |    connect(connector_data) if _supports_args(connect, 1) else connect()
+                |if 'send' in dir() and callable(send):
+                |    if _supports_args(send, 2):
+                |        send(input_data, connector_data)
+                |    elif _supports_args(send, 1):
+                |        send(input_data)
+                |    else:
+                |        send()
+                |if 'disconnect' in dir() and callable(disconnect):
+                |    disconnect()
                 |print(json.dumps({"status": "sent"}))
             """.trimMargin()
         }
