@@ -1152,13 +1152,13 @@ class PipelineResource {
             return Response.status(404).entity(mapOf("error" to "Run not found for this pipeline")).build()
         }
 
-        fun runSummary(item: PipelineRun): Map<String, Any?> {
+        fun runSummary(item: PipelineRun, lineageDepth: Int? = null): Map<String, Any?> {
             val durationMs = if (item.completedAt != null) {
                 java.time.Duration.between(item.startedAt, item.completedAt).toMillis()
             } else {
                 null
             }
-            return mapOf(
+            val summary = mapOf(
                 "id" to item.id,
                 "status" to item.status.name,
                 "triggerType" to item.triggerType.name,
@@ -1168,25 +1168,29 @@ class PipelineResource {
                 "durationMs" to durationMs,
                 "errorMessage" to item.errorMessage
             )
+            return if (lineageDepth == null) summary else summary + mapOf("lineageDepth" to lineageDepth)
         }
 
         val ancestors = mutableListOf<Map<String, Any?>>()
         var currentRetryId = run.retryOfRunId
+        var ancestorDepth = -1
         var guard = 0
         while (currentRetryId != null && guard < 20) {
             val ancestor = em.find(PipelineRun::class.java, currentRetryId) ?: break
             if (ancestor.pipeline?.id != pipeline.id) break
-            ancestors.add(runSummary(ancestor))
+            ancestors.add(runSummary(ancestor, ancestorDepth))
             currentRetryId = ancestor.retryOfRunId
+            ancestorDepth -= 1
             guard += 1
         }
 
         val descendants = mutableListOf<Map<String, Any?>>()
-        val queue = ArrayDeque<UUID>()
-        run.id?.let { queue.add(it) }
+        var latestDescendant: PipelineRun? = null
+        val queue = ArrayDeque<Pair<UUID, Int>>()
+        run.id?.let { queue.add(it to 0) }
         var visited = 0
         while (queue.isNotEmpty() && visited < 100) {
-            val parentId = queue.removeFirst()
+            val (parentId, parentDepth) = queue.removeFirst()
             val children = em.createQuery(
                 "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId AND r.retryOfRunId = :retryOf ORDER BY r.startedAt ASC",
                 PipelineRun::class.java
@@ -1195,17 +1199,25 @@ class PipelineResource {
                 .setParameter("retryOf", parentId)
                 .resultList
             children.forEach { child ->
-                descendants.add(runSummary(child))
-                child.id?.let { queue.add(it) }
+                descendants.add(runSummary(child, parentDepth + 1))
+                if (latestDescendant == null || child.startedAt.isAfter(latestDescendant!!.startedAt)) {
+                    latestDescendant = child
+                }
+                child.id?.let { queue.add(it to (parentDepth + 1)) }
             }
             visited += 1
         }
+
+        val rootRunId = ancestors.lastOrNull()?.get("id") ?: run.id
+        val latestDescendantRunId = latestDescendant?.id
 
         return Response.ok(
             mapOf(
                 "run" to runSummary(run),
                 "ancestors" to ancestors,
-                "descendants" to descendants
+                "descendants" to descendants,
+                "rootRunId" to rootRunId,
+                "latestDescendantRunId" to latestDescendantRunId
             )
         ).build()
     }

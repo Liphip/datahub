@@ -760,9 +760,13 @@ class PipelineResourceTest {
         .then()
             .statusCode(200)
             .body("run.id", equalTo(ids["retry"]))
+            .body("rootRunId", equalTo(ids["root"]))
+            .body("latestDescendantRunId", equalTo(ids["retryChild"]))
             .body("ancestors.size()", equalTo(1))
             .body("ancestors[0].id", equalTo(ids["root"]))
+            .body("ancestors[0].lineageDepth", equalTo(-1))
             .body("descendants.size()", equalTo(1))
+            .body("descendants[0].lineageDepth", equalTo(1))
             .body("descendants[0].id", equalTo(ids["retryChild"]))
     }
 

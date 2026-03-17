@@ -1895,6 +1895,50 @@ export default function Pipelines() {
                                   <div className="mb-1">
                                     Ancestors: {lineageByRunId[selectedRun.id].ancestors.length} · Descendants: {lineageByRunId[selectedRun.id].descendants.length}
                                   </div>
+                                  <div className="mb-2 flex flex-wrap gap-2">
+                                    {lineageByRunId[selectedRun.id].rootRunId && (
+                                      <button
+                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          const rootId = lineageByRunId[selectedRun.id].rootRunId;
+                                          if (!rootId) return;
+                                          const rootRun = lineageByRunId[selectedRun.id].ancestors.find((item) => item.id === rootId);
+                                          if (rootRun) {
+                                            setDetailedRunsMap((prev) => {
+                                              const existing = prev[pipeline.id] ?? [];
+                                              if (existing.some((item) => item.id === rootRun.id)) return prev;
+                                              return { ...prev, [pipeline.id]: [{ ...rootRun, metrics: rootRun.metrics ?? {} }, ...existing] };
+                                            });
+                                          }
+                                          setSelectedRunIdByPipeline((prev) => ({ ...prev, [pipeline.id]: rootId }));
+                                        }}
+                                      >
+                                        Go to root
+                                      </button>
+                                    )}
+                                    {lineageByRunId[selectedRun.id].latestDescendantRunId && (
+                                      <button
+                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          const latestId = lineageByRunId[selectedRun.id].latestDescendantRunId;
+                                          if (!latestId) return;
+                                          const latestRun = lineageByRunId[selectedRun.id].descendants.find((item) => item.id === latestId);
+                                          if (latestRun) {
+                                            setDetailedRunsMap((prev) => {
+                                              const existing = prev[pipeline.id] ?? [];
+                                              if (existing.some((item) => item.id === latestRun.id)) return prev;
+                                              return { ...prev, [pipeline.id]: [{ ...latestRun, metrics: latestRun.metrics ?? {} }, ...existing] };
+                                            });
+                                          }
+                                          setSelectedRunIdByPipeline((prev) => ({ ...prev, [pipeline.id]: latestId }));
+                                        }}
+                                      >
+                                        Go to latest retry
+                                      </button>
+                                    )}
+                                  </div>
                                   <div className="flex flex-wrap gap-2">
                                     {lineageByRunId[selectedRun.id].ancestors.map((run) => (
                                       <button
@@ -1910,7 +1954,7 @@ export default function Pipelines() {
                                         }}
                                         className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
                                       >
-                                        Ancestor {run.id.slice(0, 6)}
+                                        Ancestor {run.id.slice(0, 6)} (d{run.lineageDepth ?? -1})
                                       </button>
                                     ))}
                                     {lineageByRunId[selectedRun.id].descendants.map((run) => (
@@ -1927,7 +1971,7 @@ export default function Pipelines() {
                                         }}
                                         className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
                                       >
-                                        Descendant {run.id.slice(0, 6)}
+                                        Descendant {run.id.slice(0, 6)} (+{run.lineageDepth ?? 1})
                                       </button>
                                     ))}
                                   </div>

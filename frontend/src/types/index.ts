@@ -95,6 +95,7 @@ export interface PipelineRun {
   id: string;
   pipelineId?: string;
   retryOfRunId?: string;
+  lineageDepth?: number;
   status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
   triggerType: 'MANUAL' | 'SCHEDULED' | 'EVENT' | 'DATA';
   startedAt: string;
@@ -160,6 +161,8 @@ export interface PipelineRunLineage {
   run: PipelineRun;
   ancestors: PipelineRun[];
   descendants: PipelineRun[];
+  rootRunId?: string;
+  latestDescendantRunId?: string;
 }
 
 export interface AlertChannel {
