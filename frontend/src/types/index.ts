@@ -92,7 +92,10 @@ export interface PipelineRun {
   triggerType: 'MANUAL' | 'SCHEDULED' | 'EVENT' | 'DATA';
   startedAt: string;
   completedAt?: string;
+  durationMs?: number;
   errorMessage?: string;
+  alertsFired?: number;
+  alertEvaluation?: Record<string, unknown>;
   metrics: Record<string, unknown>;
 }
 

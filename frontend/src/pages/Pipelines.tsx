@@ -19,6 +19,8 @@ export default function Pipelines() {
   const [triggeringId, setTriggeringId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [expandedPipelineId, setExpandedPipelineId] = useState<string | null>(null);
+  const [selectedRunIdByPipeline, setSelectedRunIdByPipeline] = useState<Record<string, string>>({});
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [error, setError] = useState('');
 
@@ -169,6 +171,11 @@ export default function Pipelines() {
     return null;
   };
 
+  const formatRunTime = (value?: string) => {
+    if (!value) return '-';
+    return new Date(value).toLocaleString();
+  };
+
   return (
     <div className="px-4 py-6 sm:px-0">
       {/* Toast */}
@@ -255,6 +262,18 @@ export default function Pipelines() {
                     ) : (
                       <>
                         <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setExpandedPipelineId((prev) => (prev === pipeline.id ? null : pipeline.id));
+                            if (!selectedRunIdByPipeline[pipeline.id] && runs[0]?.id) {
+                              setSelectedRunIdByPipeline((prev) => ({ ...prev, [pipeline.id]: runs[0].id }));
+                            }
+                          }}
+                          className="text-sm text-gray-600 hover:text-gray-800"
+                        >
+                          {expandedPipelineId === pipeline.id ? 'Hide Details' : 'Details'}
+                        </button>
+                        <button
                           onClick={(e) => handleRunPipeline(pipeline.id, e)}
                           disabled={isTriggering}
                           className="btn-primary text-sm"
@@ -300,6 +319,68 @@ export default function Pipelines() {
                     )}
                     {getRunMetricNumber(runs[0], 'executionMs') != null && (
                       <span className="text-xs text-gray-500">{getRunMetricNumber(runs[0], 'executionMs')} ms</span>
+                    )}
+                  </div>
+                )}
+
+                {expandedPipelineId === pipeline.id && (
+                  <div className="mt-4 rounded border border-gray-200 bg-gray-50 p-3">
+                    <div className="text-xs font-semibold text-gray-700 mb-2">Run Details</div>
+                    {runs.length === 0 ? (
+                      <p className="text-sm text-gray-500">No runs available yet.</p>
+                    ) : (
+                      <>
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          {runs.map((run) => (
+                            <button
+                              key={run.id}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setSelectedRunIdByPipeline((prev) => ({ ...prev, [pipeline.id]: run.id }));
+                              }}
+                              className={`px-2 py-1 text-xs rounded border ${
+                                (selectedRunIdByPipeline[pipeline.id] ?? runs[0].id) === run.id
+                                  ? 'bg-white border-primary-500 text-primary-700'
+                                  : 'bg-gray-100 border-gray-300 text-gray-700'
+                              }`}
+                            >
+                              {run.status} - {new Date(run.startedAt).toLocaleTimeString()}
+                            </button>
+                          ))}
+                        </div>
+
+                        {(() => {
+                          const selectedRunId = selectedRunIdByPipeline[pipeline.id] ?? runs[0].id;
+                          const selectedRun = runs.find((r) => r.id === selectedRunId) ?? runs[0];
+                          const resultPayload = (selectedRun.metrics?.result as Record<string, unknown> | undefined) ?? selectedRun.metrics;
+                          const alertEvaluation = (selectedRun.alertEvaluation as Record<string, unknown> | undefined)
+                            ?? (resultPayload?.alertEvaluation as Record<string, unknown> | undefined);
+                          return (
+                            <div className="text-xs text-gray-700 space-y-2">
+                              <div className="flex flex-wrap gap-4">
+                                <span>Status: <strong>{selectedRun.status}</strong></span>
+                                <span>Trigger: <strong>{selectedRun.triggerType}</strong></span>
+                                <span>Started: <strong>{formatRunTime(selectedRun.startedAt)}</strong></span>
+                                <span>Duration: <strong>{selectedRun.durationMs != null ? `${selectedRun.durationMs} ms` : '-'}</strong></span>
+                              </div>
+                              {alertEvaluation && (
+                                <div className="flex flex-wrap gap-4 text-amber-800">
+                                  <span>Rules: <strong>{String(alertEvaluation.evaluatedRules ?? 0)}</strong></span>
+                                  <span>Matched: <strong>{String(alertEvaluation.matchedRules ?? 0)}</strong></span>
+                                  <span>Alerts: <strong>{String(alertEvaluation.firedAlerts ?? selectedRun.alertsFired ?? 0)}</strong></span>
+                                  <span>Cooldown: <strong>{String(alertEvaluation.cooldownSkipped ?? 0)}</strong></span>
+                                </div>
+                              )}
+                              {selectedRun.errorMessage && (
+                                <div className="text-red-700">Error: {selectedRun.errorMessage}</div>
+                              )}
+                              <pre className="mt-2 max-h-40 overflow-auto rounded bg-white border border-gray-200 p-2 text-[11px] text-gray-700">
+                                {JSON.stringify(resultPayload, null, 2)}
+                              </pre>
+                            </div>
+                          );
+                        })()}
+                      </>
                     )}
                   </div>
                 )}

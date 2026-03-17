@@ -245,11 +245,17 @@ class PipelineResource {
     @GET
     @Path("/{id}/runs")
     fun getRuns(@PathParam("id") id: String): Response {
+        val pipelineId = try {
+            UUID.fromString(id)
+        } catch (_: Exception) {
+            return Response.status(400).entity(mapOf("error" to "Invalid pipeline id")).build()
+        }
+
         val runs = em.createQuery(
             "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId ORDER BY r.startedAt DESC",
             PipelineRun::class.java
         )
-            .setParameter("pipelineId", UUID.fromString(id))
+            .setParameter("pipelineId", pipelineId)
             .resultList
         return Response.ok(
             runs.map {
@@ -259,14 +265,30 @@ class PipelineResource {
                 } catch (_: Exception) {
                     mapOf("raw" to it.metrics)
                 }
+                val durationMs = if (it.completedAt != null) {
+                    java.time.Duration.between(it.startedAt, it.completedAt).toMillis()
+                } else {
+                    null
+                }
+
+                val result = metrics["result"] as? Map<*, *>
+                val alertEvaluation = result?.get("alertEvaluation")
+                val alertsFired = when (val value = result?.get("alertsFired")) {
+                    is Number -> value.toInt()
+                    else -> null
+                }
+
                 mapOf(
                     "id" to it.id,
                     "status" to it.status.name,
                     "triggerType" to it.triggerType.name,
                     "startedAt" to it.startedAt,
                     "completedAt" to it.completedAt,
+                    "durationMs" to durationMs,
                     "errorMessage" to it.errorMessage,
-                    "metrics" to metrics
+                    "metrics" to metrics,
+                    "alertEvaluation" to alertEvaluation,
+                    "alertsFired" to alertsFired
                 )
             }
         ).build()
