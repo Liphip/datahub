@@ -5,6 +5,8 @@ import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.connectors.Connector
 import com.dataturntable.engine.PipelineConsumer
+import com.dataturntable.module.ModuleType
+import com.dataturntable.module.ModuleVersion
 import com.dataturntable.auth.User
 import com.dataturntable.security.SecurityUtils
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -69,10 +71,39 @@ class PipelineResource {
     private fun validateGraphDefinition(tenantId: UUID, graphDefinition: Any?): String? {
         if (graphDefinition !is Map<*, *>) return null
         val nodes = graphDefinition["nodes"] as? List<*> ?: return null
+        val nodeIds = mutableSetOf<String>()
         for (node in nodes) {
             val nodeMap = node as? Map<*, *> ?: continue
             val nodeId = nodeMap["id"]?.toString() ?: "unknown-node"
+            nodeIds.add(nodeId)
             val nodeType = (nodeMap["type"] as? String)?.uppercase() ?: continue
+            if (nodeType !in setOf("IMPORT", "PROCESSING", "ALERT", "EXPORT")) {
+                return "Node $nodeId has unsupported type: $nodeType"
+            }
+
+            val moduleVersionId = nodeMap["moduleVersionId"] as? String
+                ?: return "Node $nodeId ($nodeType) requires moduleVersionId"
+            val moduleVersionUuid = try {
+                UUID.fromString(moduleVersionId)
+            } catch (_: Exception) {
+                return "Node $nodeId has invalid moduleVersionId: $moduleVersionId"
+            }
+            val moduleVersion = em.find(ModuleVersion::class.java, moduleVersionUuid)
+                ?: return "Node $nodeId references missing module version: $moduleVersionId"
+            val module = moduleVersion.module
+                ?: return "Node $nodeId references module version without module"
+            if (module.tenant?.id != tenantId) {
+                return "Node $nodeId references module from another tenant"
+            }
+            val expectedType = try {
+                ModuleType.valueOf(nodeType)
+            } catch (_: Exception) {
+                null
+            }
+            if (expectedType != null && module.moduleType != expectedType) {
+                return "Node $nodeId expects $nodeType module version, found ${module.moduleType?.name ?: "unknown"}"
+            }
+
             if (nodeType != "IMPORT" && nodeType != "EXPORT") continue
 
             val connectorId = nodeMap["connectorId"] as? String
@@ -97,6 +128,17 @@ class PipelineResource {
                 return "Node $nodeId requires OUTPUT/BOTH connector direction (found $direction)"
             }
         }
+
+        val edges = graphDefinition["edges"] as? List<*> ?: emptyList<Any>()
+        for (edge in edges) {
+            val edgeMap = edge as? Map<*, *> ?: continue
+            val fromId = edgeMap["from"]?.toString() ?: continue
+            val toId = edgeMap["to"]?.toString() ?: continue
+            if (fromId !in nodeIds || toId !in nodeIds) {
+                return "Edge $fromId -> $toId references unknown node"
+            }
+        }
+
         return null
     }
 

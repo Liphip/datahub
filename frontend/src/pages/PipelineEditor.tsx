@@ -124,17 +124,34 @@ export default function PipelineEditor() {
       const processingVersionIds = processingModuleIds.filter(Boolean);
       const alertVersionIds = alertModuleIds.filter(Boolean);
       const exportVersionIds = exportModuleIds.filter(Boolean);
+      const availableVersionIds = new Set(moduleVersionOptions.map((option) => option.id));
 
       if (!importVersionId) {
         showToast('Select an import module version before saving', 'error');
+        return;
+      }
+      if (!availableVersionIds.has(importVersionId)) {
+        showToast('Selected import module version is no longer available. Reload and choose another version.', 'error');
         return;
       }
       if (processingVersionIds.length === 0) {
         showToast('Add at least one processing module version', 'error');
         return;
       }
+      if (processingVersionIds.some((id) => !availableVersionIds.has(id))) {
+        showToast('One or more selected processing module versions are no longer available.', 'error');
+        return;
+      }
+      if (alertVersionIds.some((id) => !availableVersionIds.has(id))) {
+        showToast('One or more selected alert module versions are no longer available.', 'error');
+        return;
+      }
       if (exportVersionIds.length === 0) {
         showToast('Add at least one export module version', 'error');
+        return;
+      }
+      if (exportVersionIds.some((id) => !availableVersionIds.has(id))) {
+        showToast('One or more selected export module versions are no longer available.', 'error');
         return;
       }
       if (!importConnectorId) {
@@ -144,6 +161,10 @@ export default function PipelineEditor() {
       const missingExportConnectorIndex = exportVersionIds.findIndex((_, index) => !(exportConnectorIds[index] || '').trim());
       if (missingExportConnectorIndex >= 0) {
         showToast(`Select an output connector for export module #${missingExportConnectorIndex + 1}`, 'error');
+        return;
+      }
+      if (new Set(exportConnectorIds.filter(Boolean)).size !== exportConnectorIds.filter(Boolean).length) {
+        showToast('Each export module should use a distinct connector to avoid duplicate deliveries.', 'error');
         return;
       }
 

@@ -138,6 +138,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Improved MQTT broker credential usage visibility: credential list API now returns `referenceCount`, Connectors UI uses backend-provided counts, and connector create/update/delete flows refresh credential usage to keep delete guardrails accurate.
 - Hardened MQTT connector secret handling when broker credentials are bound: backend strips inline `username`/`password` from connector config if `brokerCredentialId` is set, and the Connectors form now auto-clears/disables those fields to prevent conflicting auth sources.
 - Expanded pipeline editor and engine support for ALERT module nodes: UI now lets users add/remove alert module versions in pipeline graphs, graph save/load preserves ALERT nodes, and pipeline execution runs graph-defined ALERT modules with module-level logs in run observability.
+- Hardened graph contract validation end-to-end: backend `PipelineResource` now validates graph node module-version existence/tenant ownership/type alignment (`IMPORT/PROCESSING/ALERT/EXPORT`) plus edge node references, while `PipelineEditor` pre-validates stale module-version selections and duplicate export-connector assignments before save.
 
 ---
 

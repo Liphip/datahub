@@ -49,6 +49,40 @@ class PipelineResourceTest {
             .jsonPath()
             .getString("token")
     }
+
+    private fun createModuleVersion(token: String, tenantId: String, type: String, namePrefix: String): String {
+        val moduleId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(
+                mapOf(
+                    "name" to "$namePrefix-${java.util.UUID.randomUUID()}",
+                    "moduleType" to type,
+                    "tenantId" to tenantId
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/modules")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        return given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("code" to "def process(data):\n    return data"))
+        .`when`()
+            .post("/api/internal/v1/modules/$moduleId/versions")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+    }
     
     @Test
     fun testListPipelinesRequiresAuth() {
@@ -136,7 +170,7 @@ class PipelineResourceTest {
                 mapOf(
                     "id" to "n1",
                     "type" to "IMPORT",
-                    "moduleVersionId" to "00000000-0000-0000-0000-000000000001",
+                    "moduleVersionId" to createModuleVersion(token, tenantId, "IMPORT", "Import Direction Validation"),
                     "connectorId" to connectorId
                 )
             ),
@@ -191,9 +225,14 @@ class PipelineResourceTest {
 
         val graphDefinition = mapOf(
             "nodes" to listOf(
-                mapOf("id" to "n1", "type" to "IMPORT", "moduleVersionId" to "00000000-0000-0000-0000-000000000001", "connectorId" to connectorId),
-                mapOf("id" to "n2", "type" to "PROCESSING", "moduleVersionId" to "00000000-0000-0000-0000-000000000002"),
-                mapOf("id" to "n3", "type" to "ALERT", "moduleVersionId" to "00000000-0000-0000-0000-000000000003")
+                mapOf(
+                    "id" to "n1",
+                    "type" to "IMPORT",
+                    "moduleVersionId" to createModuleVersion(token, tenantId, "IMPORT", "Import Module"),
+                    "connectorId" to connectorId
+                ),
+                mapOf("id" to "n2", "type" to "PROCESSING", "moduleVersionId" to createModuleVersion(token, tenantId, "PROCESSING", "Processing Module")),
+                mapOf("id" to "n3", "type" to "ALERT", "moduleVersionId" to createModuleVersion(token, tenantId, "ALERT", "Alert Module"))
             ),
             "edges" to listOf(
                 mapOf("from" to "n1", "to" to "n2"),
@@ -210,6 +249,64 @@ class PipelineResourceTest {
         .then()
             .statusCode(201)
             .body("graphDefinition.nodes.size()", equalTo(3))
+    }
+
+    @Test
+    fun testCreatePipelineRejectsNodeModuleTypeMismatch() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        val processingVersionId = createModuleVersion(token, tenantId, "PROCESSING", "Mismatch Module")
+
+        val graphDefinition = mapOf(
+            "nodes" to listOf(
+                mapOf(
+                    "id" to "n-export",
+                    "type" to "EXPORT",
+                    "moduleVersionId" to processingVersionId,
+                    "connectorId" to given()
+                        .header("Authorization", "Bearer $token")
+                        .contentType("application/json")
+                        .body(
+                            mapOf(
+                                "name" to "Output Connector",
+                                "connectorType" to "MQTT",
+                                "direction" to "OUTPUT",
+                                "config" to mapOf("topic" to "dt/mismatch/out")
+                            )
+                        )
+                    .`when`()
+                        .post("/api/internal/v1/connectors?tenantId=$tenantId")
+                    .then()
+                        .statusCode(201)
+                        .extract()
+                        .body()
+                        .jsonPath()
+                        .getString("id")
+                )
+            ),
+            "edges" to emptyList<Any>()
+        )
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("name" to "Type Mismatch Pipeline", "graphDefinition" to graphDefinition))
+        .`when`()
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId")
+        .then()
+            .statusCode(400)
+            .body("error", containsString("expects EXPORT module version"))
     }
 
     @Test
