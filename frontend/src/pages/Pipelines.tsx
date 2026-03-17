@@ -91,6 +91,8 @@ export default function Pipelines() {
   const [tenantDefaultsStaleLatest, setTenantDefaultsStaleLatest] = useState<TenantLineageDefaults | null>(null);
   const [tenantDefaultsPollStatus, setTenantDefaultsPollStatus] = useState<TenantDefaultsPollStatus>('IDLE');
   const [tenantDefaultsPollCheckedAt, setTenantDefaultsPollCheckedAt] = useState<string | null>(null);
+  const [checkingTenantDefaultsNow, setCheckingTenantDefaultsNow] = useState(false);
+  const [tenantDefaultsPollCooldownUntil, setTenantDefaultsPollCooldownUntil] = useState<number>(0);
   const [tenantDefaultsConflictTelemetry, setTenantDefaultsConflictTelemetry] = useState<TenantDefaultsConflictTelemetry>(() => {
     try {
       const raw = localStorage.getItem(TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY);
@@ -263,6 +265,30 @@ export default function Pipelines() {
     return { pipelineId, runId, pending, latest, mergeChoice };
   };
 
+  const runTenantDefaultsPollCheck = async () => {
+    if (!tenantId) return;
+    try {
+      const latestResponse = await api.getTenantLineageDefaultsIfChanged(tenantId, tenantLineageDefaultsEtag);
+      if (!latestResponse.notModified && latestResponse.data) {
+        setTenantLineageDefaultsEtag(latestResponse.etag);
+        const latest = latestResponse.data;
+        if (latest.version && tenantLineageDefaults.version && latest.version !== tenantLineageDefaults.version) {
+          setTenantDefaultsStaleLatest(latest);
+          setTenantDefaultsPollStatus('STALE');
+        } else {
+          setTenantDefaultsStaleLatest(null);
+          setTenantDefaultsPollStatus('FRESH');
+        }
+      } else if (latestResponse.notModified) {
+        setTenantDefaultsPollStatus((prev) => (prev === 'STALE' ? 'STALE' : 'FRESH'));
+      }
+      setTenantDefaultsPollCheckedAt(new Date().toISOString());
+    } catch {
+      setTenantDefaultsPollStatus('OFFLINE');
+      setTenantDefaultsPollCheckedAt(new Date().toISOString());
+    }
+  };
+
   const formatApproxBytes = (bytes?: number) => {
     if (!bytes || bytes <= 0) return '0 B';
     if (bytes < 1024) return `${bytes} B`;
@@ -361,30 +387,19 @@ export default function Pipelines() {
   useEffect(() => {
     if (!tenantId || !canManageTenantSettings) return;
     const timer = window.setInterval(async () => {
-      try {
-        const latestResponse = await api.getTenantLineageDefaultsIfChanged(tenantId, tenantLineageDefaultsEtag);
-        if (!latestResponse.notModified && latestResponse.data) {
-          setTenantLineageDefaultsEtag(latestResponse.etag);
-          const latest = latestResponse.data;
-          if (latest.version && tenantLineageDefaults.version && latest.version !== tenantLineageDefaults.version) {
-            setTenantDefaultsStaleLatest(latest);
-            setTenantDefaultsPollStatus('STALE');
-          } else {
-            setTenantDefaultsStaleLatest(null);
-            setTenantDefaultsPollStatus('FRESH');
-          }
-          setTenantDefaultsPollCheckedAt(new Date().toISOString());
-        } else if (latestResponse.notModified) {
-          setTenantDefaultsPollStatus((prev) => (prev === 'STALE' ? 'STALE' : 'FRESH'));
-          setTenantDefaultsPollCheckedAt(new Date().toISOString());
-        }
-      } catch {
-        setTenantDefaultsPollStatus('OFFLINE');
-        setTenantDefaultsPollCheckedAt(new Date().toISOString());
-      }
+      await runTenantDefaultsPollCheck();
     }, 30000);
     return () => window.clearInterval(timer);
   }, [tenantId, canManageTenantSettings, tenantLineageDefaults.version, tenantLineageDefaultsEtag]);
+
+  const checkTenantDefaultsNow = async () => {
+    if (!tenantId || checkingTenantDefaultsNow) return;
+    if (Date.now() < tenantDefaultsPollCooldownUntil) return;
+    setCheckingTenantDefaultsNow(true);
+    setTenantDefaultsPollCooldownUntil(Date.now() + 5000);
+    await runTenantDefaultsPollCheck();
+    setCheckingTenantDefaultsNow(false);
+  };
 
   const refreshBucketRuns = async (tid: string, fromDate: Date, toDate: Date, silent = false) => {
     if (!silent) setLoadingBucketRuns(true);
@@ -2845,6 +2860,16 @@ export default function Pipelines() {
                                         Checked: {new Date(tenantDefaultsPollCheckedAt).toLocaleTimeString()}
                                       </span>
                                     )}
+                                    <button
+                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      disabled={checkingTenantDefaultsNow || Date.now() < tenantDefaultsPollCooldownUntil || !tenantId}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        void checkTenantDefaultsNow();
+                                      }}
+                                    >
+                                      {checkingTenantDefaultsNow ? 'Checking...' : 'Check now'}
+                                    </button>
                                     {tenantDefaultsStaleLatest && (
                                       <>
                                         <span className="px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900">
