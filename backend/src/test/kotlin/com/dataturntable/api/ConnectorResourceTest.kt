@@ -300,6 +300,61 @@ class ConnectorResourceTest {
     }
 
     @Test
+    fun testDisconnectConnectorRequiresForceWhenActivePipelinesReferenceIt() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        val connectorId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Disconnect Guard Connector",
+                "connectorType" to "MQTT",
+                "direction" to "INPUT",
+                "config" to mapOf("broker" to "mqtt://localhost:1883", "topic" to "tenant/$tenantId/guard/in")
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        QuarkusTransaction.requiringNew().run {
+            val tenant = em.find(com.dataturntable.tenant.Tenant::class.java, java.util.UUID.fromString(tenantId))
+            val pipeline = Pipeline().apply {
+                this.tenant = tenant
+                this.name = "Active Guard Pipeline"
+                this.isActive = true
+                this.graphDefinition = "{\"nodes\":[{\"id\":\"n-import\",\"type\":\"IMPORT\",\"connectorId\":\"$connectorId\"}],\"edges\":[]}"
+            }
+            em.persist(pipeline)
+            em.flush()
+        }
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .post("/api/internal/v1/connectors/$connectorId/disconnect")
+        .then()
+            .statusCode(409)
+            .body("requiresForce", equalTo(true))
+            .body("activeImpactedPipelineCount", equalTo(1))
+            .body("impactedPipelines[0].pipelineName", equalTo("Active Guard Pipeline"))
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("force", true)
+        .`when`()
+            .post("/api/internal/v1/connectors/$connectorId/disconnect")
+        .then()
+            .statusCode(200)
+            .body("isActive", equalTo(false))
+    }
+
+    @Test
     fun testListConnectorsSupportsCombinedFiltersAndSearch() {
         val token = TestAuthHelpers.createAdminToken()
         val tenantId = resolveTenantId(token)

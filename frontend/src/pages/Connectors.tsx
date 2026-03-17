@@ -432,16 +432,27 @@ export default function Connectors() {
     }
   };
 
-  const performToggleConnection = async (connector: Connector) => {
+  const performToggleConnection = async (connector: Connector, options?: { forceDisconnect?: boolean }) => {
     setTogglingId(connector.id);
     try {
       const updated = connector.isActive
-        ? await api.disconnectConnector(connector.id)
+        ? await api.disconnectConnector(connector.id, options?.forceDisconnect === true)
         : await api.connectConnector(connector.id);
       setConnectors((prev) => prev.map((c) => (c.id === connector.id ? { ...c, ...updated } : c)));
       showToast(connector.isActive ? 'Connector disconnected' : 'Connector connected', 'success');
-    } catch {
-      showToast(connector.isActive ? 'Failed to disconnect connector' : 'Failed to connect connector', 'error');
+    } catch (err: any) {
+      if (connector.isActive && err?.response?.status === 409 && options?.forceDisconnect !== true) {
+        try {
+          const impact = await api.getConnectorImpact(connector.id, impactWindowHours, { activeOnly: true, riskAtLeast: impactRiskAtLeast });
+          setDisconnectImpactModal(impact);
+          setPendingDisconnectConnector(connector);
+          showToast('Disconnect requires confirmation due to active pipeline dependencies', 'error');
+        } catch {
+          showToast(err?.response?.data?.error || 'Failed to disconnect connector', 'error');
+        }
+      } else {
+        showToast(connector.isActive ? 'Failed to disconnect connector' : 'Failed to connect connector', 'error');
+      }
     } finally {
       setTogglingId(null);
     }
@@ -1133,7 +1144,7 @@ export default function Connectors() {
                   const target = pendingDisconnectConnector;
                   setDisconnectImpactModal(null);
                   setPendingDisconnectConnector(null);
-                  if (target) await performToggleConnection(target);
+                  if (target) await performToggleConnection(target, { forceDisconnect: true });
                 }}
               >
                 Disconnect Anyway

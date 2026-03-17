@@ -979,7 +979,7 @@ class ConnectorResource {
     @Path("/{id}/disconnect")
     @Consumes(MediaType.WILDCARD)
     @Transactional
-    fun disconnect(@PathParam("id") id: String): Response {
+    fun disconnect(@PathParam("id") id: String, @QueryParam("force") force: Boolean?): Response {
         val connectorId = parseUuid(id)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
         val connector = em.find(Connector::class.java, connectorId)
@@ -989,6 +989,35 @@ class ConnectorResource {
         val currentUser = getCurrentUser()
         if (!canWriteConnector(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        if (connector.isActive && force != true) {
+            val tenantUuid = connector.tenant?.id
+                ?: return Response.status(400).entity(mapOf("error" to "Connector tenant not found")).build()
+            val references = connectorReferenceSummaries(tenantUuid, connectorId)
+            val impactedPipelines = references
+                .groupBy { it["pipelineId"]?.toString() ?: "" }
+                .filterKeys { it.isNotBlank() }
+                .mapNotNull { entry ->
+                    val pipelineUuid = parseUuid(entry.key) ?: return@mapNotNull null
+                    val pipeline = em.find(Pipeline::class.java, pipelineUuid) ?: return@mapNotNull null
+                    if (!pipeline.isActive) return@mapNotNull null
+                    mapOf(
+                        "pipelineId" to pipeline.id,
+                        "pipelineName" to pipeline.name,
+                        "nodeReferenceCount" to entry.value.size
+                    )
+                }
+            if (impactedPipelines.isNotEmpty()) {
+                return Response.status(409).entity(
+                    mapOf(
+                        "error" to "Disconnect blocked: connector is used by active pipelines",
+                        "requiresForce" to true,
+                        "activeImpactedPipelineCount" to impactedPipelines.size,
+                        "impactedPipelines" to impactedPipelines.take(20)
+                    )
+                ).build()
+            }
         }
 
         connector.isActive = false

@@ -547,8 +547,9 @@ class ApiService {
     return response.data;
   }
 
-  async disconnectConnector(id: string): Promise<Connector> {
-    const response = await this.client.post<Connector>(`/connectors/${id}/disconnect`);
+  async disconnectConnector(id: string, force = false): Promise<Connector> {
+    const suffix = force ? '?force=true' : '';
+    const response = await this.client.post<Connector>(`/connectors/${id}/disconnect${suffix}`);
     return response.data;
   }
 

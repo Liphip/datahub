@@ -162,6 +162,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added safe-disconnect impact gating: connector impact API now supports `activeOnly=true` and returns aggregate active/risk counters, while Connectors UI now performs pre-disconnect impact checks and shows a confirmation modal with prioritized active pipeline risk before allowing disconnect.
 - Added impact-to-triage deep-linking: connector impact now includes latest failed run metadata, and the Impact modal provides direct `Triage Runs` navigation into the Pipelines run-details view via focus query params (`focusPipelineId`/`focusRunId`) for faster incident handoff.
 - Added impact filtering for focused remediation: impact endpoint now supports `riskAtLeast` (`LOW|MEDIUM|HIGH`) and the Impact modal adds active-only + risk-threshold toggles so operators can quickly isolate high-risk active dependencies.
+- Enforced safe-disconnect on backend: `/connectors/{id}/disconnect` now blocks with `409` when active pipeline dependencies exist unless `force=true`, and Connectors UI now escalates that response into the existing disconnect-impact confirmation flow for explicit operator override.
 
 ---
 
