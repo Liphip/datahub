@@ -56,6 +56,8 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added synchronous execution fallback path for pipeline triggers and ingest/websocket data so runs transition out of `PENDING` in current environments.
 - Improved Pipelines UI with automatic run-status refresh while recent runs are `RUNNING`/`PENDING`.
 - Wired `pipeline-input` Kafka channel/topic (`dataturntable.pipelines.input`) so `PipelineConsumer` has an active upstream, with direct-consume fallback only when Kafka emitter is unavailable.
+- Added backend alert-rule evaluation in pipeline execution (`field/operator/value`, `any`/`all`, cooldown checks) with automatic `alert_history` dispatch creation.
+- Improved Alerts rule UX with JSON condition templates and inline validation errors.
 
 ---
 

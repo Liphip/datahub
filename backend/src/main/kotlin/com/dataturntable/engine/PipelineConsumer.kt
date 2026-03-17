@@ -5,6 +5,7 @@ import com.dataturntable.module.ModuleVersion
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.PipelineRunStatus
+import com.dataturntable.alert.AlertDispatcher
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.smallrye.reactive.messaging.annotations.Blocking
 import jakarta.enterprise.context.ApplicationScoped
@@ -39,6 +40,9 @@ class PipelineConsumer {
     
     @Inject
     lateinit var dockerService: DockerService
+
+    @Inject
+    lateinit var alertDispatcher: AlertDispatcher
     
     @Incoming("pipeline-input")
     @Blocking
@@ -231,6 +235,12 @@ class PipelineConsumer {
                 )
                 results["export_${index + 1}"] = exportResult
             }
+        }
+
+        val alertPayload = data ?: inputData
+        if (alertPayload != null) {
+            val alertsFired = alertDispatcher.evaluateRulesForPipeline(pipeline, alertPayload)
+            results["alertsFired"] = alertsFired
         }
         
         return results

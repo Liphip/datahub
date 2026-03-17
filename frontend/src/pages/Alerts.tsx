@@ -22,6 +22,7 @@ export default function Alerts() {
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [newRuleName, setNewRuleName] = useState('');
   const [newRuleCondition, setNewRuleCondition] = useState('');
+  const [ruleConditionError, setRuleConditionError] = useState('');
   const [newRuleChannelId, setNewRuleChannelId] = useState('');
   const [newRulePipelineId, setNewRulePipelineId] = useState('');
   const [creatingRule, setCreatingRule] = useState(false);
@@ -108,6 +109,7 @@ export default function Alerts() {
     setCreatingRule(true);
     try {
       const condition = JSON.parse(newRuleCondition || '{}');
+      setRuleConditionError('');
       if (editingRule) {
         const updated = await api.updateAlertRule(editingRule.id, {
           name: newRuleName,
@@ -136,10 +138,22 @@ export default function Alerts() {
       showToast(editingRule ? 'Alert rule updated' : 'Alert rule created', 'success');
     } catch (error) {
       console.error('Error creating rule:', error);
+      setRuleConditionError('Invalid condition JSON. Use a valid object format.');
       setError('Failed to create rule. Check condition JSON and selected references.');
     } finally {
       setCreatingRule(false);
     }
+  };
+
+  const useConditionTemplate = (type: 'threshold' | 'exists' | 'any') => {
+    if (type === 'threshold') {
+      setNewRuleCondition(JSON.stringify({ field: 'temperature', operator: '>', value: 80, severity: 'WARNING', message: 'Temperature threshold exceeded' }, null, 2));
+    } else if (type === 'exists') {
+      setNewRuleCondition(JSON.stringify({ field: 'deviceId', operator: 'exists', severity: 'INFO', message: 'Device payload received' }, null, 2));
+    } else {
+      setNewRuleCondition(JSON.stringify({ any: [{ field: 'temperature', operator: '>', value: 80 }, { field: 'status', operator: '==', value: 'CRITICAL' }], severity: 'CRITICAL', message: 'Critical condition met' }, null, 2));
+    }
+    setRuleConditionError('');
   };
 
   const handleDeleteChannel = async (id: string) => {
@@ -508,13 +522,22 @@ export default function Alerts() {
               </div>
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Condition (JSON)</label>
+                <div className="mb-2 flex gap-2 flex-wrap">
+                  <button type="button" onClick={() => useConditionTemplate('threshold')} className="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50">Threshold</button>
+                  <button type="button" onClick={() => useConditionTemplate('exists')} className="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50">Exists</button>
+                  <button type="button" onClick={() => useConditionTemplate('any')} className="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50">Any Of</button>
+                </div>
                 <textarea
                   value={newRuleCondition}
-                  onChange={(e) => setNewRuleCondition(e.target.value)}
+                  onChange={(e) => {
+                    setNewRuleCondition(e.target.value);
+                    setRuleConditionError('');
+                  }}
                   className="input w-full"
                   placeholder='{"field": "temperature", "operator": ">", "value": 100}'
                   rows={3}
                 />
+                {ruleConditionError && <p className="mt-1 text-xs text-red-600">{ruleConditionError}</p>}
               </div>
               <div className="flex justify-end space-x-2">
                 <button
