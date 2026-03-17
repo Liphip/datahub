@@ -104,6 +104,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added favorite triage presets (star/unstar) with favorites automatically pinned to the top of preset lists.
 - Added manual ordering controls for favorite presets (up/down) so on-call teams can prioritize top incident playbooks.
 - Added inline triage preset duplicate and rename actions for faster playbook evolution without recreating filters.
+- Added triage preset usage metadata (`useCount`, `lastUsedAt`) and preset sort modes (`favorites`, `recently used`, `most used`).
 
 ---
 

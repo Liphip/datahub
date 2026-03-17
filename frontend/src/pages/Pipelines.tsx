@@ -16,6 +16,8 @@ type TriagePreset = {
   query: string;
   tag?: string;
   favorite?: boolean;
+  useCount?: number;
+  lastUsedAt?: string;
 };
 
 const TRIAGE_PRESETS_KEY = 'pipelines.triage.presets.v1';
@@ -68,6 +70,7 @@ export default function Pipelines() {
   const [triagePresetName, setTriagePresetName] = useState('');
   const [triagePresetTag, setTriagePresetTag] = useState('');
   const [triagePresetTagFilter, setTriagePresetTagFilter] = useState('ALL');
+  const [triagePresetSortMode, setTriagePresetSortMode] = useState<'MANUAL' | 'RECENT_USED' | 'MOST_USED'>('MANUAL');
   const [editingPresetName, setEditingPresetName] = useState<string | null>(null);
   const [editingPresetNextName, setEditingPresetNextName] = useState('');
   const importPresetInputRef = useRef<HTMLInputElement | null>(null);
@@ -551,7 +554,14 @@ export default function Pipelines() {
     const existing = triagePresets.find((p) => p.name.toLowerCase() === name.toLowerCase());
     const deduped = triagePresets.filter((p) => p.name.toLowerCase() !== name.toLowerCase());
     const tag = triagePresetTag.trim();
-    const next = [{ name, query, tag: tag || undefined, favorite: existing?.favorite === true }, ...deduped].slice(0, 20);
+    const next = [{
+      name,
+      query,
+      tag: tag || undefined,
+      favorite: existing?.favorite === true,
+      useCount: existing?.useCount,
+      lastUsedAt: existing?.lastUsedAt,
+    }, ...deduped].slice(0, 20);
     persistTriagePresets(next);
     setTriagePresetName('');
     setTriagePresetTag('');
@@ -576,6 +586,14 @@ export default function Pipelines() {
     setBucketPipelineQuery(params.get('bucketQ') || '');
     setBucketPipelineIdFilter(params.get('bucketPipelineId'));
     setSearchParams(params, { replace: true });
+
+    const now = new Date().toISOString();
+    const next = triagePresets.map((p) =>
+      p.name === preset.name
+        ? { ...p, useCount: (p.useCount || 0) + 1, lastUsedAt: now }
+        : p
+    );
+    persistTriagePresets(next);
     showToast(`Applied preset: ${preset.name}`, 'success');
   };
 
@@ -672,6 +690,14 @@ export default function Pipelines() {
     if ((a.favorite ? 1 : 0) !== (b.favorite ? 1 : 0)) {
       return (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0);
     }
+    if (triagePresetSortMode === 'MOST_USED') {
+      return (b.useCount || 0) - (a.useCount || 0);
+    }
+    if (triagePresetSortMode === 'RECENT_USED') {
+      const aTime = a.lastUsedAt ? new Date(a.lastUsedAt).getTime() : 0;
+      const bTime = b.lastUsedAt ? new Date(b.lastUsedAt).getTime() : 0;
+      return bTime - aTime;
+    }
     return 0;
   });
 
@@ -719,6 +745,8 @@ export default function Pipelines() {
               query: p.query,
               tag: typeof p.tag === 'string' ? p.tag : undefined,
               favorite: p.favorite === true,
+              useCount: typeof p.useCount === 'number' ? p.useCount : undefined,
+              lastUsedAt: typeof p.lastUsedAt === 'string' ? p.lastUsedAt : undefined,
             }))
         : [];
 
@@ -866,6 +894,17 @@ export default function Pipelines() {
                 {availablePresetTags.map((tag) => (
                   <option key={tag} value={tag}>{tag}</option>
                 ))}
+              </select>
+            )}
+            {triagePresets.length > 0 && (
+              <select
+                value={triagePresetSortMode}
+                onChange={(e) => setTriagePresetSortMode(e.target.value as 'MANUAL' | 'RECENT_USED' | 'MOST_USED')}
+                className="input text-xs max-w-[165px]"
+              >
+                <option value="MANUAL">Sort: favorites</option>
+                <option value="RECENT_USED">Sort: recently used</option>
+                <option value="MOST_USED">Sort: most used</option>
               </select>
             )}
             {triagePresets.length > 0 && (
