@@ -144,6 +144,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added per-pipeline reliability summaries: backend now provides `GET /pipelines/{id}/runs/summary?sinceHours=...` with trend buckets/success stats, and the Pipelines details panel now shows a timeframe-switchable reliability snapshot (`1h`/`24h`/`7d`) alongside run logs.
 - Enhanced pipeline run drilldown filtering: `GET /pipelines/{id}/runs` now accepts `startedFrom`/`startedTo`/`runStatus`, and the Pipelines reliability snapshot now renders clickable trend buckets + quick status filters (failed/running) to load focused run details during incident triage.
 - Added pipeline run cancellation controls: backend now supports `POST /pipelines/{id}/runs/{runId}/cancel` (with execute-scope auth and completed-run guardrails), `PipelineConsumer` now respects cancelled runs to avoid overriding status, and the Pipelines run-details panel now exposes a `Cancel run` action for `RUNNING`/`PENDING` runs.
+- Improved Pipelines page RBAC UX: added explicit read/write/execute permission gating for create/run/delete/cancel actions, disabled unauthorized controls with explanatory tooltips, and added a clear no-access state when users lack `pipeline:*` read scope.
 
 ---
 

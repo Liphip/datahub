@@ -107,6 +107,11 @@ export default function Pipelines() {
   const bucketEnd = bucketStart && bucketSeconds ? new Date(bucketStart.getTime() + bucketSeconds * 1000) : null;
 
   const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
+  const abilities = user?.abilities || [];
+  const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
+  const canReadPipelines = hasAbility('pipeline:read') || hasAbility('pipeline:write') || hasAbility('pipeline:execute') || hasAbility('manage:tenant');
+  const canWritePipelines = hasAbility('pipeline:write') || hasAbility('manage:tenant');
+  const canExecutePipelines = hasAbility('pipeline:execute') || canWritePipelines;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -177,6 +182,14 @@ export default function Pipelines() {
   useEffect(() => {
     const fetchAll = async () => {
       if (!tenantId) { setLoading(false); return; }
+      if (!canReadPipelines) {
+        setPipelines([]);
+        setRunsMap({});
+        setDetailedRunsMap({});
+        setError('');
+        setLoading(false);
+        return;
+      }
       try {
         const data = await loadPipelines(tenantId, healthFilter);
         // Fetch latest 3 runs for each pipeline concurrently
@@ -208,7 +221,7 @@ export default function Pipelines() {
       }
     };
     fetchAll();
-  }, [tenantId, healthFilter, sinceHoursFilter, bucketStartParam, bucketSeconds, bucketStatusFilter, bucketPipelineIdFilter]);
+  }, [tenantId, canReadPipelines, healthFilter, sinceHoursFilter, bucketStartParam, bucketSeconds, bucketStatusFilter, bucketPipelineIdFilter]);
 
   useEffect(() => {
     try {
@@ -312,7 +325,7 @@ export default function Pipelines() {
 
   const handleCreatePipeline = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!tenantId || !newPipelineName) return;
+    if (!tenantId || !newPipelineName || !canWritePipelines) return;
     setCreating(true);
     try {
       const newPipeline = await api.createPipeline(tenantId, newPipelineName, { description: newPipelineDescription });
@@ -330,6 +343,10 @@ export default function Pipelines() {
   const handleRunPipeline = async (pipelineId: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!canExecutePipelines) {
+      showToast('You need pipeline execute permission to run pipelines', 'error');
+      return;
+    }
     setTriggeringId(pipelineId);
     try {
       await api.triggerPipeline(pipelineId);
@@ -355,6 +372,10 @@ export default function Pipelines() {
   const handleDeletePipeline = async (pipelineId: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!canWritePipelines) {
+      showToast('You need pipeline write permission to delete pipelines', 'error');
+      return;
+    }
     setDeletingId(pipelineId);
     try {
       await api.deletePipeline(pipelineId);
@@ -374,6 +395,10 @@ export default function Pipelines() {
   };
 
   const handleCancelRun = async (pipelineId: string, runId: string) => {
+    if (!canExecutePipelines) {
+      showToast('You need pipeline execute permission to cancel runs', 'error');
+      return;
+    }
     setCancellingRunId(runId);
     try {
       await api.cancelPipelineRun(pipelineId, runId);
@@ -950,10 +975,21 @@ export default function Pipelines() {
 
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Pipelines</h1>
-        <button onClick={() => setShowCreateModal(true)} className="btn-primary">
+        <button
+          onClick={() => setShowCreateModal(true)}
+          className="btn-primary"
+          disabled={!canWritePipelines}
+          title={!canWritePipelines ? 'You need pipeline write permission to create pipelines' : undefined}
+        >
           Create Pipeline
         </button>
       </div>
+
+      {!canReadPipelines && (
+        <div className="card mb-4 border-amber-200 bg-amber-50 text-amber-900">
+          You do not have permission to view pipelines in this tenant.
+        </div>
+      )}
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {(['ALL', 'PROBLEMATIC', 'RUNNING', 'FAILED', 'HEALTHY'] as const).map((filter) => (
@@ -1471,13 +1507,16 @@ export default function Pipelines() {
                         </button>
                         <button
                           onClick={(e) => handleRunPipeline(pipeline.id, e)}
-                          disabled={isTriggering}
+                          disabled={isTriggering || !canExecutePipelines}
                           className="btn-primary text-sm"
+                          title={!canExecutePipelines ? 'You need pipeline execute permission to run pipelines' : undefined}
                         >
                           {isTriggering ? 'Triggering…' : 'Run'}
                         </button>
                         <button
                           onClick={(e) => { e.preventDefault(); setConfirmDeleteId(pipeline.id); }}
+                          disabled={!canWritePipelines}
+                          title={!canWritePipelines ? 'You need pipeline write permission to delete pipelines' : undefined}
                           className="text-sm text-red-600 hover:text-red-800"
                         >
                           Delete
@@ -1709,7 +1748,8 @@ export default function Pipelines() {
                                       e.preventDefault();
                                       void handleCancelRun(pipeline.id, selectedRun.id);
                                     }}
-                                    disabled={cancellingRunId === selectedRun.id}
+                                    disabled={cancellingRunId === selectedRun.id || !canExecutePipelines}
+                                    title={!canExecutePipelines ? 'You need pipeline execute permission to cancel runs' : undefined}
                                     className="px-2 py-0.5 rounded border border-red-300 text-red-700 bg-white"
                                   >
                                     {cancellingRunId === selectedRun.id ? 'Cancelling...' : 'Cancel run'}
@@ -1790,14 +1830,19 @@ export default function Pipelines() {
             {pipelines.length > 0 ? 'No pipelines match this filter' : 'No pipelines yet'}
           </p>
           {pipelines.length === 0 && (
-            <button onClick={() => setShowCreateModal(true)} className="btn-primary">
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="btn-primary"
+              disabled={!canWritePipelines}
+              title={!canWritePipelines ? 'You need pipeline write permission to create pipelines' : undefined}
+            >
               Create Your First Pipeline
             </button>
           )}
         </div>
       )}
 
-      {showCreateModal && (
+      {showCreateModal && canWritePipelines && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <h2 className="text-xl font-bold mb-4">Create Pipeline</h2>
