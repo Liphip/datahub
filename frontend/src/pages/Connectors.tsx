@@ -10,9 +10,10 @@ export default function Connectors() {
   const { user, selectedTenantId } = useAuthStore();
   const abilities = user?.abilities || [];
   const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
-  const canReadConnectors = hasAbility('read:connector') || hasAbility('write:connector') || hasAbility('delete:connector');
-  const canWriteConnectors = hasAbility('write:connector');
-  const canDeleteConnectors = hasAbility('delete:connector');
+  const canManageTenant = hasAbility('manage:tenant');
+  const canReadConnectors = canManageTenant || hasAbility('read:connector') || hasAbility('write:connector') || hasAbility('delete:connector');
+  const canWriteConnectors = canManageTenant || hasAbility('write:connector');
+  const canDeleteConnectors = canManageTenant || hasAbility('delete:connector');
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');

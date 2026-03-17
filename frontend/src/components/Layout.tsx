@@ -104,6 +104,23 @@ export default function Layout({ children }: LayoutProps) {
               </div>
             </div>
           </div>
+          <div className="sm:hidden pb-3">
+            <div className="flex gap-2 overflow-x-auto">
+              {visibleNavigation.map((item) => (
+                <Link
+                  key={`mobile-${item.name}`}
+                  to={item.href}
+                  className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium border ${
+                    location.pathname === item.href
+                      ? 'border-primary-600 bg-primary-50 text-primary-700'
+                      : 'border-gray-200 text-gray-600'
+                  }`}
+                >
+                  {item.name}
+                </Link>
+              ))}
+            </div>
+          </div>
         </div>
       </nav>
 
