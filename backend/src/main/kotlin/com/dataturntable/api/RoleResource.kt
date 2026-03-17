@@ -86,7 +86,9 @@ class RoleResource {
             if (!SecurityUtils.hasAbility(currentUser, "manage:tenant")) {
                 return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
             }
-            Role.findByTenantId(tenantUuid)
+            em.createQuery("SELECT r FROM Role r WHERE r.tenant.id = :tenantId", Role::class.java)
+                .setParameter("tenantId", tenantUuid)
+                .resultList
         } else {
             if (!currentUser.isSuperAdmin()) {
                 return Response.status(400).entity(mapOf("error" to "tenantId is required")).build()

@@ -119,6 +119,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Hardened Data API tenant RBAC (`data:read`/`data:write` + tenant scope) and updated Data Explorer to provide permission-aware read/write states (including guarded create/delete/query flows).
 - Added connector scoped-access coverage for forbidden tenant access and updated Connectors page UX to enforce read/write/delete permission states in-page.
 - Scoped `AuthUserResource` tenant operations to tenant memberships (including tenant-aware get/update/delete with safer delete semantics), and improved Users page UX with search/status/role filters plus filtered empty-state messaging.
+- Replaced fragile `Role.findByTenantId(...)` static lookup usage in `RoleResource` list path with EntityManager-backed tenant query, added tenant role-list regression coverage, and improved Users page recovery UX with explicit retry action on partial-load errors.
 
 ---
 

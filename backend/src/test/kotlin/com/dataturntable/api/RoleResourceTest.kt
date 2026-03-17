@@ -90,4 +90,29 @@ class RoleResourceTest {
             .statusCode(400)
             .body("error", equalTo("Invalid role id"))
     }
+
+    @Test
+    fun testListRolesForTenantReturnsTenantRoles() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("tenantId", tenantId)
+        .`when`()
+            .get("/api/internal/v1/roles")
+        .then()
+            .statusCode(200)
+            .body("size()", org.hamcrest.Matchers.greaterThan(0))
+            .body("name", hasItem("Tenant Admin"))
+    }
 }

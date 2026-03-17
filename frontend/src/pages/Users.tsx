@@ -185,6 +185,18 @@ export default function Users() {
     }
   };
 
+  const handleReload = async () => {
+    if (!tenantId) return;
+    setLoading(true);
+    try {
+      await loadData(tenantId);
+    } catch {
+      setError('Failed to load users and memberships');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const tableUsers = (canReadUsers ? users : memberships.map((m) => ({
     id: m.authUserId,
     email: m.authUserEmail || `user:${m.authUserId.slice(0, 8)}`,
@@ -232,7 +244,10 @@ export default function Users() {
       {error && (
         <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700 flex justify-between items-center">
           <span>{error}</span>
-          <button onClick={() => setError('')} className="text-red-400 hover:text-red-600 ml-4">✕</button>
+          <div className="flex items-center gap-3 ml-4">
+            <button onClick={handleReload} className="text-red-700 hover:text-red-900 text-sm underline">Retry</button>
+            <button onClick={() => setError('')} className="text-red-400 hover:text-red-600">✕</button>
+          </div>
         </div>
       )}
 
