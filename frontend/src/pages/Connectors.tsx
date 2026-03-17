@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { Connector, BrokerCredential } from '../types';
@@ -111,6 +111,18 @@ export default function Connectors() {
   });
 
   const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
+  const brokerCredentialUsage = useMemo(() => {
+    const usage: Record<string, number> = {};
+    connectors.forEach((connector) => {
+      if (connector.connectorType !== 'MQTT') return;
+      const credentialId = typeof connector.config?.brokerCredentialId === 'string'
+        ? connector.config.brokerCredentialId.trim()
+        : '';
+      if (!credentialId) return;
+      usage[credentialId] = (usage[credentialId] || 0) + 1;
+    });
+    return usage;
+  }, [connectors]);
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -235,6 +247,11 @@ export default function Connectors() {
 
   const handleDeleteBrokerCredential = async (id: string) => {
     if (!tenantId) return;
+    const activeReferences = brokerCredentialUsage[id] || 0;
+    if (activeReferences > 0) {
+      setError('Cannot delete this broker credential while MQTT connectors still reference it');
+      return;
+    }
     setDeletingBrokerCredentialId(id);
     try {
       await api.deleteMqttBrokerCredential(id);
@@ -719,6 +736,9 @@ export default function Connectors() {
                         <span className={`text-xs px-2 py-0.5 rounded ${credential.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}`}>
                           {credential.isActive ? 'Active' : 'Inactive'}
                         </span>
+                        <div className="text-xs text-slate-500 mt-1">
+                          In use by {brokerCredentialUsage[credential.id] || 0} connector(s)
+                        </div>
                       </td>
                       <td className="px-3 py-2 text-right space-x-2">
                         <button className="text-indigo-700 hover:text-indigo-900" onClick={() => openEditBrokerCredential(credential)}>
@@ -734,7 +754,8 @@ export default function Connectors() {
                         <button
                           className="text-red-700 hover:text-red-900"
                           onClick={() => handleDeleteBrokerCredential(credential.id)}
-                          disabled={deletingBrokerCredentialId === credential.id}
+                          disabled={deletingBrokerCredentialId === credential.id || (brokerCredentialUsage[credential.id] || 0) > 0}
+                          title={(brokerCredentialUsage[credential.id] || 0) > 0 ? 'Remove connector references before deleting' : undefined}
                         >
                           {deletingBrokerCredentialId === credential.id ? 'Deleting...' : 'Delete'}
                         </button>

@@ -192,6 +192,21 @@ class ConnectorResource {
         return null
     }
 
+    private fun connectorUsesBrokerCredential(connector: Connector, credentialId: UUID): Boolean {
+        val configRaw = try {
+            EncryptionUtils.decrypt(connector.config ?: "{}")
+        } catch (_: Exception) {
+            "{}"
+        }
+        val configMap = try {
+            objectMapper.readValue(configRaw, Map::class.java) as? Map<*, *> ?: emptyMap<String, Any>()
+        } catch (_: Exception) {
+            emptyMap<String, Any>()
+        }
+        val configuredId = configMap["brokerCredentialId"]?.toString()?.trim()
+        return configuredId == credentialId.toString()
+    }
+
     private fun brokerCredentialToMap(credential: BrokerCredential): Map<String, Any?> {
         val topics = try {
             objectMapper.readValue(credential.allowedTopics, List::class.java)
@@ -395,6 +410,29 @@ class ConnectorResource {
         val currentUser = getCurrentUser()
         if (!canManageBrokerCredentials(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        val tenantUuid = credential.tenant?.id
+            ?: return Response.status(400).entity(mapOf("error" to "Credential tenant not found")).build()
+        val mqttConnectors = em.createQuery(
+            "SELECT c FROM Connector c WHERE c.tenant.id = :tenantId AND c.connectorType = :connectorType",
+            Connector::class.java
+        )
+            .setParameter("tenantId", tenantUuid)
+            .setParameter("connectorType", ConnectorType.MQTT)
+            .resultList
+
+        val referencing = mqttConnectors.filter { connectorUsesBrokerCredential(it, credentialId) }
+        if (referencing.isNotEmpty()) {
+            return Response.status(409).entity(
+                mapOf(
+                    "error" to "Broker credential is in use by MQTT connectors",
+                    "references" to referencing.take(20).map {
+                        mapOf("id" to it.id, "name" to it.name)
+                    },
+                    "referenceCount" to referencing.size
+                )
+            ).build()
         }
 
         credential.delete()

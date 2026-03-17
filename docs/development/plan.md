@@ -133,6 +133,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added tenant-scoped integrated MQTT broker credential management (separate from auth users) with topic ACL lists, password rotation, and admin-only UI/API controls (`/connectors/mqtt/credentials*`).
 - Linked MQTT connectors to tenant broker credentials via `brokerCredentialId` selection in the UI and backend ACL validation (connector topic must match allowed broker credential topics).
 - Improved pipeline graph guardrails: frontend now blocks save when required import/processing/export connectors/modules are missing and surfaces backend validation messages; backend graph validation errors now include offending node IDs for faster fixes.
+- Added broker credential lifecycle guardrails: backend now blocks deletion when a credential is still referenced by tenant MQTT connectors (with reference details), and the Connectors UI shows per-credential usage plus disables delete while in use.
 
 ---
 

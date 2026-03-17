@@ -423,4 +423,59 @@ class ConnectorResourceTest {
             .statusCode(400)
             .body("error", equalTo("MQTT topic is not allowed by broker credential"))
     }
+
+    @Test
+    fun testDeleteMqttCredentialRejectsWhenReferencedByConnector() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        val credentialId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(
+                mapOf(
+                    "name" to "Delete Guard",
+                    "username" to "delete-guard",
+                    "allowedTopics" to listOf("tenant/$tenantId/events/#")
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/connectors/mqtt/credentials?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(
+                mapOf(
+                    "name" to "Guarded Connector",
+                    "connectorType" to "MQTT",
+                    "direction" to "INPUT",
+                    "config" to mapOf(
+                        "broker" to "mqtt://localhost:1883",
+                        "topic" to "tenant/$tenantId/events/ingest",
+                        "brokerCredentialId" to credentialId
+                    )
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .delete("/api/internal/v1/connectors/mqtt/credentials/$credentialId")
+        .then()
+            .statusCode(409)
+            .body("error", equalTo("Broker credential is in use by MQTT connectors"))
+            .body("referenceCount", equalTo(1))
+            .body("references[0].name", equalTo("Guarded Connector"))
+    }
 }
