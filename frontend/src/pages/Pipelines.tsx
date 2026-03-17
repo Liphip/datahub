@@ -50,6 +50,7 @@ export default function Pipelines() {
   const [loadingBucketRuns, setLoadingBucketRuns] = useState(false);
   const [autoRefreshBucket, setAutoRefreshBucket] = useState(false);
   const [bucketLastRefreshedAt, setBucketLastRefreshedAt] = useState<string | null>(null);
+  const [refreshNowTick, setRefreshNowTick] = useState(() => Date.now());
 
   const bucketStartParam = searchParams.get('bucketStart');
   const bucketSecondsParam = Number(searchParams.get('bucketSeconds') || '');
@@ -143,6 +144,17 @@ export default function Pipelines() {
 
     return () => window.clearInterval(intervalId);
   }, [autoRefreshBucket, tenantId, bucketStartParam, bucketSeconds]);
+
+  useEffect(() => {
+    if (!bucketStart || !bucketEnd || !bucketLastRefreshedAt) return;
+
+    const intervalId = window.setInterval(() => {
+      if (document.hidden) return;
+      setRefreshNowTick(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [bucketStartParam, bucketSeconds, bucketLastRefreshedAt]);
 
   useEffect(() => {
     if (!tenantId || pipelines.length === 0) return;
@@ -295,7 +307,7 @@ export default function Pipelines() {
   );
 
   const bucketRefreshAgeSeconds = bucketLastRefreshedAt
-    ? Math.max(0, Math.floor((Date.now() - new Date(bucketLastRefreshedAt).getTime()) / 1000))
+    ? Math.max(0, Math.floor((refreshNowTick - new Date(bucketLastRefreshedAt).getTime()) / 1000))
     : null;
 
   const bucketFreshness = bucketRefreshAgeSeconds == null
