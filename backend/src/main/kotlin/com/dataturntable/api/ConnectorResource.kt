@@ -3,6 +3,7 @@ package com.dataturntable.api
 import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.Connector.Direction
 import com.dataturntable.connectors.Connector.ConnectorType
+import com.dataturntable.connectors.BrokerCredential
 import com.dataturntable.tenant.Tenant
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.dataturntable.auth.User
@@ -135,6 +136,46 @@ class ConnectorResource {
             "createdAt" to connector.createdAt?.toString()
         )
     }
+
+    private fun canManageBrokerCredentials(currentUser: User?, tenantId: String): Boolean {
+        if (currentUser == null) return false
+        if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) return false
+        return currentUser.isSuperAdmin() || SecurityUtils.hasAbility(currentUser, "manage:tenant")
+    }
+
+    private fun brokerCredentialToMap(credential: BrokerCredential): Map<String, Any?> {
+        val topics = try {
+            objectMapper.readValue(credential.allowedTopics, List::class.java)
+        } catch (_: Exception) {
+            emptyList<String>()
+        }
+        return mapOf(
+            "id" to credential.id,
+            "tenantId" to credential.tenant?.id,
+            "name" to credential.name,
+            "username" to credential.username,
+            "allowedTopics" to topics,
+            "isActive" to credential.isActive,
+            "createdAt" to credential.createdAt?.toString(),
+            "updatedAt" to credential.updatedAt?.toString()
+        )
+    }
+
+    private fun normalizeTopics(raw: Any?): List<String> {
+        return when (raw) {
+            is List<*> -> raw.mapNotNull { it?.toString()?.trim() }.filter { it.isNotBlank() }.distinct()
+            is String -> raw.split(",", "\n").map { it.trim() }.filter { it.isNotBlank() }.distinct()
+            else -> emptyList()
+        }
+    }
+
+    private fun generateCredentialPassword(length: Int = 24): String {
+        val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%&*"
+        val random = java.security.SecureRandom()
+        return (1..length)
+            .map { alphabet[random.nextInt(alphabet.length)] }
+            .joinToString("")
+    }
     
     @GET
     @Path("/mqtt/defaults")
@@ -153,6 +194,162 @@ class ConnectorResource {
                 "integratedBrokerLabel" to "Integrated Mosquitto"
             )
         ).build()
+    }
+
+    @GET
+    @Path("/mqtt/credentials")
+    fun listMqttCredentials(@QueryParam("tenantId") tenantId: String?): Response {
+        val tid = tenantId ?: getTenantIdFromToken()
+            ?: return Response.status(400).entity(mapOf("error" to "tenantId is required")).build()
+        val tenantUuid = parseUuid(tid)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid tenantId")).build()
+        val currentUser = getCurrentUser()
+        if (!canManageBrokerCredentials(currentUser, tid)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        val credentials = em.createQuery(
+            "SELECT b FROM BrokerCredential b WHERE b.tenant.id = :tenantId ORDER BY b.createdAt DESC",
+            BrokerCredential::class.java
+        )
+            .setParameter("tenantId", tenantUuid)
+            .resultList
+
+        return Response.ok(credentials.map { brokerCredentialToMap(it) }).build()
+    }
+
+    @POST
+    @Path("/mqtt/credentials")
+    @Transactional
+    fun createMqttCredential(@QueryParam("tenantId") tenantId: String?, request: Map<String, Any>): Response {
+        val tid = tenantId ?: (request["tenantId"] as? String) ?: getTenantIdFromToken()
+            ?: return Response.status(400).entity(mapOf("error" to "tenantId is required")).build()
+        val tenantUuid = parseUuid(tid)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid tenantId")).build()
+        val currentUser = getCurrentUser()
+        if (!canManageBrokerCredentials(currentUser, tid)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        val tenant = em.find(Tenant::class.java, tenantUuid)
+            ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
+
+        val name = (request["name"] as? String)?.trim()
+            ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
+        if (name.isBlank()) {
+            return Response.status(400).entity(mapOf("error" to "Name is required")).build()
+        }
+        val username = ((request["username"] as? String)?.trim()).takeUnless { it.isNullOrBlank() }
+            ?: "mqtt_${name.lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_')}_${UUID.randomUUID().toString().take(6)}"
+        val password = ((request["password"] as? String)?.trim()).takeUnless { it.isNullOrBlank() }
+            ?: generateCredentialPassword()
+        val allowedTopics = normalizeTopics(request["allowedTopics"]).ifEmpty {
+            listOf((request["defaultTopic"] as? String)?.trim()).filterNotNull().filter { it.isNotBlank() }
+        }
+        if (allowedTopics.isEmpty()) {
+            return Response.status(400).entity(mapOf("error" to "allowedTopics must include at least one topic")).build()
+        }
+
+        val exists = em.createQuery(
+            "SELECT COUNT(b) FROM BrokerCredential b WHERE b.tenant.id = :tenantId AND (b.name = :name OR b.username = :username)",
+            java.lang.Long::class.java
+        )
+            .setParameter("tenantId", tenantUuid)
+            .setParameter("name", name)
+            .setParameter("username", username)
+            .singleResult
+        if (exists > 0L) {
+            return Response.status(409).entity(mapOf("error" to "Credential name or username already exists in tenant")).build()
+        }
+
+        val credential = BrokerCredential().apply {
+            this.tenant = tenant
+            this.name = name
+            this.username = username
+            this.passwordEncrypted = EncryptionUtils.encrypt(password)
+            this.allowedTopics = objectMapper.writeValueAsString(allowedTopics)
+            this.isActive = request["isActive"] as? Boolean ?: true
+            this.createdAt = java.time.Instant.now()
+            this.updatedAt = java.time.Instant.now()
+        }
+        credential.persist()
+
+        return Response.status(201).entity(
+            brokerCredentialToMap(credential) + mapOf("password" to password)
+        ).build()
+    }
+
+    @PATCH
+    @Path("/mqtt/credentials/{id}")
+    @Transactional
+    fun updateMqttCredential(@PathParam("id") id: String, request: Map<String, Any>): Response {
+        val credentialId = parseUuid(id)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid credential id")).build()
+        val credential = em.find(BrokerCredential::class.java, credentialId)
+            ?: return Response.status(404).entity(mapOf("error" to "Credential not found")).build()
+        val tenantId = credential.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Credential tenant not found")).build()
+        val currentUser = getCurrentUser()
+        if (!canManageBrokerCredentials(currentUser, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        (request["name"] as? String)?.trim()?.takeIf { it.isNotBlank() }?.let { credential.name = it }
+        request["allowedTopics"]?.let {
+            val topics = normalizeTopics(it)
+            if (topics.isNotEmpty()) {
+                credential.allowedTopics = objectMapper.writeValueAsString(topics)
+            }
+        }
+        (request["isActive"] as? Boolean)?.let { credential.isActive = it }
+        credential.updatedAt = java.time.Instant.now()
+        credential.persist()
+
+        return Response.ok(brokerCredentialToMap(credential)).build()
+    }
+
+    @POST
+    @Path("/mqtt/credentials/{id}/rotate-password")
+    @Consumes(MediaType.WILDCARD)
+    @Transactional
+    fun rotateMqttCredentialPassword(@PathParam("id") id: String, request: Map<String, Any>?): Response {
+        val credentialId = parseUuid(id)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid credential id")).build()
+        val credential = em.find(BrokerCredential::class.java, credentialId)
+            ?: return Response.status(404).entity(mapOf("error" to "Credential not found")).build()
+        val tenantId = credential.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Credential tenant not found")).build()
+        val currentUser = getCurrentUser()
+        if (!canManageBrokerCredentials(currentUser, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        val password = (request?.get("password") as? String)?.trim().takeUnless { it.isNullOrBlank() }
+            ?: generateCredentialPassword()
+        credential.passwordEncrypted = EncryptionUtils.encrypt(password)
+        credential.updatedAt = java.time.Instant.now()
+        credential.persist()
+
+        return Response.ok(brokerCredentialToMap(credential) + mapOf("password" to password)).build()
+    }
+
+    @DELETE
+    @Path("/mqtt/credentials/{id}")
+    @Transactional
+    fun deleteMqttCredential(@PathParam("id") id: String): Response {
+        val credentialId = parseUuid(id)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid credential id")).build()
+        val credential = em.find(BrokerCredential::class.java, credentialId)
+            ?: return Response.status(404).entity(mapOf("error" to "Credential not found")).build()
+        val tenantId = credential.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Credential tenant not found")).build()
+        val currentUser = getCurrentUser()
+        if (!canManageBrokerCredentials(currentUser, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        credential.delete()
+        return Response.noContent().build()
     }
 
     @GET

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Connector } from '../types';
+import type { Connector, BrokerCredential } from '../types';
 
 const connectorTypes = ['MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'CUSTOM'] as const;
 const directions = ['INPUT', 'OUTPUT', 'BOTH'] as const;
@@ -66,6 +66,7 @@ export default function Connectors() {
   const canReadConnectors = canManageTenant || hasAbility('read:connector') || hasAbility('write:connector') || hasAbility('delete:connector');
   const canWriteConnectors = canManageTenant || hasAbility('write:connector');
   const canDeleteConnectors = canManageTenant || hasAbility('delete:connector');
+  const canManageBrokerUsers = canManageTenant;
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -93,6 +94,20 @@ export default function Connectors() {
     defaultTopic: string;
     integratedBrokerLabel: string;
   } | null>(null);
+  const [brokerCredentials, setBrokerCredentials] = useState<BrokerCredential[]>([]);
+  const [showBrokerModal, setShowBrokerModal] = useState(false);
+  const [editingBrokerCredential, setEditingBrokerCredential] = useState<BrokerCredential | null>(null);
+  const [savingBrokerCredential, setSavingBrokerCredential] = useState(false);
+  const [deletingBrokerCredentialId, setDeletingBrokerCredentialId] = useState<string | null>(null);
+  const [rotatingBrokerCredentialId, setRotatingBrokerCredentialId] = useState<string | null>(null);
+  const [revealedBrokerPassword, setRevealedBrokerPassword] = useState<string>('');
+  const [brokerForm, setBrokerForm] = useState({
+    name: '',
+    username: '',
+    password: '',
+    allowedTopicsText: 'dataturntable/events/#',
+    isActive: true,
+  });
 
   const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
 
@@ -106,6 +121,15 @@ export default function Connectors() {
     const direction = filterDirection === 'ALL' ? undefined : filterDirection;
     const data = await api.getConnectors(tid, type, direction);
     setConnectors(data);
+  };
+
+  const loadBrokerCredentials = async (tid: string) => {
+    if (!canManageBrokerUsers) {
+      setBrokerCredentials([]);
+      return;
+    }
+    const data = await api.getMqttBrokerCredentials(tid);
+    setBrokerCredentials(data);
   };
 
   useEffect(() => {
@@ -125,6 +149,7 @@ export default function Connectors() {
         await loadConnectors(tenantId);
         const defaults = await api.getMqttConnectorDefaults().catch(() => null);
         setMqttDefaults(defaults);
+        await loadBrokerCredentials(tenantId);
         setError('');
       } catch (err) {
         console.error('Error fetching connectors:', err);
@@ -135,7 +160,104 @@ export default function Connectors() {
     };
 
     fetchConnectors();
-  }, [tenantId, filterType, filterDirection, canReadConnectors]);
+  }, [tenantId, filterType, filterDirection, canReadConnectors, canManageBrokerUsers]);
+
+  const openCreateBrokerCredential = () => {
+    setEditingBrokerCredential(null);
+    setBrokerForm({
+      name: '',
+      username: '',
+      password: '',
+      allowedTopicsText: mqttDefaults?.defaultTopic ? `${mqttDefaults.defaultTopic}/#` : 'dataturntable/events/#',
+      isActive: true,
+    });
+    setShowBrokerModal(true);
+  };
+
+  const openEditBrokerCredential = (credential: BrokerCredential) => {
+    setEditingBrokerCredential(credential);
+    setBrokerForm({
+      name: credential.name,
+      username: credential.username,
+      password: '',
+      allowedTopicsText: credential.allowedTopics.join('\n'),
+      isActive: credential.isActive,
+    });
+    setShowBrokerModal(true);
+  };
+
+  const handleSaveBrokerCredential = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tenantId || !canManageBrokerUsers) return;
+    const allowedTopics = brokerForm.allowedTopicsText
+      .split(/\n|,/)
+      .map((topic) => topic.trim())
+      .filter(Boolean);
+    if (allowedTopics.length === 0) {
+      setError('At least one allowed topic is required for MQTT broker credentials');
+      return;
+    }
+
+    setSavingBrokerCredential(true);
+    try {
+      if (editingBrokerCredential) {
+        await api.updateMqttBrokerCredential(editingBrokerCredential.id, {
+          name: brokerForm.name,
+          allowedTopics,
+          isActive: brokerForm.isActive,
+        });
+        if (brokerForm.password.trim()) {
+          const rotated = await api.rotateMqttBrokerCredentialPassword(editingBrokerCredential.id, brokerForm.password.trim());
+          setRevealedBrokerPassword(rotated.password || '');
+        }
+      } else {
+        const created = await api.createMqttBrokerCredential(tenantId, {
+          name: brokerForm.name,
+          username: brokerForm.username.trim() || undefined,
+          password: brokerForm.password.trim() || undefined,
+          allowedTopics,
+          isActive: brokerForm.isActive,
+        });
+        setRevealedBrokerPassword(created.password || '');
+      }
+
+      await loadBrokerCredentials(tenantId);
+      setShowBrokerModal(false);
+      setEditingBrokerCredential(null);
+      showToast(editingBrokerCredential ? 'Broker credential updated' : 'Broker credential created', 'success');
+    } catch (err: any) {
+      setError(err?.response?.data?.error || 'Failed to save broker credential');
+    } finally {
+      setSavingBrokerCredential(false);
+    }
+  };
+
+  const handleDeleteBrokerCredential = async (id: string) => {
+    if (!tenantId) return;
+    setDeletingBrokerCredentialId(id);
+    try {
+      await api.deleteMqttBrokerCredential(id);
+      await loadBrokerCredentials(tenantId);
+      showToast('Broker credential deleted', 'success');
+    } catch (err: any) {
+      setError(err?.response?.data?.error || 'Failed to delete broker credential');
+    } finally {
+      setDeletingBrokerCredentialId(null);
+    }
+  };
+
+  const handleRotateBrokerCredentialPassword = async (credential: BrokerCredential) => {
+    setRotatingBrokerCredentialId(credential.id);
+    try {
+      const rotated = await api.rotateMqttBrokerCredentialPassword(credential.id);
+      setRevealedBrokerPassword(rotated.password || '');
+      showToast('Broker credential password rotated', 'success');
+    } catch (err: any) {
+      setError(err?.response?.data?.error || 'Failed to rotate broker credential password');
+    } finally {
+      setRotatingBrokerCredentialId(null);
+    }
+  };
 
   const applyMqttPreset = (mode: 'internal' | 'external') => {
     const broker = mode === 'internal'
@@ -382,6 +504,23 @@ export default function Connectors() {
         </div>
       )}
 
+      {revealedBrokerPassword && (
+        <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="font-semibold text-sm">MQTT broker password (shown once)</div>
+              <code className="text-xs break-all">{revealedBrokerPassword}</code>
+            </div>
+            <button
+              onClick={() => setRevealedBrokerPassword('')}
+              className="text-xs underline"
+            >
+              Hide
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="mb-6 flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Connectors</h1>
@@ -526,6 +665,79 @@ export default function Connectors() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {canManageBrokerUsers && (
+        <div className="card mt-6">
+          <div className="flex items-start justify-between mb-3 gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Integrated MQTT Broker Users</h2>
+              <p className="text-sm text-slate-600 dark:text-slate-300">
+                Tenant-scoped broker credentials for the bundled Mosquitto broker. These are separate from app login users.
+              </p>
+            </div>
+            <button onClick={openCreateBrokerCredential} className="btn-primary text-sm">Create Broker User</button>
+          </div>
+
+          {brokerCredentials.length === 0 ? (
+            <p className="text-sm text-slate-500">No MQTT broker users configured for this tenant.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-700 text-sm">
+                <thead className="bg-slate-50 dark:bg-slate-800">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">Name</th>
+                    <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">Username</th>
+                    <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">Allowed Topics</th>
+                    <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">Status</th>
+                    <th className="px-3 py-2 text-right font-medium text-slate-600 dark:text-slate-300">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {brokerCredentials.map((credential) => (
+                    <tr key={credential.id}>
+                      <td className="px-3 py-2 text-slate-800 dark:text-slate-200">{credential.name}</td>
+                      <td className="px-3 py-2"><code>{credential.username}</code></td>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-wrap gap-1">
+                          {credential.allowedTopics.map((topic) => (
+                            <span key={`${credential.id}-${topic}`} className="rounded bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-xs">
+                              {topic}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={`text-xs px-2 py-0.5 rounded ${credential.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}`}>
+                          {credential.isActive ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-right space-x-2">
+                        <button className="text-indigo-700 hover:text-indigo-900" onClick={() => openEditBrokerCredential(credential)}>
+                          Edit
+                        </button>
+                        <button
+                          className="text-emerald-700 hover:text-emerald-900"
+                          onClick={() => handleRotateBrokerCredentialPassword(credential)}
+                          disabled={rotatingBrokerCredentialId === credential.id}
+                        >
+                          {rotatingBrokerCredentialId === credential.id ? 'Rotating...' : 'Rotate Password'}
+                        </button>
+                        <button
+                          className="text-red-700 hover:text-red-900"
+                          onClick={() => handleDeleteBrokerCredential(credential.id)}
+                          disabled={deletingBrokerCredentialId === credential.id}
+                        >
+                          {deletingBrokerCredentialId === credential.id ? 'Deleting...' : 'Delete'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
@@ -677,6 +889,75 @@ export default function Connectors() {
                   className="btn-primary"
                 >
                   {savingConnector ? 'Saving...' : editingConnector ? 'Save Changes' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showBrokerModal && canManageBrokerUsers && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-slate-900 rounded-lg p-6 max-w-lg w-full mx-4">
+            <h2 className="text-xl font-bold mb-4 text-slate-900 dark:text-slate-100">
+              {editingBrokerCredential ? 'Edit MQTT Broker User' : 'Create MQTT Broker User'}
+            </h2>
+            <form onSubmit={handleSaveBrokerCredential} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Display Name</label>
+                <input className="input" value={brokerForm.name} onChange={(e) => setBrokerForm((prev) => ({ ...prev, name: e.target.value }))} required />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Broker Username</label>
+                <input
+                  className="input"
+                  value={brokerForm.username}
+                  onChange={(e) => setBrokerForm((prev) => ({ ...prev, username: e.target.value }))}
+                  placeholder="optional; auto-generated if empty"
+                  disabled={Boolean(editingBrokerCredential)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Password {editingBrokerCredential ? '(leave blank to keep current)' : '(optional auto-generate)'}</label>
+                <input
+                  className="input"
+                  type="password"
+                  value={brokerForm.password}
+                  onChange={(e) => setBrokerForm((prev) => ({ ...prev, password: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Allowed Topics (one per line or comma separated)</label>
+                <textarea
+                  className="input"
+                  rows={4}
+                  value={brokerForm.allowedTopicsText}
+                  onChange={(e) => setBrokerForm((prev) => ({ ...prev, allowedTopicsText: e.target.value }))}
+                  placeholder="dataturntable/events/#"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={brokerForm.isActive}
+                  onChange={(e) => setBrokerForm((prev) => ({ ...prev, isActive: e.target.checked }))}
+                />
+                Credential is active
+              </label>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => {
+                    setShowBrokerModal(false);
+                    setEditingBrokerCredential(null);
+                  }}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary" disabled={savingBrokerCredential}>
+                  {savingBrokerCredential ? 'Saving...' : editingBrokerCredential ? 'Save Changes' : 'Create User'}
                 </button>
               </div>
             </form>

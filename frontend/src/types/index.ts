@@ -191,6 +191,17 @@ export interface Connector {
   createdAt: string;
 }
 
+export interface BrokerCredential {
+  id: string;
+  tenantId: string;
+  name: string;
+  username: string;
+  allowedTopics: string[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Role {
   id: string;
   tenantId?: string;

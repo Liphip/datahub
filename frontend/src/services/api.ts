@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, TenantPipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, Connector, Role, Membership, TenantContext } from '../types';
+import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, TenantPipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, Connector, Role, Membership, TenantContext, BrokerCredential } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 export const API_STATUS_EVENT = 'dataturntable:api-status';
@@ -393,6 +393,36 @@ class ApiService {
       integratedBrokerLabel: string;
     }>(`/connectors/mqtt/defaults`);
     return response.data;
+  }
+
+  async getMqttBrokerCredentials(tenantId: string): Promise<BrokerCredential[]> {
+    const response = await this.client.get<BrokerCredential[]>(`/connectors/mqtt/credentials?tenantId=${tenantId}`);
+    return response.data;
+  }
+
+  async createMqttBrokerCredential(
+    tenantId: string,
+    data: { name: string; username?: string; password?: string; allowedTopics: string[]; isActive?: boolean }
+  ): Promise<BrokerCredential & { password?: string }> {
+    const response = await this.client.post<BrokerCredential & { password?: string }>(`/connectors/mqtt/credentials?tenantId=${tenantId}`, data);
+    return response.data;
+  }
+
+  async updateMqttBrokerCredential(
+    id: string,
+    data: Partial<Pick<BrokerCredential, 'name' | 'allowedTopics' | 'isActive'>>
+  ): Promise<BrokerCredential> {
+    const response = await this.client.patch<BrokerCredential>(`/connectors/mqtt/credentials/${id}`, data);
+    return response.data;
+  }
+
+  async rotateMqttBrokerCredentialPassword(id: string, password?: string): Promise<BrokerCredential & { password: string }> {
+    const response = await this.client.post<BrokerCredential & { password: string }>(`/connectors/mqtt/credentials/${id}/rotate-password`, password ? { password } : {});
+    return response.data;
+  }
+
+  async deleteMqttBrokerCredential(id: string): Promise<void> {
+    await this.client.delete(`/connectors/mqtt/credentials/${id}`);
   }
 
   async getConnectors(tenantId: string, type?: string, direction?: string): Promise<Connector[]> {

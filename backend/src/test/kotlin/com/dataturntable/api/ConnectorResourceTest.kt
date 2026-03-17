@@ -340,4 +340,41 @@ class ConnectorResourceTest {
             .body("externalBrokerUrl", notNullValue())
             .body("defaultTopic", notNullValue())
     }
+
+    @Test
+    fun testCreateAndRotateMqttBrokerCredential() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        val credentialId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(
+                mapOf(
+                    "name" to "Dashboard Reader",
+                    "username" to "dash-reader",
+                    "allowedTopics" to listOf("dataturntable/events/#", "tenant/${tenantId}/metrics/#")
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/connectors/mqtt/credentials?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .body("username", equalTo("dash-reader"))
+            .body("password", notNullValue())
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("password" to "ChangedPass!456"))
+        .`when`()
+            .post("/api/internal/v1/connectors/mqtt/credentials/$credentialId/rotate-password")
+        .then()
+            .statusCode(200)
+            .body("password", equalTo("ChangedPass!456"))
+    }
 }

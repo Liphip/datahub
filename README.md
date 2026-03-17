@@ -164,6 +164,9 @@ Pipelines are directed graphs (DAGs), not just linear chains:
 | GET/POST/PATCH/DELETE /tenants/{id}/memberships | Tenant membership management |
 | GET/POST/PATCH/DELETE /connectors | Tenant connector library |
 | GET /connectors/mqtt/defaults | Integrated MQTT broker connection defaults |
+| GET/POST /connectors/mqtt/credentials | List/create tenant-scoped broker users |
+| PATCH/DELETE /connectors/mqtt/credentials/{id} | Update/delete broker user |
+| POST /connectors/mqtt/credentials/{id}/rotate-password | Rotate broker user password |
 | POST /connectors/{id}/connect | Mark connector connected/enabled |
 | POST /connectors/{id}/disconnect | Mark connector disconnected/disabled |
 | POST /connectors/{id}/test | Validate connector config |
@@ -178,6 +181,7 @@ Notes:
 - Connector configs are encrypted at rest and sensitive fields are masked in API responses.
 - Connectors can be managed from the Connectors page with explicit Connect/Disconnect/Test actions.
 - MQTT connector forms include quick-fill for the integrated Mosquitto broker (`mqtt://mosquitto:1883`) and localhost (`mqtt://localhost:1883`), while still allowing custom brokers.
+- Integrated broker credentials are tenant-scoped entities (separate from app auth users) with explicit topic ACL lists; only tenant admins/superadmins can manage them.
 - Frontend auth uses SHA-256 (Base64) client hashing before transmission; server stores BCrypt of that hash.
 - Pipelines support a `graphDefinition` payload; IMPORT/EXPORT nodes must reference compatible connectors by `connectorId`.
 - The pipeline editor now captures connector selections for IMPORT/EXPORT nodes and sends a DAG `graphDefinition` with connector-aware validation.
