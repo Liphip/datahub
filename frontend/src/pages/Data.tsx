@@ -10,6 +10,10 @@ type DataTable = {
 
 export default function Data() {
   const { user, selectedTenantId } = useAuthStore();
+  const abilities = user?.abilities || [];
+  const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
+  const canReadData = hasAbility('data:read') || hasAbility('data:write');
+  const canWriteData = hasAbility('data:write');
   const [tables, setTables] = useState<DataTable[]>([]);
   const [selectedTable, setSelectedTable] = useState<string>('');
   const [data, setData] = useState<unknown[]>([]);
@@ -64,6 +68,14 @@ export default function Data() {
         setLoading(false);
         return;
       }
+      if (!canReadData) {
+        setTables([]);
+        setSelectedTable('');
+        setData([]);
+        setError('');
+        setLoading(false);
+        return;
+      }
       
       try {
         await fetchTables(tenantId);
@@ -77,9 +89,13 @@ export default function Data() {
     };
     
     load();
-  }, [tenantId]);
+  }, [tenantId, canReadData]);
 
   const handleQuery = async () => {
+    if (!canReadData) {
+      showToast('You do not have permission to query data', 'error');
+      return;
+    }
     if (!tenantId || !selectedTable) return;
     
     setQuerying(true);
@@ -100,6 +116,10 @@ export default function Data() {
   };
 
   const handleCreateTable = async () => {
+    if (!canWriteData) {
+      showToast('You do not have permission to create tables', 'error');
+      return;
+    }
     if (!tenantId || !newTableName) return;
     
     setInsertingData(true);
@@ -128,6 +148,10 @@ export default function Data() {
   };
 
   const handleDeleteTable = async () => {
+    if (!canWriteData) {
+      showToast('You do not have permission to delete tables', 'error');
+      return;
+    }
     if (!tenantId || !selectedTable) return;
 
     setDeletingTable(true);
@@ -146,6 +170,10 @@ export default function Data() {
   };
 
   const handleRefreshTables = async () => {
+    if (!canReadData) {
+      showToast('You do not have permission to refresh tables', 'error');
+      return;
+    }
     if (!tenantId) return;
     setLoading(true);
     try {
@@ -180,6 +208,16 @@ export default function Data() {
     );
   }
 
+  if (!canReadData) {
+    return (
+      <div className="px-4 py-6">
+        <div className="card text-center py-12">
+          <p className="text-gray-500">You do not have permission to view data for this tenant.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="px-4 py-6 sm:px-0">
       {toast && (
@@ -196,9 +234,11 @@ export default function Data() {
           <button onClick={handleRefreshTables} className="btn-secondary">
             Refresh
           </button>
-          <button onClick={() => setShowCreateModal(true)} className="btn-primary">
-            Create Table
-          </button>
+          {canWriteData && (
+            <button onClick={() => setShowCreateModal(true)} className="btn-primary">
+              Create Table
+            </button>
+          )}
         </div>
       </div>
 
@@ -265,8 +305,9 @@ export default function Data() {
           </button>
           <button
             onClick={() => setConfirmDelete(true)}
-            disabled={!selectedTable || deletingTable}
+            disabled={!canWriteData || !selectedTable || deletingTable}
             className="btn-secondary border-red-300 text-red-700 hover:bg-red-50"
+            title={!canWriteData ? 'You need data write permission to delete tables' : undefined}
           >
             {deletingTable ? 'Deleting...' : 'Delete Table'}
           </button>
@@ -276,7 +317,11 @@ export default function Data() {
       {tables.length === 0 ? (
         <div className="card text-center py-12">
           <p className="text-gray-500 mb-4">No tables found</p>
-          <button onClick={() => setShowCreateModal(true)} className="btn-primary">Create Your First Table</button>
+          {canWriteData ? (
+            <button onClick={() => setShowCreateModal(true)} className="btn-primary">Create Your First Table</button>
+          ) : (
+            <p className="text-sm text-gray-500">You need data write access to create tables.</p>
+          )}
         </div>
       ) : (
         <div className="card overflow-hidden">
@@ -326,7 +371,7 @@ export default function Data() {
         </div>
       )}
 
-      {showCreateModal && (
+      {showCreateModal && canWriteData && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <h2 className="text-xl font-bold mb-4">Create Table</h2>
@@ -362,7 +407,7 @@ export default function Data() {
         </div>
       )}
 
-      {confirmDelete && selectedTable && (
+      {confirmDelete && canWriteData && selectedTable && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <h2 className="text-xl font-bold mb-2">Delete Table</h2>

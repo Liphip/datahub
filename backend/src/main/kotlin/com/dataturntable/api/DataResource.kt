@@ -1,5 +1,7 @@
 package com.dataturntable.api
 
+import com.dataturntable.auth.User
+import com.dataturntable.security.SecurityUtils
 import com.dataturntable.tenant.Tenant
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.security.Authenticated
@@ -9,6 +11,7 @@ import jakarta.persistence.PersistenceContext
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
+import org.eclipse.microprofile.jwt.JsonWebToken
 import java.time.Instant
 import java.util.UUID
 
@@ -17,11 +20,30 @@ import java.util.UUID
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
 class DataResource {
+
+    @Inject
+    lateinit var jwt: JsonWebToken
     
     @PersistenceContext
     lateinit var em: EntityManager
     
     private val objectMapper = ObjectMapper()
+
+    private fun currentUser(): User? {
+        val subject = jwt.subject ?: return null
+        val userId = try { UUID.fromString(subject) } catch (_: Exception) { return null }
+        return em.find(User::class.java, userId)
+    }
+
+    private fun requireTenantAccess(user: User, tenantId: String, ability: String): Response? {
+        if (!SecurityUtils.canAccessTenant(user, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        if (!SecurityUtils.hasAbility(user, ability)) {
+            return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
+        }
+        return null
+    }
 
     private fun parseTenantUuid(tenantId: String): UUID {
         return try {
@@ -72,7 +94,9 @@ class DataResource {
         @QueryParam("end") end: String?,
         @QueryParam("limit") limit: Int?
     ): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseTenantUuid(tenantId)
+        requireTenantAccess(currentUser, tenantUuid.toString(), "data:read")?.let { return it }
         if (em.find(Tenant::class.java, tenantUuid) == null) {
             return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
         }
@@ -115,7 +139,9 @@ class DataResource {
         @QueryParam("table") table: String?,
         data: List<Map<String, Any>>
     ): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseTenantUuid(tenantId)
+        requireTenantAccess(currentUser, tenantUuid.toString(), "data:write")?.let { return it }
         if (em.find(Tenant::class.java, tenantUuid) == null) {
             return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
         }
@@ -142,7 +168,9 @@ class DataResource {
     @GET
     @Path("/{tenantId}/tables")
     fun listTables(@PathParam("tenantId") tenantId: String): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseTenantUuid(tenantId)
+        requireTenantAccess(currentUser, tenantUuid.toString(), "data:read")?.let { return it }
         if (em.find(Tenant::class.java, tenantUuid) == null) {
             return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
         }
@@ -175,7 +203,9 @@ class DataResource {
         @PathParam("tenantId") tenantId: String,
         @PathParam("table") table: String
     ): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseTenantUuid(tenantId)
+        requireTenantAccess(currentUser, tenantUuid.toString(), "data:write")?.let { return it }
         if (em.find(Tenant::class.java, tenantUuid) == null) {
             return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
         }

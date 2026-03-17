@@ -116,6 +116,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added module RBAC enforcement in `ModuleResource` (`module:read`/`module:write`/`module:delete` + tenant scope), plus frontend module permission UX (read-only editor mode, gated create/delete actions, and clearer 403 guidance on Modules page).
 - Added pipeline RBAC enforcement in `PipelineResource` (`pipeline:read`/`pipeline:write`/`pipeline:execute` + tenant scope), and upgraded `PipelineEditor` to select concrete module *versions* (not module IDs) with permission-aware read/write/execute UX states.
 - Hardened Alert API authorization/tenant scoping (`alert:read`/`alert:configure`) including cross-tenant rule/channel/pipeline reference guards, and updated Alerts UI to present permission-aware read/configure states.
+- Hardened Data API tenant RBAC (`data:read`/`data:write` + tenant scope) and updated Data Explorer to provide permission-aware read/write states (including guarded create/delete/query flows).
 
 ---
 
