@@ -1,14 +1,67 @@
 package com.dataturntable.api
 
+import com.dataturntable.auth.User
 import com.dataturntable.test.TestAuthHelpers
+import io.quarkus.narayana.jta.QuarkusTransaction
 import io.quarkus.test.junit.QuarkusTest
+import io.restassured.http.ContentType
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
 import org.junit.jupiter.api.Test
+import org.mindrot.jbcrypt.BCrypt
 
 import io.restassured.RestAssured.given
 import org.hamcrest.CoreMatchers.*
 
 @QuarkusTest
 class ConnectorResourceTest {
+
+    @PersistenceContext
+    lateinit var em: EntityManager
+
+    private fun createNonMemberToken(): String {
+        val email = "connector-outsider-${java.util.UUID.randomUUID()}@example.com"
+        val passwordHash = java.util.Base64.getEncoder().encodeToString(
+            java.security.MessageDigest.getInstance("SHA-256").digest("ViewerPass!123".toByteArray())
+        )
+
+        QuarkusTransaction.requiringNew().run {
+            val user = User().apply {
+                this.email = email
+                this.passwordHash = BCrypt.hashpw(passwordHash, BCrypt.gensalt())
+                this.isActive = true
+                this.createdAt = java.time.Instant.now()
+                this.updatedAt = java.time.Instant.now()
+            }
+            em.persist(user)
+            em.flush()
+        }
+
+        return given()
+            .contentType(ContentType.JSON)
+            .body(mapOf("email" to email, "passwordHash" to passwordHash))
+        .`when`()
+            .post("/api/internal/v1/auth/login")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("token")
+    }
+
+    private fun resolveTenantId(token: String): String {
+        return given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+    }
 
     @Test
     fun testListConnectorsRequiresAuth() {
@@ -185,5 +238,21 @@ class ConnectorResourceTest {
             .delete("/api/internal/v1/connectors/00000000-0000-0000-0000-000000000000")
         .then()
             .statusCode(401)
+    }
+
+    @Test
+    fun testListConnectorsRejectsUnauthorizedTenantScope() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+        val outsiderToken = createNonMemberToken()
+
+        given()
+            .header("Authorization", "Bearer $outsiderToken")
+            .queryParam("tenantId", tenantId)
+        .`when`()
+            .get("/api/internal/v1/connectors")
+        .then()
+            .statusCode(403)
+            .body("error", equalTo("Forbidden"))
     }
 }

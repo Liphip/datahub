@@ -8,6 +8,11 @@ const directions = ['INPUT', 'OUTPUT', 'BOTH'] as const;
 
 export default function Connectors() {
   const { user, selectedTenantId } = useAuthStore();
+  const abilities = user?.abilities || [];
+  const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
+  const canReadConnectors = hasAbility('read:connector') || hasAbility('write:connector') || hasAbility('delete:connector');
+  const canWriteConnectors = hasAbility('write:connector');
+  const canDeleteConnectors = hasAbility('delete:connector');
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -47,6 +52,12 @@ export default function Connectors() {
         setLoading(false);
         return;
       }
+      if (!canReadConnectors) {
+        setConnectors([]);
+        setError('');
+        setLoading(false);
+        return;
+      }
 
       try {
         await loadConnectors(tenantId);
@@ -60,10 +71,14 @@ export default function Connectors() {
     };
 
     fetchConnectors();
-  }, [tenantId, filterType, filterDirection]);
+  }, [tenantId, filterType, filterDirection, canReadConnectors]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canWriteConnectors) {
+      showToast('You do not have permission to manage connectors', 'error');
+      return;
+    }
     if (!tenantId) return;
 
     try {
@@ -128,6 +143,10 @@ export default function Connectors() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!canDeleteConnectors) {
+      showToast('You do not have permission to delete connectors', 'error');
+      return;
+    }
     setDeletingId(id);
     try {
       await api.deleteConnector(id);
@@ -146,6 +165,7 @@ export default function Connectors() {
   };
 
   const handleEdit = (connector: Connector) => {
+    if (!canWriteConnectors) return;
     setEditingConnector(connector);
     setFormData({
       name: connector.name,
@@ -158,6 +178,7 @@ export default function Connectors() {
   };
 
   const handleOpenCreate = () => {
+    if (!canWriteConnectors) return;
     setEditingConnector(null);
     setFormData({
       name: '',
@@ -200,6 +221,16 @@ export default function Connectors() {
     );
   }
 
+  if (!canReadConnectors) {
+    return (
+      <div className="px-4 py-6 sm:px-0">
+        <div className="card text-center py-12">
+          <p className="text-gray-500">You do not have permission to view connectors for this tenant.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="px-4 py-6 sm:px-0">
       {toast && (
@@ -217,12 +248,14 @@ export default function Connectors() {
             Manage protocol interface definitions (MQTT, REST, WebSocket, UDP, etc.)
           </p>
         </div>
-        <button
-          onClick={handleOpenCreate}
-          className="btn-primary"
-        >
-          Create Connector
-        </button>
+        {canWriteConnectors && (
+          <button
+            onClick={handleOpenCreate}
+            className="btn-primary"
+          >
+            Create Connector
+          </button>
+        )}
       </div>
 
       <div className="card mb-4">
@@ -261,14 +294,16 @@ export default function Connectors() {
           </svg>
           <h3 className="mt-2 text-sm font-medium text-gray-900">No connectors</h3>
           <p className="mt-1 text-sm text-gray-500">Get started by creating your first connector.</p>
-          <div className="mt-6">
-            <button
-              onClick={handleOpenCreate}
-              className="btn-primary"
-            >
-              Create Connector
-            </button>
-          </div>
+          {canWriteConnectors && (
+            <div className="mt-6">
+              <button
+                onClick={handleOpenCreate}
+                className="btn-primary"
+              >
+                Create Connector
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -295,13 +330,15 @@ export default function Connectors() {
               </div>
               
               <div className="flex justify-end space-x-2">
-                <button
-                  onClick={() => handleEdit(connector)}
-                  className="text-blue-600 hover:text-blue-800 text-sm"
-                >
-                  Edit
-                </button>
-                {confirmDeleteId === connector.id ? (
+                {canWriteConnectors && (
+                  <button
+                    onClick={() => handleEdit(connector)}
+                    className="text-blue-600 hover:text-blue-800 text-sm"
+                  >
+                    Edit
+                  </button>
+                )}
+                {canDeleteConnectors && (confirmDeleteId === connector.id ? (
                   <>
                     <span className="text-xs text-gray-500">Delete?</span>
                     <button
@@ -325,14 +362,14 @@ export default function Connectors() {
                   >
                     Delete
                   </button>
-                )}
+                ))}
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {showModal && (
+      {showModal && canWriteConnectors && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
             <h2 className="text-xl font-bold mb-4">
