@@ -2,7 +2,7 @@ import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Pipeline, PipelineRun, PipelineRunLineage, PipelineRunSummary, TenantPipelineRun } from '../types';
+import type { Pipeline, PipelineRun, PipelineRunLineage, PipelineRunSummary, TenantLineageDefaults, TenantPipelineRun } from '../types';
 
 type RunMap = Record<string, PipelineRun[]>;
 type PipelineRunDetailFilter = {
@@ -36,6 +36,12 @@ type TriagePreset = {
 const TRIAGE_PRESETS_KEY = 'pipelines.triage.presets.v1';
 const LINEAGE_SAFE_DEFAULTS_KEY = 'pipelines.lineage.safe-defaults.v1';
 const LINEAGE_SAFE_DEFAULT_TTL_HOURS = 168;
+const DEFAULT_TENANT_LINEAGE_DEFAULTS: TenantLineageDefaults = {
+  safeScopePolicy: 'AUTO',
+  defaultFetchMode: 'SUMMARY',
+  defaultDepth: 20,
+  maxDepthCap: 200,
+};
 const LINEAGE_STATUS_OPTIONS: LineageStatusFilter[] = ['ALL', 'INFLIGHT', 'TERMINAL', 'FAILED', 'RUNNING', 'PENDING', 'SUCCESS', 'CANCELLED'];
 
 export default function Pipelines() {
@@ -65,6 +71,8 @@ export default function Pipelines() {
   const [lineageFetchModeByRunId, setLineageFetchModeByRunId] = useState<Record<string, LineageFetchMode>>({});
   const [lineageSafeScopePolicyByRunId, setLineageSafeScopePolicyByRunId] = useState<Record<string, LineageSafeScopePolicy>>({});
   const [lineagePerfHistoryByRunId, setLineagePerfHistoryByRunId] = useState<Record<string, LineagePerfSample[]>>({});
+  const [tenantLineageDefaults, setTenantLineageDefaults] = useState<TenantLineageDefaults>(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+  const [savingTenantLineageDefaults, setSavingTenantLineageDefaults] = useState(false);
   const [lineageSafeDefaultsByRunId, setLineageSafeDefaultsByRunId] = useState<Record<string, LineageSafeDefault>>(() => {
     try {
       const raw = localStorage.getItem(LINEAGE_SAFE_DEFAULTS_KEY);
@@ -186,6 +194,7 @@ export default function Pipelines() {
   const canReadPipelines = hasAbility('pipeline:read') || hasAbility('pipeline:write') || hasAbility('pipeline:execute') || hasAbility('manage:tenant');
   const canWritePipelines = hasAbility('pipeline:write') || hasAbility('manage:tenant');
   const canExecutePipelines = hasAbility('pipeline:execute') || canWritePipelines;
+  const canManageTenantSettings = hasAbility('manage:tenant');
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -238,6 +247,27 @@ export default function Pipelines() {
   useEffect(() => {
     localStorage.setItem(LINEAGE_SAFE_DEFAULTS_KEY, JSON.stringify(lineageSafeDefaultsByRunId));
   }, [lineageSafeDefaultsByRunId]);
+
+  useEffect(() => {
+    const loadTenantLineageDefaults = async () => {
+      if (!tenantId || !canReadPipelines) {
+        setTenantLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+        return;
+      }
+      try {
+        const defaults = await api.getTenantLineageDefaults(tenantId);
+        setTenantLineageDefaults({
+          safeScopePolicy: defaults.safeScopePolicy ?? 'AUTO',
+          defaultFetchMode: defaults.defaultFetchMode ?? 'SUMMARY',
+          defaultDepth: defaults.defaultDepth ?? 20,
+          maxDepthCap: defaults.maxDepthCap ?? 200,
+        });
+      } catch {
+        setTenantLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+      }
+    };
+    void loadTenantLineageDefaults();
+  }, [tenantId, canReadPipelines]);
 
   const refreshBucketRuns = async (tid: string, fromDate: Date, toDate: Date, silent = false) => {
     if (!silent) setLoadingBucketRuns(true);
@@ -634,11 +664,16 @@ export default function Pipelines() {
         : !isSafeDefaultExpired(pipelineScopedSafe)
           ? pipelineScopedSafe
           : undefined;
-      const depth = maxDepth ?? lineageDepthByRunId[runId] ?? usableSafeDefault?.depth ?? 20;
+      const tenantDefaultDepth = tenantLineageDefaults.defaultDepth ?? 20;
+      const tenantMaxDepthCap = tenantLineageDefaults.maxDepthCap ?? 200;
+      const depth = Math.min(
+        tenantMaxDepthCap,
+        maxDepth ?? lineageDepthByRunId[runId] ?? usableSafeDefault?.depth ?? tenantDefaultDepth
+      );
       const requestedDirection = direction ?? lineageDirectionByRunId[runId] ?? 'both';
       const requestedStatus = statusFilter ?? lineageStatusFilterByRunId[runId] ?? 'ALL';
-      const requestedFetchMode = fetchMode ?? lineageFetchModeByRunId[runId] ?? usableSafeDefault?.mode ?? 'SUMMARY';
-      const requestedSafeScopePolicy = safeScopePolicy ?? lineageSafeScopePolicyByRunId[runId] ?? 'AUTO';
+      const requestedFetchMode = fetchMode ?? lineageFetchModeByRunId[runId] ?? usableSafeDefault?.mode ?? tenantLineageDefaults.defaultFetchMode ?? 'SUMMARY';
+      const requestedSafeScopePolicy = safeScopePolicy ?? lineageSafeScopePolicyByRunId[runId] ?? tenantLineageDefaults.safeScopePolicy ?? 'AUTO';
       const statusPreset = requestedStatus === 'INFLIGHT'
         ? 'inflight'
         : requestedStatus === 'TERMINAL'
@@ -970,6 +1005,34 @@ export default function Pipelines() {
   const resetLineageView = async (pipelineId: string, runId: string) => {
     const defaultDepth = lineageByRunId[runId]?.defaultDepth ?? 20;
     await handleLoadRunLineage(pipelineId, runId, defaultDepth, 'both', 'ALL', 'SUMMARY', 'AUTO');
+  };
+
+  const saveTenantLineageDefaultsFromCurrent = async (pipelineId: string, runId: string) => {
+    if (!tenantId) return;
+    if (!canManageTenantSettings) {
+      showToast('You need tenant manage permission to update tenant defaults', 'error');
+      return;
+    }
+    const depth = lineageDepthByRunId[runId] ?? tenantLineageDefaults.defaultDepth ?? 20;
+    const mode = lineageFetchModeByRunId[runId] ?? tenantLineageDefaults.defaultFetchMode ?? 'SUMMARY';
+    const policy = lineageSafeScopePolicyByRunId[runId] ?? tenantLineageDefaults.safeScopePolicy ?? 'AUTO';
+    const maxDepthCap = Math.max(20, Math.min(200, Math.max(depth, tenantLineageDefaults.maxDepthCap ?? 200)));
+    setSavingTenantLineageDefaults(true);
+    try {
+      const updated = await api.updateTenantLineageDefaults(tenantId, {
+        safeScopePolicy: policy,
+        defaultFetchMode: mode,
+        defaultDepth: depth,
+        maxDepthCap,
+      });
+      setTenantLineageDefaults(updated);
+      showToast('Tenant lineage defaults updated', 'success');
+      await handleLoadRunLineage(pipelineId, runId, depth, undefined, undefined, mode, policy);
+    } catch {
+      showToast('Failed to update tenant lineage defaults', 'error');
+    } finally {
+      setSavingTenantLineageDefaults(false);
+    }
   };
 
   const forgetSafeDefault = (scope: LineageSafeScope, targetId: string) => {
@@ -2536,6 +2599,23 @@ export default function Pipelines() {
                                       );
                                     })}
                                   </div>
+                                  <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-indigo-800">
+                                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                      Tenant defaults: {tenantLineageDefaults.defaultFetchMode} d{tenantLineageDefaults.defaultDepth} cap d{tenantLineageDefaults.maxDepthCap} {tenantLineageDefaults.safeScopePolicy.toLowerCase()}
+                                    </span>
+                                    {canManageTenantSettings && (
+                                      <button
+                                        disabled={savingTenantLineageDefaults}
+                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          void saveTenantLineageDefaultsFromCurrent(pipeline.id, selectedRun.id);
+                                        }}
+                                      >
+                                        {savingTenantLineageDefaults ? 'Saving tenant defaults...' : 'Save current as tenant defaults'}
+                                      </button>
+                                    )}
+                                  </div>
                                   <div className="mb-2 flex flex-wrap items-center gap-2">
                                     <span className="text-[11px] text-indigo-800">Direction:</span>
                                     {(['both', 'ancestors', 'descendants'] as const).map((option) => {
@@ -2745,7 +2825,11 @@ export default function Pipelines() {
                                         onClick={(e) => {
                                           e.preventDefault();
                                           const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
-                                          const nextDepth = lineageByRunId[selectedRun.id].nextRecommendedDepth ?? Math.min(200, currentDepth + 20);
+                                          const maxDepthCap = tenantLineageDefaults.maxDepthCap ?? 200;
+                                          const nextDepth = Math.min(
+                                            maxDepthCap,
+                                            lineageByRunId[selectedRun.id].nextRecommendedDepth ?? Math.min(maxDepthCap, currentDepth + 20)
+                                          );
                                           void handleLoadRunLineage(
                                             pipeline.id,
                                             selectedRun.id,
@@ -2755,7 +2839,10 @@ export default function Pipelines() {
                                           );
                                         }}
                                       >
-                                        {`Load to d${lineageByRunId[selectedRun.id].nextRecommendedDepth ?? Math.min(200, (lineageDepthByRunId[selectedRun.id] ?? 20) + 20)}`}
+                                        {`Load to d${Math.min(
+                                          tenantLineageDefaults.maxDepthCap ?? 200,
+                                          lineageByRunId[selectedRun.id].nextRecommendedDepth ?? Math.min(tenantLineageDefaults.maxDepthCap ?? 200, (lineageDepthByRunId[selectedRun.id] ?? 20) + 20)
+                                        )}`}
                                       </button>
                                     </div>
                                   )}

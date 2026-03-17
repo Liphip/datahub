@@ -7,6 +7,8 @@ import com.dataturntable.alert.AlertRule
 import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
+import com.dataturntable.module.CodeModule
+import com.dataturntable.module.ModuleVersion
 import com.dataturntable.test.TestAuthHelpers
 import io.quarkus.narayana.jta.QuarkusTransaction
 import io.quarkus.test.junit.QuarkusTest
@@ -31,13 +33,20 @@ class TenantResourceTest {
     @BeforeEach
     @Transactional
     fun cleanup() {
-        em.createQuery("DELETE FROM Membership").executeUpdate()
-        em.createQuery("DELETE FROM Role").executeUpdate()
-        em.createQuery("DELETE FROM User").executeUpdate()
-        em.createQuery("DELETE FROM AlertChannel").executeUpdate()
-        em.createQuery("DELETE FROM AlertRule").executeUpdate()
-        em.createQuery("DELETE FROM AlertHistory").executeUpdate()
-        em.createQuery("DELETE FROM Tenant").executeUpdate()
+        em.createNativeQuery("SET REFERENTIAL_INTEGRITY FALSE").executeUpdate()
+        try {
+            em.createQuery("DELETE FROM ModuleVersion").executeUpdate()
+            em.createQuery("DELETE FROM CodeModule").executeUpdate()
+            em.createQuery("DELETE FROM Membership").executeUpdate()
+            em.createQuery("DELETE FROM Role").executeUpdate()
+            em.createQuery("DELETE FROM User").executeUpdate()
+            em.createQuery("DELETE FROM AlertChannel").executeUpdate()
+            em.createQuery("DELETE FROM AlertRule").executeUpdate()
+            em.createQuery("DELETE FROM AlertHistory").executeUpdate()
+            em.createQuery("DELETE FROM Tenant").executeUpdate()
+        } finally {
+            em.createNativeQuery("SET REFERENTIAL_INTEGRITY TRUE").executeUpdate()
+        }
     }
 
     fun createNonAdminToken(): String {
@@ -406,5 +415,61 @@ class TenantResourceTest {
         .then()
             .statusCode(403)
             .body("error", equalTo("Forbidden"))
+    }
+
+    @Test
+    fun testTenantManagerCanGetAndUpdateLineageDefaults() {
+        val adminToken = TestAuthHelpers.createAdminToken()
+        val rootId = given()
+            .header("Authorization", "Bearer $adminToken")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        val managerToken = createTenantManagerToken(rootId)
+
+        given()
+            .header("Authorization", "Bearer $managerToken")
+        .`when`()
+            .get("/api/internal/v1/tenants/$rootId/lineage-defaults")
+        .then()
+            .statusCode(200)
+            .body("safeScopePolicy", equalTo("AUTO"))
+            .body("defaultFetchMode", equalTo("SUMMARY"))
+            .body("defaultDepth", equalTo(20))
+            .body("maxDepthCap", equalTo(200))
+
+        given()
+            .header("Authorization", "Bearer $managerToken")
+            .contentType(ContentType.JSON)
+            .body(mapOf(
+                "safeScopePolicy" to "PIPELINE",
+                "defaultFetchMode" to "DETAILS",
+                "defaultDepth" to 40,
+                "maxDepthCap" to 120
+            ))
+        .`when`()
+            .patch("/api/internal/v1/tenants/$rootId/lineage-defaults")
+        .then()
+            .statusCode(200)
+            .body("safeScopePolicy", equalTo("PIPELINE"))
+            .body("defaultFetchMode", equalTo("DETAILS"))
+            .body("defaultDepth", equalTo(40))
+            .body("maxDepthCap", equalTo(120))
+
+        given()
+            .header("Authorization", "Bearer $managerToken")
+            .contentType(ContentType.JSON)
+            .body(mapOf("defaultDepth" to 500))
+        .`when`()
+            .patch("/api/internal/v1/tenants/$rootId/lineage-defaults")
+        .then()
+            .statusCode(400)
+            .body("error", containsString("defaultDepth"))
     }
 }

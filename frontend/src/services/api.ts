@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, Role, Membership, TenantContext, BrokerCredential } from '../types';
+import type { AuthResponse, User, Tenant, TenantLineageDefaults, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, Role, Membership, TenantContext, BrokerCredential } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 export const API_STATUS_EVENT = 'dataturntable:api-status';
@@ -136,6 +136,16 @@ class ApiService {
 
   async getTenantChildren(parentId: string): Promise<Tenant[]> {
     const response = await this.client.get<Tenant[]>(`/tenants/${parentId}/children`);
+    return response.data;
+  }
+
+  async getTenantLineageDefaults(tenantId: string): Promise<TenantLineageDefaults> {
+    const response = await this.client.get<TenantLineageDefaults>(`/tenants/${tenantId}/lineage-defaults`);
+    return response.data;
+  }
+
+  async updateTenantLineageDefaults(tenantId: string, data: Partial<TenantLineageDefaults>): Promise<TenantLineageDefaults> {
+    const response = await this.client.patch<TenantLineageDefaults>(`/tenants/${tenantId}/lineage-defaults`, data);
     return response.data;
   }
 

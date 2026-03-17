@@ -3,6 +3,7 @@ package com.dataturntable.api
 import com.dataturntable.tenant.Tenant
 import com.dataturntable.auth.User
 import com.dataturntable.service.TenantService
+import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.security.Authenticated
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
@@ -27,6 +28,9 @@ class TenantResource {
 
     @Inject
     lateinit var jwt: JsonWebToken
+
+    @Inject
+    lateinit var objectMapper: ObjectMapper
 
     private fun getCurrentUser(): User? {
         val subject = jwt.subject ?: return null
@@ -54,6 +58,43 @@ class TenantResource {
         } catch (_: Exception) {
             throw WebApplicationException(Response.status(400).entity(mapOf("error" to "Invalid $field")).build())
         }
+    }
+
+    private fun parseSettings(settingsRaw: String?): MutableMap<String, Any?> {
+        if (settingsRaw.isNullOrBlank()) return mutableMapOf()
+        return try {
+            @Suppress("UNCHECKED_CAST")
+            (objectMapper.readValue(settingsRaw, Map::class.java) as? Map<String, Any?>)?.toMutableMap() ?: mutableMapOf()
+        } catch (_: Exception) {
+            mutableMapOf()
+        }
+    }
+
+    private fun normalizeLineageDefaults(raw: Map<String, Any?>?): Map<String, Any?> {
+        val safeScopePolicy = when ((raw?.get("safeScopePolicy") as? String)?.trim()?.uppercase()) {
+            "RUN" -> "RUN"
+            "PIPELINE" -> "PIPELINE"
+            else -> "AUTO"
+        }
+        val defaultFetchMode = when ((raw?.get("defaultFetchMode") as? String)?.trim()?.uppercase()) {
+            "DETAILS" -> "DETAILS"
+            else -> "SUMMARY"
+        }
+        val defaultDepth = ((raw?.get("defaultDepth") as? Number)?.toInt() ?: 20).coerceIn(1, 200)
+        val maxDepthCap = ((raw?.get("maxDepthCap") as? Number)?.toInt() ?: 200).coerceIn(20, 200)
+        return mapOf(
+            "safeScopePolicy" to safeScopePolicy,
+            "defaultFetchMode" to defaultFetchMode,
+            "defaultDepth" to defaultDepth,
+            "maxDepthCap" to maxDepthCap
+        )
+    }
+
+    private fun extractLineageDefaults(settingsRaw: String?): Map<String, Any?> {
+        val settings = parseSettings(settingsRaw)
+        @Suppress("UNCHECKED_CAST")
+        val lineageDefaultsRaw = settings["lineageDefaults"] as? Map<String, Any?>
+        return normalizeLineageDefaults(lineageDefaultsRaw)
     }
 
     private fun toTenantMap(tenant: Tenant, children: List<Map<String, Any?>>? = null): Map<String, Any?> {
@@ -281,5 +322,87 @@ class TenantResource {
             children.filter { child -> child.id?.let { user.canAccessTenant(it) } == true }
         }
         return Response.ok(visibleChildren.map { toTenantMap(it) }).build()
+    }
+
+    @GET
+    @Path("/{id}/lineage-defaults")
+    fun getLineageDefaults(@PathParam("id") id: String): Response {
+        val (currentUser, denial) = requireTenantManager()
+        denial?.let { return it }
+        val user = currentUser ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+
+        val tenantId = try {
+            parseUuid(id, "tenant id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        if (!canManageTenant(user, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        val tenant = em.find(Tenant::class.java, tenantId)
+            ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+        return Response.ok(extractLineageDefaults(tenant.settings)).build()
+    }
+
+    @PATCH
+    @Path("/{id}/lineage-defaults")
+    @Transactional
+    fun updateLineageDefaults(@PathParam("id") id: String, request: Map<String, Any>): Response {
+        val (currentUser, denial) = requireTenantManager()
+        denial?.let { return it }
+        val user = currentUser ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+
+        val tenantId = try {
+            parseUuid(id, "tenant id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        if (!canManageTenant(user, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        val tenant = em.find(Tenant::class.java, tenantId)
+            ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+
+        @Suppress("UNCHECKED_CAST")
+        val currentLineageDefaults = extractLineageDefaults(tenant.settings).toMutableMap()
+        val merged = currentLineageDefaults.toMutableMap()
+        request["safeScopePolicy"]?.let {
+            val value = (it as? String)?.trim()?.uppercase()
+            if (value !in setOf("AUTO", "RUN", "PIPELINE")) {
+                return Response.status(400).entity(mapOf("error" to "Invalid safeScopePolicy. Allowed values: AUTO, RUN, PIPELINE")).build()
+            }
+            merged["safeScopePolicy"] = value
+        }
+        request["defaultFetchMode"]?.let {
+            val value = (it as? String)?.trim()?.uppercase()
+            if (value !in setOf("SUMMARY", "DETAILS")) {
+                return Response.status(400).entity(mapOf("error" to "Invalid defaultFetchMode. Allowed values: SUMMARY, DETAILS")).build()
+            }
+            merged["defaultFetchMode"] = value
+        }
+        request["defaultDepth"]?.let {
+            val value = (it as? Number)?.toInt() ?: return Response.status(400).entity(mapOf("error" to "defaultDepth must be a number")).build()
+            if (value !in 1..200) {
+                return Response.status(400).entity(mapOf("error" to "defaultDepth must be between 1 and 200")).build()
+            }
+            merged["defaultDepth"] = value
+        }
+        request["maxDepthCap"]?.let {
+            val value = (it as? Number)?.toInt() ?: return Response.status(400).entity(mapOf("error" to "maxDepthCap must be a number")).build()
+            if (value !in 20..200) {
+                return Response.status(400).entity(mapOf("error" to "maxDepthCap must be between 20 and 200")).build()
+            }
+            merged["maxDepthCap"] = value
+        }
+
+        val settings = parseSettings(tenant.settings)
+        settings["lineageDefaults"] = normalizeLineageDefaults(merged)
+        tenant.settings = objectMapper.writeValueAsString(settings)
+        tenant.updatedAt = java.time.Instant.now()
+        em.merge(tenant)
+
+        return Response.ok(extractLineageDefaults(tenant.settings)).build()
     }
 }

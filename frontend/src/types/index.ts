@@ -55,6 +55,13 @@ export interface CodeModule {
   versions: ModuleVersion[];
 }
 
+export interface TenantLineageDefaults {
+  safeScopePolicy: 'AUTO' | 'RUN' | 'PIPELINE';
+  defaultFetchMode: 'SUMMARY' | 'DETAILS';
+  defaultDepth: number;
+  maxDepthCap: number;
+}
+
 export interface ModuleVersion {
   id: string;
   moduleId?: string;
