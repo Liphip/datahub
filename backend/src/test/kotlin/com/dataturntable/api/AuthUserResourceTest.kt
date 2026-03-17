@@ -4,6 +4,7 @@ import com.dataturntable.test.TestAuthHelpers
 import io.quarkus.test.junit.QuarkusTest
 import io.restassured.RestAssured.given
 import org.hamcrest.CoreMatchers.equalTo
+import org.hamcrest.CoreMatchers.notNullValue
 import org.junit.jupiter.api.Test
 import java.util.UUID
 
@@ -24,6 +25,7 @@ class AuthUserResourceTest {
     fun testCreateAuthUserAcceptsPasswordAlias() {
         val token = TestAuthHelpers.createAdminToken()
         val email = "auth-user-${UUID.randomUUID()}@example.com"
+        val passwordHash = "dGVzdC1zaGEyNTYtaGFzaA=="
 
         given()
             .header("Authorization", "Bearer $token")
@@ -31,7 +33,7 @@ class AuthUserResourceTest {
             .body(
                 mapOf(
                     "email" to email,
-                    "password" to "dGVzdC1zaGEyNTYtaGFzaA=="
+                    "password" to passwordHash
                 )
             )
         .`when`()
@@ -39,5 +41,14 @@ class AuthUserResourceTest {
         .then()
             .statusCode(201)
             .body("email", equalTo(email))
+
+        given()
+            .contentType("application/json")
+            .body(mapOf("email" to email, "passwordHash" to passwordHash))
+        .`when`()
+            .post("/api/internal/v1/auth/login")
+        .then()
+            .statusCode(200)
+            .body("token", notNullValue())
     }
 }

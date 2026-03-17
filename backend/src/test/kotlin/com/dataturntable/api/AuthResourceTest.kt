@@ -1,6 +1,9 @@
 package com.dataturntable.api
 
 import com.dataturntable.auth.User
+import com.dataturntable.alert.AlertChannel
+import com.dataturntable.alert.AlertHistory
+import com.dataturntable.alert.AlertRule
 import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
@@ -29,6 +32,9 @@ class AuthResourceTest {
     @BeforeEach
     @Transactional
     fun cleanup() {
+        em.createQuery("DELETE FROM AlertHistory").executeUpdate()
+        em.createQuery("DELETE FROM AlertRule").executeUpdate()
+        em.createQuery("DELETE FROM AlertChannel").executeUpdate()
         em.createQuery("DELETE FROM Membership").executeUpdate()
         em.createQuery("DELETE FROM User").executeUpdate()
         em.createQuery("DELETE FROM Role").executeUpdate()
@@ -94,6 +100,27 @@ class AuthResourceTest {
         .then()
             .statusCode(409)
             .body("error", notNullValue())
+    }
+
+    @Test
+    fun testRegisterEndpointCreatesAndAuthenticatesUser() {
+        val registerBody = """
+            {
+                "tenantName": "Tenant-${'$'}{java.util.UUID.randomUUID()}",
+                "email": "register@example.com",
+                "passwordHash": "${hashPassword("Password123!")}"
+            }
+        """.trimIndent()
+
+        given()
+            .contentType(ContentType.JSON)
+            .body(registerBody)
+        .`when`()
+            .post("/api/internal/v1/auth/register")
+        .then()
+            .statusCode(201)
+            .body("token", notNullValue())
+            .body("user.email", equalTo("register@example.com"))
     }
 
     @Test

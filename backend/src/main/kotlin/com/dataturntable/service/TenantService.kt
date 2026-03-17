@@ -45,7 +45,7 @@ class TenantService {
             this.tenant = tenant
             name = "Viewer"
             description = "Default viewer role"
-            abilities = "[\"module:read\", \"pipeline:read\", \"data:read\", \"alert:read\"]"
+            abilities = "[\"module:read\", \"pipeline:read\", \"data:read\", \"alert:read\", \"read:connector\", \"read:user\"]"
             isDefault = true
         }
         viewerRole.persist()
@@ -54,7 +54,7 @@ class TenantService {
             this.tenant = tenant
             name = "Editor"
             description = "Default editor role"
-            abilities = "[\"module:read\", \"module:write\", \"pipeline:read\", \"pipeline:write\", \"pipeline:execute\", \"data:read\", \"data:write\", \"alert:read\"]"
+            abilities = "[\"module:read\", \"module:write\", \"pipeline:read\", \"pipeline:write\", \"pipeline:execute\", \"data:read\", \"data:write\", \"alert:read\", \"read:connector\", \"write:connector\", \"read:user\"]"
         }
         editorRole.persist()
         
@@ -62,7 +62,7 @@ class TenantService {
             this.tenant = tenant
             name = "Tenant Admin"
             description = "Tenant administrator role"
-            abilities = "[\"module:read\", \"module:write\", \"module:delete\", \"pipeline:read\", \"pipeline:write\", \"pipeline:execute\", \"data:read\", \"data:write\", \"data:export\", \"alert:read\", \"alert:configure\", \"tenant:users\", \"tenant:manage\"]"
+            abilities = "[\"module:read\", \"module:write\", \"module:delete\", \"pipeline:read\", \"pipeline:write\", \"pipeline:execute\", \"data:read\", \"data:write\", \"data:export\", \"alert:read\", \"alert:configure\", \"tenant:users\", \"tenant:manage\", \"manage:tenant\", \"read:user\", \"write:user\", \"delete:user\", \"read:connector\", \"write:connector\", \"delete:connector\"]"
         }
         adminRole.persist()
     }

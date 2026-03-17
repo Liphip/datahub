@@ -29,6 +29,43 @@ class ModuleResource {
             null
         }
     }
+
+    private fun versionToMap(version: ModuleVersion): Map<String, Any?> {
+        return mapOf(
+            "id" to version.id,
+            "moduleId" to version.module?.id,
+            "version" to version.version,
+            "versionTag" to version.versionTag,
+            "code" to version.code,
+            "requirements" to version.requirements,
+            "config" to version.config,
+            "isActive" to version.isActive,
+            "createdAt" to version.createdAt
+        )
+    }
+
+    private fun moduleToMap(module: CodeModule, includeVersions: Boolean = false): Map<String, Any?> {
+        val base = mutableMapOf<String, Any?>(
+            "id" to module.id,
+            "tenantId" to module.tenant?.id,
+            "name" to module.name,
+            "description" to module.description,
+            "moduleType" to module.moduleType?.name,
+            "isActive" to module.isActive,
+            "createdAt" to module.createdAt
+        )
+        val versions = em.createQuery(
+            "SELECT v FROM ModuleVersion v WHERE v.module.id = :moduleId ORDER BY v.version DESC",
+            ModuleVersion::class.java
+        )
+            .setParameter("moduleId", module.id)
+            .resultList
+        base["versionCount"] = versions.size
+        if (includeVersions) {
+            base["versions"] = versions.map { versionToMap(it) }
+        }
+        return base
+    }
     
     @GET
     fun list(@QueryParam("tenantId") tenantId: String, @QueryParam("type") type: String?): Response {
@@ -60,7 +97,7 @@ class ModuleResource {
                 .resultList
         }
 
-        return Response.ok(modules.map { mapOf("id" to it.id, "name" to it.name, "moduleType" to it.moduleType?.name) }).build()
+        return Response.ok(modules.map { moduleToMap(it, includeVersions = false) }).build()
     }
     
     @POST
@@ -109,7 +146,7 @@ class ModuleResource {
         }
         val module = em.find(CodeModule::class.java, moduleId)
         return if (module != null) {
-            Response.ok(mapOf("id" to module.id, "name" to module.name, "moduleType" to module.moduleType?.name)).build()
+            Response.ok(moduleToMap(module, includeVersions = true)).build()
         } else {
             Response.status(404).entity(mapOf("error" to "Module not found")).build()
         }
@@ -147,7 +184,7 @@ class ModuleResource {
         )
             .setParameter("moduleId", moduleId)
             .resultList
-        return Response.ok(versions.map { mapOf("id" to it.id, "version" to it.version, "versionTag" to it.versionTag) }).build()
+        return Response.ok(versions.map { versionToMap(it) }).build()
     }
     
     @POST

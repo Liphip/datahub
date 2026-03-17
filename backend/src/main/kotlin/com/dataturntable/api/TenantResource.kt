@@ -2,6 +2,7 @@ package com.dataturntable.api
 
 import com.dataturntable.tenant.Tenant
 import com.dataturntable.auth.User
+import com.dataturntable.service.TenantService
 import io.quarkus.security.Authenticated
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
@@ -9,6 +10,7 @@ import jakarta.transaction.Transactional
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
+import org.eclipse.microprofile.jwt.JsonWebToken
 import java.util.UUID
 
 @Path("/tenants")
@@ -19,6 +21,26 @@ class TenantResource {
     
     @Inject
     lateinit var em: EntityManager
+
+    @Inject
+    lateinit var tenantService: TenantService
+
+    @Inject
+    lateinit var jwt: JsonWebToken
+
+    private fun getCurrentUser(): User? {
+        val subject = jwt.subject ?: return null
+        val userId = try { UUID.fromString(subject) } catch (_: Exception) { return null }
+        return em.find(User::class.java, userId)
+    }
+
+    private fun requireSuperadmin(): Response? {
+        val user = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        if (!user.isSuperAdmin()) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        return null
+    }
     
     @GET
     fun list(): Response {
@@ -29,6 +51,8 @@ class TenantResource {
     @POST
     @Transactional
     fun create(request: Map<String, Any>): Response {
+        requireSuperadmin()?.let { return it }
+
         val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
         
         val parentId = request["parentId"] as? String
@@ -50,6 +74,7 @@ class TenantResource {
             this.updatedAt = java.time.Instant.now()
         }
         em.persist(tenant)
+        tenantService.createDefaultRoles(tenant)
         return Response.status(201).entity(mapOf("id" to tenant.id, "name" to tenant.name)).build()
     }
     
@@ -68,6 +93,8 @@ class TenantResource {
     @Path("/{id}")
     @Transactional
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
+        requireSuperadmin()?.let { return it }
+
         val tenant = em.find(Tenant::class.java, UUID.fromString(id))
         return if (tenant != null) {
             request["name"]?.let { tenant.name = it as String }
@@ -85,6 +112,8 @@ class TenantResource {
     @Path("/{id}")
     @Transactional
     fun delete(@PathParam("id") id: String): Response {
+        requireSuperadmin()?.let { return it }
+
         val tenant = em.find(Tenant::class.java, UUID.fromString(id))
         return if (tenant != null) {
             if (tenant.parent == null) {

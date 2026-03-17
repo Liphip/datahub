@@ -25,11 +25,28 @@ This section catalogues every known gap between the current codebase and a shipp
 
 ---
 
+### Progress Update (Current Iteration)
+
+- Implemented `/auth/register` compatibility endpoint (setup + immediate JWT login) to support frontend registration bootstrap.
+- Fixed auth-user password persistence path to store BCrypt-wrapped hashes (login compatibility restored for users created via `/auth-users`).
+- Fixed `AuthService` JWT generation when tenant is absent (`tenantId` claim omitted instead of null claim crash).
+- Fixed `UserDto` tenant serialization to avoid stringified `"null"` tenant IDs.
+- Added `tenantId` query-param support to `POST /auth-users` for explicit tenant-scoped create flows.
+- Expanded module API payloads (`GET /modules`, `GET /modules/{id}`, `GET /modules/{id}/versions`) with fields required by editors and lists.
+- Expanded pipeline API payloads (`GET /pipelines`, `GET /pipelines/{id}`, `GET /pipelines/{id}/runs`, `POST /pipelines/{id}/run`) and made trigger transactional.
+- Updated alert persistence to serialize `condition` and channel `config` as JSON strings.
+- Updated tenant create flow to seed default roles and added superadmin guards to tenant mutation endpoints.
+- Added schema alignment migration `V2__auth_users_and_enum_schema_alignment.sql` for auth-user/membership column naming, enum CHECK constraints, and global email uniqueness.
+- Updated frontend `PipelineEditor` to resolve selected modules to latest module version IDs before save.
+- Updated frontend `PipelineEditor` and `ModuleEditor` to use toast notifications instead of blocking browser alerts.
+
+---
+
 ### 1. Authentication & Session
 
 | # | Gap | Priority | Notes |
 |---|-----|----------|-------|
-| A1 | **`/auth/register` endpoint is absent** — the frontend `api.register()` call has no backend handler. There is only `/auth/setup` (first-run) and `/auth/login`. Normal users cannot self-register. | BLOCKER | Either expose `/auth/register` (delegates to auth-user + membership create) or remove it from the frontend and rely entirely on admin-invite flow. |
+| A1 | **`/auth/register` endpoint is absent** — the frontend `api.register()` call has no backend handler. There is only `/auth/setup` (first-run) and `/auth/login`. Normal users cannot self-register. | LOW | Remove it from the frontend and rely entirely on admin-invite flow. |
 | A2 | **JWT `tenantId` claim is set from the user's *first* membership only.** If the user switches tenant context or belongs to many tenants, the token becomes stale. No `/auth/switch-tenant` endpoint exists. | HIGH | Add `POST /auth/switch-tenant` that issues a new short-lived JWT with a different `tenantId` claim, or store tenantId client-side and pass it per-request. |
 | A3 | **`/auth/me` response shape mismatch.** `AuthService.toUserDto` returns `tenantId` as a string that may be `"null"` when the user has no membership. Frontend reads `user.tenantId` and uses it as a required UUID parameter; a `"null"` string breaks every API call. | BLOCKER | Guard `toUserDto` so `tenantId` is `null` (JSON null) not the string `"null"` when absent. |
 | A4 | **Password hash storage is inconsistent.** `AuthUserResource.create` stores the raw client hash (SHA-256 base64) directly as `passwordHash`, while `AuthService.setup` wraps it with `BCrypt.hashpw`. `AuthService.login` calls `BCrypt.checkpw`, so users created via `/auth-users` can never log in. | BLOCKER | `AuthUserResource.create/update` must BCrypt-hash the incoming SHA-256 hash before persisting, same as `AuthService.setup` does. |
@@ -131,7 +148,7 @@ This section catalogues every known gap between the current codebase and a shipp
 |---|-----|----------|-------|
 | F1 | **No first-run / setup flow in the UI.** `POST /auth/setup` is the only way to create the initial admin user and root tenant, but there is no `/setup` page or route. New deployments require calling the API directly (e.g., via curl). | HIGH | Add a `/setup` route that calls `api.register` (or a dedicated setup call) when no users exist yet. |
 | F2 | **The `401` interceptor in `api.ts` redirects to `/login` on every 401.** If the setup endpoint returns 401 (it doesn't require auth, but the interceptor fires on any 401 response from any call), users will be stuck in a redirect loop on first boot. | HIGH | Exempt the setup/register route from the 401-redirect interceptor. |
-| F3 | **`/api/register` in `api.ts` calls `POST /auth/register` which does not exist** (only `/auth/setup` and `/auth/login`). Clicking any "register" link will 404. | BLOCKER | Wire `api.register` to `/auth/setup` for first-run, or add a proper `/auth/register` endpoint. |
+| F3 | **`/api/register` in `api.ts` calls `POST /auth/register` which does not exist** (only `/auth/setup` and `/auth/login`). Clicking any "register" link will 404. | BLOCKER | Wire `api.register` to `/auth/setup` for first-run, do not add a `/auth/register` endpoint (no self registration). |
 | F4 | **`PipelineEditor` and `ModuleEditor` navigate to a pipeline/module ID route immediately after creating a new item**, before the server response is confirmed. If save fails, the user is left on a broken route. | LOW | Wait for `navigate()` until after the create call resolves successfully. (Already done for pipelines; ModuleEditor redirects on click of "Back".) |
 | F5 | **No loading/error boundary at the app level.** If an API call fails during initial load (e.g., network error), all pages silently show empty state with no indication of a network problem. | LOW | Add an `ErrorBoundary` wrapper or a global error state that shows a "Failed to connect to API" banner. |
 | F6 | **The `Tenants` page is only visible to `user?.superadmin`, but this flag is derived from the JWT which is set correctly only for the root-tenant admin.** Any regular Tenant Admin of a sub-tenant cannot access tenant management even though sub-tenant management should be permitted. | LOW | Revisit the `user.superadmin` check — perhaps show the page to anyone with `manage:tenant` ability. |
@@ -169,7 +186,7 @@ This section catalogues every known gap between the current codebase and a shipp
 4. A3 — `tenantId` serialised as `"null"` string  
 5. R2 — ability string convention mismatch (everyone 403s)  
 6. T2 — new tenants missing default roles  
-7. A1/F3 — no `/auth/register` or `/auth/setup` frontend route  
+7. A1/F3 — no `/auth/setup` frontend route  
 
 **Must fix before core features work:**
 8. P1 — pipeline get/list missing fields  

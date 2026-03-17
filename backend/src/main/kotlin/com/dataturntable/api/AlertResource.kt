@@ -6,6 +6,7 @@ import com.dataturntable.alert.AlertRule
 import com.dataturntable.alert.AlertHistory
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.tenant.Tenant
+import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.security.Authenticated
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
@@ -20,6 +21,8 @@ import java.util.UUID
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
 class AlertResource {
+
+    private val objectMapper = ObjectMapper()
 
     @PersistenceContext
     lateinit var em: EntityManager
@@ -73,7 +76,13 @@ class AlertResource {
             this.name = name
             this.tenant = tenant
             this.channelType = parsedChannelType
-            this.config = request["config"]?.toString() ?: "{}"
+            this.config = request["config"]?.let {
+                try {
+                    objectMapper.writeValueAsString(it)
+                } catch (_: Exception) {
+                    it.toString()
+                }
+            } ?: "{}"
             this.isActive = true
             this.createdAt = java.time.Instant.now()
             this.updatedAt = java.time.Instant.now()
@@ -118,7 +127,11 @@ class AlertResource {
         val conditionRaw = request["condition"] ?: return Response.status(400).entity(mapOf("error" to "Condition is required")).build()
         val condition = when (conditionRaw) {
             is String -> conditionRaw
-            else -> conditionRaw.toString()
+            else -> try {
+                objectMapper.writeValueAsString(conditionRaw)
+            } catch (_: Exception) {
+                conditionRaw.toString()
+            }
         }
         
         val tenant = em.find(Tenant::class.java, parseUuid(tenantId, "tenantId"))

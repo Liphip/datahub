@@ -60,6 +60,23 @@ class PipelineResource {
         }
         return null
     }
+
+    private fun pipelineToMap(p: Pipeline): Map<String, Any?> {
+        return mapOf(
+            "id" to p.id,
+            "tenantId" to p.tenant?.id,
+            "name" to p.name,
+            "description" to p.description,
+            "importModuleVersionId" to p.importModuleVersionId,
+            "processingModuleVersionIds" to p.processingModuleVersionIds.toList(),
+            "exportModuleVersionIds" to p.exportModuleVersionIds.toList(),
+            "kafkaConsumerGroup" to p.kafkaConsumerGroup,
+            "isActive" to p.isActive,
+            "graphDefinition" to parseGraphDefinition(p.graphDefinition),
+            "createdAt" to p.createdAt,
+            "updatedAt" to p.updatedAt
+        )
+    }
     
     @GET
     fun list(@QueryParam("tenantId") tenantId: String): Response {
@@ -69,14 +86,7 @@ class PipelineResource {
         )
             .setParameter("tenantId", UUID.fromString(tenantId))
             .resultList
-        return Response.ok(pipelines.map {
-            mapOf(
-                "id" to it.id,
-                "name" to it.name,
-                "isActive" to it.isActive,
-                "graphDefinition" to parseGraphDefinition(it.graphDefinition)
-            )
-        }).build()
+        return Response.ok(pipelines.map { pipelineToMap(it) }).build()
     }
     
     @POST
@@ -113,14 +123,7 @@ class PipelineResource {
         }
         pipeline.persist()
         
-        return Response.status(201).entity(
-            mapOf(
-                "id" to pipeline.id,
-                "name" to pipeline.name,
-                "graphDefinition" to parseGraphDefinition(pipeline.graphDefinition),
-                "isActive" to pipeline.isActive
-            )
-        ).build()
+        return Response.status(201).entity(pipelineToMap(pipeline)).build()
     }
     
     @GET
@@ -128,14 +131,7 @@ class PipelineResource {
     fun get(@PathParam("id") id: String): Response {
         val pipeline = em.find(Pipeline::class.java, UUID.fromString(id))
         return if (pipeline != null) {
-            Response.ok(
-                mapOf(
-                    "id" to pipeline.id,
-                    "name" to pipeline.name,
-                    "isActive" to pipeline.isActive,
-                    "graphDefinition" to parseGraphDefinition(pipeline.graphDefinition)
-                )
-            ).build()
+            Response.ok(pipelineToMap(pipeline)).build()
         } else {
             Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
         }
@@ -186,14 +182,7 @@ class PipelineResource {
             }
             pipeline.updatedAt = java.time.Instant.now()
             pipeline.persist()
-            Response.ok(
-                mapOf(
-                    "id" to pipeline.id,
-                    "name" to pipeline.name,
-                    "isActive" to pipeline.isActive,
-                    "graphDefinition" to parseGraphDefinition(pipeline.graphDefinition)
-                )
-            ).build()
+            Response.ok(pipelineToMap(pipeline)).build()
         } else {
             Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
         }
@@ -201,15 +190,27 @@ class PipelineResource {
     
     @POST
     @Path("/{id}/run")
+    @Transactional
     fun trigger(@PathParam("id") id: String, @QueryParam("triggerType") triggerType: String?): Response {
         val pipeline = em.find(Pipeline::class.java, UUID.fromString(id))
         return if (pipeline != null) {
             val run = PipelineRun().apply {
                 this.pipeline = pipeline
-                this.triggerType = triggerType?.let { TriggerType.valueOf(it.uppercase()) } ?: TriggerType.MANUAL
+                this.triggerType = try {
+                    triggerType?.let { TriggerType.valueOf(it.uppercase()) } ?: TriggerType.MANUAL
+                } catch (_: IllegalArgumentException) {
+                    return Response.status(400).entity(mapOf("error" to "Invalid triggerType")).build()
+                }
             }
             run.persist()
-            Response.status(201).entity(mapOf("id" to run.id, "status" to run.status.name)).build()
+            Response.status(201).entity(
+                mapOf(
+                    "id" to run.id,
+                    "status" to run.status.name,
+                    "triggerType" to run.triggerType.name,
+                    "startedAt" to run.startedAt
+                )
+            ).build()
         } else {
             Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
         }
@@ -218,7 +219,24 @@ class PipelineResource {
     @GET
     @Path("/{id}/runs")
     fun getRuns(@PathParam("id") id: String): Response {
-        val runs = PipelineRun.findByPipelineId(UUID.fromString(id))
-        return Response.ok(runs.map { mapOf("id" to it.id, "status" to it.status.name, "startedAt" to it.startedAt.toString()) }).build()
+        val runs = em.createQuery(
+            "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId ORDER BY r.startedAt DESC",
+            PipelineRun::class.java
+        )
+            .setParameter("pipelineId", UUID.fromString(id))
+            .resultList
+        return Response.ok(
+            runs.map {
+                mapOf(
+                    "id" to it.id,
+                    "status" to it.status.name,
+                    "triggerType" to it.triggerType.name,
+                    "startedAt" to it.startedAt,
+                    "completedAt" to it.completedAt,
+                    "errorMessage" to it.errorMessage,
+                    "metrics" to it.metrics
+                )
+            }
+        ).build()
     }
 }

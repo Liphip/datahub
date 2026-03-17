@@ -11,6 +11,7 @@ import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
 import org.eclipse.microprofile.jwt.JsonWebToken
+import org.mindrot.jbcrypt.BCrypt
 import java.util.UUID
 
 @Path("/auth-users")
@@ -32,6 +33,10 @@ class AuthUserResource {
     private fun extractPasswordHash(request: Map<String, Any>): String? {
         return (request["passwordHash"] as? String)?.takeIf { it.isNotBlank() }
             ?: (request["password"] as? String)?.takeIf { it.isNotBlank() }
+    }
+
+    private fun hashForStorage(passwordHash: String): String {
+        return BCrypt.hashpw(passwordHash, BCrypt.gensalt())
     }
 
     @GET
@@ -68,9 +73,9 @@ class AuthUserResource {
 
     @POST
     @Transactional
-    fun create(request: Map<String, Any>): Response {
+    fun create(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
         val currentUser = try { jwt.subject?.let { em.find(User::class.java, UUID.fromString(it)) } } catch (_: Exception) { null }
-        val tenantId = getTenantIdFromToken()
+        val tenantId = tenantIdQuery ?: getTenantIdFromToken()
         if (currentUser == null || tenantId == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
@@ -93,7 +98,7 @@ class AuthUserResource {
 
         val user = User().apply {
             this.email = email
-            this.passwordHash = passwordHash
+            this.passwordHash = hashForStorage(passwordHash)
             this.firstName = request["firstName"] as? String
             this.lastName = request["lastName"] as? String
             this.isActive = true
@@ -148,7 +153,7 @@ class AuthUserResource {
         }
 
         request["email"]?.let { user.email = it as String }
-        extractPasswordHash(request)?.let { user.passwordHash = it }
+        extractPasswordHash(request)?.let { user.passwordHash = hashForStorage(it) }
         request["firstName"]?.let { user.firstName = it as String }
         request["lastName"]?.let { user.lastName = it as String }
         request["isActive"]?.let { user.isActive = it as Boolean }

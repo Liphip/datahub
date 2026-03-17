@@ -161,14 +161,17 @@ class AuthService {
 
         val tenantId = primaryMembership?.tenant?.id?.toString()
 
-        return Jwt.issuer("https://dataturntable.io")
+        val jwtBuilder = Jwt.issuer("https://dataturntable.io")
             .subject(user.id.toString())
             .upn(user.email)
             .groups(groups)
-            .claim("tenantId", tenantId)
             .claim("email", user.email)
             .expiresIn(3600L)
-            .sign()
+        if (!tenantId.isNullOrBlank()) {
+            jwtBuilder.claim("tenantId", tenantId)
+        }
+
+        return jwtBuilder.sign()
     }
     
     private fun generateRandomPassword(length: Int): String {
@@ -198,8 +201,8 @@ class AuthService {
              email = user.email ?: "",
              firstName = user.firstName,
              lastName = user.lastName,
-             tenantId = primaryTenant?.id.toString(),
-             roleName = user.getMembershipForTenant(primaryTenant?.id ?: UUID.randomUUID())?.role?.name,
+             tenantId = primaryTenant?.id?.toString(),
+             roleName = primaryTenant?.id?.let { user.getMembershipForTenant(it)?.role?.name },
              abilities = user.getAllAbilities().toList(),
              superadmin = user.isSuperAdmin()
          )

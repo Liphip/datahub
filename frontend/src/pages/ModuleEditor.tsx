@@ -100,6 +100,7 @@ export default function ModuleEditor() {
   const [versionTag, setVersionTag] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const tenantId = user?.tenantId;
 
@@ -130,16 +131,24 @@ export default function ModuleEditor() {
     fetchModule();
   }, [id]);
 
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
+
   const handleSave = async () => {
     if (!id || !tenantId) return;
     
     setSaving(true);
     try {
       await api.createModuleVersion(id, code, requirements, versionTag || undefined);
-      alert('Version saved successfully!');
+      const versions = await api.getModuleVersions(id);
+      setModule((prev) => prev ? { ...prev, versions } : prev);
+      setVersionTag('');
+      showToast('Version saved successfully', 'success');
     } catch (error) {
       console.error('Error saving version:', error);
-      alert('Failed to save version');
+      showToast('Failed to save version', 'error');
     } finally {
       setSaving(false);
     }
@@ -166,6 +175,14 @@ export default function ModuleEditor() {
 
   return (
     <div className="h-screen flex flex-col">
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded shadow-lg text-white text-sm ${
+          toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+        }`}>
+          {toast.message}
+        </div>
+      )}
+
       <div className="flex justify-between items-center p-4 bg-white border-b">
         <div>
           <h1 className="text-xl font-bold">{module.name}</h1>

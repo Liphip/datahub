@@ -1,6 +1,11 @@
 package com.dataturntable.api
 
 import com.dataturntable.auth.User
+import com.dataturntable.alert.AlertChannel
+import com.dataturntable.alert.AlertHistory
+import com.dataturntable.alert.AlertRule
+import com.dataturntable.tenant.Membership
+import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
 import io.quarkus.test.junit.QuarkusTest
 import io.restassured.http.ContentType
@@ -23,7 +28,12 @@ class TenantResourceTest {
     @BeforeEach
     @Transactional
     fun cleanup() {
+        em.createQuery("DELETE FROM Membership").executeUpdate()
+        em.createQuery("DELETE FROM Role").executeUpdate()
         em.createQuery("DELETE FROM User").executeUpdate()
+        em.createQuery("DELETE FROM AlertChannel").executeUpdate()
+        em.createQuery("DELETE FROM AlertRule").executeUpdate()
+        em.createQuery("DELETE FROM AlertHistory").executeUpdate()
         em.createQuery("DELETE FROM Tenant").executeUpdate()
     }
     

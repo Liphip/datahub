@@ -14,6 +14,7 @@ export default function PipelineEditor() {
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -83,68 +84,90 @@ export default function PipelineEditor() {
     fetchData();
   }, [id, tenantId]);
 
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
+
+  const resolveLatestVersionId = async (moduleId: string): Promise<string> => {
+    const versions = await api.getModuleVersions(moduleId);
+    const latest = versions[0];
+    if (!latest?.id) {
+      throw new Error(`No versions available for module ${moduleId}`);
+    }
+    return latest.id;
+  };
+
   const handleSave = async () => {
     if (!tenantId || !name) return;
 
-    const graphNodes: Array<Record<string, unknown>> = [];
-    const graphEdges: Array<Record<string, unknown>> = [];
-
-    let importNodeId = '';
-    if (importModuleId) {
-      importNodeId = 'n-import';
-      graphNodes.push({
-        id: importNodeId,
-        type: 'IMPORT',
-        moduleVersionId: importModuleId,
-        connectorId: importConnectorId || undefined,
-      });
-    }
-
-    const processingNodeIds: string[] = [];
-    processingModuleIds.filter(Boolean).forEach((moduleId, index) => {
-      const nodeId = `n-processing-${index + 1}`;
-      processingNodeIds.push(nodeId);
-      graphNodes.push({ id: nodeId, type: 'PROCESSING', moduleVersionId: moduleId });
-    });
-
-    exportModuleIds.filter(Boolean).forEach((moduleId, index) => {
-      const nodeId = `n-export-${index + 1}`;
-      graphNodes.push({
-        id: nodeId,
-        type: 'EXPORT',
-        moduleVersionId: moduleId,
-        connectorId: exportConnectorIds[index] || undefined,
-      });
-    });
-
-    const firstProcessingNodeId = processingNodeIds[0];
-    if (importNodeId && firstProcessingNodeId) {
-      graphEdges.push({ from: importNodeId, to: firstProcessingNodeId });
-    }
-    if (importNodeId && !firstProcessingNodeId) {
-      graphNodes
-        .filter((node) => node.type === 'EXPORT')
-        .forEach((node) => graphEdges.push({ from: importNodeId, to: node.id }));
-    }
-    if (firstProcessingNodeId) {
-      graphNodes
-        .filter((node) => node.type === 'EXPORT')
-        .forEach((node) => graphEdges.push({ from: firstProcessingNodeId, to: node.id }));
-    }
-
-    const graphDefinition = {
-      nodes: graphNodes,
-      edges: graphEdges,
-    };
-    
-    setSaving(true);
     try {
+      const importVersionId = importModuleId ? await resolveLatestVersionId(importModuleId) : '';
+      const processingVersionIds = await Promise.all(
+        processingModuleIds.filter(Boolean).map((moduleId) => resolveLatestVersionId(moduleId))
+      );
+      const exportVersionIds = await Promise.all(
+        exportModuleIds.filter(Boolean).map((moduleId) => resolveLatestVersionId(moduleId))
+      );
+
+      const graphNodes: Array<Record<string, unknown>> = [];
+      const graphEdges: Array<Record<string, unknown>> = [];
+
+      let importNodeId = '';
+      if (importVersionId) {
+        importNodeId = 'n-import';
+        graphNodes.push({
+          id: importNodeId,
+          type: 'IMPORT',
+          moduleVersionId: importVersionId,
+          connectorId: importConnectorId || undefined,
+        });
+      }
+
+      const processingNodeIds: string[] = [];
+      processingVersionIds.forEach((moduleVersionId, index) => {
+        const nodeId = `n-processing-${index + 1}`;
+        processingNodeIds.push(nodeId);
+        graphNodes.push({ id: nodeId, type: 'PROCESSING', moduleVersionId });
+      });
+
+      exportVersionIds.forEach((moduleVersionId, index) => {
+        const nodeId = `n-export-${index + 1}`;
+        graphNodes.push({
+          id: nodeId,
+          type: 'EXPORT',
+          moduleVersionId,
+          connectorId: exportConnectorIds[index] || undefined,
+        });
+      });
+
+      const firstProcessingNodeId = processingNodeIds[0];
+      if (importNodeId && firstProcessingNodeId) {
+        graphEdges.push({ from: importNodeId, to: firstProcessingNodeId });
+      }
+      if (importNodeId && !firstProcessingNodeId) {
+        graphNodes
+          .filter((node) => node.type === 'EXPORT')
+          .forEach((node) => graphEdges.push({ from: importNodeId, to: node.id }));
+      }
+      if (firstProcessingNodeId) {
+        graphNodes
+          .filter((node) => node.type === 'EXPORT')
+          .forEach((node) => graphEdges.push({ from: firstProcessingNodeId, to: node.id }));
+      }
+
+      const graphDefinition = {
+        nodes: graphNodes,
+        edges: graphEdges,
+      };
+    
+      setSaving(true);
       if (id === 'new') {
         const newPipeline = await api.createPipeline(tenantId, name, {
           description,
-          importModuleVersionId: importModuleId || undefined,
-          processingModuleVersionIds: processingModuleIds,
-          exportModuleVersionIds: exportModuleIds,
+          importModuleVersionId: importVersionId || undefined,
+          processingModuleVersionIds: processingVersionIds,
+          exportModuleVersionIds: exportVersionIds,
           graphDefinition,
           isActive,
         });
@@ -153,17 +176,17 @@ export default function PipelineEditor() {
         await api.updatePipeline(id, {
           name,
           description,
-          importModuleVersionId: importModuleId || undefined,
-          processingModuleVersionIds: processingModuleIds,
-          exportModuleVersionIds: exportModuleIds,
+          importModuleVersionId: importVersionId || undefined,
+          processingModuleVersionIds: processingVersionIds,
+          exportModuleVersionIds: exportVersionIds,
           graphDefinition,
           isActive,
         });
-        alert('Pipeline saved successfully!');
+        showToast('Pipeline saved successfully', 'success');
       }
     } catch (error) {
       console.error('Error saving pipeline:', error);
-      alert('Failed to save pipeline');
+      showToast('Failed to save pipeline', 'error');
     } finally {
       setSaving(false);
     }
@@ -174,10 +197,10 @@ export default function PipelineEditor() {
     
     try {
       await api.triggerPipeline(id);
-      alert('Pipeline triggered successfully!');
+      showToast('Pipeline triggered successfully', 'success');
     } catch (error) {
       console.error('Error running pipeline:', error);
-      alert('Failed to trigger pipeline');
+      showToast('Failed to trigger pipeline', 'error');
     }
   };
 
@@ -245,6 +268,14 @@ export default function PipelineEditor() {
 
   return (
     <div className="px-4 py-6 sm:px-0">
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded shadow-lg text-white text-sm ${
+          toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+        }`}>
+          {toast.message}
+        </div>
+      )}
+
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">
           {id === 'new' ? 'Create Pipeline' : 'Edit Pipeline'}
