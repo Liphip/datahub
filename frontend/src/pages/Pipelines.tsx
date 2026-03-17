@@ -431,6 +431,10 @@ export default function Pipelines() {
     setSearchParams(next, { replace: true });
   };
 
+  const clearBucketStatusFilter = () => applyBucketStatusFilter('ALL');
+  const clearBucketPipelineQuery = () => applyBucketPipelineQuery('');
+  const clearBucketSort = () => applyBucketSortMode('NEWEST');
+
   return (
     <div className="px-4 py-6 sm:px-0">
       {/* Toast */}
@@ -581,6 +585,36 @@ export default function Pipelines() {
                 placeholder="Filter pipeline name"
                 className="input text-xs max-w-[190px]"
               />
+            </div>
+          )}
+
+          {(bucketStatusFilter !== 'ALL' || bucketPipelineQuery.trim() || bucketSortMode !== 'NEWEST') && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="text-gray-500">Active filters:</span>
+              {bucketStatusFilter !== 'ALL' && (
+                <button
+                  onClick={clearBucketStatusFilter}
+                  className="px-2 py-0.5 rounded-full border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                >
+                  status: {bucketStatusFilter} x
+                </button>
+              )}
+              {bucketPipelineQuery.trim() && (
+                <button
+                  onClick={clearBucketPipelineQuery}
+                  className="px-2 py-0.5 rounded-full border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100"
+                >
+                  query: {bucketPipelineQuery.trim()} x
+                </button>
+              )}
+              {bucketSortMode !== 'NEWEST' && (
+                <button
+                  onClick={clearBucketSort}
+                  className="px-2 py-0.5 rounded-full border border-gray-300 bg-gray-50 text-gray-700 hover:bg-gray-100"
+                >
+                  sort: failed-first x
+                </button>
+              )}
             </div>
           )}
           {loadingBucketRuns ? (
