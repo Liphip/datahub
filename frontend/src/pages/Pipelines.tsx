@@ -96,6 +96,7 @@ export default function Pipelines() {
   const [tenantDefaultsPollPausedUntil, setTenantDefaultsPollPausedUntil] = useState<number>(0);
   const [checkingTenantDefaultsNow, setCheckingTenantDefaultsNow] = useState(false);
   const [tenantDefaultsPollCooldownUntil, setTenantDefaultsPollCooldownUntil] = useState<number>(0);
+  const [showTenantPollDebug, setShowTenantPollDebug] = useState(false);
   const [tenantDefaultsConflictTelemetry, setTenantDefaultsConflictTelemetry] = useState<TenantDefaultsConflictTelemetry>(() => {
     try {
       const raw = localStorage.getItem(TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY);
@@ -2930,6 +2931,15 @@ export default function Pipelines() {
                                     >
                                       {checkingTenantDefaultsNow ? 'Checking...' : 'Check now'}
                                     </button>
+                                    <button
+                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        setShowTenantPollDebug((prev) => !prev);
+                                      }}
+                                    >
+                                      {showTenantPollDebug ? 'Hide poll details' : 'Poll details'}
+                                    </button>
                                     {tenantDefaultsStaleLatest && (
                                       <>
                                         <span className="px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900">
@@ -3001,6 +3011,18 @@ export default function Pipelines() {
                                       </button>
                                     )}
                                   </div>
+                                  {showTenantPollDebug && (
+                                    <div className="mb-2 flex flex-wrap items-center gap-3 text-[11px] text-indigo-900 rounded border border-indigo-200 bg-white px-2 py-1">
+                                      <span>Interval: {Math.round(tenantDefaultsPollIntervalMs / 1000)}s</span>
+                                      <span>Offline retries: {tenantDefaultsPollOfflineFailures}</span>
+                                      <span>
+                                        Pause: {tenantDefaultsPollPausedUntil > Date.now() ? `until ${new Date(tenantDefaultsPollPausedUntil).toLocaleTimeString()}` : 'active'}
+                                      </span>
+                                      <span>
+                                        Check cooldown: {tenantDefaultsPollCooldownUntil > Date.now() ? `${Math.ceil((tenantDefaultsPollCooldownUntil - Date.now()) / 1000)}s` : 'ready'}
+                                      </span>
+                                    </div>
+                                  )}
                                   <div className="mb-2 flex flex-wrap items-center gap-2">
                                     <span className="text-[11px] text-indigo-800">Direction:</span>
                                     {(['both', 'ancestors', 'descendants'] as const).map((option) => {

@@ -61,6 +61,7 @@ export default function Tenants() {
   const [lineagePollPausedUntil, setLineagePollPausedUntil] = useState<number>(0);
   const [checkingLineagePollNow, setCheckingLineagePollNow] = useState(false);
   const [lineagePollCooldownUntil, setLineagePollCooldownUntil] = useState<number>(0);
+  const [showLineagePollDebug, setShowLineagePollDebug] = useState(false);
   const [conflictTelemetryByTenant, setConflictTelemetryByTenant] = useState<TenantDefaultsConflictTelemetry>(() => {
     try {
       const raw = localStorage.getItem(TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY);
@@ -750,6 +751,12 @@ export default function Tenants() {
               >
                 {checkingLineagePollNow ? 'Checking...' : 'Check now'}
               </button>
+              <button
+                className="text-indigo-700 hover:text-indigo-900"
+                onClick={() => setShowLineagePollDebug((prev) => !prev)}
+              >
+                {showLineagePollDebug ? 'Hide poll details' : 'Poll details'}
+              </button>
               {selectedTenantConflictTelemetry && (
                 <>
                   <span className="px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900">
@@ -773,6 +780,18 @@ export default function Tenants() {
           <p className="text-sm text-indigo-800">
             Configure tenant-wide defaults for pipeline lineage triage. These act as baseline behavior across pipelines.
           </p>
+          {showLineagePollDebug && (
+            <div className="rounded border border-indigo-200 bg-white px-3 py-2 text-xs text-indigo-900 flex flex-wrap items-center gap-3">
+              <span>Interval: {Math.round(lineagePollIntervalMs / 1000)}s</span>
+              <span>Offline retries: {lineagePollOfflineFailures}</span>
+              <span>
+                Pause: {lineagePollPausedUntil > Date.now() ? `until ${new Date(lineagePollPausedUntil).toLocaleTimeString()}` : 'active'}
+              </span>
+              <span>
+                Check cooldown: {lineagePollCooldownUntil > Date.now() ? `${Math.ceil((lineagePollCooldownUntil - Date.now()) / 1000)}s` : 'ready'}
+              </span>
+            </div>
+          )}
           {lineageDefaultsStaleLatest && isLineageDefaultsDirty && (
             <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 flex flex-wrap items-center gap-2">
               <span>Defaults may be stale. Another user updated this tenant while you were editing.</span>
