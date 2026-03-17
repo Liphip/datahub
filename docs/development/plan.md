@@ -181,6 +181,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added safe-default lifecycle controls: lineage API now emits `recommendedSafeReason`, and the lineage panel now shows the learned reason plus explicit controls to `Forget this run` or `Clear all safe defaults`, keeping adaptive defaults reversible for one-off investigations.
 - Added safe-default expiry and refresh behavior: lineage API now emits `recommendedSafeTtlHours`, and the lineage panel now stores per-run safe defaults with expiry timestamps (default 7 days), prunes expired defaults, displays expiration time, and offers one-click `Refresh expiry` to keep useful defaults alive.
 - Added safe-default scope controls: lineage API now emits `recommendedSafeScope` (`RUN|PIPELINE`), and the lineage panel now supports run-scoped and pipeline-scoped learned defaults with promotion/copy actions (`Promote to pipeline scope`, `Copy to run scope`) so heavy pipelines can reuse tuned defaults across runs.
+- Added safe-scope policy controls for lineage learning: lineage API now accepts `safeScopePolicy` (`auto|run|pipeline`) and returns both policy and `appliedSafeScope`, while the lineage panel now provides an `auto/run/pipeline` policy selector so teams can govern whether newly learned defaults are persisted per run or shared at pipeline scope.
 
 ---
 

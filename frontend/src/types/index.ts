@@ -186,6 +186,8 @@ export interface PipelineRunLineage {
   recommendedSafeReason?: 'SWITCH_TO_SUMMARY' | 'REDUCE_DEPTH' | null;
   recommendedSafeTtlHours?: number;
   recommendedSafeScope?: 'RUN' | 'PIPELINE';
+  safeScopePolicy?: 'AUTO' | 'RUN' | 'PIPELINE';
+  appliedSafeScope?: 'RUN' | 'PIPELINE';
   ancestorsTotal?: number;
   ancestorsStatusCounts?: Partial<Record<'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED', number>>;
   descendantsTotal?: number;

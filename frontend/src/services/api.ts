@@ -302,13 +302,15 @@ class ApiService {
     direction: 'both' | 'ancestors' | 'descendants' = 'both',
     statuses?: Array<'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED'>,
     statusPreset?: 'all' | 'failures' | 'inflight' | 'terminal',
-    includeDetails = false
+    includeDetails = false,
+    safeScopePolicy: 'AUTO' | 'RUN' | 'PIPELINE' = 'AUTO'
   ): Promise<PipelineRunLineage> {
     const statusQuery = statuses && statuses.length > 0 ? `&statuses=${statuses.join(',')}` : '';
     const presetQuery = statusPreset ? `&statusPreset=${statusPreset}` : '';
     const detailsQuery = includeDetails ? '&includeDetails=true' : '';
+    const safeScopePolicyQuery = safeScopePolicy === 'AUTO' ? '' : `&safeScopePolicy=${safeScopePolicy.toLowerCase()}`;
     const response = await this.client.get<PipelineRunLineage>(
-      `/pipelines/${pipelineId}/runs/${runId}/lineage?maxDepth=${Math.max(1, maxDepth)}&direction=${direction}${statusQuery}${presetQuery}${detailsQuery}`
+      `/pipelines/${pipelineId}/runs/${runId}/lineage?maxDepth=${Math.max(1, maxDepth)}&direction=${direction}${statusQuery}${presetQuery}${detailsQuery}${safeScopePolicyQuery}`
     );
     return response.data;
   }

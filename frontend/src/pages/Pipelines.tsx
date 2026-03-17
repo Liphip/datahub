@@ -19,6 +19,7 @@ type BucketRunStatusFilter = 'ALL' | 'RUNNING' | 'PENDING' | 'SUCCESS' | 'FAILED
 type LineageDirection = 'both' | 'ancestors' | 'descendants';
 type LineageStatusFilter = 'ALL' | 'INFLIGHT' | 'TERMINAL' | 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
 type LineageFetchMode = 'SUMMARY' | 'DETAILS';
+type LineageSafeScopePolicy = 'AUTO' | 'RUN' | 'PIPELINE';
 type LineagePerfSample = { totalMs: number; payloadBytes: number; measuredAt?: string };
 type LineageSafeScope = 'RUN' | 'PIPELINE';
 type LineageSafeDefault = { scope: LineageSafeScope; targetId: string; mode: LineageFetchMode; depth: number; updatedAt: string; reason?: string; expiresAt?: string };
@@ -62,6 +63,7 @@ export default function Pipelines() {
   const [lineageDirectionByRunId, setLineageDirectionByRunId] = useState<Record<string, LineageDirection>>({});
   const [lineageStatusFilterByRunId, setLineageStatusFilterByRunId] = useState<Record<string, LineageStatusFilter>>({});
   const [lineageFetchModeByRunId, setLineageFetchModeByRunId] = useState<Record<string, LineageFetchMode>>({});
+  const [lineageSafeScopePolicyByRunId, setLineageSafeScopePolicyByRunId] = useState<Record<string, LineageSafeScopePolicy>>({});
   const [lineagePerfHistoryByRunId, setLineagePerfHistoryByRunId] = useState<Record<string, LineagePerfSample[]>>({});
   const [lineageSafeDefaultsByRunId, setLineageSafeDefaultsByRunId] = useState<Record<string, LineageSafeDefault>>(() => {
     try {
@@ -168,6 +170,10 @@ export default function Pipelines() {
   const lineageModeRaw = (searchParams.get('lineageMode') || '').toUpperCase();
   const lineageModeParam: LineageFetchMode | null = (['SUMMARY', 'DETAILS'] as const).includes(lineageModeRaw as LineageFetchMode)
     ? (lineageModeRaw as LineageFetchMode)
+    : null;
+  const lineageSafeScopePolicyRaw = (searchParams.get('lineageSafeScopePolicy') || '').toUpperCase();
+  const lineageSafeScopePolicyParam: LineageSafeScopePolicy | null = (['AUTO', 'RUN', 'PIPELINE'] as const).includes(lineageSafeScopePolicyRaw as LineageSafeScopePolicy)
+    ? (lineageSafeScopePolicyRaw as LineageSafeScopePolicy)
     : null;
   const bucketSecondsParam = Number(searchParams.get('bucketSeconds') || '');
   const bucketStart = bucketStartParam ? new Date(bucketStartParam) : null;
@@ -602,7 +608,8 @@ export default function Pipelines() {
     maxDepth?: number,
     direction?: LineageDirection,
     statusFilter?: LineageStatusFilter,
-    fetchMode?: LineageFetchMode
+    fetchMode?: LineageFetchMode,
+    safeScopePolicy?: LineageSafeScopePolicy
   ) => {
     if (!canReadPipelines) {
       showToast('You need pipeline read permission to inspect run lineage', 'error');
@@ -631,6 +638,7 @@ export default function Pipelines() {
       const requestedDirection = direction ?? lineageDirectionByRunId[runId] ?? 'both';
       const requestedStatus = statusFilter ?? lineageStatusFilterByRunId[runId] ?? 'ALL';
       const requestedFetchMode = fetchMode ?? lineageFetchModeByRunId[runId] ?? usableSafeDefault?.mode ?? 'SUMMARY';
+      const requestedSafeScopePolicy = safeScopePolicy ?? lineageSafeScopePolicyByRunId[runId] ?? 'AUTO';
       const statusPreset = requestedStatus === 'INFLIGHT'
         ? 'inflight'
         : requestedStatus === 'TERMINAL'
@@ -650,12 +658,14 @@ export default function Pipelines() {
         requestedDirection,
         statuses,
         statusPreset,
-        requestedFetchMode === 'DETAILS'
+        requestedFetchMode === 'DETAILS',
+        requestedSafeScopePolicy
       );
       setLineageDepthByRunId((prev) => ({ ...prev, [runId]: depth }));
       setLineageDirectionByRunId((prev) => ({ ...prev, [runId]: requestedDirection }));
       setLineageStatusFilterByRunId((prev) => ({ ...prev, [runId]: requestedStatus }));
       setLineageFetchModeByRunId((prev) => ({ ...prev, [runId]: requestedFetchMode }));
+      setLineageSafeScopePolicyByRunId((prev) => ({ ...prev, [runId]: requestedSafeScopePolicy }));
       setLineageByRunId((prev) => ({ ...prev, [runId]: lineage }));
       setLineagePerfHistoryByRunId((prev) => {
         const existing = prev[runId] ?? [];
@@ -672,9 +682,9 @@ export default function Pipelines() {
         const suggestedDepth = lineage.recommendedSafeDepth ?? (lineage.recommendedAction === 'REDUCE_DEPTH' ? Math.max(20, depth - 20) : depth);
         setLineageSafeDefaultsByRunId((prev) => ({
           ...prev,
-          [safeDefaultKey((lineage.recommendedSafeScope ?? 'RUN') as LineageSafeScope, (lineage.recommendedSafeScope ?? 'RUN') === 'PIPELINE' ? pipelineId : runId)]: {
-            scope: ((lineage.recommendedSafeScope ?? 'RUN') as LineageSafeScope),
-            targetId: (lineage.recommendedSafeScope ?? 'RUN') === 'PIPELINE' ? pipelineId : runId,
+          [safeDefaultKey((lineage.appliedSafeScope ?? lineage.recommendedSafeScope ?? 'RUN') as LineageSafeScope, (lineage.appliedSafeScope ?? lineage.recommendedSafeScope ?? 'RUN') === 'PIPELINE' ? pipelineId : runId)]: {
+            scope: ((lineage.appliedSafeScope ?? lineage.recommendedSafeScope ?? 'RUN') as LineageSafeScope),
+            targetId: (lineage.appliedSafeScope ?? lineage.recommendedSafeScope ?? 'RUN') === 'PIPELINE' ? pipelineId : runId,
             mode: suggestedMode,
             depth: suggestedDepth,
             updatedAt: new Date().toISOString(),
@@ -691,6 +701,11 @@ export default function Pipelines() {
       next.set('lineageDepth', String(depth));
       next.set('lineageDirection', requestedDirection);
       next.set('lineageMode', requestedFetchMode);
+      if (requestedSafeScopePolicy === 'AUTO') {
+        next.delete('lineageSafeScopePolicy');
+      } else {
+        next.set('lineageSafeScopePolicy', requestedSafeScopePolicy);
+      }
       if (requestedStatus === 'ALL') {
         next.delete('lineageStatus');
       } else {
@@ -711,14 +726,15 @@ export default function Pipelines() {
     const targetRunId = lineageRunIdParam || focusRunIdParam || selectedRunId;
     if (selectedRunId !== targetRunId) return;
 
-    const hasLineageQuery = Boolean(lineageRunIdParam || lineageDepthParam || lineageDirectionParam || lineageStatusParam || lineageModeParam);
+    const hasLineageQuery = Boolean(lineageRunIdParam || lineageDepthParam || lineageDirectionParam || lineageStatusParam || lineageModeParam || lineageSafeScopePolicyParam);
     if (!hasLineageQuery) return;
 
     const requestedDirection = lineageDirectionParam ?? 'both';
     const requestedStatus = lineageStatusParam ?? 'ALL';
     const requestedMode = lineageModeParam ?? 'SUMMARY';
+    const requestedSafeScopePolicy = lineageSafeScopePolicyParam ?? 'AUTO';
     const requestedDepth = lineageDepthParam ?? 20;
-    const signature = `${focusPipelineIdParam}:${targetRunId}:${requestedDirection}:${requestedStatus}:${requestedMode}:${requestedDepth}`;
+    const signature = `${focusPipelineIdParam}:${targetRunId}:${requestedDirection}:${requestedStatus}:${requestedMode}:${requestedSafeScopePolicy}:${requestedDepth}`;
     if (handledLineageFocusRef.current === signature) return;
     handledLineageFocusRef.current = signature;
 
@@ -728,7 +744,8 @@ export default function Pipelines() {
       requestedDepth,
       requestedDirection,
       requestedStatus,
-      requestedMode
+      requestedMode,
+      requestedSafeScopePolicy
     );
   }, [
     canReadPipelines,
@@ -739,6 +756,7 @@ export default function Pipelines() {
     lineageDirectionParam,
     lineageStatusParam,
     lineageModeParam,
+    lineageSafeScopePolicyParam,
     selectedRunIdByPipeline,
   ]);
 
@@ -923,6 +941,7 @@ export default function Pipelines() {
       const direction = lineageDirectionByRunId[runId] ?? 'both';
       const status = lineageStatusFilterByRunId[runId] ?? 'ALL';
       const mode = lineageFetchModeByRunId[runId] ?? 'SUMMARY';
+      const safeScopePolicy = lineageSafeScopePolicyByRunId[runId] ?? 'AUTO';
       const params = new URLSearchParams(searchParams);
       params.set('focusPipelineId', pipelineId);
       params.set('focusRunId', runId);
@@ -930,6 +949,11 @@ export default function Pipelines() {
       params.set('lineageDepth', String(depth));
       params.set('lineageDirection', direction);
       params.set('lineageMode', mode);
+      if (safeScopePolicy === 'AUTO') {
+        params.delete('lineageSafeScopePolicy');
+      } else {
+        params.set('lineageSafeScopePolicy', safeScopePolicy);
+      }
       if (status === 'ALL') {
         params.delete('lineageStatus');
       } else {
@@ -945,7 +969,7 @@ export default function Pipelines() {
 
   const resetLineageView = async (pipelineId: string, runId: string) => {
     const defaultDepth = lineageByRunId[runId]?.defaultDepth ?? 20;
-    await handleLoadRunLineage(pipelineId, runId, defaultDepth, 'both', 'ALL', 'SUMMARY');
+    await handleLoadRunLineage(pipelineId, runId, defaultDepth, 'both', 'ALL', 'SUMMARY', 'AUTO');
   };
 
   const forgetSafeDefault = (scope: LineageSafeScope, targetId: string) => {
@@ -2214,7 +2238,7 @@ export default function Pipelines() {
                                 >
                                   {loadingLineageRunId === selectedRun.id
                                     ? 'Loading lineage...'
-                                    : `Load lineage (${lineageFetchModeByRunId[selectedRun.id] ?? 'SUMMARY'} ${lineageDirectionByRunId[selectedRun.id] ?? 'both'} ${lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL'} d${lineageDepthByRunId[selectedRun.id] ?? 20})`}
+                                    : `Load lineage (${lineageFetchModeByRunId[selectedRun.id] ?? 'SUMMARY'} ${(lineageSafeScopePolicyByRunId[selectedRun.id] ?? 'AUTO').toLowerCase()} ${lineageDirectionByRunId[selectedRun.id] ?? 'both'} ${lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL'} d${lineageDepthByRunId[selectedRun.id] ?? 20})`}
                                 </button>
                                 {(selectedRun.status === 'RUNNING' || selectedRun.status === 'PENDING') && (
                                   <button
@@ -2481,6 +2505,33 @@ export default function Pipelines() {
                                           }}
                                         >
                                           {mode === 'SUMMARY' ? 'Summary only' : 'Include details'}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                                    <span className="text-[11px] text-indigo-800">Safe scope policy:</span>
+                                    {(['AUTO', 'RUN', 'PIPELINE'] as const).map((policy) => {
+                                      const active = (lineageSafeScopePolicyByRunId[selectedRun.id] ?? (lineageByRunId[selectedRun.id].safeScopePolicy ?? 'AUTO')) === policy;
+                                      return (
+                                        <button
+                                          key={`${selectedRun.id}-lineage-safe-policy-${policy}`}
+                                          className={`px-2 py-0.5 rounded border ${active ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-indigo-300 bg-white text-indigo-800'}`}
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
+                                            void handleLoadRunLineage(
+                                              pipeline.id,
+                                              selectedRun.id,
+                                              currentDepth,
+                                              lineageDirectionByRunId[selectedRun.id] ?? 'both',
+                                              lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL',
+                                              lineageFetchModeByRunId[selectedRun.id] ?? 'SUMMARY',
+                                              policy
+                                            );
+                                          }}
+                                        >
+                                          {policy.toLowerCase()}
                                         </button>
                                       );
                                     })}

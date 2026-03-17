@@ -1134,7 +1134,8 @@ class PipelineResource {
         @QueryParam("direction") direction: String?,
         @QueryParam("statuses") statuses: String?,
         @QueryParam("statusPreset") statusPreset: String?,
-        @QueryParam("includeDetails") includeDetails: Boolean?
+        @QueryParam("includeDetails") includeDetails: Boolean?,
+        @QueryParam("safeScopePolicy") safeScopePolicy: String?
     ): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
@@ -1208,6 +1209,14 @@ class PipelineResource {
             }
         }
         val resolvedStatusPreset = if (!statuses.isNullOrBlank()) "custom" else normalizedStatusPreset
+        val normalizedSafeScopePolicy = when (safeScopePolicy?.trim()?.lowercase()) {
+            null, "", "auto" -> "AUTO"
+            "run" -> "RUN"
+            "pipeline" -> "PIPELINE"
+            else -> return Response.status(400)
+                .entity(mapOf("error" to "Invalid safeScopePolicy. Allowed values: auto, run, pipeline"))
+                .build()
+        }
         val orderedStatuses = statusFilter
             ?.let { selected -> PipelineRunStatus.entries.filter { selected.contains(it) } }
             ?.map { it.name }
@@ -1386,6 +1395,7 @@ class PipelineResource {
             heavyQuery || heavyPayload -> "PIPELINE"
             else -> "RUN"
         }
+        val appliedSafeScope = if (normalizedSafeScopePolicy == "AUTO") recommendedSafeScope else normalizedSafeScopePolicy
 
         return Response.ok(
             mapOf(
@@ -1417,6 +1427,8 @@ class PipelineResource {
                 "recommendedSafeReason" to recommendedSafeReason,
                 "recommendedSafeTtlHours" to recommendedSafeTtlHours,
                 "recommendedSafeScope" to recommendedSafeScope,
+                "safeScopePolicy" to normalizedSafeScopePolicy,
+                "appliedSafeScope" to appliedSafeScope,
                 "ancestorsTotal" to ancestorsTotal,
                 "ancestorsStatusCounts" to ancestorsStatusCounts,
                 "descendantsTotal" to descendantsTotal,
