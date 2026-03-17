@@ -123,6 +123,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added explicit connector lifecycle operations (`connect`, `disconnect`, `test`) with permission checks and validation API responses, plus Connectors page controls/status badges for connect/disconnect/test workflows.
 - Added mobile navigation chips in `Layout` so all pages (including Connectors) are reachable on small screens, and widened Connectors page ability fallback to include `manage:tenant` for legacy-role compatibility.
 - Fixed PostgreSQL bootstrap migration for optional Timescale hypertable creation (`PERFORM create_hypertable(...)` in `V1__Initial_schema.sql`) to prevent backend startup failure on empty schemas.
+- Fixed setup-password handling so `/auth/setup` correctly hashes provided plaintext passwords before BCrypt storage (restoring custom-password login compatibility), with regression coverage in `AuthResourceTest`.
 
 ---
 

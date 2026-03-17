@@ -195,6 +195,33 @@ class AuthResourceTest {
             .body("token", notNullValue())
             .body("user.email", equalTo("admin2@example.com"))
     }
+
+    @Test
+    fun testSetupAcceptsCustomPasswordForLogin() {
+        val customPassword = "MyCustomPass!123"
+        val setupBody = mapOf(
+            "email" to "custompass@example.com",
+            "password" to customPassword
+        )
+
+        given()
+            .contentType(ContentType.JSON)
+            .body(setupBody)
+        .`when`()
+            .post("/api/internal/v1/auth/setup")
+        .then()
+            .statusCode(201)
+            .body("email", equalTo("custompass@example.com"))
+
+        given()
+            .contentType(ContentType.JSON)
+            .body(mapOf("email" to "custompass@example.com", "passwordHash" to hashPassword(customPassword)))
+        .`when`()
+            .post("/api/internal/v1/auth/login")
+        .then()
+            .statusCode(200)
+            .body("token", notNullValue())
+    }
     
     @Test
     fun testLoginWithInvalidCredentials() {

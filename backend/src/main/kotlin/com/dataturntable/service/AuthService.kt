@@ -129,8 +129,15 @@ class AuthService {
         em.flush()
         
         val generatedPassword = generateRandomPassword(16)
-        val submittedHash = request.passwordHash ?: request.password
-        val passwordHash = submittedHash ?: hashPasswordForStorage(generatedPassword)
+        val passwordHash = when {
+            !request.passwordHash.isNullOrBlank() -> request.passwordHash
+            !request.password.isNullOrBlank() -> hashPasswordForStorage(request.password)
+            else -> hashPasswordForStorage(generatedPassword)
+        }
+        val responsePassword = when {
+            !request.password.isNullOrBlank() -> request.password
+            else -> generatedPassword
+        }
         
         val user = User().apply {
             this.email = request.email
@@ -166,7 +173,7 @@ class AuthService {
 
         return SetupResponse(
             email = user.email ?: request.email,
-            password = generatedPassword,
+            password = responsePassword,
             user = toUserDto(user)
         )
     }
