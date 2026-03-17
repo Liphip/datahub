@@ -63,7 +63,8 @@ class PipelineConsumer {
                 try {
                     @Suppress("UNCHECKED_CAST")
                     dataPayload = objectMapper.readValue(message, Map::class.java) as? Map<String, Any>
-                    pipelineId = dataPayload?.get("_pipelineId") as? String
+                    pipelineId = (dataPayload?.get("_pipelineId") as? String)
+                        ?: (dataPayload?.get("pipelineId") as? String)
                 } catch (e: Exception) {
                     LOG.errorf("Failed to parse pipeline message: %s", e.message)
                     return PipelineEvent(
@@ -96,8 +97,20 @@ class PipelineConsumer {
                 error = "No pipeline ID in message"
             )
         }
+
+        val pipelineUuid = try {
+            UUID.fromString(pipelineId)
+        } catch (_: Exception) {
+            return PipelineEvent(
+                runId = "unknown",
+                pipelineId = pipelineId,
+                stage = "init",
+                success = false,
+                error = "Invalid pipeline ID"
+            )
+        }
         
-        val pipeline = Pipeline.findById(UUID.fromString(pipelineId))
+        val pipeline = Pipeline.findById(pipelineUuid)
         if (pipeline == null) {
             LOG.errorf("Pipeline not found: %s", pipelineId)
             return PipelineEvent(
@@ -109,8 +122,17 @@ class PipelineConsumer {
             )
         }
         
-        val runId = pipelineMsg?.runId ?: UUID.randomUUID().toString()
-        val run = PipelineRun.findById(UUID.fromString(runId))
+        val runId = pipelineMsg?.runId
+            ?: (dataPayload?.get("_runId") as? String)
+            ?: (dataPayload?.get("runId") as? String)
+            ?: UUID.randomUUID().toString()
+
+        val runUuid = try {
+            UUID.fromString(runId)
+        } catch (_: Exception) {
+            null
+        }
+        val run = runUuid?.let { PipelineRun.findById(it) }
         if (run != null) {
             run.status = PipelineRunStatus.RUNNING
             run.startedAt = java.time.Instant.now()

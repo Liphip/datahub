@@ -53,6 +53,8 @@ This section catalogues every known gap between the current codebase and a shipp
 - Hardened `SecurityUtils` tenant parsing and DTO conversion to avoid invalid UUID crashes and null tenant string leakage.
 - Added Users page activate/deactivate controls with optimistic status updates and ability-gated actions.
 - Hardened Auth Users API UUID validation paths to return `400` on invalid tenant/user identifiers instead of unhandled errors.
+- Added synchronous execution fallback path for pipeline triggers and ingest/websocket data so runs transition out of `PENDING` in current environments.
+- Improved Pipelines UI with automatic run-status refresh while recent runs are `RUNNING`/`PENDING`.
 
 ---
 

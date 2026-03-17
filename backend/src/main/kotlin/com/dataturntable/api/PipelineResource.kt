@@ -4,8 +4,10 @@ import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.connectors.Connector
+import com.dataturntable.engine.PipelineConsumer
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.security.Authenticated
+import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
@@ -20,6 +22,9 @@ import java.util.UUID
 @Authenticated
 class PipelineResource {
     private val objectMapper = ObjectMapper()
+
+    @Inject
+    lateinit var pipelineConsumer: PipelineConsumer
 
     @PersistenceContext
     lateinit var em: EntityManager
@@ -203,6 +208,24 @@ class PipelineResource {
                 }
             }
             run.persist()
+            em.flush()
+
+            val triggerMessage = mapOf(
+                "runId" to run.id.toString(),
+                "pipelineId" to pipeline.id.toString(),
+                "triggerType" to run.triggerType.name,
+                "data" to emptyMap<String, Any>()
+            )
+
+            try {
+                pipelineConsumer.consume(objectMapper.writeValueAsString(triggerMessage))
+            } catch (_: Exception) {
+                run.status = com.dataturntable.pipeline.PipelineRunStatus.FAILED
+                run.completedAt = java.time.Instant.now()
+                run.errorMessage = "Failed to execute pipeline trigger"
+                run.persist()
+            }
+
             Response.status(201).entity(
                 mapOf(
                     "id" to run.id,

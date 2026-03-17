@@ -63,6 +63,31 @@ export default function Pipelines() {
     fetchAll();
   }, [tenantId]);
 
+  useEffect(() => {
+    if (!tenantId || pipelines.length === 0) return;
+
+    const hasActiveRuns = Object.values(runsMap).some((runs) =>
+      runs.some((run) => run.status === 'RUNNING' || run.status === 'PENDING')
+    );
+    if (!hasActiveRuns) return;
+
+    const intervalId = window.setInterval(async () => {
+      const entries = await Promise.all(
+        pipelines.map(async (p) => {
+          try {
+            const runs = await api.getPipelineRuns(p.id);
+            return [p.id, runs.slice(0, 3)] as [string, PipelineRun[]];
+          } catch {
+            return [p.id, runsMap[p.id] ?? []] as [string, PipelineRun[]];
+          }
+        })
+      );
+      setRunsMap(Object.fromEntries(entries));
+    }, 8000);
+
+    return () => window.clearInterval(intervalId);
+  }, [tenantId, pipelines, runsMap]);
+
   const handleCreatePipeline = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!tenantId || !newPipelineName) return;
@@ -249,6 +274,9 @@ export default function Pipelines() {
                         className={`w-3 h-3 rounded-full ${runStatusColor[run.status] ?? 'bg-gray-400'}`}
                       />
                     ))}
+                    <span className="text-xs text-gray-500 ml-2">
+                      {runs[0].status === 'RUNNING' || runs[0].status === 'PENDING' ? 'Updating...' : `Last: ${runs[0].status}`}
+                    </span>
                   </div>
                 )}
               </div>

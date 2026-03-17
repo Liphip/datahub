@@ -1,10 +1,15 @@
 package com.dataturntable.api
 
 import com.dataturntable.pipeline.Pipeline
+import com.dataturntable.pipeline.PipelineRun
+import com.dataturntable.pipeline.TriggerType
+import com.dataturntable.engine.PipelineConsumer
 import com.dataturntable.service.KafkaService
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
 import jakarta.websocket.Session
 import org.jboss.logging.Logger
@@ -18,6 +23,12 @@ class WebSocketIngestResource {
     
     @Inject
     lateinit var kafkaService: KafkaService
+
+    @Inject
+    lateinit var pipelineConsumer: PipelineConsumer
+
+    @PersistenceContext
+    lateinit var em: EntityManager
     
     private val objectMapper = ObjectMapper()
     
@@ -49,8 +60,17 @@ class WebSocketIngestResource {
             enrichedPayload["_pipelineId"] = pipelineId
             enrichedPayload["_ingestedAt"] = java.time.Instant.now().toString()
             enrichedPayload["_source"] = "websocket"
+
+            val run = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.triggerType = TriggerType.DATA
+            }
+            run.persist()
+            em.flush()
+            enrichedPayload["_runId"] = run.id.toString()
             
             kafkaService.sendToPipelineSpecificInput(pipelineId, enrichedPayload)
+            pipelineConsumer.consume(objectMapper.writeValueAsString(enrichedPayload))
             
             LOG.debugf("WebSocket message queued for pipeline %s", pipelineId)
         } catch (e: Exception) {

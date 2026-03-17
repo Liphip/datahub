@@ -1,10 +1,15 @@
 package com.dataturntable.api
 
 import com.dataturntable.pipeline.Pipeline
+import com.dataturntable.pipeline.PipelineRun
+import com.dataturntable.pipeline.TriggerType
+import com.dataturntable.engine.PipelineConsumer
 import com.dataturntable.service.KafkaService
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.security.Authenticated
 import jakarta.inject.Inject
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
@@ -18,6 +23,12 @@ class IngestResource {
     
     @Inject
     lateinit var kafkaService: KafkaService
+
+    @Inject
+    lateinit var pipelineConsumer: PipelineConsumer
+
+    @PersistenceContext
+    lateinit var em: EntityManager
     
     private val objectMapper = ObjectMapper()
     
@@ -48,13 +59,23 @@ class IngestResource {
         enrichedPayload["_pipelineId"] = pipelineId
         enrichedPayload["_ingestedAt"] = java.time.Instant.now().toString()
         tenantId?.let { enrichedPayload["_tenantId"] = it }
+
+        val run = PipelineRun().apply {
+            this.pipeline = pipeline
+            this.triggerType = TriggerType.DATA
+        }
+        run.persist()
+        em.flush()
+        enrichedPayload["_runId"] = run.id.toString()
         
         try {
             kafkaService.sendToPipelineSpecificInput(pipeline.id.toString(), enrichedPayload)
+            pipelineConsumer.consume(objectMapper.writeValueAsString(enrichedPayload))
             
             return Response.accepted(mapOf(
                 "status" to "accepted",
                 "pipelineId" to pipelineId,
+                "runId" to run.id,
                 "message" to "Data queued for processing"
             )).build()
         } catch (e: Exception) {
