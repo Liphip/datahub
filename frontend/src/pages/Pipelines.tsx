@@ -1980,7 +1980,7 @@ export default function Pipelines() {
                                         onClick={(e) => {
                                           e.preventDefault();
                                           const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
-                                          const nextDepth = Math.min(200, currentDepth + 20);
+                                          const nextDepth = lineageByRunId[selectedRun.id].nextRecommendedDepth ?? Math.min(200, currentDepth + 20);
                                           void handleLoadRunLineage(
                                             pipeline.id,
                                             selectedRun.id,
@@ -1989,7 +1989,7 @@ export default function Pipelines() {
                                           );
                                         }}
                                       >
-                                        Load deeper
+                                        {`Load to d${lineageByRunId[selectedRun.id].nextRecommendedDepth ?? Math.min(200, (lineageDepthByRunId[selectedRun.id] ?? 20) + 20)}`}
                                       </button>
                                     </div>
                                   )}

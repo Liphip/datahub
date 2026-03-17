@@ -167,6 +167,7 @@ export interface PipelineRunLineage {
   direction?: 'both' | 'ancestors' | 'descendants';
   ancestorsTruncated?: boolean;
   descendantsTruncated?: boolean;
+  nextRecommendedDepth?: number;
 }
 
 export interface AlertChannel {

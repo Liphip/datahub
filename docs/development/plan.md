@@ -166,6 +166,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Enhanced run retry lineage navigation: pipeline run lineage API now returns root/latest lineage pointers plus depth metadata, and Pipelines run-details UI now adds one-click `Go to root` / `Go to latest retry` actions with depth-labeled lineage nodes for faster retry-chain debugging.
 - Added scalable lineage loading controls: pipeline lineage API now accepts `maxDepth` and returns truncation flags, while the Pipelines run-details panel surfaces current depth and `Load deeper` controls when lineage is truncated to avoid over-fetching large retry chains.
 - Added directional lineage loading for focused triage: pipeline lineage API now accepts `direction` (`both|ancestors|descendants`) with validation and response echo, and the Pipelines run-details panel adds direction chips so operators can inspect only retry ancestry or only downstream retries when troubleshooting large chains.
+- Improved lineage performance and depth guidance: lineage descendant truncation now uses batched frontier checks (avoiding per-node depth-limit count queries), and the lineage response now provides `nextRecommendedDepth` so the UI can offer a deterministic `Load to dN` action when chains are truncated.
 
 ---
 

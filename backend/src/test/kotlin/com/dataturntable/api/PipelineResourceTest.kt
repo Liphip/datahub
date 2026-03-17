@@ -772,6 +772,7 @@ class PipelineResourceTest {
             .body("descendants.size()", equalTo(1))
             .body("descendants[0].lineageDepth", equalTo(1))
             .body("descendantsTruncated", equalTo(false))
+            .body("nextRecommendedDepth", nullValue())
             .body("descendants[0].id", equalTo(ids["retryChild"]))
     }
 
@@ -850,6 +851,7 @@ class PipelineResourceTest {
             .body("maxDepth", equalTo(1))
             .body("ancestors.size()", equalTo(1))
             .body("ancestorsTruncated", equalTo(true))
+            .body("nextRecommendedDepth", equalTo(20))
 
         given()
             .header("Authorization", "Bearer $token")
@@ -861,6 +863,7 @@ class PipelineResourceTest {
             .body("maxDepth", equalTo(1))
             .body("descendants.size()", equalTo(1))
             .body("descendantsTruncated", equalTo(true))
+            .body("nextRecommendedDepth", equalTo(20))
     }
 
     @Test
@@ -939,6 +942,7 @@ class PipelineResourceTest {
             .body("direction", equalTo("ancestors"))
             .body("ancestors.size()", equalTo(1))
             .body("descendants.size()", equalTo(0))
+            .body("nextRecommendedDepth", nullValue())
             .body("latestDescendantRunId", nullValue())
 
         given()
@@ -951,6 +955,7 @@ class PipelineResourceTest {
             .body("direction", equalTo("descendants"))
             .body("ancestors.size()", equalTo(0))
             .body("descendants.size()", equalTo(1))
+            .body("nextRecommendedDepth", nullValue())
             .body("descendants[0].id", equalTo(ids["retryChild"]))
 
         given()
