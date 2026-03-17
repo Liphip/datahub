@@ -14,6 +14,7 @@ type BucketRunStatusFilter = 'ALL' | 'RUNNING' | 'PENDING' | 'SUCCESS' | 'FAILED
 type TriagePreset = {
   name: string;
   query: string;
+  tag?: string;
 };
 
 const TRIAGE_PRESETS_KEY = 'pipelines.triage.presets.v1';
@@ -64,6 +65,8 @@ export default function Pipelines() {
   const bucketQueryInputRef = useRef<HTMLInputElement | null>(null);
   const [triagePresets, setTriagePresets] = useState<TriagePreset[]>([]);
   const [triagePresetName, setTriagePresetName] = useState('');
+  const [triagePresetTag, setTriagePresetTag] = useState('');
+  const [triagePresetTagFilter, setTriagePresetTagFilter] = useState('ALL');
   const importPresetInputRef = useRef<HTMLInputElement | null>(null);
   const [showShortcutHints, setShowShortcutHints] = useState(() => {
     const stored = localStorage.getItem('pipelines.bucket.shortcuts.hidden');
@@ -543,9 +546,11 @@ export default function Pipelines() {
     }
     const query = searchParams.toString();
     const deduped = triagePresets.filter((p) => p.name.toLowerCase() !== name.toLowerCase());
-    const next = [{ name, query }, ...deduped].slice(0, 10);
+    const tag = triagePresetTag.trim();
+    const next = [{ name, query, tag: tag || undefined }, ...deduped].slice(0, 20);
     persistTriagePresets(next);
     setTriagePresetName('');
+    setTriagePresetTag('');
     showToast('Triage preset saved', 'success');
   };
 
@@ -575,6 +580,15 @@ export default function Pipelines() {
     persistTriagePresets(next);
     showToast('Preset removed', 'success');
   };
+
+  const availablePresetTags = Array.from(
+    new Set(triagePresets.map((p) => p.tag?.trim()).filter((v): v is string => Boolean(v)))
+  ).sort((a, b) => a.localeCompare(b));
+
+  const visibleTriagePresets = triagePresets.filter((preset) => {
+    if (triagePresetTagFilter === 'ALL') return true;
+    return (preset.tag || '').toLowerCase() === triagePresetTagFilter.toLowerCase();
+  });
 
   const exportTriagePresets = () => {
     if (triagePresets.length === 0) {
@@ -726,6 +740,12 @@ export default function Pipelines() {
               placeholder="Save triage preset"
               className="input text-xs max-w-[190px]"
             />
+            <input
+              value={triagePresetTag}
+              onChange={(e) => setTriagePresetTag(e.target.value)}
+              placeholder="Tag (optional)"
+              className="input text-xs max-w-[150px]"
+            />
             <button
               onClick={saveCurrentTriagePreset}
               className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
@@ -744,13 +764,26 @@ export default function Pipelines() {
             >
               Import
             </button>
+            {availablePresetTags.length > 0 && (
+              <select
+                value={triagePresetTagFilter}
+                onChange={(e) => setTriagePresetTagFilter(e.target.value)}
+                className="input text-xs max-w-[150px]"
+              >
+                <option value="ALL">All tags</option>
+                {availablePresetTags.map((tag) => (
+                  <option key={tag} value={tag}>{tag}</option>
+                ))}
+              </select>
+            )}
             {triagePresets.length > 0 && (
               <div className="flex flex-wrap gap-2">
-                {triagePresets.slice(0, 5).map((preset) => (
+                {visibleTriagePresets.slice(0, 8).map((preset) => (
                   <span key={preset.name} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-gray-200 bg-gray-50 text-[11px]">
                     <button onClick={() => applyTriagePreset(preset)} className="text-primary-700 hover:text-primary-900">
                       {preset.name}
                     </button>
+                    {preset.tag && <span className="text-gray-500">[{preset.tag}]</span>}
                     <button onClick={() => deleteTriagePreset(preset.name)} className="text-gray-500 hover:text-red-600">x</button>
                   </span>
                 ))}
