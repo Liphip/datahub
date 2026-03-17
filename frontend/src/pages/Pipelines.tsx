@@ -66,6 +66,7 @@ export default function Pipelines() {
   const [bucketPipelineQuery, setBucketPipelineQuery] = useState(searchParams.get('bucketQ') || '');
   const [bucketPipelineIdFilter, setBucketPipelineIdFilter] = useState<string | null>(searchParams.get('bucketPipelineId'));
   const bucketQueryInputRef = useRef<HTMLInputElement | null>(null);
+  const triagePresetNameInputRef = useRef<HTMLInputElement | null>(null);
   const [triagePresets, setTriagePresets] = useState<TriagePreset[]>([]);
   const [triagePresetName, setTriagePresetName] = useState('');
   const [triagePresetTag, setTriagePresetTag] = useState('');
@@ -233,12 +234,20 @@ export default function Pipelines() {
       } else if (event.key.toLowerCase() === 'a') {
         event.preventDefault();
         applyBucketStatusFilter('ALL');
+      } else if (event.key.toLowerCase() === 'n') {
+        event.preventDefault();
+        triagePresetNameInputRef.current?.focus();
+      } else if (event.key.toLowerCase() === 'p') {
+        event.preventDefault();
+        if (visibleTriagePresets.length > 0) {
+          applyTriagePreset(visibleTriagePresets[0]);
+        }
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [bucketStartParam, bucketSeconds, searchParams.toString()]);
+  }, [bucketStartParam, bucketSeconds, searchParams.toString(), triagePresets, triagePresetTagFilter, triagePresetSortMode]);
 
   useEffect(() => {
     if (!tenantId || pipelines.length === 0) return;
@@ -939,6 +948,7 @@ export default function Pipelines() {
               className="hidden"
             />
             <input
+              ref={triagePresetNameInputRef}
               value={triagePresetName}
               onChange={(e) => setTriagePresetName(e.target.value)}
               placeholder="Save triage preset"
@@ -1148,6 +1158,8 @@ export default function Pipelines() {
               <span className="px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50">`f` failed</span>
               <span className="px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50">`r` running</span>
               <span className="px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50">`a` all</span>
+              <span className="px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50">`n` new preset</span>
+              <span className="px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50">`p` apply top preset</span>
             </div>
           )}
           {bucketLastRefreshedAt && (

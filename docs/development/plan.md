@@ -108,6 +108,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Preset chips now expose quick usage context (count + relative last-used tooltip) to help choose fresher playbooks.
 - Added per-preset and global usage-stat reset actions to rebaseline triage playbook popularity tracking.
 - Added optional confirmation guardrails for destructive preset actions (delete/reset), with persisted preference toggle.
+- Expanded keyboard triage shortcuts to preset workflows (`n` focus new preset, `p` apply top visible preset).
 
 ---
 
