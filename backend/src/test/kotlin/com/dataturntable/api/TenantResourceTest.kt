@@ -103,4 +103,49 @@ class TenantResourceTest {
             .statusCode(400)
             .body("error", equalTo("Invalid tenant id"))
     }
+
+    @Test
+    fun testListTenantsRecursiveSupportsQueryFilter() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val rootId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType(ContentType.JSON)
+            .body(mapOf("name" to "Alpha Child", "parentId" to rootId))
+        .`when`()
+            .post("/api/internal/v1/tenants")
+        .then()
+            .statusCode(201)
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType(ContentType.JSON)
+            .body(mapOf("name" to "Beta Child", "parentId" to rootId))
+        .`when`()
+            .post("/api/internal/v1/tenants")
+        .then()
+            .statusCode(201)
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("recursive", "true")
+            .queryParam("query", "Alpha")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .body("toString()", containsString("Alpha Child"))
+            .body("toString()", not(containsString("Beta Child")))
+    }
 }

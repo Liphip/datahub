@@ -21,16 +21,30 @@ export default function Tenants() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [expandedTenantIds, setExpandedTenantIds] = useState<Record<string, boolean>>({});
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
   };
 
-  const fetchTenants = async () => {
+  const collectTenantIds = (nodes: TenantWithChildren[]): string[] =>
+    nodes.flatMap((node) => [node.id, ...collectTenantIds((node.children || []) as TenantWithChildren[])]);
+
+  const fetchTenants = async (query?: string) => {
     try {
-      const tree = await api.getTenantsRecursive();
-      setTenants(tree as TenantWithChildren[]);
+      const tree = await api.getTenantsRecursive(query);
+      const tenantTree = tree as TenantWithChildren[];
+      setTenants(tenantTree);
+      const allIds = collectTenantIds(tenantTree);
+      setExpandedTenantIds((prev) => {
+        const next = { ...prev };
+        allIds.forEach((id) => {
+          if (next[id] === undefined) next[id] = true;
+        });
+        return next;
+      });
     } catch (err) {
       console.error('Error fetching tenants:', err);
     } finally {
@@ -41,6 +55,13 @@ export default function Tenants() {
   useEffect(() => {
     fetchTenants();
   }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      fetchTenants(searchQuery.trim() || undefined);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
 
   const handleCreateTenant = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,7 +74,7 @@ export default function Tenants() {
       setShowCreateModal(false);
       setNewTenantName('');
       setNewTenantParentId('');
-      await fetchTenants();
+      await fetchTenants(searchQuery.trim() || undefined);
       showToast('Tenant created successfully', 'success');
     } catch (err: any) {
       const errorMsg = err.response?.data?.error || 'Failed to create tenant';
@@ -76,7 +97,7 @@ export default function Tenants() {
     setCreating(true);
     try {
       await api.updateTenant(editingTenant.id, { name: newTenantName });
-      await fetchTenants();
+      await fetchTenants(searchQuery.trim() || undefined);
       setShowEditModal(false);
       setEditingTenant(null);
       setNewTenantName('');
@@ -106,7 +127,7 @@ export default function Tenants() {
     setDeletingId(tenantId);
     try {
       await api.deleteTenant(tenantId);
-      await fetchTenants();
+      await fetchTenants(searchQuery.trim() || undefined);
       setConfirmDeleteId(null);
       showToast('Tenant deleted', 'success');
     } catch (err) {
@@ -134,13 +155,25 @@ export default function Tenants() {
   const renderTenantTree = (tenant: TenantWithChildren, depth: number = 0) => {
     const hasChildren = tenant.children && tenant.children.length > 0;
     const isRoot = !tenant.parentId;
+    const isExpanded = expandedTenantIds[tenant.id] ?? true;
 
     return (
       <div key={tenant.id} style={{ marginLeft: depth * 24 }}>
         <div className="card mb-2">
           <div className="flex justify-between items-start">
             <div>
-              <h3 className="text-lg font-semibold">{tenant.name}</h3>
+              <div className="flex items-center space-x-2">
+                {hasChildren && (
+                  <button
+                    onClick={() => setExpandedTenantIds((prev) => ({ ...prev, [tenant.id]: !isExpanded }))}
+                    className="text-xs px-1.5 py-0.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
+                    title={isExpanded ? 'Collapse subtree' : 'Expand subtree'}
+                  >
+                    {isExpanded ? '−' : '+'}
+                  </button>
+                )}
+                <h3 className="text-lg font-semibold">{tenant.name}</h3>
+              </div>
               <p className="text-sm text-gray-500">ID: {tenant.id}</p>
             </div>
             <div className="flex space-x-2">
@@ -182,7 +215,7 @@ export default function Tenants() {
             </div>
           </div>
         </div>
-        {hasChildren && (
+        {hasChildren && isExpanded && (
           <div className="border-l-2 border-gray-200 ml-4 pl-4">
             {tenant.children!.map(child => renderTenantTree(child, depth + 1))}
           </div>
@@ -211,14 +244,48 @@ export default function Tenants() {
 
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Tenants</h1>
-        <button 
-          onClick={() => openCreateModal()} 
-          className="btn-primary"
-          disabled={tenants.length > 0}
-          title={tenants.length > 0 ? "Root tenant already exists. Add sub-tenants instead." : "Create root tenant"}
-        >
-          Create Root Tenant
-        </button>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => {
+              const ids = collectTenantIds(tenants);
+              const next: Record<string, boolean> = {};
+              ids.forEach((id) => { next[id] = true; });
+              setExpandedTenantIds(next);
+            }}
+            className="btn-secondary text-sm"
+          >
+            Expand All
+          </button>
+          <button
+            onClick={() => {
+              const ids = collectTenantIds(tenants);
+              const next: Record<string, boolean> = {};
+              ids.forEach((id) => { next[id] = false; });
+              setExpandedTenantIds(next);
+            }}
+            className="btn-secondary text-sm"
+          >
+            Collapse All
+          </button>
+          <button 
+            onClick={() => openCreateModal()} 
+            className="btn-primary"
+            disabled={tenants.length > 0}
+            title={tenants.length > 0 ? "Root tenant already exists. Add sub-tenants instead." : "Create root tenant"}
+          >
+            Create Root Tenant
+          </button>
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="input w-full md:max-w-md"
+          placeholder="Search tenants by name"
+        />
       </div>
 
       {tenants.length === 0 && !loading && (

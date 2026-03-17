@@ -62,22 +62,37 @@ class TenantResource {
         return base
     }
 
-    private fun buildTenantTree(tenants: List<Tenant>, parentId: UUID?): List<Map<String, Any?>> {
+    private fun buildTenantTree(tenants: List<Tenant>, parentId: UUID?, query: String?): List<Map<String, Any?>> {
         val nodes = tenants.filter { it.parent?.id == parentId }
-        return nodes.map { tenant ->
-            toTenantMap(tenant, buildTenantTree(tenants, tenant.id))
+        val normalizedQuery = query?.trim()?.lowercase()
+
+        return nodes.mapNotNull { tenant ->
+            val children = buildTenantTree(tenants, tenant.id, normalizedQuery)
+            val matchesSelf = normalizedQuery.isNullOrBlank() || tenant.name?.lowercase()?.contains(normalizedQuery) == true
+
+            if (!matchesSelf && children.isEmpty()) {
+                null
+            } else {
+                toTenantMap(tenant, children)
+            }
         }
     }
     
     @GET
-    fun list(@QueryParam("recursive") recursive: String?): Response {
+    fun list(@QueryParam("recursive") recursive: String?, @QueryParam("query") query: String?): Response {
         if (recursive.equals("true", ignoreCase = true)) {
             val allTenants = em.createQuery("SELECT t FROM Tenant t", Tenant::class.java).resultList
-            return Response.ok(buildTenantTree(allTenants, null)).build()
+            return Response.ok(buildTenantTree(allTenants, null, query)).build()
         }
 
         val tenants = em.createQuery("SELECT t FROM Tenant t WHERE t.parent IS NULL", Tenant::class.java).resultList
-        return Response.ok(tenants.map { toTenantMap(it) }).build()
+        val normalizedQuery = query?.trim()?.lowercase()
+        val filtered = if (normalizedQuery.isNullOrBlank()) {
+            tenants
+        } else {
+            tenants.filter { it.name?.lowercase()?.contains(normalizedQuery) == true }
+        }
+        return Response.ok(filtered.map { toTenantMap(it) }).build()
     }
     
     @POST

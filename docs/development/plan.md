@@ -74,6 +74,8 @@ This section catalogues every known gap between the current codebase and a shipp
 - Pipeline list API now validates `runHealth` filters and rejects unknown values with `400`.
 - Tenant API now supports `GET /tenants?recursive=true` tree responses and validates tenant UUID path/query inputs with explicit `400` errors.
 - Tenants UI now loads recursive tenant trees in a single request and supports deep parent selection for nested sub-tenant creation.
+- Tenant API recursive listing now supports `query` filtering to return matching branches only.
+- Tenants UI now includes tenant-name search and expand/collapse controls for large hierarchies.
 
 ---
 
