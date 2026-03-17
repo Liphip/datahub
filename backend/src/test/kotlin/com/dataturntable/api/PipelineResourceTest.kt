@@ -310,6 +310,66 @@ class PipelineResourceTest {
     }
 
     @Test
+    fun testCreatePipelineRejectsCyclicGraph() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        val importVersionId = createModuleVersion(token, tenantId, "IMPORT", "Cycle Import")
+        val processingVersionId = createModuleVersion(token, tenantId, "PROCESSING", "Cycle Processing")
+
+        val connectorId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(
+                mapOf(
+                    "name" to "Cycle Input Connector",
+                    "connectorType" to "MQTT",
+                    "direction" to "INPUT",
+                    "config" to mapOf("broker" to "mqtt://localhost:1883", "topic" to "dt/cycle/in")
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        val graphDefinition = mapOf(
+            "nodes" to listOf(
+                mapOf("id" to "n-import", "type" to "IMPORT", "moduleVersionId" to importVersionId, "connectorId" to connectorId),
+                mapOf("id" to "n-processing", "type" to "PROCESSING", "moduleVersionId" to processingVersionId)
+            ),
+            "edges" to listOf(
+                mapOf("from" to "n-import", "to" to "n-processing"),
+                mapOf("from" to "n-processing", "to" to "n-import")
+            )
+        )
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("name" to "Cyclic Pipeline", "graphDefinition" to graphDefinition))
+        .`when`()
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId")
+        .then()
+            .statusCode(400)
+            .body("error", containsString("contains a cycle"))
+    }
+
+    @Test
     fun testTriggerPipelineTransitionsRunOutOfPending() {
         val token = TestAuthHelpers.createAdminToken()
 

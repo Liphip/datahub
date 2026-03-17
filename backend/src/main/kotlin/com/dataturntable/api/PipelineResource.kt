@@ -130,6 +130,13 @@ class PipelineResource {
         }
 
         val edges = graphDefinition["edges"] as? List<*> ?: emptyList<Any>()
+        val indegree = mutableMapOf<String, Int>()
+        val adjacency = mutableMapOf<String, MutableList<String>>()
+        nodeIds.forEach { nodeId ->
+            indegree[nodeId] = 0
+            adjacency[nodeId] = mutableListOf()
+        }
+
         for (edge in edges) {
             val edgeMap = edge as? Map<*, *> ?: continue
             val fromId = edgeMap["from"]?.toString() ?: continue
@@ -137,6 +144,25 @@ class PipelineResource {
             if (fromId !in nodeIds || toId !in nodeIds) {
                 return "Edge $fromId -> $toId references unknown node"
             }
+            adjacency[fromId]?.add(toId)
+            indegree[toId] = (indegree[toId] ?: 0) + 1
+        }
+
+        val queue = ArrayDeque(indegree.filterValues { it == 0 }.keys)
+        var visitedCount = 0
+        while (queue.isNotEmpty()) {
+            val nodeId = queue.removeFirst()
+            visitedCount += 1
+            adjacency[nodeId].orEmpty().forEach { nextId ->
+                val updated = (indegree[nextId] ?: 0) - 1
+                indegree[nextId] = updated
+                if (updated == 0) {
+                    queue.add(nextId)
+                }
+            }
+        }
+        if (visitedCount != nodeIds.size) {
+            return "Graph contains a cycle; pipelines must be acyclic"
         }
 
         return null

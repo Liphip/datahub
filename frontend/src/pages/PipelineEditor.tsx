@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
@@ -329,6 +329,51 @@ export default function PipelineEditor() {
   const exportVersionOptions = moduleVersionOptions.filter(v => v.moduleType === 'EXPORT');
   const importConnectors = connectors.filter((c) => c.direction === 'INPUT' || c.direction === 'BOTH');
   const exportConnectors = connectors.filter((c) => c.direction === 'OUTPUT' || c.direction === 'BOTH');
+  const pipelineHealthChecks = useMemo(() => {
+    const availableVersionIds = new Set(moduleVersionOptions.map((option) => option.id));
+    const selectedProcessing = processingModuleIds.filter(Boolean);
+    const selectedAlert = alertModuleIds.filter(Boolean);
+    const selectedExport = exportModuleIds.filter(Boolean);
+    const selectedExportConnectors = exportConnectorIds.map((id) => id.trim()).filter(Boolean);
+
+    return [
+      {
+        label: 'Import module version selected and available',
+        ok: Boolean(importModuleId) && availableVersionIds.has(importModuleId),
+      },
+      {
+        label: 'At least one processing module selected',
+        ok: selectedProcessing.length > 0,
+      },
+      {
+        label: 'All processing modules are available',
+        ok: selectedProcessing.every((id) => availableVersionIds.has(id)),
+      },
+      {
+        label: 'All alert modules are available',
+        ok: selectedAlert.every((id) => availableVersionIds.has(id)),
+      },
+      {
+        label: 'At least one export module selected',
+        ok: selectedExport.length > 0,
+      },
+      {
+        label: 'Export connectors selected for each export module',
+        ok: selectedExport.every((_, index) => Boolean((exportConnectorIds[index] || '').trim())),
+      },
+      {
+        label: 'Export connectors are unique (no duplicate deliveries)',
+        ok: new Set(selectedExportConnectors).size === selectedExportConnectors.length,
+      },
+    ];
+  }, [
+    moduleVersionOptions,
+    importModuleId,
+    processingModuleIds,
+    alertModuleIds,
+    exportModuleIds,
+    exportConnectorIds,
+  ]);
 
   if (loading) {
     return (
@@ -645,6 +690,20 @@ export default function PipelineEditor() {
             ) : (
               <p className="text-sm text-gray-500">New pipeline</p>
             )}
+          </div>
+
+          <div className="card">
+            <h2 className="text-lg font-semibold mb-4">Configuration Health</h2>
+            <div className="space-y-2 text-sm">
+              {pipelineHealthChecks.map((check) => (
+                <div key={check.label} className="flex items-start justify-between gap-3">
+                  <span className="text-gray-700">{check.label}</span>
+                  <span className={check.ok ? 'text-emerald-600 font-medium' : 'text-amber-700 font-medium'}>
+                    {check.ok ? 'OK' : 'Needs attention'}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="card">
