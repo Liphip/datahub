@@ -2,15 +2,23 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Pipeline, CodeModule, Connector } from '../types';
+import type { Pipeline, CodeModule, Connector, ModuleVersion } from '../types';
+
+type ModuleVersionOption = ModuleVersion & {
+  moduleName: string;
+  moduleType: CodeModule['moduleType'];
+};
 
 export default function PipelineEditor() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user, selectedTenantId } = useAuthStore();
+  const canReadPipelines = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('pipeline:read'));
+  const canWritePipelines = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('pipeline:write'));
+  const canExecutePipelines = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('pipeline:execute'));
   
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
-  const [modules, setModules] = useState<CodeModule[]>([]);
+  const [moduleVersionOptions, setModuleVersionOptions] = useState<ModuleVersionOption[]>([]);
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -40,8 +48,20 @@ export default function PipelineEditor() {
           api.getModules(tenantId),
           api.getConnectors(tenantId),
         ]);
+
+        const versionsByModule = await Promise.all(
+          modulesData.map(async (module) => {
+            const versions = await api.getModuleVersions(module.id);
+            return versions.map((version) => ({
+              ...version,
+              moduleName: module.name,
+              moduleType: module.moduleType,
+            }));
+          })
+        );
+        const flattenedOptions = versionsByModule.flat();
         
-        setModules(modulesData);
+        setModuleVersionOptions(flattenedOptions);
         setConnectors(connectorsData);
         
         if (pipelineData) {
@@ -89,26 +109,13 @@ export default function PipelineEditor() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  const resolveLatestVersionId = async (moduleId: string): Promise<string> => {
-    const versions = await api.getModuleVersions(moduleId);
-    const latest = versions[0];
-    if (!latest?.id) {
-      throw new Error(`No versions available for module ${moduleId}`);
-    }
-    return latest.id;
-  };
-
   const handleSave = async () => {
-    if (!tenantId || !name) return;
+    if (!tenantId || !name || !canWritePipelines) return;
 
     try {
-      const importVersionId = importModuleId ? await resolveLatestVersionId(importModuleId) : '';
-      const processingVersionIds = await Promise.all(
-        processingModuleIds.filter(Boolean).map((moduleId) => resolveLatestVersionId(moduleId))
-      );
-      const exportVersionIds = await Promise.all(
-        exportModuleIds.filter(Boolean).map((moduleId) => resolveLatestVersionId(moduleId))
-      );
+      const importVersionId = importModuleId || '';
+      const processingVersionIds = processingModuleIds.filter(Boolean);
+      const exportVersionIds = exportModuleIds.filter(Boolean);
 
       const graphNodes: Array<Record<string, unknown>> = [];
       const graphEdges: Array<Record<string, unknown>> = [];
@@ -193,7 +200,7 @@ export default function PipelineEditor() {
   };
 
   const handleRun = async () => {
-    if (!id || id === 'new') return;
+    if (!id || id === 'new' || !canExecutePipelines) return;
     
     try {
       await api.triggerPipeline(id);
@@ -240,9 +247,9 @@ export default function PipelineEditor() {
     setExportConnectorIds(updated);
   };
 
-  const importModules = modules.filter(m => m.moduleType === 'IMPORT');
-  const processingModules = modules.filter(m => m.moduleType === 'PROCESSING');
-  const exportModules = modules.filter(m => m.moduleType === 'EXPORT');
+  const importVersionOptions = moduleVersionOptions.filter(v => v.moduleType === 'IMPORT');
+  const processingVersionOptions = moduleVersionOptions.filter(v => v.moduleType === 'PROCESSING');
+  const exportVersionOptions = moduleVersionOptions.filter(v => v.moduleType === 'EXPORT');
   const importConnectors = connectors.filter((c) => c.direction === 'INPUT' || c.direction === 'BOTH');
   const exportConnectors = connectors.filter((c) => c.direction === 'OUTPUT' || c.direction === 'BOTH');
 
@@ -261,6 +268,16 @@ export default function PipelineEditor() {
       <div className="px-4 py-6">
         <div className="card text-center py-12">
           <p className="text-gray-500">No tenant ID found. Please contact support.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!canReadPipelines) {
+    return (
+      <div className="px-4 py-6">
+        <div className="card text-center py-12">
+          <p className="text-gray-500">You do not have permission to view pipelines in this tenant.</p>
         </div>
       </div>
     );
@@ -290,15 +307,18 @@ export default function PipelineEditor() {
           {id !== 'new' && (
             <button
               onClick={handleRun}
+              disabled={!canExecutePipelines}
               className="btn-primary bg-green-600 hover:bg-green-700"
+              title={!canExecutePipelines ? 'You need pipeline execute permission to run pipelines' : undefined}
             >
               Run Pipeline
             </button>
           )}
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || !canWritePipelines}
             className="btn-primary"
+            title={!canWritePipelines ? 'You need pipeline write permission to save changes' : undefined}
           >
             {saving ? 'Saving...' : 'Save'}
           </button>
@@ -350,13 +370,16 @@ export default function PipelineEditor() {
               value={importModuleId}
               onChange={(e) => setImportModuleId(e.target.value)}
               className="input w-full"
+              disabled={!canWritePipelines}
             >
               <option value="">None</option>
-              {importModules.map(m => (
-                <option key={m.id} value={m.id}>{m.name}</option>
+              {importVersionOptions.map((version) => (
+                <option key={version.id} value={version.id}>
+                  {version.moduleName} (v{version.version}{version.versionTag ? ` - ${version.versionTag}` : ''})
+                </option>
               ))}
             </select>
-            {importModules.length === 0 && (
+            {importVersionOptions.length === 0 && (
               <p className="text-sm text-gray-500 mt-2">
                 No import modules available. Create one in the Modules section.
               </p>
@@ -367,6 +390,7 @@ export default function PipelineEditor() {
                 value={importConnectorId}
                 onChange={(e) => setImportConnectorId(e.target.value)}
                 className="input w-full"
+                disabled={!canWritePipelines}
               >
                 <option value="">Select connector</option>
                 {importConnectors.map((connector) => (
@@ -383,6 +407,7 @@ export default function PipelineEditor() {
                 type="button"
                 onClick={addProcessingModule}
                 className="text-sm text-primary-600 hover:text-primary-700"
+                disabled={!canWritePipelines}
               >
                 + Add Module
               </button>
@@ -395,16 +420,20 @@ export default function PipelineEditor() {
                       value={moduleId}
                       onChange={(e) => updateProcessingModule(index, e.target.value)}
                       className="input flex-1"
+                      disabled={!canWritePipelines}
                     >
                       <option value="">Select module</option>
-                      {processingModules.map(m => (
-                        <option key={m.id} value={m.id}>{m.name}</option>
+                      {processingVersionOptions.map((version) => (
+                        <option key={version.id} value={version.id}>
+                          {version.moduleName} (v{version.version}{version.versionTag ? ` - ${version.versionTag}` : ''})
+                        </option>
                       ))}
                     </select>
                     <button
                       type="button"
                       onClick={() => removeProcessingModule(index)}
                       className="text-red-600 hover:text-red-700"
+                      disabled={!canWritePipelines}
                     >
                       Remove
                     </button>
@@ -423,6 +452,7 @@ export default function PipelineEditor() {
                 type="button"
                 onClick={addExportModule}
                 className="text-sm text-primary-600 hover:text-primary-700"
+                disabled={!canWritePipelines}
               >
                 + Add Module
               </button>
@@ -436,16 +466,20 @@ export default function PipelineEditor() {
                         value={moduleId}
                         onChange={(e) => updateExportModule(index, e.target.value)}
                         className="input flex-1"
+                        disabled={!canWritePipelines}
                       >
                         <option value="">Select module</option>
-                        {exportModules.map(m => (
-                          <option key={m.id} value={m.id}>{m.name}</option>
+                        {exportVersionOptions.map((version) => (
+                          <option key={version.id} value={version.id}>
+                            {version.moduleName} (v{version.version}{version.versionTag ? ` - ${version.versionTag}` : ''})
+                          </option>
                         ))}
                       </select>
                       <button
                         type="button"
                         onClick={() => removeExportModule(index)}
                         className="text-red-600 hover:text-red-700"
+                        disabled={!canWritePipelines}
                       >
                         Remove
                       </button>
@@ -454,6 +488,7 @@ export default function PipelineEditor() {
                       value={exportConnectorIds[index] || ''}
                       onChange={(e) => updateExportConnector(index, e.target.value)}
                       className="input w-full"
+                      disabled={!canWritePipelines}
                     >
                       <option value="">Select connector</option>
                       {exportConnectors.map((connector) => (

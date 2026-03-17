@@ -5,6 +5,8 @@ import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.connectors.Connector
 import com.dataturntable.engine.PipelineConsumer
+import com.dataturntable.auth.User
+import com.dataturntable.security.SecurityUtils
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.security.Authenticated
 import jakarta.inject.Inject
@@ -14,6 +16,7 @@ import jakarta.transaction.Transactional
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
+import org.eclipse.microprofile.jwt.JsonWebToken
 import java.util.UUID
 
 @Path("/pipelines")
@@ -26,8 +29,17 @@ class PipelineResource {
     @Inject
     lateinit var pipelineConsumer: PipelineConsumer
 
+    @Inject
+    lateinit var jwt: JsonWebToken
+
     @PersistenceContext
     lateinit var em: EntityManager
+
+    private fun currentUser(): User? {
+        val subject = jwt.subject ?: return null
+        val userId = try { UUID.fromString(subject) } catch (_: Exception) { return null }
+        return em.find(User::class.java, userId)
+    }
 
     private fun parseUuid(value: String, field: String): UUID {
         return try {
@@ -120,6 +132,22 @@ class PipelineResource {
             )
         }
     }
+
+    private fun requireTenantAccess(
+        user: User,
+        tenantId: String,
+        ability: String,
+        forbiddenMessage: String = "Forbidden",
+        insufficientMessage: String = "Insufficient permissions"
+    ): Response? {
+        if (!SecurityUtils.canAccessTenant(user, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to forbiddenMessage)).build()
+        }
+        if (!SecurityUtils.hasAbility(user, ability)) {
+            return Response.status(403).entity(mapOf("error" to insufficientMessage)).build()
+        }
+        return null
+    }
     
     @GET
     @Path("/runs")
@@ -131,11 +159,13 @@ class PipelineResource {
         @QueryParam("runStatus") runStatus: String?,
         @QueryParam("pipelineId") pipelineId: String?
     ): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = try {
             parseUuid(tenantId, "tenantId")
         } catch (e: WebApplicationException) {
             return e.response
         }
+        requireTenantAccess(currentUser, tenantId, "pipeline:read")?.let { return it }
 
         val fromInstant = try {
             from?.let { parseInstant(it, "from") }
@@ -216,11 +246,13 @@ class PipelineResource {
         @QueryParam("limit") limit: Int?,
         @QueryParam("sinceHours") sinceHours: Int?
     ): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = try {
             parseUuid(tenantId, "tenantId")
         } catch (e: WebApplicationException) {
             return e.response
         }
+        requireTenantAccess(currentUser, tenantId, "pipeline:read")?.let { return it }
 
         val maxRows = (limit ?: 50).coerceIn(1, 500)
         val hours = sinceHours ?: 24
@@ -316,11 +348,13 @@ class PipelineResource {
         @QueryParam("latestFrom") latestFrom: String?,
         @QueryParam("latestTo") latestTo: String?
     ): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = try {
             parseUuid(tenantId, "tenantId")
         } catch (e: WebApplicationException) {
             return e.response
         }
+        requireTenantAccess(currentUser, tenantId, "pipeline:read")?.let { return it }
 
         val pipelines = em.createQuery(
             "SELECT p FROM Pipeline p WHERE p.tenant.id = :tenantId",
@@ -415,6 +449,7 @@ class PipelineResource {
     @POST
     @Transactional
     fun create(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantId = tenantIdQuery ?: request["tenantId"] as? String
         val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
 
@@ -422,7 +457,12 @@ class PipelineResource {
             return Response.status(400).entity(mapOf("error" to "tenantId is required")).build()
         }
 
-        val tenantUuid = UUID.fromString(tenantId)
+        val tenantUuid = try {
+            parseUuid(tenantId, "tenantId")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        requireTenantAccess(currentUser, tenantId, "pipeline:write")?.let { return it }
         val tenant = em.find(com.dataturntable.tenant.Tenant::class.java, tenantUuid)
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
 
@@ -452,6 +492,7 @@ class PipelineResource {
     @GET
     @Path("/{id}")
     fun get(@PathParam("id") id: String): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
             parseUuid(id, "pipeline id")
         } catch (e: WebApplicationException) {
@@ -459,6 +500,9 @@ class PipelineResource {
         }
         val pipeline = em.find(Pipeline::class.java, pipelineId)
         return if (pipeline != null) {
+            val tenantId = pipeline.tenant?.id?.toString()
+                ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
+            requireTenantAccess(currentUser, tenantId, "pipeline:read")?.let { return it }
             Response.ok(pipelineToMap(pipeline)).build()
         } else {
             Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
@@ -469,6 +513,7 @@ class PipelineResource {
     @Path("/{id}")
     @Transactional
     fun delete(@PathParam("id") id: String): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
             parseUuid(id, "pipeline id")
         } catch (e: WebApplicationException) {
@@ -476,6 +521,9 @@ class PipelineResource {
         }
         val pipeline = em.find(Pipeline::class.java, pipelineId)
         return if (pipeline != null) {
+            val tenantId = pipeline.tenant?.id?.toString()
+                ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
+            requireTenantAccess(currentUser, tenantId, "pipeline:write")?.let { return it }
             pipeline.delete()
             Response.noContent().build()
         } else {
@@ -487,6 +535,7 @@ class PipelineResource {
     @Path("/{id}")
     @Transactional
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
             parseUuid(id, "pipeline id")
         } catch (e: WebApplicationException) {
@@ -494,6 +543,9 @@ class PipelineResource {
         }
         val pipeline = em.find(Pipeline::class.java, pipelineId)
         return if (pipeline != null) {
+            val tenantId = pipeline.tenant?.id?.toString()
+                ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
+            requireTenantAccess(currentUser, tenantId, "pipeline:write")?.let { return it }
             request["name"]?.let { pipeline.name = it as String }
             request["description"]?.let { pipeline.description = it as String }
             request["isActive"]?.let { pipeline.isActive = it as Boolean }
@@ -530,6 +582,7 @@ class PipelineResource {
     @Path("/{id}/run")
     @Transactional
     fun trigger(@PathParam("id") id: String, @QueryParam("triggerType") triggerType: String?): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
             parseUuid(id, "pipeline id")
         } catch (e: WebApplicationException) {
@@ -537,6 +590,9 @@ class PipelineResource {
         }
         val pipeline = em.find(Pipeline::class.java, pipelineId)
         return if (pipeline != null) {
+            val tenantId = pipeline.tenant?.id?.toString()
+                ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
+            requireTenantAccess(currentUser, tenantId, "pipeline:execute")?.let { return it }
             val run = PipelineRun().apply {
                 this.pipeline = pipeline
                 this.triggerType = try {
@@ -583,11 +639,18 @@ class PipelineResource {
     @GET
     @Path("/{id}/runs")
     fun getRuns(@PathParam("id") id: String): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
             UUID.fromString(id)
         } catch (_: Exception) {
             return Response.status(400).entity(mapOf("error" to "Invalid pipeline id")).build()
         }
+
+        val pipeline = em.find(Pipeline::class.java, pipelineId)
+            ?: return Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
+        val tenantId = pipeline.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
+        requireTenantAccess(currentUser, tenantId, "pipeline:read")?.let { return it }
 
         val runs = em.createQuery(
             "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId ORDER BY r.startedAt DESC",
