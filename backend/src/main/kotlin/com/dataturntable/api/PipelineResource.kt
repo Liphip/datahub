@@ -1202,7 +1202,14 @@ class PipelineResource {
         while (queue.isNotEmpty() && visited < (depthLimit * 10)) {
             val (parentId, parentDepth) = queue.removeFirst()
             if (parentDepth >= depthLimit) {
-                descendantsTruncated = descendantsTruncated || queue.isNotEmpty()
+                val hasChildrenBeyondDepth = em.createQuery(
+                    "SELECT COUNT(r) FROM PipelineRun r WHERE r.pipeline.id = :pipelineId AND r.retryOfRunId = :retryOf",
+                    java.lang.Long::class.java
+                )
+                    .setParameter("pipelineId", pipeline.id)
+                    .setParameter("retryOf", parentId)
+                    .singleResult > 0
+                descendantsTruncated = descendantsTruncated || hasChildrenBeyondDepth || queue.isNotEmpty()
                 continue
             }
             val children = em.createQuery(
@@ -1214,7 +1221,7 @@ class PipelineResource {
                 .resultList
             children.forEach { child ->
                 descendants.add(runSummary(child, parentDepth + 1))
-                if (latestDescendant == null || child.startedAt.isAfter(latestDescendant!!.startedAt)) {
+                if (latestDescendant == null || child.startedAt.isAfter(latestDescendant?.startedAt)) {
                     latestDescendant = child
                 }
                 child.id?.let { queue.add(it to (parentDepth + 1)) }

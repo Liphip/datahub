@@ -802,7 +802,7 @@ class PipelineResourceTest {
             .jsonPath()
             .getString("id")
 
-        val leafId = QuarkusTransaction.requiringNew().call<String> {
+        val ids = QuarkusTransaction.requiringNew().call<Map<String, String>> {
             val pipeline = em.find(Pipeline::class.java, java.util.UUID.fromString(pipelineId))
             val r1 = PipelineRun().apply {
                 this.pipeline = pipeline
@@ -833,19 +833,33 @@ class PipelineResourceTest {
             }
             em.persist(r3)
             em.flush()
-            r3.id.toString()
+            mapOf(
+                "root" to r1.id.toString(),
+                "leaf" to r3.id.toString()
+            )
         }
 
         given()
             .header("Authorization", "Bearer $token")
             .queryParam("maxDepth", 1)
         .`when`()
-            .get("/api/internal/v1/pipelines/$pipelineId/runs/$leafId/lineage")
+            .get("/api/internal/v1/pipelines/$pipelineId/runs/${ids["leaf"]}/lineage")
         .then()
             .statusCode(200)
             .body("maxDepth", equalTo(1))
             .body("ancestors.size()", equalTo(1))
             .body("ancestorsTruncated", equalTo(true))
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("maxDepth", 1)
+        .`when`()
+            .get("/api/internal/v1/pipelines/$pipelineId/runs/${ids["root"]}/lineage")
+        .then()
+            .statusCode(200)
+            .body("maxDepth", equalTo(1))
+            .body("descendants.size()", equalTo(1))
+            .body("descendantsTruncated", equalTo(true))
     }
 
     @Test
