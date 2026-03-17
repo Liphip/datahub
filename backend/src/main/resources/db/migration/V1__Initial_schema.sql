@@ -266,7 +266,7 @@ CREATE TABLE readings (
 DO $$ 
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb') THEN
-        SELECT create_hypertable('readings', 'time', if_not_exists => TRUE);
+        PERFORM create_hypertable('readings', 'time', if_not_exists => TRUE);
     END IF;
 END $$;
 

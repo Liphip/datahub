@@ -122,6 +122,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Replaced fragile `Role.findByTenantId(...)` static lookup usage in `RoleResource` list path with EntityManager-backed tenant query, added tenant role-list regression coverage, and improved Users page recovery UX with explicit retry action on partial-load errors.
 - Added explicit connector lifecycle operations (`connect`, `disconnect`, `test`) with permission checks and validation API responses, plus Connectors page controls/status badges for connect/disconnect/test workflows.
 - Added mobile navigation chips in `Layout` so all pages (including Connectors) are reachable on small screens, and widened Connectors page ability fallback to include `manage:tenant` for legacy-role compatibility.
+- Fixed PostgreSQL bootstrap migration for optional Timescale hypertable creation (`PERFORM create_hypertable(...)` in `V1__Initial_schema.sql`) to prevent backend startup failure on empty schemas.
 
 ---
 
