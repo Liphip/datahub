@@ -175,6 +175,9 @@ export interface PipelineRunLineage {
   estimatedNodesInResponse?: number;
   estimatedPayloadBytes?: number;
   estimatedPayloadClass?: 'SMALL' | 'MEDIUM' | 'LARGE';
+  lineageQueryMs?: number;
+  lineageBuildMs?: number;
+  lineageTotalMs?: number;
   ancestorsTotal?: number;
   ancestorsStatusCounts?: Partial<Record<'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED', number>>;
   descendantsTotal?: number;

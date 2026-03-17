@@ -1213,6 +1213,7 @@ class PipelineResource {
             ?.map { it.name }
         val defaultDepth = 20
         val withDetails = includeDetails == true
+        val lineageStartedNs = System.nanoTime()
 
         fun includeByStatus(status: PipelineRunStatus): Boolean = statusFilter?.contains(status) ?: true
 
@@ -1341,6 +1342,8 @@ class PipelineResource {
         val latestDescendantRunId = if (includeDescendants) latestDescendant?.id else null
         val rootRunInView = rootRunId == run.id || ancestors.any { it["id"] == rootRunId }
         val latestDescendantRunInView = latestDescendantRunId != null && descendants.any { it["id"] == latestDescendantRunId }
+        val lineageQueryMs = (System.nanoTime() - lineageStartedNs) / 1_000_000
+        val buildStartedNs = System.nanoTime()
         val isLineageTruncated = ancestorsTruncated || descendantsTruncated
         val estimatedNodesInResponse = 1 + ancestors.size + descendants.size
         val estimatedPayloadBytes = estimatedNodesInResponse * if (withDetails) 2200 else 260
@@ -1354,6 +1357,8 @@ class PipelineResource {
         } else {
             null
         }
+        val lineageBuildMs = (System.nanoTime() - buildStartedNs) / 1_000_000
+        val lineageTotalMs = (System.nanoTime() - lineageStartedNs) / 1_000_000
 
         return Response.ok(
             mapOf(
@@ -1374,6 +1379,9 @@ class PipelineResource {
                 "estimatedNodesInResponse" to estimatedNodesInResponse,
                 "estimatedPayloadBytes" to estimatedPayloadBytes,
                 "estimatedPayloadClass" to estimatedPayloadClass,
+                "lineageQueryMs" to lineageQueryMs,
+                "lineageBuildMs" to lineageBuildMs,
+                "lineageTotalMs" to lineageTotalMs,
                 "ancestorsTotal" to ancestorsTotal,
                 "ancestorsStatusCounts" to ancestorsStatusCounts,
                 "descendantsTotal" to descendantsTotal,

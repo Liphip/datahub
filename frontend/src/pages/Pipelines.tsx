@@ -2114,6 +2114,12 @@ export default function Pipelines() {
                                       </button>
                                     )}
                                   </div>
+                                  <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-indigo-800">
+                                    <span>Server timing:</span>
+                                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">query {lineageByRunId[selectedRun.id].lineageQueryMs ?? 0} ms</span>
+                                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">build {lineageByRunId[selectedRun.id].lineageBuildMs ?? 0} ms</span>
+                                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">total {lineageByRunId[selectedRun.id].lineageTotalMs ?? 0} ms</span>
+                                  </div>
                                   <div className="mb-2 flex flex-wrap items-center gap-2">
                                     <span className="text-[11px] text-indigo-800">Fetch mode:</span>
                                     {(['SUMMARY', 'DETAILS'] as const).map((mode) => {
