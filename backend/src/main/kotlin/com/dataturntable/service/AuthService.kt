@@ -2,6 +2,7 @@ package com.dataturntable.service
 
 import com.dataturntable.auth.User
 import com.dataturntable.dto.*
+import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Tenant
 import io.smallrye.jwt.build.Jwt
 import jakarta.enterprise.context.ApplicationScoped
@@ -9,6 +10,7 @@ import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
+import jakarta.ws.rs.NotFoundException
 import org.eclipse.microprofile.jwt.JsonWebToken
 import org.mindrot.jbcrypt.BCrypt
 import java.security.SecureRandom
@@ -46,8 +48,48 @@ class AuthService {
         user.lastLoginAt = java.time.Instant.now()
         user.persist()
         
-        val token = generateJwtToken(user)
-        return AuthResponse(token, toUserDto(user))
+        val requestedTenantId = parseUuid(request.tenantId)
+        if (requestedTenantId != null && !user.canAccessTenant(requestedTenantId)) {
+            throw SecurityException("Invalid tenant context")
+        }
+
+        val token = generateJwtToken(user, requestedTenantId)
+        return AuthResponse(token, toUserDto(user, requestedTenantId))
+    }
+
+    @Transactional
+    fun switchTenant(userId: UUID, tenantId: String): AuthResponse {
+        val tenantUuid = parseUuid(tenantId) ?: throw IllegalArgumentException("Invalid tenantId")
+        val user = em.find(User::class.java, userId) ?: throw SecurityException("Unauthorized")
+        if (em.find(Tenant::class.java, tenantUuid) == null) {
+            throw NotFoundException("Tenant not found")
+        }
+        if (!user.isSuperAdmin() && user.getMembershipForTenant(tenantUuid) == null) {
+            throw SecurityException("Forbidden")
+        }
+
+        val token = generateJwtToken(user, tenantUuid)
+        return AuthResponse(token, toUserDto(user, tenantUuid))
+    }
+
+    @Transactional
+    fun getTenantContexts(userId: UUID): List<TenantContextDto> {
+        val memberships = em.createQuery(
+            "SELECT m FROM Membership m JOIN FETCH m.tenant t LEFT JOIN FETCH m.role r WHERE m.authUser.id = :userId",
+            Membership::class.java
+        )
+            .setParameter("userId", userId)
+            .resultList
+
+        return memberships.mapNotNull { membership ->
+            val tenant = membership.tenant ?: return@mapNotNull null
+            val tenantId = tenant.id ?: return@mapNotNull null
+            TenantContextDto(
+                tenantId = tenantId.toString(),
+                tenantName = tenant.name ?: "Unnamed Tenant",
+                roleName = membership.role?.name
+            )
+        }
     }
     
     private fun findUserByEmail(email: String, tenantId: String?): User? {
@@ -149,7 +191,7 @@ class AuthService {
         return normalized.toList()
     }
     
-    private fun generateJwtToken(user: User): String {
+    private fun generateJwtToken(user: User, tenantContextId: UUID? = null): String {
         val groups = HashSet<String>()
         if (user.isSuperAdmin()) groups.add("superadmin")
 
@@ -157,9 +199,11 @@ class AuthService {
         val primaryMembership = user.loadMemberships().firstOrNull { it.tenant?.parent == null }
             ?: user.loadMemberships().firstOrNull()
 
-        primaryMembership?.role?.name?.let { groups.add(it) }
+        val contextMembership = tenantContextId?.let { user.getMembershipForTenant(it) }
 
-        val tenantId = primaryMembership?.tenant?.id?.toString()
+        (contextMembership?.role?.name ?: primaryMembership?.role?.name)?.let { groups.add(it) }
+
+        val tenantId = tenantContextId?.toString() ?: primaryMembership?.tenant?.id?.toString()
 
         val jwtBuilder = Jwt.issuer("https://dataturntable.io")
             .subject(user.id.toString())
@@ -194,8 +238,9 @@ class AuthService {
         return password.toString().toList().shuffled(secureRandom).joinToString("")
     }
     
-    private fun toUserDto(user: User): UserDto {
-         val primaryTenant = user.getPrimaryTenant()
+    private fun toUserDto(user: User, tenantContextId: UUID? = null): UserDto {
+         val contextTenant = tenantContextId?.let { em.find(Tenant::class.java, it) }
+         val primaryTenant = contextTenant ?: user.getPrimaryTenant()
          return UserDto(
              id = user.id.toString(),
              email = user.email ?: "",
@@ -221,6 +266,16 @@ class AuthService {
             return null
         }
         val user = em.find(User::class.java, userId) ?: return null
-        return toUserDto(user)
+        val tenantIdFromJwt = parseUuid(jwt.getClaim("tenantId") as? String)
+        return toUserDto(user, tenantIdFromJwt)
+    }
+
+    private fun parseUuid(value: String?): UUID? {
+        if (value.isNullOrBlank()) return null
+        return try {
+            UUID.fromString(value)
+        } catch (_: Exception) {
+            null
+        }
     }
 }

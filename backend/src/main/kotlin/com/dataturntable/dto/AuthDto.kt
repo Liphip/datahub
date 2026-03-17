@@ -31,6 +31,12 @@ data class AuthResponse(
     val user: UserDto
 )
 
+data class TenantContextDto(
+    val tenantId: String,
+    val tenantName: String,
+    val roleName: String?
+)
+
 data class UserDto(
     val id: String,
     val email: String,

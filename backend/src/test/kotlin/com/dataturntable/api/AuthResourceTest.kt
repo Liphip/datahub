@@ -274,6 +274,78 @@ class AuthResourceTest {
         .then()
             .statusCode(401)
     }
+
+    @Test
+    fun testSwitchTenantUpdatesJwtContext() {
+        val setupResponse = given()
+            .contentType(ContentType.JSON)
+            .body(mapOf("email" to "switch@example.com"))
+        .`when`()
+            .post("/api/internal/v1/auth/setup")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+
+        val password = setupResponse.getString("password")
+        val rootTenantId = setupResponse.getString("user.tenantId")
+        val token = given()
+            .contentType(ContentType.JSON)
+            .body(mapOf("email" to "switch@example.com", "passwordHash" to hashPassword(password)))
+        .`when`()
+            .post("/api/internal/v1/auth/login")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("token")
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType(ContentType.JSON)
+            .body(mapOf("name" to "Secondary Tenant", "parentId" to rootTenantId))
+        .`when`()
+            .post("/api/internal/v1/tenants")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        val switchedToken = given()
+            .header("Authorization", "Bearer $token")
+            .contentType(ContentType.JSON)
+            .body(mapOf("tenantId" to tenantId))
+        .`when`()
+            .post("/api/internal/v1/auth/switch-tenant")
+        .then()
+            .statusCode(200)
+            .body("user.tenantId", equalTo(tenantId))
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("token")
+
+        given()
+            .header("Authorization", "Bearer $switchedToken")
+        .`when`()
+            .get("/api/internal/v1/auth/me")
+        .then()
+            .statusCode(200)
+            .body("tenantId", equalTo(tenantId))
+    }
+
+    @Test
+    fun testListTenantContextsRequiresAuth() {
+        given()
+        .`when`()
+            .get("/api/internal/v1/auth/tenants")
+        .then()
+            .statusCode(401)
+    }
     
     private fun hashPassword(password: String): String {
         val digest = MessageDigest.getInstance("SHA-256")

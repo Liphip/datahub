@@ -85,4 +85,44 @@ class AuthResource {
             Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         }
     }
+
+    @GET
+    @Path("/tenants")
+    @Authenticated
+    fun listTenantContexts(): Response {
+        val subject = jwt.subject ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val userId = try {
+            java.util.UUID.fromString(subject)
+        } catch (_: Exception) {
+            return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        }
+
+        val contexts = authService.getTenantContexts(userId)
+        return Response.ok(contexts).build()
+    }
+
+    @POST
+    @Path("/switch-tenant")
+    @Authenticated
+    fun switchTenant(request: Map<String, String>): Response {
+        val subject = jwt.subject ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val userId = try {
+            java.util.UUID.fromString(subject)
+        } catch (_: Exception) {
+            return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        }
+        val tenantId = request["tenantId"]
+            ?: return Response.status(400).entity(mapOf("error" to "tenantId is required")).build()
+
+        return try {
+            val response = authService.switchTenant(userId, tenantId)
+            Response.ok(response).build()
+        } catch (e: IllegalArgumentException) {
+            Response.status(400).entity(mapOf("error" to (e.message ?: "Bad request"))).build()
+        } catch (e: NotFoundException) {
+            Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+        } catch (e: SecurityException) {
+            Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+    }
 }
