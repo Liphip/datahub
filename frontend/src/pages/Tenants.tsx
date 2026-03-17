@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Tenant, TenantLineageDefaults } from '../types';
+import type { Tenant, TenantLineageDefaults, TenantLineageDefaultsConfig } from '../types';
 
 interface TenantWithChildren extends Tenant {
   children?: TenantWithChildren[];
@@ -125,6 +125,25 @@ export default function Tenants() {
       showToast('Tenant lineage defaults saved', 'success');
     } catch {
       showToast('Failed to save tenant lineage defaults', 'error');
+    } finally {
+      setSavingLineageDefaults(false);
+    }
+  };
+
+  const restoreAndSaveLineageDefaults = async (defaults: TenantLineageDefaultsConfig) => {
+    if (!lineageDefaultsTenantId) return;
+    setSavingLineageDefaults(true);
+    try {
+      const updated = await api.updateTenantLineageDefaults(lineageDefaultsTenantId, {
+        safeScopePolicy: defaults.safeScopePolicy,
+        defaultFetchMode: defaults.defaultFetchMode,
+        defaultDepth: defaults.defaultDepth,
+        maxDepthCap: defaults.maxDepthCap,
+      });
+      setLineageDefaults(updated);
+      showToast('Lineage defaults restored from history', 'success');
+    } catch {
+      showToast('Failed to restore lineage defaults from history', 'error');
     } finally {
       setSavingLineageDefaults(false);
     }
@@ -465,13 +484,31 @@ export default function Tenants() {
                       <span>{entry.changedByEmail || entry.changedByUserId || 'unknown user'}</span>
                       {' · '}
                       <span>{entry.defaults.defaultFetchMode} d{entry.defaults.defaultDepth} cap d{entry.defaults.maxDepthCap} {entry.defaults.safeScopePolicy.toLowerCase()}</span>
+                      {entry.changedFields && entry.changedFields.length > 0 && (
+                        <span className="ml-2 inline-flex flex-wrap gap-1">
+                          {entry.changedFields.map((field) => (
+                            <span key={`${entry.changedAt}-${field}`} className="px-1.5 py-0.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-800">
+                              {field}
+                            </span>
+                          ))}
+                        </span>
+                      )}
                     </div>
-                    <button
-                      className="text-indigo-700 hover:text-indigo-900"
-                      onClick={() => setLineageDefaults((prev) => ({ ...prev, ...entry.defaults }))}
-                    >
-                      Apply to form
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="text-indigo-700 hover:text-indigo-900"
+                        onClick={() => setLineageDefaults((prev) => ({ ...prev, ...entry.defaults }))}
+                      >
+                        Apply to form
+                      </button>
+                      <button
+                        className="text-indigo-700 hover:text-indigo-900"
+                        disabled={savingLineageDefaults}
+                        onClick={() => { void restoreAndSaveLineageDefaults(entry.defaults); }}
+                      >
+                        Restore + Save
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

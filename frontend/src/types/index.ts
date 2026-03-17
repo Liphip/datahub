@@ -66,6 +66,7 @@ export interface TenantLineageDefaultsHistoryEntry {
   changedAt: string;
   changedByUserId?: string;
   changedByEmail?: string;
+  changedFields?: string[];
   defaults: TenantLineageDefaultsConfig;
 }
 

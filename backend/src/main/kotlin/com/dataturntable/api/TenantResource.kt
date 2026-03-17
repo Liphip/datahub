@@ -110,9 +110,15 @@ class TenantResource {
                 "changedAt" to changedAt,
                 "changedByUserId" to (entry["changedByUserId"] as? String),
                 "changedByEmail" to (entry["changedByEmail"] as? String),
+                "changedFields" to ((entry["changedFields"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList<String>()),
                 "defaults" to normalizeLineageDefaults(defaultsRaw)
             )
         }
+    }
+
+    private fun lineageDefaultsChangedFields(previous: Map<String, Any?>, next: Map<String, Any?>): List<String> {
+        val fields = listOf("safeScopePolicy", "defaultFetchMode", "defaultDepth", "maxDepthCap")
+        return fields.filter { key -> previous[key] != next[key] }
     }
 
     private fun buildLineageDefaultsResponse(settingsRaw: String?): Map<String, Any?> {
@@ -422,13 +428,16 @@ class TenantResource {
 
         val settings = parseSettings(tenant.settings)
         val normalizedDefaults = normalizeLineageDefaults(merged)
+        val previousDefaults = extractLineageDefaults(tenant.settings)
+        val changedFields = lineageDefaultsChangedFields(previousDefaults, normalizedDefaults)
         val currentHistory = extractLineageDefaultsHistory(tenant.settings).toMutableList()
-        if (normalizedDefaults != extractLineageDefaults(tenant.settings)) {
+        if (changedFields.isNotEmpty()) {
             currentHistory.add(
                 mapOf(
                     "changedAt" to java.time.Instant.now().toString(),
                     "changedByUserId" to user.id?.toString(),
                     "changedByEmail" to user.email,
+                    "changedFields" to changedFields,
                     "defaults" to normalizedDefaults
                 )
             )

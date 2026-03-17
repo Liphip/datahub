@@ -464,6 +464,7 @@ class TenantResourceTest {
             .body("maxDepthCap", equalTo(120))
             .body("history.size()", equalTo(1))
             .body("history[0].changedByEmail", equalTo("tenant-admin@example.com"))
+            .body("history[0].changedFields", hasItems("safeScopePolicy", "defaultFetchMode", "defaultDepth", "maxDepthCap"))
             .body("history[0].defaults.safeScopePolicy", equalTo("PIPELINE"))
 
         given()
