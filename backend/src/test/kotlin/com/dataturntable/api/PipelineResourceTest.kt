@@ -155,6 +155,64 @@ class PipelineResourceTest {
     }
 
     @Test
+    fun testCreatePipelineAcceptsAlertNodesInGraph() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        val connectorId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(
+                mapOf(
+                    "name" to "Input Connector",
+                    "connectorType" to "MQTT",
+                    "direction" to "INPUT",
+                    "config" to mapOf("broker" to "mqtt://localhost:1883", "topic" to "dt/alerts/in")
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        val graphDefinition = mapOf(
+            "nodes" to listOf(
+                mapOf("id" to "n1", "type" to "IMPORT", "moduleVersionId" to "00000000-0000-0000-0000-000000000001", "connectorId" to connectorId),
+                mapOf("id" to "n2", "type" to "PROCESSING", "moduleVersionId" to "00000000-0000-0000-0000-000000000002"),
+                mapOf("id" to "n3", "type" to "ALERT", "moduleVersionId" to "00000000-0000-0000-0000-000000000003")
+            ),
+            "edges" to listOf(
+                mapOf("from" to "n1", "to" to "n2"),
+                mapOf("from" to "n2", "to" to "n3")
+            )
+        )
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("name" to "Alert Graph Pipeline", "graphDefinition" to graphDefinition))
+        .`when`()
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .body("graphDefinition.nodes.size()", equalTo(3))
+    }
+
+    @Test
     fun testTriggerPipelineTransitionsRunOutOfPending() {
         val token = TestAuthHelpers.createAdminToken()
 

@@ -140,6 +140,18 @@ class PipelineConsumer {
 
         return resolved
     }
+
+    private fun resolveAlertModuleVersionsFromGraph(pipeline: Pipeline): List<ModuleVersion> {
+        val graph = parseJsonMap(pipeline.graphDefinition)
+        val nodes = graph["nodes"] as? List<*> ?: return emptyList()
+        return nodes.mapNotNull { node ->
+            val nodeMap = node as? Map<*, *> ?: return@mapNotNull null
+            val nodeType = nodeMap["type"]?.toString()?.uppercase() ?: return@mapNotNull null
+            if (nodeType != "ALERT") return@mapNotNull null
+            val moduleVersionId = parseUuid(nodeMap["moduleVersionId"]?.toString()) ?: return@mapNotNull null
+            ModuleVersion.findById(moduleVersionId)
+        }
+    }
     
     @Incoming("pipeline-input")
     @Blocking
@@ -455,6 +467,49 @@ class PipelineConsumer {
                     executionLog.add("FAIL EXPORT #${index + 1} ${exportVersion.module?.name ?: exportVersion.id}: ${e.message}")
                     throw e
                 }
+            }
+        }
+
+        val graphAlertVersions = resolveAlertModuleVersionsFromGraph(pipeline)
+        graphAlertVersions.forEachIndexed { index, alertVersion ->
+            if (data == null) return@forEachIndexed
+            LOG.infof("Executing alert module %d: %s", index + 1, alertVersion.module?.name)
+            executionLog.add("START ALERT #${index + 1} ${alertVersion.module?.name ?: alertVersion.id}")
+            try {
+                val alertOutput = dockerService.executeModule(
+                    alertVersion,
+                    data,
+                    pipeline.id.toString(),
+                    runId,
+                    ModuleType.ALERT
+                )
+                results["alert_${index + 1}"] = alertOutput.result
+                moduleLogs.add(mapOf(
+                    "stage" to "ALERT",
+                    "order" to (index + 1),
+                    "moduleVersionId" to alertVersion.id,
+                    "moduleName" to alertVersion.module?.name,
+                    "success" to true,
+                    "stdout" to trimLog(alertOutput.stdout),
+                    "stderr" to trimLog(alertOutput.stderr),
+                    "exitCode" to alertOutput.exitCode,
+                    "durationMs" to alertOutput.durationMs
+                ))
+                executionLog.add("DONE ALERT #${index + 1} ${alertVersion.module?.name ?: alertVersion.id} (${alertOutput.durationMs}ms)")
+            } catch (e: ModuleExecutionException) {
+                moduleLogs.add(mapOf(
+                    "stage" to "ALERT",
+                    "order" to (index + 1),
+                    "moduleVersionId" to alertVersion.id,
+                    "moduleName" to alertVersion.module?.name,
+                    "success" to false,
+                    "stdout" to trimLog(e.stdout),
+                    "stderr" to trimLog(e.stderr),
+                    "exitCode" to e.exitCode,
+                    "error" to e.message
+                ))
+                executionLog.add("FAIL ALERT #${index + 1} ${alertVersion.module?.name ?: alertVersion.id}: ${e.message}")
+                throw e
             }
         }
 

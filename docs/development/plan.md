@@ -137,6 +137,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added runtime connector injection for pipeline module execution: import/export node `connectorId` configs are now resolved from graph definition and passed into module containers, with MQTT broker credentials expanded to runtime username/password when `brokerCredentialId` is configured; pipeline run module logs now include connector context in the UI.
 - Improved MQTT broker credential usage visibility: credential list API now returns `referenceCount`, Connectors UI uses backend-provided counts, and connector create/update/delete flows refresh credential usage to keep delete guardrails accurate.
 - Hardened MQTT connector secret handling when broker credentials are bound: backend strips inline `username`/`password` from connector config if `brokerCredentialId` is set, and the Connectors form now auto-clears/disables those fields to prevent conflicting auth sources.
+- Expanded pipeline editor and engine support for ALERT module nodes: UI now lets users add/remove alert module versions in pipeline graphs, graph save/load preserves ALERT nodes, and pipeline execution runs graph-defined ALERT modules with module-level logs in run observability.
 
 ---
 

@@ -29,6 +29,7 @@ export default function PipelineEditor() {
   const [importModuleId, setImportModuleId] = useState('');
   const [importConnectorId, setImportConnectorId] = useState('');
   const [processingModuleIds, setProcessingModuleIds] = useState<string[]>([]);
+  const [alertModuleIds, setAlertModuleIds] = useState<string[]>([]);
   const [exportModuleIds, setExportModuleIds] = useState<string[]>([]);
   const [exportConnectorIds, setExportConnectorIds] = useState<string[]>([]);
   const [isActive, setIsActive] = useState(false);
@@ -70,6 +71,11 @@ export default function PipelineEditor() {
           setDescription(pipelineData.description || '');
           setImportModuleId(pipelineData.importModuleVersionId || '');
           setProcessingModuleIds(pipelineData.processingModuleVersionIds || []);
+          const alertNodes = (pipelineData.graphDefinition?.nodes || []).filter((node) => node.type === 'ALERT');
+          const parsedAlertModuleIds = alertNodes
+            .map((node) => (typeof node.moduleVersionId === 'string' ? node.moduleVersionId : ''))
+            .filter(Boolean);
+          setAlertModuleIds(parsedAlertModuleIds);
           setExportModuleIds(pipelineData.exportModuleVersionIds || []);
           setIsActive(pipelineData.isActive);
 
@@ -90,6 +96,7 @@ export default function PipelineEditor() {
           setImportModuleId('');
           setImportConnectorId('');
           setProcessingModuleIds([]);
+          setAlertModuleIds([]);
           setExportModuleIds([]);
           setExportConnectorIds([]);
           setIsActive(false);
@@ -115,6 +122,7 @@ export default function PipelineEditor() {
     try {
       const importVersionId = importModuleId || '';
       const processingVersionIds = processingModuleIds.filter(Boolean);
+      const alertVersionIds = alertModuleIds.filter(Boolean);
       const exportVersionIds = exportModuleIds.filter(Boolean);
 
       if (!importVersionId) {
@@ -170,6 +178,13 @@ export default function PipelineEditor() {
         });
       });
 
+      const alertNodeIds: string[] = [];
+      alertVersionIds.forEach((moduleVersionId, index) => {
+        const nodeId = `n-alert-${index + 1}`;
+        alertNodeIds.push(nodeId);
+        graphNodes.push({ id: nodeId, type: 'ALERT', moduleVersionId });
+      });
+
       const firstProcessingNodeId = processingNodeIds[0];
       if (importNodeId && firstProcessingNodeId) {
         graphEdges.push({ from: importNodeId, to: firstProcessingNodeId });
@@ -183,6 +198,10 @@ export default function PipelineEditor() {
         graphNodes
           .filter((node) => node.type === 'EXPORT')
           .forEach((node) => graphEdges.push({ from: firstProcessingNodeId, to: node.id }));
+      }
+      const alertSourceNodeId = firstProcessingNodeId || importNodeId;
+      if (alertSourceNodeId) {
+        alertNodeIds.forEach((nodeId) => graphEdges.push({ from: alertSourceNodeId, to: nodeId }));
       }
 
       const graphDefinition = {
@@ -252,6 +271,20 @@ export default function PipelineEditor() {
     setExportConnectorIds([...exportConnectorIds, '']);
   };
 
+  const addAlertModule = () => {
+    setAlertModuleIds([...alertModuleIds, '']);
+  };
+
+  const updateAlertModule = (index: number, value: string) => {
+    const updated = [...alertModuleIds];
+    updated[index] = value;
+    setAlertModuleIds(updated);
+  };
+
+  const removeAlertModule = (index: number) => {
+    setAlertModuleIds(alertModuleIds.filter((_, i) => i !== index));
+  };
+
   const updateExportModule = (index: number, value: string) => {
     const updated = [...exportModuleIds];
     updated[index] = value;
@@ -271,6 +304,7 @@ export default function PipelineEditor() {
 
   const importVersionOptions = moduleVersionOptions.filter(v => v.moduleType === 'IMPORT');
   const processingVersionOptions = moduleVersionOptions.filter(v => v.moduleType === 'PROCESSING');
+  const alertVersionOptions = moduleVersionOptions.filter(v => v.moduleType === 'ALERT');
   const exportVersionOptions = moduleVersionOptions.filter(v => v.moduleType === 'EXPORT');
   const importConnectors = connectors.filter((c) => c.direction === 'INPUT' || c.direction === 'BOTH');
   const exportConnectors = connectors.filter((c) => c.direction === 'OUTPUT' || c.direction === 'BOTH');
@@ -469,6 +503,51 @@ export default function PipelineEditor() {
 
           <div className="card">
             <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-semibold">Alert Modules</h2>
+              <button
+                type="button"
+                onClick={addAlertModule}
+                className="text-sm text-primary-600 hover:text-primary-700"
+                disabled={!canWritePipelines}
+              >
+                + Add Module
+              </button>
+            </div>
+            {alertModuleIds.length > 0 ? (
+              <div className="space-y-2">
+                {alertModuleIds.map((moduleId, index) => (
+                  <div key={index} className="flex space-x-2">
+                    <select
+                      value={moduleId}
+                      onChange={(e) => updateAlertModule(index, e.target.value)}
+                      className="input flex-1"
+                      disabled={!canWritePipelines}
+                    >
+                      <option value="">Select module</option>
+                      {alertVersionOptions.map((version) => (
+                        <option key={version.id} value={version.id}>
+                          {version.moduleName} (v{version.version}{version.versionTag ? ` - ${version.versionTag}` : ''})
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => removeAlertModule(index)}
+                      className="text-red-600 hover:text-red-700"
+                      disabled={!canWritePipelines}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">No alert modules added.</p>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-semibold">Export Modules</h2>
               <button
                 type="button"
@@ -552,6 +631,7 @@ export default function PipelineEditor() {
             <div className="text-sm text-gray-600 space-y-2">
               <p><strong>Import Module:</strong> Fetches data from external sources</p>
               <p><strong>Processing Modules:</strong> Transform data (run in order)</p>
+              <p><strong>Alert Modules:</strong> Evaluate conditions and emit alert events</p>
               <p><strong>Export Modules:</strong> Send data to external systems</p>
             </div>
           </div>
