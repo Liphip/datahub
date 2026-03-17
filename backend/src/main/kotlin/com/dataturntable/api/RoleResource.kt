@@ -35,6 +35,14 @@ class RoleResource {
         return em.find(User::class.java, userId)
     }
 
+    private fun parseUuid(value: String, field: String): UUID? {
+        return try {
+            UUID.fromString(value)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun parseAbilities(raw: String?): List<String> {
         if (raw.isNullOrBlank()) return emptyList()
         return try {
@@ -67,9 +75,22 @@ class RoleResource {
     
     @GET
     fun list(@QueryParam("tenantId") tenantId: String?): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+
         val roles = if (tenantId != null) {
-            Role.findByTenantId(UUID.fromString(tenantId))
+            val tenantUuid = parseUuid(tenantId, "tenantId")
+                ?: return Response.status(400).entity(mapOf("error" to "Invalid tenantId")).build()
+            if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) {
+                return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+            }
+            if (!SecurityUtils.hasAbility(currentUser, "manage:tenant")) {
+                return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
+            }
+            Role.findByTenantId(tenantUuid)
         } else {
+            if (!currentUser.isSuperAdmin()) {
+                return Response.status(400).entity(mapOf("error" to "tenantId is required")).build()
+            }
             em.createQuery("from Role", Role::class.java).resultList
         }
         
@@ -97,7 +118,9 @@ class RoleResource {
         }
         
         val tenant = if (tenantId != null) {
-            em.find(Tenant::class.java, UUID.fromString(tenantId))
+            val tenantUuid = parseUuid(tenantId, "tenantId")
+                ?: return Response.status(400).entity(mapOf("error" to "Invalid tenantId")).build()
+            em.find(Tenant::class.java, tenantUuid)
         } else {
             null
         }
@@ -120,8 +143,24 @@ class RoleResource {
     @GET
     @Path("/{id}")
     fun get(@PathParam("id") id: String): Response {
-        val role = em.find(Role::class.java, UUID.fromString(id))
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val roleId = parseUuid(id, "role id")
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid role id")).build()
+        val role = em.find(Role::class.java, roleId)
         return if (role != null) {
+            val tenantId = role.tenant?.id?.toString()
+            if (tenantId == null) {
+                if (!currentUser.isSuperAdmin()) {
+                    return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+                }
+            } else {
+                if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) {
+                    return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+                }
+                if (!SecurityUtils.hasAbility(currentUser, "manage:tenant")) {
+                    return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
+                }
+            }
             Response.ok(roleToMap(role)).build()
         } else {
             Response.status(404).entity(mapOf("error" to "Role not found")).build()
@@ -133,7 +172,9 @@ class RoleResource {
     @Transactional
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        val role = em.find(Role::class.java, UUID.fromString(id))
+        val roleId = parseUuid(id, "role id")
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid role id")).build()
+        val role = em.find(Role::class.java, roleId)
         return if (role != null) {
             if (role.isSystem) {
                 return Response.status(403)
@@ -167,7 +208,9 @@ class RoleResource {
     @Transactional
     fun delete(@PathParam("id") id: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        val role = em.find(Role::class.java, UUID.fromString(id))
+        val roleId = parseUuid(id, "role id")
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid role id")).build()
+        val role = em.find(Role::class.java, roleId)
         return if (role != null) {
             if (role.isSystem) {
                 return Response.status(403)

@@ -112,6 +112,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Hardened tenant read APIs (`GET /tenants`, `GET /tenants/{id}`, `GET /tenants/{id}/children`) with explicit authorization checks and coverage for forbidden authenticated access.
 - Extended tenant management auth to allow scoped `manage:tenant` users (while keeping root-tenant create/delete superadmin-only), and updated Tenants navigation/page gating to use tenant-management abilities.
 - Enhanced `ModuleEditor` version-history UX with one-click version loading plus unsaved-change guardrail (inline confirm) and loaded-version indicator.
+- Hardened Role API UUID/error handling and role read access checks (`manage:tenant` + tenant scope), and improved Modules list version counters to use backend `versionCount` metadata.
 
 ---
 

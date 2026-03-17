@@ -51,6 +51,7 @@ export interface CodeModule {
   moduleType: 'IMPORT' | 'PROCESSING' | 'ALERT' | 'EXPORT';
   isActive: boolean;
   createdAt: string;
+  versionCount?: number;
   versions: ModuleVersion[];
 }
 

@@ -160,7 +160,7 @@ export default function Modules() {
                     {module.description || 'No description'}
                   </p>
                   <div className="flex justify-between items-center text-sm text-gray-500">
-                    <span>{module.versions?.length ?? 0} version(s)</span>
+                    <span>{module.versionCount ?? module.versions?.length ?? 0} version(s)</span>
                     <span className={`w-2 h-2 rounded-full ${module.isActive ? 'bg-green-400' : 'bg-gray-300'}`} />
                   </div>
                 </Link>
