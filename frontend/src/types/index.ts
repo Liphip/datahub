@@ -172,6 +172,9 @@ export interface PipelineRunLineage {
   statusFiltered?: boolean;
   rootRunInView?: boolean;
   latestDescendantRunInView?: boolean;
+  estimatedNodesInResponse?: number;
+  estimatedPayloadBytes?: number;
+  estimatedPayloadClass?: 'SMALL' | 'MEDIUM' | 'LARGE';
   ancestorsTotal?: number;
   ancestorsStatusCounts?: Partial<Record<'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED', number>>;
   descendantsTotal?: number;

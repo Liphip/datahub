@@ -149,6 +149,15 @@ export default function Pipelines() {
     setTimeout(() => setToast(null), 3500);
   };
 
+  const formatApproxBytes = (bytes?: number) => {
+    if (!bytes || bytes <= 0) return '0 B';
+    if (bytes < 1024) return `${bytes} B`;
+    const kb = bytes / 1024;
+    if (kb < 1024) return `${kb.toFixed(kb >= 100 ? 0 : 1)} KB`;
+    const mb = kb / 1024;
+    return `${mb.toFixed(mb >= 100 ? 0 : 1)} MB`;
+  };
+
   const persistTriagePresets = (presets: TriagePreset[]) => {
     localStorage.setItem(TRIAGE_PRESETS_KEY, JSON.stringify(presets));
     setTriagePresets(presets);
@@ -2076,6 +2085,34 @@ export default function Pipelines() {
                                   </div>
                                   <div className="mb-1">
                                     Ancestors: {lineageByRunId[selectedRun.id].ancestors.length}/{lineageByRunId[selectedRun.id].ancestorsTotal ?? lineageByRunId[selectedRun.id].ancestors.length} · Descendants: {lineageByRunId[selectedRun.id].descendants.length}/{lineageByRunId[selectedRun.id].descendantsTotal ?? lineageByRunId[selectedRun.id].descendants.length}
+                                  </div>
+                                  <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
+                                    <span className="text-indigo-800">
+                                      Estimated payload: ~{formatApproxBytes(lineageByRunId[selectedRun.id].estimatedPayloadBytes)}
+                                      {' '}for {lineageByRunId[selectedRun.id].estimatedNodesInResponse ?? (1 + lineageByRunId[selectedRun.id].ancestors.length + lineageByRunId[selectedRun.id].descendants.length)} nodes
+                                    </span>
+                                    <span className={`px-2 py-0.5 rounded border ${lineageByRunId[selectedRun.id].estimatedPayloadClass === 'LARGE' ? 'border-amber-300 bg-amber-50 text-amber-900' : lineageByRunId[selectedRun.id].estimatedPayloadClass === 'MEDIUM' ? 'border-sky-300 bg-sky-50 text-sky-900' : 'border-emerald-300 bg-emerald-50 text-emerald-900'}`}>
+                                      {(lineageByRunId[selectedRun.id].estimatedPayloadClass || 'SMALL').toLowerCase()}
+                                    </span>
+                                    {lineageByRunId[selectedRun.id].estimatedPayloadClass === 'LARGE' && (lineageFetchModeByRunId[selectedRun.id] ?? (lineageByRunId[selectedRun.id].includeDetails ? 'DETAILS' : 'SUMMARY')) === 'DETAILS' && (
+                                      <button
+                                        className="px-2 py-0.5 rounded border border-amber-300 bg-white text-amber-900"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
+                                          void handleLoadRunLineage(
+                                            pipeline.id,
+                                            selectedRun.id,
+                                            currentDepth,
+                                            lineageDirectionByRunId[selectedRun.id] ?? 'both',
+                                            lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL',
+                                            'SUMMARY'
+                                          );
+                                        }}
+                                      >
+                                        Switch to summary mode
+                                      </button>
+                                    )}
                                   </div>
                                   <div className="mb-2 flex flex-wrap items-center gap-2">
                                     <span className="text-[11px] text-indigo-800">Fetch mode:</span>
