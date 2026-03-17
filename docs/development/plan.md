@@ -127,6 +127,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Fixed pipeline entity mapping regression by binding `importModuleVersionId` to `import_module_version_id` directly (removing duplicate implicit camelCase column selection) to stop `/pipelines?...includeRunSummary=true` SQL 500 errors.
 - Added tenant-context fallback (`selectedTenantId -> user.tenantId -> first auth tenant context`) across core frontend pages so create actions continue to work when JWT `tenantId` is absent/stale.
 - Refined frontend visual contrast (buttons/inputs/cards/background typography) and added persistent light/dark theme toggle in app layout (`tailwind darkMode='class'`) to improve readability across key workflows.
+- Reworked create/edit dialogs to be entity-type aware: Connectors now use protocol-specific config fields (instead of raw JSON), and Alert Channels now use channel-type-specific config forms with required-field validation.
 
 ---
 

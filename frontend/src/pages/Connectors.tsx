@@ -5,6 +5,58 @@ import type { Connector } from '../types';
 
 const connectorTypes = ['MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'CUSTOM'] as const;
 const directions = ['INPUT', 'OUTPUT', 'BOTH'] as const;
+type ConnectorType = typeof connectorTypes[number];
+
+type ConnectorConfigField = {
+  key: string;
+  label: string;
+  type?: 'text' | 'url' | 'number' | 'password';
+  placeholder?: string;
+  required?: boolean;
+  hint?: string;
+};
+
+const connectorConfigSchema: Record<ConnectorType, ConnectorConfigField[]> = {
+  MQTT: [
+    { key: 'broker', label: 'Broker URL', type: 'url', required: true, placeholder: 'mqtt://broker:1883' },
+    { key: 'topic', label: 'Topic', required: true, placeholder: 'sensors/+/telemetry' },
+    { key: 'clientId', label: 'Client ID', placeholder: 'dt-edge-ingest' },
+    { key: 'username', label: 'Username' },
+    { key: 'password', label: 'Password', type: 'password' },
+  ],
+  REST: [
+    { key: 'baseUrl', label: 'Base URL', type: 'url', required: true, placeholder: 'https://api.example.com' },
+    { key: 'path', label: 'Path', placeholder: '/ingest' },
+    { key: 'method', label: 'Method', placeholder: 'POST' },
+    { key: 'authToken', label: 'Auth Token', type: 'password' },
+  ],
+  WEBSOCKET: [
+    { key: 'url', label: 'WebSocket URL', type: 'url', required: true, placeholder: 'wss://stream.example.com/events' },
+    { key: 'path', label: 'Path', placeholder: '/socket' },
+    { key: 'authToken', label: 'Auth Token', type: 'password' },
+  ],
+  UDP: [
+    { key: 'host', label: 'Host', required: true, placeholder: 'udp-gateway.internal' },
+    { key: 'port', label: 'Port', type: 'number', required: true, placeholder: '5140' },
+  ],
+  FILE: [
+    { key: 'path', label: 'File Path', required: true, placeholder: '/var/data/input.ndjson' },
+    { key: 'format', label: 'Format', placeholder: 'jsonl' },
+  ],
+  CUSTOM: [
+    { key: 'handler', label: 'Handler ID', placeholder: 'custom.transform.v1' },
+    { key: 'endpoint', label: 'Endpoint', placeholder: 'plugin://transformers/default' },
+  ],
+};
+
+const initialConfigByType = (type: ConnectorType, existing?: Record<string, unknown>) => {
+  const fields = connectorConfigSchema[type] || [];
+  return fields.reduce<Record<string, string>>((acc, field) => {
+    const value = existing?.[field.key];
+    acc[field.key] = value == null ? '' : String(value);
+    return acc;
+  }, {});
+};
 
 export default function Connectors() {
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
@@ -29,9 +81,9 @@ export default function Connectors() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [formData, setFormData] = useState({
     name: '',
-    connectorType: 'MQTT',
-    direction: 'INPUT',
-    config: '{}',
+    connectorType: 'MQTT' as ConnectorType,
+    direction: 'INPUT' as Connector['direction'],
+    config: initialConfigByType('MQTT'),
     description: ''
   });
 
@@ -88,31 +140,55 @@ export default function Connectors() {
       setSavingConnector(true);
 
       if (editingConnector) {
+        const requiredMissing = connectorConfigSchema[formData.connectorType]
+          .filter((field) => field.required && !formData.config[field.key]?.trim())
+          .map((field) => field.label);
+        if (requiredMissing.length > 0) {
+          setError(`Missing required config fields: ${requiredMissing.join(', ')}`);
+          return;
+        }
+
+        const parsedConfig = Object.entries(formData.config).reduce<Record<string, unknown>>((acc, [key, value]) => {
+          const trimmed = value.trim();
+          if (!trimmed) return acc;
+          if (key === 'port') {
+            const parsed = Number(trimmed);
+            acc[key] = Number.isFinite(parsed) ? parsed : trimmed;
+          } else {
+            acc[key] = trimmed;
+          }
+          return acc;
+        }, {});
+
         const updatePayload: Partial<Connector> = {
           name: formData.name,
           connectorType: formData.connectorType as Connector['connectorType'],
           direction: formData.direction as Connector['direction'],
           description: formData.description,
+          config: parsedConfig,
         };
-
-        if (formData.config.trim()) {
-          try {
-            updatePayload.config = JSON.parse(formData.config);
-          } catch {
-            setError('Invalid JSON in config field');
-            return;
-          }
-        }
 
         await api.updateConnector(editingConnector.id, updatePayload);
       } else {
-        let config: Record<string, unknown> = {};
-        try {
-          config = JSON.parse(formData.config);
-        } catch {
-          setError('Invalid JSON in config field');
+        const requiredMissing = connectorConfigSchema[formData.connectorType]
+          .filter((field) => field.required && !formData.config[field.key]?.trim())
+          .map((field) => field.label);
+        if (requiredMissing.length > 0) {
+          setError(`Missing required config fields: ${requiredMissing.join(', ')}`);
           return;
         }
+
+        const config = Object.entries(formData.config).reduce<Record<string, unknown>>((acc, [key, value]) => {
+          const trimmed = value.trim();
+          if (!trimmed) return acc;
+          if (key === 'port') {
+            const parsed = Number(trimmed);
+            acc[key] = Number.isFinite(parsed) ? parsed : trimmed;
+          } else {
+            acc[key] = trimmed;
+          }
+          return acc;
+        }, {});
 
         await api.createConnector(
           tenantId,
@@ -130,7 +206,7 @@ export default function Connectors() {
         name: '',
         connectorType: 'MQTT',
         direction: 'INPUT',
-        config: '{}',
+        config: initialConfigByType('MQTT'),
         description: ''
       });
 
@@ -211,7 +287,7 @@ export default function Connectors() {
       name: connector.name,
       connectorType: connector.connectorType,
       direction: connector.direction,
-      config: '',
+      config: initialConfigByType(connector.connectorType, connector.config),
       description: connector.description || '',
     });
     setShowModal(true);
@@ -224,7 +300,7 @@ export default function Connectors() {
       name: '',
       connectorType: 'MQTT',
       direction: 'INPUT',
-      config: '{}',
+      config: initialConfigByType('MQTT'),
       description: '',
     });
     setShowModal(true);
@@ -457,7 +533,14 @@ export default function Connectors() {
                   </label>
                   <select
                     value={formData.connectorType}
-                    onChange={(e) => setFormData({ ...formData, connectorType: e.target.value })}
+                    onChange={(e) => {
+                      const nextType = e.target.value as ConnectorType;
+                      setFormData({
+                        ...formData,
+                        connectorType: nextType,
+                        config: initialConfigByType(nextType, formData.config),
+                      });
+                    }}
                     className="input"
                   >
                     {connectorTypes.map((type) => (
@@ -472,7 +555,7 @@ export default function Connectors() {
                   </label>
                   <select
                     value={formData.direction}
-                    onChange={(e) => setFormData({ ...formData, direction: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, direction: e.target.value as Connector['direction'] })}
                     className="input"
                   >
                     {directions.map((dir) => (
@@ -481,19 +564,34 @@ export default function Connectors() {
                   </select>
                 </div>
                 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {editingConnector ? 'Config Override (JSON)' : 'Config (JSON)'}
+                <div className="rounded border border-slate-200 dark:border-slate-700 p-3">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
+                    {formData.connectorType} Configuration
                   </label>
-                  <textarea
-                    value={formData.config}
-                    onChange={(e) => setFormData({ ...formData, config: e.target.value })}
-                    className="input font-mono text-sm"
-                    rows={4}
-                    placeholder={editingConnector
-                      ? 'Leave empty to keep existing encrypted config'
-                      : '{"broker": "mqtt://localhost:1883", "topic": "sensors/#"}'}
-                  />
+                  <div className="grid grid-cols-1 gap-3">
+                    {(connectorConfigSchema[formData.connectorType] || []).map((field) => (
+                      <div key={field.key}>
+                        <label className="block text-sm text-slate-600 dark:text-slate-300 mb-1">
+                          {field.label}{field.required ? ' *' : ''}
+                        </label>
+                        <input
+                          type={field.type || 'text'}
+                          value={formData.config[field.key] || ''}
+                          onChange={(e) => setFormData({
+                            ...formData,
+                            config: { ...formData.config, [field.key]: e.target.value },
+                          })}
+                          className="input"
+                          placeholder={field.placeholder}
+                          required={field.required}
+                        />
+                        {field.hint && <p className="text-xs text-slate-500 mt-1">{field.hint}</p>}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500">
+                    Direction: <strong>{formData.direction}</strong> - use INPUT for ingest, OUTPUT for delivery, BOTH for bidirectional adapters.
+                  </p>
                 </div>
                 
                 <div>

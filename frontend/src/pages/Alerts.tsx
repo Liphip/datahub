@@ -3,6 +3,52 @@ import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { AlertChannel, AlertRule, AlertHistory, Pipeline } from '../types';
 
+type AlertChannelType = AlertChannel['channelType'];
+type ChannelConfigField = {
+  key: string;
+  label: string;
+  type?: 'text' | 'url' | 'email' | 'number' | 'password';
+  placeholder?: string;
+  required?: boolean;
+};
+
+const channelConfigSchema: Record<AlertChannelType, ChannelConfigField[]> = {
+  WEBHOOK: [
+    { key: 'url', label: 'Webhook URL', type: 'url', required: true, placeholder: 'https://hooks.example.com/alerts' },
+    { key: 'method', label: 'HTTP Method', placeholder: 'POST' },
+    { key: 'authToken', label: 'Auth Token', type: 'password' },
+  ],
+  SLACK: [
+    { key: 'webhookUrl', label: 'Slack Webhook URL', type: 'url', required: true, placeholder: 'https://hooks.slack.com/services/...' },
+    { key: 'channel', label: 'Channel', placeholder: '#alerts' },
+  ],
+  EMAIL: [
+    { key: 'recipient', label: 'Recipient Email', type: 'email', required: true, placeholder: 'ops@example.com' },
+    { key: 'subjectTemplate', label: 'Subject Template', placeholder: 'Alert: {{severity}} {{title}}' },
+  ],
+  REST: [
+    { key: 'baseUrl', label: 'Base URL', type: 'url', required: true, placeholder: 'https://api.example.com' },
+    { key: 'path', label: 'Path', placeholder: '/alerts' },
+    { key: 'method', label: 'HTTP Method', placeholder: 'POST' },
+    { key: 'authToken', label: 'Auth Token', type: 'password' },
+  ],
+  MQTT: [
+    { key: 'broker', label: 'Broker URL', type: 'url', required: true, placeholder: 'mqtt://broker:1883' },
+    { key: 'topic', label: 'Topic', required: true, placeholder: 'alerts/critical' },
+    { key: 'username', label: 'Username' },
+    { key: 'password', label: 'Password', type: 'password' },
+  ],
+};
+
+const initialChannelConfig = (type: AlertChannelType, existing?: Record<string, unknown>) => {
+  const fields = channelConfigSchema[type] || [];
+  return fields.reduce<Record<string, string>>((acc, field) => {
+    const value = existing?.[field.key];
+    acc[field.key] = value == null ? '' : String(value);
+    return acc;
+  }, {});
+};
+
 export default function Alerts() {
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const abilities = user?.abilities || [];
@@ -22,8 +68,8 @@ export default function Alerts() {
   const [editingChannel, setEditingChannel] = useState<AlertChannel | null>(null);
   const [editingRule, setEditingRule] = useState<AlertRule | null>(null);
   const [newChannelName, setNewChannelName] = useState('');
-  const [newChannelType, setNewChannelType] = useState('WEBHOOK');
-  const [newChannelUrl, setNewChannelUrl] = useState('');
+  const [newChannelType, setNewChannelType] = useState<AlertChannelType>('WEBHOOK');
+  const [newChannelConfig, setNewChannelConfig] = useState<Record<string, string>>(initialChannelConfig('WEBHOOK'));
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [newRuleName, setNewRuleName] = useState('');
   const [newRuleCondition, setNewRuleCondition] = useState('');
@@ -102,7 +148,25 @@ export default function Alerts() {
     
     setCreatingChannel(true);
     try {
-      const config = newChannelUrl ? { url: newChannelUrl } : {};
+      const requiredMissing = channelConfigSchema[newChannelType]
+        .filter((field) => field.required && !newChannelConfig[field.key]?.trim())
+        .map((field) => field.label);
+      if (requiredMissing.length > 0) {
+        setError(`Missing required channel fields: ${requiredMissing.join(', ')}`);
+        return;
+      }
+
+      const config = Object.entries(newChannelConfig).reduce<Record<string, unknown>>((acc, [key, value]) => {
+        const trimmed = value.trim();
+        if (!trimmed) return acc;
+        if (key === 'qos') {
+          const parsed = Number(trimmed);
+          acc[key] = Number.isFinite(parsed) ? parsed : trimmed;
+        } else {
+          acc[key] = trimmed;
+        }
+        return acc;
+      }, {});
       if (editingChannel) {
         const updated = await api.updateAlertChannel(editingChannel.id, {
           name: newChannelName,
@@ -118,7 +182,7 @@ export default function Alerts() {
       setEditingChannel(null);
       setNewChannelName('');
       setNewChannelType('WEBHOOK');
-      setNewChannelUrl('');
+      setNewChannelConfig(initialChannelConfig('WEBHOOK'));
       setError('');
       showToast(editingChannel ? 'Alert channel updated' : 'Alert channel created', 'success');
     } catch (error) {
@@ -272,7 +336,15 @@ export default function Alerts() {
     setEditingChannel(channel);
     setNewChannelName(channel.name);
     setNewChannelType(channel.channelType);
-    setNewChannelUrl(typeof channel.config?.url === 'string' ? channel.config.url : '');
+    setNewChannelConfig(initialChannelConfig(channel.channelType, channel.config));
+    setShowChannelModal(true);
+  };
+
+  const openCreateChannel = () => {
+    setEditingChannel(null);
+    setNewChannelName('');
+    setNewChannelType('WEBHOOK');
+    setNewChannelConfig(initialChannelConfig('WEBHOOK'));
     setShowChannelModal(true);
   };
 
@@ -345,7 +417,7 @@ export default function Alerts() {
             <div className="space-y-4">
               {canConfigureAlerts && (
                 <div className="flex justify-end">
-                  <button onClick={() => setShowChannelModal(true)} className="btn-primary text-sm">Add Channel</button>
+                  <button onClick={openCreateChannel} className="btn-primary text-sm">Add Channel</button>
                 </div>
               )}
               {channels.length > 0 ? (
@@ -530,7 +602,11 @@ export default function Alerts() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
                 <select
                   value={newChannelType}
-                  onChange={(e) => setNewChannelType(e.target.value)}
+                  onChange={(e) => {
+                    const nextType = e.target.value as AlertChannelType;
+                    setNewChannelType(nextType);
+                    setNewChannelConfig(initialChannelConfig(nextType, newChannelConfig));
+                  }}
                   className="input w-full"
                 >
                   <option value="WEBHOOK">Webhook</option>
@@ -540,15 +616,25 @@ export default function Alerts() {
                   <option value="MQTT">MQTT</option>
                 </select>
               </div>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">URL</label>
-                <input
-                  type="url"
-                  value={newChannelUrl}
-                  onChange={(e) => setNewChannelUrl(e.target.value)}
-                  className="input w-full"
-                  placeholder="https://..."
-                />
+              <div className="mb-4 rounded border border-slate-200 dark:border-slate-700 p-3">
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">{newChannelType} Configuration</label>
+                <div className="space-y-3">
+                  {(channelConfigSchema[newChannelType] || []).map((field) => (
+                    <div key={field.key}>
+                      <label className="block text-sm text-slate-600 dark:text-slate-300 mb-1">
+                        {field.label}{field.required ? ' *' : ''}
+                      </label>
+                      <input
+                        type={field.type || 'text'}
+                        value={newChannelConfig[field.key] || ''}
+                        onChange={(e) => setNewChannelConfig((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                        className="input w-full"
+                        placeholder={field.placeholder}
+                        required={field.required}
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
               <div className="flex justify-end space-x-2">
                 <button
@@ -556,6 +642,9 @@ export default function Alerts() {
                   onClick={() => {
                     setShowChannelModal(false);
                     setEditingChannel(null);
+                    setNewChannelName('');
+                    setNewChannelType('WEBHOOK');
+                    setNewChannelConfig(initialChannelConfig('WEBHOOK'));
                   }}
                   className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
                 >
