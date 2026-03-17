@@ -32,6 +32,7 @@ type TenantLineageDefaultsConflict = {
   latest: TenantLineageDefaults;
   mergeChoice: TenantLineageMergeChoice;
 };
+type TenantDefaultsConflictTelemetry = Record<string, { count: number; lastConflictAt?: string }>;
 
 type TriagePreset = {
   name: string;
@@ -44,6 +45,7 @@ type TriagePreset = {
 
 const TRIAGE_PRESETS_KEY = 'pipelines.triage.presets.v1';
 const LINEAGE_SAFE_DEFAULTS_KEY = 'pipelines.lineage.safe-defaults.v1';
+const TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY = 'tenant.lineageDefaults.conflicts.v1';
 const LINEAGE_SAFE_DEFAULT_TTL_HOURS = 168;
 const DEFAULT_TENANT_LINEAGE_DEFAULTS: TenantLineageDefaults = {
   safeScopePolicy: 'AUTO',
@@ -84,6 +86,16 @@ export default function Pipelines() {
   const [tenantLineageDefaults, setTenantLineageDefaults] = useState<TenantLineageDefaults>(DEFAULT_TENANT_LINEAGE_DEFAULTS);
   const [savingTenantLineageDefaults, setSavingTenantLineageDefaults] = useState(false);
   const [tenantDefaultsConflict, setTenantDefaultsConflict] = useState<TenantLineageDefaultsConflict | null>(null);
+  const [tenantDefaultsConflictTelemetry, setTenantDefaultsConflictTelemetry] = useState<TenantDefaultsConflictTelemetry>(() => {
+    try {
+      const raw = localStorage.getItem(TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as TenantDefaultsConflictTelemetry;
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
   const [lineageSafeDefaultsByRunId, setLineageSafeDefaultsByRunId] = useState<Record<string, LineageSafeDefault>>(() => {
     try {
       const raw = localStorage.getItem(LINEAGE_SAFE_DEFAULTS_KEY);
@@ -212,6 +224,27 @@ export default function Pipelines() {
     setTimeout(() => setToast(null), 3500);
   };
 
+  const trackTenantDefaultsConflict = (tid: string) => {
+    setTenantDefaultsConflictTelemetry((prev) => {
+      const current = prev[tid] ?? { count: 0 };
+      return {
+        ...prev,
+        [tid]: {
+          count: current.count + 1,
+          lastConflictAt: new Date().toISOString(),
+        },
+      };
+    });
+  };
+
+  const clearTenantDefaultsConflictTelemetry = (tid: string) => {
+    setTenantDefaultsConflictTelemetry((prev) => {
+      const next = { ...prev };
+      delete next[tid];
+      return next;
+    });
+  };
+
   const formatApproxBytes = (bytes?: number) => {
     if (!bytes || bytes <= 0) return '0 B';
     if (bytes < 1024) return `${bytes} B`;
@@ -258,6 +291,10 @@ export default function Pipelines() {
   useEffect(() => {
     localStorage.setItem(LINEAGE_SAFE_DEFAULTS_KEY, JSON.stringify(lineageSafeDefaultsByRunId));
   }, [lineageSafeDefaultsByRunId]);
+
+  useEffect(() => {
+    localStorage.setItem(TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY, JSON.stringify(tenantDefaultsConflictTelemetry));
+  }, [tenantDefaultsConflictTelemetry]);
 
   useEffect(() => {
     const loadTenantLineageDefaults = async () => {
@@ -1048,6 +1085,7 @@ export default function Pipelines() {
     } catch (err: any) {
       if (err?.response?.status === 409) {
         showToast('Tenant defaults changed elsewhere. Resolve conflict to continue.', 'error');
+        trackTenantDefaultsConflict(tenantId);
         try {
           const latest = await api.getTenantLineageDefaults(tenantId);
           const mergeChoice = TENANT_LINEAGE_FIELDS.reduce((acc, field) => {
@@ -2719,6 +2757,28 @@ export default function Pipelines() {
                                     <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
                                       Tenant defaults: {tenantLineageDefaults.defaultFetchMode} d{tenantLineageDefaults.defaultDepth} cap d{tenantLineageDefaults.maxDepthCap} {tenantLineageDefaults.safeScopePolicy.toLowerCase()}
                                     </span>
+                                    {tenantId && tenantDefaultsConflictTelemetry[tenantId] && (
+                                      <>
+                                        <span className="px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900">
+                                          Conflicts this session: {tenantDefaultsConflictTelemetry[tenantId].count}
+                                        </span>
+                                        {tenantDefaultsConflictTelemetry[tenantId].lastConflictAt && (
+                                          <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                            Last: {new Date(tenantDefaultsConflictTelemetry[tenantId].lastConflictAt as string).toLocaleString()}
+                                          </span>
+                                        )}
+                                        <button
+                                          className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            if (!tenantId) return;
+                                            clearTenantDefaultsConflictTelemetry(tenantId);
+                                          }}
+                                        >
+                                          Clear conflict stats
+                                        </button>
+                                      </>
+                                    )}
                                     {canManageTenantSettings && (
                                       <button
                                         disabled={savingTenantLineageDefaults}

@@ -16,12 +16,15 @@ interface LineageDefaultsConflictState {
   mergeChoice: LineageMergeChoice;
 }
 
+type TenantDefaultsConflictTelemetry = Record<string, { count: number; lastConflictAt?: string }>;
+
 const DEFAULT_TENANT_LINEAGE_DEFAULTS: TenantLineageDefaults = {
   safeScopePolicy: 'AUTO',
   defaultFetchMode: 'SUMMARY',
   defaultDepth: 20,
   maxDepthCap: 200,
 };
+const TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY = 'tenant.lineageDefaults.conflicts.v1';
 
 const LINEAGE_DEFAULT_FIELDS: LineageDefaultsField[] = ['safeScopePolicy', 'defaultFetchMode', 'defaultDepth', 'maxDepthCap'];
 
@@ -47,10 +50,41 @@ export default function Tenants() {
   const [loadingLineageDefaults, setLoadingLineageDefaults] = useState(false);
   const [savingLineageDefaults, setSavingLineageDefaults] = useState(false);
   const [lineageDefaultsConflict, setLineageDefaultsConflict] = useState<LineageDefaultsConflictState | null>(null);
+  const [conflictTelemetryByTenant, setConflictTelemetryByTenant] = useState<TenantDefaultsConflictTelemetry>(() => {
+    try {
+      const raw = localStorage.getItem(TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as TenantDefaultsConflictTelemetry;
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
+  };
+
+  const trackDefaultsConflict = (tenantId: string) => {
+    setConflictTelemetryByTenant((prev) => {
+      const current = prev[tenantId] ?? { count: 0 };
+      return {
+        ...prev,
+        [tenantId]: {
+          count: current.count + 1,
+          lastConflictAt: new Date().toISOString(),
+        },
+      };
+    });
+  };
+
+  const clearDefaultsConflictTelemetry = (tenantId: string) => {
+    setConflictTelemetryByTenant((prev) => {
+      const next = { ...prev };
+      delete next[tenantId];
+      return next;
+    });
   };
 
   const collectTenantIds = (nodes: TenantWithChildren[]): string[] =>
@@ -122,6 +156,10 @@ export default function Tenants() {
   }, [lineageDefaultsTenantId]);
 
   useEffect(() => {
+    localStorage.setItem(TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY, JSON.stringify(conflictTelemetryByTenant));
+  }, [conflictTelemetryByTenant]);
+
+  useEffect(() => {
     setLineageDefaultsConflict(null);
   }, [lineageDefaultsTenantId]);
 
@@ -143,6 +181,7 @@ export default function Tenants() {
     } catch (err: any) {
       if (err?.response?.status === 409) {
         showToast('Defaults changed by another user. Resolve conflict before saving.', 'error');
+        trackDefaultsConflict(lineageDefaultsTenantId);
         try {
           const latest = await api.getTenantLineageDefaults(lineageDefaultsTenantId);
           const defaultDepth = Math.min(200, Math.max(1, lineageDefaults.defaultDepth));
@@ -185,6 +224,7 @@ export default function Tenants() {
     } catch (err: any) {
       if (err?.response?.status === 409) {
         showToast('Defaults changed by another user. Resolve conflict before restoring.', 'error');
+        trackDefaultsConflict(lineageDefaultsTenantId);
         try {
           const latest = await api.getTenantLineageDefaults(lineageDefaultsTenantId);
           const pending: TenantLineageDefaultsConfig = {
@@ -300,6 +340,7 @@ export default function Tenants() {
 
   const allTenants = flattenTenants(tenants);
   const selectedLineageDefaultsTenant = allTenants.find((t) => t.id === lineageDefaultsTenantId);
+  const selectedTenantConflictTelemetry = lineageDefaultsTenantId ? conflictTelemetryByTenant[lineageDefaultsTenantId] : undefined;
 
   const resolveConflictUseLatest = () => {
     if (!lineageDefaultsConflict) return;
@@ -492,11 +533,31 @@ export default function Tenants() {
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-lg font-semibold text-indigo-900">Lineage Defaults</h2>
-            {selectedLineageDefaultsTenant?.updatedAt && (
-              <span className="text-xs text-indigo-700">
-                Tenant updated: {new Date(selectedLineageDefaultsTenant.updatedAt).toLocaleString()}
-              </span>
-            )}
+            <div className="flex flex-wrap items-center gap-2 text-xs text-indigo-700">
+              {selectedLineageDefaultsTenant?.updatedAt && (
+                <span>
+                  Tenant updated: {new Date(selectedLineageDefaultsTenant.updatedAt).toLocaleString()}
+                </span>
+              )}
+              {selectedTenantConflictTelemetry && (
+                <>
+                  <span className="px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900">
+                    Conflicts: {selectedTenantConflictTelemetry.count}
+                  </span>
+                  {selectedTenantConflictTelemetry.lastConflictAt && (
+                    <span>
+                      Last: {new Date(selectedTenantConflictTelemetry.lastConflictAt).toLocaleString()}
+                    </span>
+                  )}
+                  <button
+                    className="text-indigo-700 hover:text-indigo-900"
+                    onClick={() => lineageDefaultsTenantId && clearDefaultsConflictTelemetry(lineageDefaultsTenantId)}
+                  >
+                    Clear
+                  </button>
+                </>
+              )}
+            </div>
           </div>
           <p className="text-sm text-indigo-800">
             Configure tenant-wide defaults for pipeline lineage triage. These act as baseline behavior across pipelines.

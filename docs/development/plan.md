@@ -189,6 +189,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added optimistic concurrency for lineage defaults updates: tenant lineage defaults responses now include a `version` token and updates accept `ifVersion` to detect concurrent edits (409 on conflict), while Tenants/Pipelines settings flows now pass version tokens and auto-refresh on conflicts to prevent silent overwrite across multiple admins.
 - Added interactive conflict resolution UX for lineage defaults: when Tenants settings detects a version conflict, it now opens a resolution modal with side-by-side latest vs pending values and explicit actions (`Use Latest`, `Reapply Mine`, `Merge And Save` with per-field latest/mine toggles) instead of silently discarding edits.
 - Extended conflict-resolution parity to Pipelines: `Save current as tenant defaults` now uses the same interactive merge workflow (latest vs pending with per-field choices and `Use Latest` / `Reapply Mine` / `Merge And Save`) so both tenant-default entry points provide consistent concurrent-edit handling.
+- Added tenant-default conflict telemetry in UI sessions: Tenants and Pipelines now track per-tenant conflict counts and last-conflict timestamps in local storage, surface these metrics inline near lineage defaults controls, and allow clearing conflict stats to aid operational triage and UX tuning.
 
 ---
 
