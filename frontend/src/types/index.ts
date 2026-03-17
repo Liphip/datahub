@@ -104,6 +104,11 @@ export interface PipelineRun {
   metrics: Record<string, unknown>;
 }
 
+export interface TenantPipelineRun extends PipelineRun {
+  pipelineId: string;
+  pipelineName: string;
+}
+
 export interface PipelineRunSummary {
   windowSize: number;
   sinceHours: number;

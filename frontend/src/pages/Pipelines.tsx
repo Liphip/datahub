@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Pipeline, PipelineRun } from '../types';
+import type { Pipeline, PipelineRun, TenantPipelineRun } from '../types';
 
 type RunMap = Record<string, PipelineRun[]>;
 type HealthFilter = 'ALL' | 'PROBLEMATIC' | 'RUNNING' | 'FAILED' | 'HEALTHY';
@@ -40,6 +40,8 @@ export default function Pipelines() {
   const [sortMode, setSortMode] = useState<SortMode>('RECENT_RUN');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [error, setError] = useState('');
+  const [bucketRuns, setBucketRuns] = useState<TenantPipelineRun[]>([]);
+  const [loadingBucketRuns, setLoadingBucketRuns] = useState(false);
 
   const bucketStartParam = searchParams.get('bucketStart');
   const bucketSecondsParam = Number(searchParams.get('bucketSeconds') || '');
@@ -83,6 +85,25 @@ export default function Pipelines() {
           })
         );
         setRunsMap(Object.fromEntries(runsEntries));
+
+        if (bucketStart && bucketEnd) {
+          setLoadingBucketRuns(true);
+          try {
+            const runs = await api.getTenantPipelineRuns(tenantId, {
+              from: bucketStart.toISOString(),
+              to: bucketEnd.toISOString(),
+              limit: 40,
+            });
+            setBucketRuns(runs);
+          } catch {
+            setBucketRuns([]);
+          } finally {
+            setLoadingBucketRuns(false);
+          }
+        } else {
+          setBucketRuns([]);
+        }
+
         setError('');
       } catch (e) {
         console.error('Error fetching pipelines:', e);
@@ -321,9 +342,50 @@ export default function Pipelines() {
       )}
 
       {bucketStart && bucketEnd && (
-        <div className="mb-3 text-xs text-gray-600">
+        <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
           Bucket filter active: <span className="font-medium">{bucketStart.toLocaleString()}</span> to <span className="font-medium">{bucketEnd.toLocaleString()}</span>.
-          <button onClick={clearBucketFilter} className="ml-2 text-primary-600 hover:text-primary-800">Clear bucket</button>
+          <button onClick={clearBucketFilter} className="ml-2 text-primary-700 hover:text-primary-900">Clear bucket</button>
+        </div>
+      )}
+
+      {bucketStart && bucketEnd && (
+        <div className="mb-4 card">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-gray-900">Runs In Selected Bucket</h2>
+            <span className="text-xs text-gray-500">{bucketRuns.length} runs</span>
+          </div>
+          {loadingBucketRuns ? (
+            <p className="text-sm text-gray-500">Loading bucket runs...</p>
+          ) : bucketRuns.length > 0 ? (
+            <div className="overflow-auto">
+              <table className="min-w-full text-xs">
+                <thead>
+                  <tr className="text-left text-gray-500 border-b border-gray-200">
+                    <th className="py-2 pr-3">Pipeline</th>
+                    <th className="py-2 pr-3">Status</th>
+                    <th className="py-2 pr-3">Started</th>
+                    <th className="py-2 pr-3">Duration</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bucketRuns.slice(0, 12).map((run) => (
+                    <tr key={run.id} className="border-b border-gray-100">
+                      <td className="py-2 pr-3">
+                        <Link to={`/pipelines/${run.pipelineId}`} className="text-primary-600 hover:text-primary-800">
+                          {run.pipelineName}
+                        </Link>
+                      </td>
+                      <td className="py-2 pr-3">{run.status}</td>
+                      <td className="py-2 pr-3">{run.startedAt ? new Date(run.startedAt).toLocaleTimeString() : '-'}</td>
+                      <td className="py-2 pr-3">{run.durationMs != null ? `${run.durationMs} ms` : '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">No runs found in this bucket.</p>
+          )}
         </div>
       )}
 

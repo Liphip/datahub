@@ -122,6 +122,68 @@ class PipelineResource {
     }
     
     @GET
+    @Path("/runs")
+    fun getTenantRuns(
+        @QueryParam("tenantId") tenantId: String,
+        @QueryParam("from") from: String?,
+        @QueryParam("to") to: String?,
+        @QueryParam("limit") limit: Int?
+    ): Response {
+        val tenantUuid = try {
+            parseUuid(tenantId, "tenantId")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+
+        val fromInstant = try {
+            from?.let { parseInstant(it, "from") }
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val toInstant = try {
+            to?.let { parseInstant(it, "to") }
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        if (fromInstant != null && toInstant != null && fromInstant.isAfter(toInstant)) {
+            return Response.status(400).entity(mapOf("error" to "from must be before to")).build()
+        }
+
+        val maxRows = (limit ?: 50).coerceIn(1, 200)
+
+        val jpql = StringBuilder(
+            "SELECT r FROM PipelineRun r JOIN FETCH r.pipeline p WHERE p.tenant.id = :tenantId"
+        )
+        if (fromInstant != null) jpql.append(" AND r.startedAt >= :from")
+        if (toInstant != null) jpql.append(" AND r.startedAt <= :to")
+        jpql.append(" ORDER BY r.startedAt DESC")
+
+        val query = em.createQuery(jpql.toString(), PipelineRun::class.java)
+            .setParameter("tenantId", tenantUuid)
+            .setMaxResults(maxRows)
+        if (fromInstant != null) query.setParameter("from", fromInstant)
+        if (toInstant != null) query.setParameter("to", toInstant)
+
+        val runs = query.resultList
+
+        return Response.ok(
+            runs.map { run ->
+                mapOf(
+                    "id" to run.id,
+                    "pipelineId" to run.pipeline?.id,
+                    "pipelineName" to run.pipeline?.name,
+                    "status" to run.status.name,
+                    "triggerType" to run.triggerType.name,
+                    "startedAt" to run.startedAt,
+                    "completedAt" to run.completedAt,
+                    "durationMs" to if (run.completedAt != null) java.time.Duration.between(run.startedAt, run.completedAt).toMillis() else null,
+                    "errorMessage" to run.errorMessage,
+                )
+            }
+        ).build()
+    }
+
+    @GET
     @Path("/runs/summary")
     fun getRunSummary(
         @QueryParam("tenantId") tenantId: String,

@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, Connector, Role, Membership, TenantContext } from '../types';
+import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, TenantPipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, Connector, Role, Membership, TenantContext } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 export const API_STATUS_EVENT = 'dataturntable:api-status';
@@ -266,6 +266,14 @@ class ApiService {
 
   async getPipelineRunSummary(tenantId: string, limit = 50, sinceHours = 24): Promise<PipelineRunSummary> {
     const response = await this.client.get<PipelineRunSummary>(`/pipelines/runs/summary?tenantId=${tenantId}&limit=${limit}&sinceHours=${sinceHours}`);
+    return response.data;
+  }
+
+  async getTenantPipelineRuns(tenantId: string, options?: { from?: string; to?: string; limit?: number }): Promise<TenantPipelineRun[]> {
+    const from = options?.from ? `&from=${encodeURIComponent(options.from)}` : '';
+    const to = options?.to ? `&to=${encodeURIComponent(options.to)}` : '';
+    const limit = options?.limit ? `&limit=${options.limit}` : '';
+    const response = await this.client.get<TenantPipelineRun[]>(`/pipelines/runs?tenantId=${tenantId}${from}${to}${limit}`);
     return response.data;
   }
 

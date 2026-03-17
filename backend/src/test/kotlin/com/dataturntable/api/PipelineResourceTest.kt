@@ -328,4 +328,30 @@ class PipelineResourceTest {
             .statusCode(400)
             .body("error", equalTo("Invalid sinceHours"))
     }
+
+    @Test
+    fun testGetTenantRunsEndpointAccessible() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("tenantId", tenantId)
+            .queryParam("limit", 20)
+        .`when`()
+            .get("/api/internal/v1/pipelines/runs")
+        .then()
+            .statusCode(200)
+            .body("size()", notNullValue())
+    }
 }
