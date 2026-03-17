@@ -183,6 +183,7 @@ export interface PipelineRunLineage {
   recommendedAction?: 'NONE' | 'SWITCH_TO_SUMMARY' | 'REDUCE_DEPTH';
   recommendedSafeFetchMode?: 'SUMMARY' | 'DETAILS';
   recommendedSafeDepth?: number;
+  recommendedSafeReason?: 'SWITCH_TO_SUMMARY' | 'REDUCE_DEPTH' | null;
   ancestorsTotal?: number;
   ancestorsStatusCounts?: Partial<Record<'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED', number>>;
   descendantsTotal?: number;

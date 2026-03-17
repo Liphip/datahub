@@ -1379,6 +1379,7 @@ class PipelineResource {
         } else {
             depthLimit
         }
+        val recommendedSafeReason = if (recommendedAction == "NONE") null else recommendedAction
 
         return Response.ok(
             mapOf(
@@ -1407,6 +1408,7 @@ class PipelineResource {
                 "recommendedAction" to recommendedAction,
                 "recommendedSafeFetchMode" to recommendedSafeFetchMode,
                 "recommendedSafeDepth" to recommendedSafeDepth,
+                "recommendedSafeReason" to recommendedSafeReason,
                 "ancestorsTotal" to ancestorsTotal,
                 "ancestorsStatusCounts" to ancestorsStatusCounts,
                 "descendantsTotal" to descendantsTotal,

@@ -615,7 +615,7 @@ export default function Pipelines() {
             mode: suggestedMode,
             depth: suggestedDepth,
             updatedAt: new Date().toISOString(),
-            reason: lineage.recommendedAction,
+            reason: lineage.recommendedSafeReason ?? lineage.recommendedAction,
           },
         }));
       }
@@ -882,6 +882,21 @@ export default function Pipelines() {
   const resetLineageView = async (pipelineId: string, runId: string) => {
     const defaultDepth = lineageByRunId[runId]?.defaultDepth ?? 20;
     await handleLoadRunLineage(pipelineId, runId, defaultDepth, 'both', 'ALL', 'SUMMARY');
+  };
+
+  const forgetSafeDefaultsForRun = (runId: string) => {
+    setLineageSafeDefaultsByRunId((prev) => {
+      if (!prev[runId]) return prev;
+      const next = { ...prev };
+      delete next[runId];
+      return next;
+    });
+    showToast('Safe defaults removed for this run', 'success');
+  };
+
+  const clearAllSafeDefaults = () => {
+    setLineageSafeDefaultsByRunId({});
+    showToast('All lineage safe defaults cleared', 'success');
   };
 
   const focusLineageTargetRun = async (
@@ -2137,6 +2152,11 @@ export default function Pipelines() {
                                       <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
                                         Safe defaults: {lineageSafeDefaultsByRunId[selectedRun.id].mode} d{lineageSafeDefaultsByRunId[selectedRun.id].depth}
                                       </span>
+                                      {lineageSafeDefaultsByRunId[selectedRun.id].reason && (
+                                        <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                          reason: {lineageSafeDefaultsByRunId[selectedRun.id].reason?.toLowerCase().replace(/_/g, ' ')}
+                                        </span>
+                                      )}
                                       <button
                                         className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
                                         onClick={(e) => {
@@ -2155,6 +2175,26 @@ export default function Pipelines() {
                                       >
                                         Apply safe defaults
                                       </button>
+                                      <button
+                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          forgetSafeDefaultsForRun(selectedRun.id);
+                                        }}
+                                      >
+                                        Forget this run
+                                      </button>
+                                      {Object.keys(lineageSafeDefaultsByRunId).length > 1 && (
+                                        <button
+                                          className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            clearAllSafeDefaults();
+                                          }}
+                                        >
+                                          Clear all safe defaults
+                                        </button>
+                                      )}
                                     </div>
                                   )}
                                   <div className="mb-1">

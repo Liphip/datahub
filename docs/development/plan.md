@@ -178,6 +178,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added lightweight lineage performance trend visibility: lineage API now includes `lineageMeasuredAt`, and the lineage panel keeps a short in-memory history of recent loads with compact timing/payload micro-bars so operators can quickly spot regressions while changing depth, filters, and fetch mode.
 - Added actionable lineage performance guardrails: lineage API now emits `lineagePerformanceHint` and `recommendedAction` (`NONE|SWITCH_TO_SUMMARY|REDUCE_DEPTH`), and the lineage panel now detects timing regressions vs recent medians and surfaces one-click mitigations (`Use summary mode`, `Reduce depth`) directly in the triage flow.
 - Added learned safe lineage defaults: lineage API now emits `recommendedSafeFetchMode` and `recommendedSafeDepth`, and the lineage panel persists per-run safe defaults locally when guardrails trigger, then offers one-click `Apply safe defaults` and uses remembered defaults for subsequent lineage loads.
+- Added safe-default lifecycle controls: lineage API now emits `recommendedSafeReason`, and the lineage panel now shows the learned reason plus explicit controls to `Forget this run` or `Clear all safe defaults`, keeping adaptive defaults reversible for one-off investigations.
 
 ---
 
