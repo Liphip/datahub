@@ -82,6 +82,14 @@ class ConnectorResource {
             null
         }
     }
+
+    private fun parseUuid(value: String): UUID? {
+        return try {
+            UUID.fromString(value)
+        } catch (_: Exception) {
+            null
+        }
+    }
     
     @GET
     fun list(
@@ -92,6 +100,8 @@ class ConnectorResource {
         val tid = tenantId ?: getTenantIdFromToken() ?: return Response.status(400)
             .entity(mapOf("error" to "tenantId is required"))
             .build()
+        val tenantUuid = parseUuid(tid)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid tenantId")).build()
 
         val currentUser = getCurrentUser()
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tid)) {
@@ -101,10 +111,10 @@ class ConnectorResource {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
         
-        val tenant = em.find(Tenant::class.java, UUID.fromString(tid))
-            ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
-        
-        val tenantUuid = UUID.fromString(tid)
+        if (em.find(Tenant::class.java, tenantUuid) == null) {
+            return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
+        }
+
         val parsedType = type?.let { parseConnectorType(it) }
         if (type != null && parsedType == null) {
             return Response.status(400).entity(mapOf("error" to "Invalid connector type")).build()
@@ -184,8 +194,11 @@ class ConnectorResource {
                 .entity(mapOf("error" to "Tenant ID is required"))
                 .build()
         }
-        
-        val tenant = em.find(Tenant::class.java, UUID.fromString(tenantId))
+
+        val tenantUuid = parseUuid(tenantId)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid tenantId")).build()
+
+        val tenant = em.find(Tenant::class.java, tenantUuid)
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
         
         val configValue = request["config"] ?: emptyMap<String, Any>()
@@ -227,7 +240,9 @@ class ConnectorResource {
     @GET
     @Path("/{id}")
     fun get(@PathParam("id") id: String): Response {
-        val connector = em.find(Connector::class.java, UUID.fromString(id))
+        val connectorId = parseUuid(id)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
+        val connector = em.find(Connector::class.java, connectorId)
         val tenantId = getTenantIdFromToken()
         return if (connector != null) {
             val currentUser = getCurrentUser()
@@ -266,7 +281,9 @@ class ConnectorResource {
     @Path("/{id}")
     @Transactional
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
-        val connector = em.find(Connector::class.java, UUID.fromString(id))
+        val connectorId = parseUuid(id)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
+        val connector = em.find(Connector::class.java, connectorId)
         val tenantId = getTenantIdFromToken()
         return if (connector != null) {
             val currentUser = getCurrentUser()
@@ -291,6 +308,9 @@ class ConnectorResource {
                 connector.direction = parsed
             }
             request["config"]?.let {
+                if (it is Map<*, *> && it.isEmpty()) {
+                    return@let
+                }
                 val plain = try { objectMapper.writeValueAsString(it) } catch (_: Exception) { it.toString() }
                 connector.config = EncryptionUtils.encrypt(plain)
             }
@@ -315,7 +335,9 @@ class ConnectorResource {
     @Path("/{id}")
     @Transactional
     fun delete(@PathParam("id") id: String): Response {
-        val connector = em.find(Connector::class.java, UUID.fromString(id))
+        val connectorId = parseUuid(id)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
+        val connector = em.find(Connector::class.java, connectorId)
         val tenantId = getTenantIdFromToken()
         return if (connector != null) {
             val currentUser = getCurrentUser()

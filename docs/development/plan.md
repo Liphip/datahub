@@ -43,6 +43,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Updated Tenants UI to replace browser confirm/alert flows with inline confirmation and toast notifications.
 - Hardened Data API query/insert/delete endpoints with strict table name validation and parameterized SQL inputs for time/device/value/tags.
 - Role API now enforces RBAC for create/update/delete and serializes abilities as JSON arrays in responses and persistence.
+- Hardened Connector API UUID validation and PATCH behavior so empty config payloads no longer overwrite stored connector config.
 
 ---
 

@@ -102,6 +102,81 @@ class ConnectorResourceTest {
             .statusCode(400)
             .body("error", equalTo("Invalid direction"))
     }
+
+    @Test
+    fun testListConnectorsRejectsInvalidTenantId() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("tenantId", "not-a-uuid")
+        .`when`()
+            .get("/api/internal/v1/connectors")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid tenantId"))
+    }
+
+    @Test
+    fun testCreateConnectorRejectsInvalidTenantId() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Bad Tenant Connector",
+                "connectorType" to "MQTT",
+                "direction" to "INPUT"
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=bad-tenant")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid tenantId"))
+    }
+
+    @Test
+    fun testPatchEmptyConfigDoesNotOverwriteExistingConfig() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val createResponse = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Patch Config Connector",
+                "connectorType" to "MQTT",
+                "direction" to "INPUT",
+                "config" to mapOf("host" to "persist.local", "password" to "secret")
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+
+        val id = createResponse.getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("config" to emptyMap<String, Any>()))
+        .`when`()
+            .patch("/api/internal/v1/connectors/$id")
+        .then()
+            .statusCode(200)
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/connectors/$id")
+        .then()
+            .statusCode(200)
+            .body("config.host", equalTo("persist.local"))
+            .body("config.password", equalTo("********"))
+    }
     
     @Test
     fun testDeleteConnectorRequiresAuth() {
