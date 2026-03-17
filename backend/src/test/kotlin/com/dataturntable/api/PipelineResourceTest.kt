@@ -243,6 +243,8 @@ class PipelineResourceTest {
             .statusCode(200)
             .body("windowSize", equalTo(25))
             .body("sinceHours", equalTo(24))
+            .body("bucketSeconds", equalTo(3600))
+            .body("trendBuckets.size()", equalTo(24))
             .body("totalRuns", notNullValue())
             .body("successRate", notNullValue())
             .body("failedRuns", notNullValue())

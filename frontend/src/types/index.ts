@@ -107,12 +107,20 @@ export interface PipelineRun {
 export interface PipelineRunSummary {
   windowSize: number;
   sinceHours: number;
+  bucketSeconds: number;
   totalRuns: number;
   successRuns: number;
   failedRuns: number;
   inFlightRuns: number;
   successRate: number;
   avgDurationMs?: number;
+  trendBuckets: {
+    bucketStart: string;
+    totalRuns: number;
+    successRuns: number;
+    failedRuns: number;
+    inFlightRuns: number;
+  }[];
 }
 
 export interface AlertChannel {

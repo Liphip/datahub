@@ -129,6 +129,8 @@ export default function Dashboard() {
     .filter((d): d is string => Boolean(d))
     .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
 
+  const maxTrendTotal = Math.max(1, ...(runSummary?.trendBuckets?.map((b) => b.totalRuns) ?? [1]));
+
   return (
     <div className="px-4 py-6 sm:px-0">
       <div className="mb-6">
@@ -277,6 +279,27 @@ export default function Dashboard() {
               </div>
             </div>
             <p className="mt-3 text-xs text-gray-500">Average duration: {runSummary?.avgDurationMs != null ? `${runSummary.avgDurationMs} ms` : 'n/a'}</p>
+            <div className="mt-3">
+              <div className="flex items-end gap-1 h-16 rounded border border-gray-200 bg-gray-50 px-2 py-1">
+                {(runSummary?.trendBuckets ?? []).map((bucket) => {
+                  const ratio = bucket.totalRuns / maxTrendTotal;
+                  const failureShare = bucket.totalRuns > 0 ? bucket.failedRuns / bucket.totalRuns : 0;
+                  const bg = failureShare > 0.4 ? 'bg-red-400' : failureShare > 0 ? 'bg-amber-400' : 'bg-green-400';
+                  return (
+                    <div
+                      key={bucket.bucketStart}
+                      className={`flex-1 rounded-t ${bg}`}
+                      title={`${new Date(bucket.bucketStart).toLocaleString()} | total:${bucket.totalRuns} success:${bucket.successRuns} failed:${bucket.failedRuns} running:${bucket.inFlightRuns}`}
+                      style={{ height: `${Math.max(8, Math.round(ratio * 100))}%` }}
+                    />
+                  );
+                })}
+              </div>
+              <div className="mt-1 flex justify-between text-[10px] text-gray-500">
+                <span>{reliabilityWindow === 1 ? 'Last hour' : reliabilityWindow === 24 ? 'Last day' : 'Last 7 days'}</span>
+                <span>Trend: green=healthy, red=failures</span>
+              </div>
+            </div>
           </div>
 
           {/* Quick actions */}

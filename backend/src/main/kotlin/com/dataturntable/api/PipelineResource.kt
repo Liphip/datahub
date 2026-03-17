@@ -132,6 +132,17 @@ class PipelineResource {
             return Response.status(400).entity(mapOf("error" to "Invalid sinceHours")).build()
         }
 
+        val bucketSeconds = when (hours) {
+            1 -> 10 * 60L
+            24 -> 60 * 60L
+            else -> 6 * 60 * 60L
+        }
+        val bucketCount = when (hours) {
+            1 -> 6
+            24 -> 24
+            else -> 28
+        }
+
         val sinceInstant = java.time.Instant.now().minus(java.time.Duration.ofHours(hours.toLong()))
         val runs = em.createQuery(
             "SELECT r FROM PipelineRun r WHERE r.pipeline.tenant.id = :tenantId AND r.startedAt >= :since ORDER BY r.startedAt DESC",
@@ -160,16 +171,42 @@ class PipelineResource {
         }
         val successRate = if (total > 0) (success.toDouble() / total) else 0.0
 
+        val buckets = MutableList(bucketCount) { index ->
+            mutableMapOf<String, Any>(
+                "bucketStart" to sinceInstant.plusSeconds(index.toLong() * bucketSeconds).toString(),
+                "totalRuns" to 0,
+                "successRuns" to 0,
+                "failedRuns" to 0,
+                "inFlightRuns" to 0
+            )
+        }
+
+        runs.forEach { run ->
+            val startedAt = run.startedAt ?: return@forEach
+            val secondsFromStart = java.time.Duration.between(sinceInstant, startedAt).seconds
+            if (secondsFromStart < 0) return@forEach
+            val index = (secondsFromStart / bucketSeconds).toInt().coerceIn(0, bucketCount - 1)
+            val bucket = buckets[index]
+            bucket["totalRuns"] = (bucket["totalRuns"] as Int) + 1
+            when (run.status.name) {
+                "SUCCESS" -> bucket["successRuns"] = (bucket["successRuns"] as Int) + 1
+                "FAILED" -> bucket["failedRuns"] = (bucket["failedRuns"] as Int) + 1
+                "RUNNING", "PENDING" -> bucket["inFlightRuns"] = (bucket["inFlightRuns"] as Int) + 1
+            }
+        }
+
         return Response.ok(
             mapOf(
                 "windowSize" to maxRows,
                 "sinceHours" to hours,
+                "bucketSeconds" to bucketSeconds,
                 "totalRuns" to total,
                 "successRuns" to success,
                 "failedRuns" to failed,
                 "inFlightRuns" to running,
                 "successRate" to successRate,
-                "avgDurationMs" to avgDurationMs
+                "avgDurationMs" to avgDurationMs,
+                "trendBuckets" to buckets
             )
         ).build()
     }
