@@ -5,7 +5,6 @@ import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.connectors.Connector
 import com.dataturntable.engine.PipelineConsumer
-import com.dataturntable.service.KafkaService
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.security.Authenticated
 import jakarta.inject.Inject
@@ -26,9 +25,6 @@ class PipelineResource {
 
     @Inject
     lateinit var pipelineConsumer: PipelineConsumer
-
-    @Inject
-    lateinit var kafkaService: KafkaService
 
     @PersistenceContext
     lateinit var em: EntityManager
@@ -218,15 +214,14 @@ class PipelineResource {
                 "runId" to run.id.toString(),
                 "pipelineId" to pipeline.id.toString(),
                 "triggerType" to run.triggerType.name,
-                "data" to emptyMap<String, Any>()
+                "data" to mapOf(
+                    "_pipelineId" to pipeline.id.toString(),
+                    "_triggerType" to run.triggerType.name
+                )
             )
 
             try {
-                if (kafkaService.isKafkaAvailable()) {
-                    kafkaService.sendToPipelineInput(pipeline.id.toString(), triggerMessage)
-                } else {
-                    pipelineConsumer.consume(objectMapper.writeValueAsString(triggerMessage))
-                }
+                pipelineConsumer.consume(objectMapper.writeValueAsString(triggerMessage))
             } catch (e: Exception) {
                 run.status = com.dataturntable.pipeline.PipelineRunStatus.FAILED
                 run.completedAt = java.time.Instant.now()

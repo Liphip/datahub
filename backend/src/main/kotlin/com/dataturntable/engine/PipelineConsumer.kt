@@ -63,6 +63,10 @@ class PipelineConsumer {
             
             if (pipelineMsg != null) {
                 pipelineId = pipelineMsg.pipelineId
+                if (pipelineMsg.data is Map<*, *>) {
+                    @Suppress("UNCHECKED_CAST")
+                    dataPayload = pipelineMsg.data as? Map<String, Any>
+                }
             } else {
                 try {
                     @Suppress("UNCHECKED_CAST")

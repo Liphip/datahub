@@ -55,10 +55,21 @@ open class AlertHistory : PanacheEntityBase() {
     var status: AlertStatus = AlertStatus.PENDING
     
     companion object {
-        fun findById(id: UUID): AlertHistory? = 
-            PanacheEntityBase.find<AlertHistory>("id = ?1", id).firstResult()
-        
-        fun findRecentByTenant(tenantId: UUID, limit: Int = 100): List<AlertHistory> = 
-            PanacheEntityBase.list<AlertHistory>("tenant.id = ?1 ORDER BY sentAt DESC", tenantId).take(limit)
+        fun findById(id: UUID): AlertHistory? =
+            getEntityManager()
+                .createQuery("SELECT a FROM AlertHistory a WHERE a.id = :id", AlertHistory::class.java)
+                .setParameter("id", id)
+                .resultList
+                .firstOrNull()
+
+        fun findRecentByTenant(tenantId: UUID, limit: Int = 100): List<AlertHistory> =
+            getEntityManager()
+                .createQuery(
+                    "SELECT a FROM AlertHistory a WHERE a.tenant.id = :tenantId ORDER BY a.sentAt DESC",
+                    AlertHistory::class.java
+                )
+                .setParameter("tenantId", tenantId)
+                .setMaxResults(limit)
+                .resultList
     }
 }

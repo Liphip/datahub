@@ -181,4 +181,26 @@ class AlertResourceTest {
             .body("enabled", equalTo(false))
             .body("condition.field", equalTo("humidity"))
     }
+
+    @Test
+    fun testCreateRuleRejectsInvalidConditionFormat() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(
+                mapOf(
+                    "name" to "Bad Rule",
+                    "condition" to mapOf("operator" to ">", "value" to 10)
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/alerts/rules?tenantId=$tenantId")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid condition format"))
+    }
+
 }

@@ -58,6 +58,8 @@ This section catalogues every known gap between the current codebase and a shipp
 - Wired `pipeline-input` Kafka channel/topic (`dataturntable.pipelines.input`) so `PipelineConsumer` has an active upstream, with direct-consume fallback only when Kafka emitter is unavailable.
 - Added backend alert-rule evaluation in pipeline execution (`field/operator/value`, `any`/`all`, cooldown checks) with automatic `alert_history` dispatch creation.
 - Improved Alerts rule UX with JSON condition templates and inline validation errors.
+- Alert Rule API now validates condition JSON structure on create/update (rejects malformed or incomplete condition objects).
+- Fixed ingest/websocket pipeline lookup to use JPA entity manager lookups (avoids Panache static lookup failures in runtime/tests).
 
 ---
 

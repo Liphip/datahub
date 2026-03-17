@@ -36,7 +36,13 @@ class WebSocketIngestResource {
     
     @Transactional
     fun handleWebSocketMessage(session: Session, pipelineId: String, message: String) {
-        val pipeline = Pipeline.findById(UUID.fromString(pipelineId))
+        val pipelineUuid = try {
+            UUID.fromString(pipelineId)
+        } catch (_: Exception) {
+            LOG.warnf("Invalid pipelineId in WebSocket message: %s", pipelineId)
+            return
+        }
+        val pipeline = em.find(Pipeline::class.java, pipelineUuid)
         
         if (pipeline == null) {
             LOG.warnf("WebSocket message for unknown pipeline: %s", pipelineId)

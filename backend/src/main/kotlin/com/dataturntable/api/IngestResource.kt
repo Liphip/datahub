@@ -41,7 +41,14 @@ class IngestResource {
         @HeaderParam("X-Tenant-Id") tenantId: String?,
         payload: Map<String, Any>
     ): Response {
-        val pipeline = Pipeline.findById(UUID.fromString(pipelineId))
+        val pipelineUuid = try {
+            UUID.fromString(pipelineId)
+        } catch (_: Exception) {
+            return Response.status(400)
+                .entity(mapOf("error" to "Invalid pipelineId"))
+                .build()
+        }
+        val pipeline = em.find(Pipeline::class.java, pipelineUuid)
         
         if (pipeline == null) {
             return Response.status(404)

@@ -63,6 +63,51 @@ class AlertResource {
         }
     }
 
+    private fun parseConditionMap(raw: Any?): Map<String, Any>? {
+        if (raw == null) return null
+        return when (raw) {
+            is String -> try {
+                @Suppress("UNCHECKED_CAST")
+                objectMapper.readValue(raw, Map::class.java) as? Map<String, Any>
+            } catch (_: Exception) {
+                null
+            }
+            is Map<*, *> -> {
+                @Suppress("UNCHECKED_CAST")
+                raw as? Map<String, Any>
+            }
+            else -> null
+        }
+    }
+
+    private fun isValidConditionMap(condition: Map<String, Any>): Boolean {
+        if (condition.isEmpty()) return false
+
+        val all = condition["all"] as? List<*>
+        if (all != null) {
+            if (all.isEmpty()) return false
+            return all.all {
+                val nested = it as? Map<*, *> ?: return@all false
+                @Suppress("UNCHECKED_CAST")
+                isValidConditionMap(nested as Map<String, Any>)
+            }
+        }
+
+        val any = condition["any"] as? List<*>
+        if (any != null) {
+            if (any.isEmpty()) return false
+            return any.all {
+                val nested = it as? Map<*, *> ?: return@all false
+                @Suppress("UNCHECKED_CAST")
+                isValidConditionMap(nested as Map<String, Any>)
+            }
+        }
+
+        val field = condition["field"] as? String
+        val operator = condition["operator"] as? String
+        return !field.isNullOrBlank() && !operator.isNullOrBlank()
+    }
+
     private fun toChannelDto(channel: AlertChannel): Map<String, Any?> {
         return mapOf(
             "id" to channel.id,
@@ -192,10 +237,12 @@ class AlertResource {
             ?: return Response.status(400).entity(mapOf("error" to "Tenant ID is required")).build()
         val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
         val conditionRaw = request["condition"] ?: return Response.status(400).entity(mapOf("error" to "Condition is required")).build()
-        val condition = when (conditionRaw) {
-            is String -> conditionRaw
-            else -> serializeJsonValue(conditionRaw)
+        val conditionMap = parseConditionMap(conditionRaw)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid condition JSON")).build()
+        if (!isValidConditionMap(conditionMap)) {
+            return Response.status(400).entity(mapOf("error" to "Invalid condition format")).build()
         }
+        val condition = serializeJsonValue(conditionMap)
         
         val tenant = em.find(Tenant::class.java, parseUuid(tenantId, "tenantId"))
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
@@ -232,10 +279,12 @@ class AlertResource {
         request["name"]?.let { rule.name = it as String }
         request["description"]?.let { rule.description = it as String }
         request["condition"]?.let {
-            rule.condition = when (it) {
-                is String -> it
-                else -> serializeJsonValue(it)
+            val conditionMap = parseConditionMap(it)
+                ?: return Response.status(400).entity(mapOf("error" to "Invalid condition JSON")).build()
+            if (!isValidConditionMap(conditionMap)) {
+                return Response.status(400).entity(mapOf("error" to "Invalid condition format")).build()
             }
+            rule.condition = serializeJsonValue(conditionMap)
         }
         request["channelId"]?.let {
             val channel = em.find(AlertChannel::class.java, parseUuid(it as String, "channelId"))
@@ -275,7 +324,13 @@ class AlertResource {
     @GET
     @Path("/history")
     fun getHistory(@QueryParam("tenantId") tenantId: String, @QueryParam("limit") limit: Int?): Response {
-        val history = AlertHistory.findRecentByTenant(parseUuid(tenantId, "tenantId"), limit ?: 100)
+        val history = em.createQuery(
+            "SELECT h FROM AlertHistory h WHERE h.tenant.id = :tenantId ORDER BY h.sentAt DESC",
+            AlertHistory::class.java
+        )
+            .setParameter("tenantId", parseUuid(tenantId, "tenantId"))
+            .setMaxResults(limit ?: 100)
+            .resultList
         return Response.ok(history.map { mapOf("id" to it.id, "title" to it.title, "status" to it.status.name) }).build()
     }
 }
