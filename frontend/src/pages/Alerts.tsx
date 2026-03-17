@@ -14,6 +14,8 @@ export default function Alerts() {
   const [activeTab, setActiveTab] = useState<'channels' | 'rules' | 'history'>('channels');
   const [showChannelModal, setShowChannelModal] = useState(false);
   const [showRuleModal, setShowRuleModal] = useState(false);
+  const [editingChannel, setEditingChannel] = useState<AlertChannel | null>(null);
+  const [editingRule, setEditingRule] = useState<AlertRule | null>(null);
   const [newChannelName, setNewChannelName] = useState('');
   const [newChannelType, setNewChannelType] = useState('WEBHOOK');
   const [newChannelUrl, setNewChannelUrl] = useState('');
@@ -73,14 +75,24 @@ export default function Alerts() {
     setCreatingChannel(true);
     try {
       const config = newChannelUrl ? { url: newChannelUrl } : {};
-      const newChannel = await api.createAlertChannel(tenantId, newChannelName, newChannelType, config);
-      setChannels([...channels, newChannel]);
+      if (editingChannel) {
+        const updated = await api.updateAlertChannel(editingChannel.id, {
+          name: newChannelName,
+          channelType: newChannelType as AlertChannel['channelType'],
+          config,
+        });
+        setChannels(channels.map((c) => (c.id === updated.id ? updated : c)));
+      } else {
+        const newChannel = await api.createAlertChannel(tenantId, newChannelName, newChannelType, config);
+        setChannels([...channels, newChannel]);
+      }
       setShowChannelModal(false);
+      setEditingChannel(null);
       setNewChannelName('');
       setNewChannelType('WEBHOOK');
       setNewChannelUrl('');
       setError('');
-      showToast('Alert channel created', 'success');
+      showToast(editingChannel ? 'Alert channel updated' : 'Alert channel created', 'success');
     } catch (error) {
       console.error('Error creating channel:', error);
       setError('Failed to create channel');
@@ -96,21 +108,32 @@ export default function Alerts() {
     setCreatingRule(true);
     try {
       const condition = JSON.parse(newRuleCondition || '{}');
-      const newRule = await api.createAlertRule(
-        tenantId,
-        newRuleName,
-        condition,
-        newRuleChannelId || undefined,
-        newRulePipelineId || undefined
-      );
-      setRules([...rules, newRule]);
+      if (editingRule) {
+        const updated = await api.updateAlertRule(editingRule.id, {
+          name: newRuleName,
+          condition,
+          channelId: newRuleChannelId || undefined,
+          pipelineId: newRulePipelineId || undefined,
+        });
+        setRules(rules.map((r) => (r.id === updated.id ? updated : r)));
+      } else {
+        const newRule = await api.createAlertRule(
+          tenantId,
+          newRuleName,
+          condition,
+          newRuleChannelId || undefined,
+          newRulePipelineId || undefined
+        );
+        setRules([...rules, newRule]);
+      }
       setShowRuleModal(false);
+      setEditingRule(null);
       setNewRuleName('');
       setNewRuleCondition('');
       setNewRuleChannelId('');
       setNewRulePipelineId('');
       setError('');
-      showToast('Alert rule created', 'success');
+      showToast(editingRule ? 'Alert rule updated' : 'Alert rule created', 'success');
     } catch (error) {
       console.error('Error creating rule:', error);
       setError('Failed to create rule. Check condition JSON and selected references.');
@@ -149,6 +172,26 @@ export default function Alerts() {
     } finally {
       setDeletingRuleId(null);
     }
+  };
+
+  const openEditChannel = (channel: AlertChannel) => {
+    setEditingChannel(channel);
+    setNewChannelName(channel.name);
+    setNewChannelType(channel.channelType);
+    setNewChannelUrl(typeof channel.config?.url === 'string' ? channel.config.url : '');
+    setShowChannelModal(true);
+  };
+
+  const openEditRule = (rule: AlertRule) => {
+    setEditingRule(rule);
+    setNewRuleName(rule.name);
+    setNewRuleChannelId(rule.channelId || '');
+    setNewRulePipelineId(rule.pipelineId || '');
+    const conditionValue = typeof rule.condition === 'string'
+      ? rule.condition
+      : JSON.stringify(rule.condition ?? {}, null, 2);
+    setNewRuleCondition(conditionValue);
+    setShowRuleModal(true);
   };
 
   return (
@@ -218,6 +261,12 @@ export default function Alerts() {
                       </span>
                     </div>
                     <div className="mt-4 flex justify-end">
+                      <button
+                        onClick={() => openEditChannel(channel)}
+                        className="mr-3 text-sm text-blue-600 hover:text-blue-800"
+                      >
+                        Edit
+                      </button>
                       {confirmDeleteChannelId === channel.id ? (
                         <div className="flex items-center space-x-2">
                           <span className="text-xs text-gray-500">Delete?</span>
@@ -272,6 +321,12 @@ export default function Alerts() {
                         </span>
                       </div>
                       <div className="mt-4 flex justify-end">
+                        <button
+                          onClick={() => openEditRule(rule)}
+                          className="mr-3 text-sm text-blue-600 hover:text-blue-800"
+                        >
+                          Edit
+                        </button>
                         {confirmDeleteRuleId === rule.id ? (
                           <div className="flex items-center space-x-2">
                             <span className="text-xs text-gray-500">Delete?</span>
@@ -350,7 +405,7 @@ export default function Alerts() {
       {showChannelModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h2 className="text-xl font-bold mb-4">Add Alert Channel</h2>
+            <h2 className="text-xl font-bold mb-4">{editingChannel ? 'Edit Alert Channel' : 'Add Alert Channel'}</h2>
             <form onSubmit={handleCreateChannel}>
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
@@ -389,7 +444,10 @@ export default function Alerts() {
               <div className="flex justify-end space-x-2">
                 <button
                   type="button"
-                  onClick={() => setShowChannelModal(false)}
+                  onClick={() => {
+                    setShowChannelModal(false);
+                    setEditingChannel(null);
+                  }}
                   className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
                 >
                   Cancel
@@ -399,7 +457,7 @@ export default function Alerts() {
                   disabled={creatingChannel}
                   className="btn-primary"
                 >
-                  {creatingChannel ? 'Creating...' : 'Create'}
+                  {creatingChannel ? 'Saving...' : editingChannel ? 'Save' : 'Create'}
                 </button>
               </div>
             </form>
@@ -410,7 +468,7 @@ export default function Alerts() {
       {showRuleModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h2 className="text-xl font-bold mb-4">Add Alert Rule</h2>
+            <h2 className="text-xl font-bold mb-4">{editingRule ? 'Edit Alert Rule' : 'Add Alert Rule'}</h2>
             <form onSubmit={handleCreateRule}>
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
@@ -461,7 +519,10 @@ export default function Alerts() {
               <div className="flex justify-end space-x-2">
                 <button
                   type="button"
-                  onClick={() => setShowRuleModal(false)}
+                  onClick={() => {
+                    setShowRuleModal(false);
+                    setEditingRule(null);
+                  }}
                   className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
                 >
                   Cancel
@@ -471,7 +532,7 @@ export default function Alerts() {
                   disabled={creatingRule}
                   className="btn-primary"
                 >
-                  {creatingRule ? 'Creating...' : 'Create'}
+                  {creatingRule ? 'Saving...' : editingRule ? 'Save' : 'Create'}
                 </button>
               </div>
             </form>

@@ -237,6 +237,11 @@ class ApiService {
     await this.client.delete(`/alerts/channels/${id}`);
   }
 
+  async updateAlertChannel(id: string, data: Partial<AlertChannel>): Promise<AlertChannel> {
+    const response = await this.client.patch<AlertChannel>(`/alerts/channels/${id}`, data);
+    return response.data;
+  }
+
   async getAlertRules(tenantId: string): Promise<AlertRule[]> {
     const response = await this.client.get<AlertRule[]>(`/alerts/rules?tenantId=${tenantId}`);
     return response.data;
@@ -261,6 +266,11 @@ class ApiService {
 
   async deleteAlertRule(id: string): Promise<void> {
     await this.client.delete(`/alerts/rules/${id}`);
+  }
+
+  async updateAlertRule(id: string, data: Partial<AlertRule>): Promise<AlertRule> {
+    const response = await this.client.patch<AlertRule>(`/alerts/rules/${id}`, data);
+    return response.data;
   }
 
   async getAlertHistory(tenantId: string, limit?: number): Promise<AlertHistory[]> {

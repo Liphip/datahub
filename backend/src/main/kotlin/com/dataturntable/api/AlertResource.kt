@@ -44,6 +44,52 @@ class AlertResource {
             )
         }
     }
+
+    private fun parseJsonValue(raw: String?): Any {
+        if (raw.isNullOrBlank()) return emptyMap<String, Any>()
+        return try {
+            objectMapper.readValue(raw, Any::class.java)
+        } catch (_: Exception) {
+            raw
+        }
+    }
+
+    private fun serializeJsonValue(value: Any?): String {
+        if (value == null) return "{}"
+        return try {
+            objectMapper.writeValueAsString(value)
+        } catch (_: Exception) {
+            value.toString()
+        }
+    }
+
+    private fun toChannelDto(channel: AlertChannel): Map<String, Any?> {
+        return mapOf(
+            "id" to channel.id,
+            "tenantId" to channel.tenant?.id,
+            "name" to channel.name,
+            "description" to channel.description,
+            "channelType" to channel.channelType?.name,
+            "config" to parseJsonValue(channel.config),
+            "isActive" to channel.isActive,
+            "createdAt" to channel.createdAt.toString()
+        )
+    }
+
+    private fun toRuleDto(rule: AlertRule): Map<String, Any?> {
+        return mapOf(
+            "id" to rule.id,
+            "tenantId" to rule.tenant?.id,
+            "pipelineId" to rule.pipeline?.id,
+            "channelId" to rule.channel?.id,
+            "name" to rule.name,
+            "description" to rule.description,
+            "condition" to parseJsonValue(rule.condition),
+            "enabled" to rule.enabled,
+            "cooldownSeconds" to rule.cooldownSeconds,
+            "createdAt" to rule.createdAt.toString()
+        )
+    }
     
     @GET
     @Path("/channels")
@@ -55,7 +101,7 @@ class AlertResource {
         )
             .setParameter("tenantId", tenantUuid)
             .resultList
-        return Response.ok(channels.map { mapOf("id" to it.id, "name" to it.name, "channelType" to it.channelType?.name) }).build()
+        return Response.ok(channels.map { toChannelDto(it) }).build()
     }
     
     @POST
@@ -76,19 +122,40 @@ class AlertResource {
             this.name = name
             this.tenant = tenant
             this.channelType = parsedChannelType
-            this.config = request["config"]?.let {
-                try {
-                    objectMapper.writeValueAsString(it)
-                } catch (_: Exception) {
-                    it.toString()
-                }
-            } ?: "{}"
+            this.description = request["description"] as? String
+            this.config = serializeJsonValue(request["config"])
             this.isActive = true
             this.createdAt = java.time.Instant.now()
             this.updatedAt = java.time.Instant.now()
         }
         channel.persist()
-        return Response.status(201).entity(mapOf("id" to channel.id, "name" to channel.name)).build()
+        return Response.status(201).entity(toChannelDto(channel)).build()
+    }
+
+    @PATCH
+    @Path("/channels/{id}")
+    @Transactional
+    fun updateChannel(@PathParam("id") id: String, request: Map<String, Any>): Response {
+        val channel = em.find(AlertChannel::class.java, parseUuid(id, "channel id"))
+            ?: return Response.status(404).entity(mapOf("error" to "Channel not found")).build()
+
+        request["name"]?.let { channel.name = it as String }
+        request["description"]?.let { channel.description = it as String }
+        request["channelType"]?.let {
+            val parsed = parseChannelType(it as String)
+                ?: return Response.status(400).entity(mapOf("error" to "Invalid channel type")).build()
+            channel.channelType = parsed
+        }
+        request["config"]?.let {
+            channel.config = serializeJsonValue(it)
+        }
+        request["isActive"]?.let {
+            channel.isActive = it as Boolean
+        }
+        channel.updatedAt = java.time.Instant.now()
+        channel.persist()
+
+        return Response.ok(toChannelDto(channel)).build()
     }
     
     @DELETE
@@ -114,7 +181,7 @@ class AlertResource {
         )
             .setParameter("tenantId", tenantUuid)
             .resultList
-        return Response.ok(rules.map { mapOf("id" to it.id, "name" to it.name, "enabled" to it.enabled) }).build()
+        return Response.ok(rules.map { toRuleDto(it) }).build()
     }
     
     @POST
@@ -127,11 +194,7 @@ class AlertResource {
         val conditionRaw = request["condition"] ?: return Response.status(400).entity(mapOf("error" to "Condition is required")).build()
         val condition = when (conditionRaw) {
             is String -> conditionRaw
-            else -> try {
-                objectMapper.writeValueAsString(conditionRaw)
-            } catch (_: Exception) {
-                conditionRaw.toString()
-            }
+            else -> serializeJsonValue(conditionRaw)
         }
         
         val tenant = em.find(Tenant::class.java, parseUuid(tenantId, "tenantId"))
@@ -156,7 +219,44 @@ class AlertResource {
             this.updatedAt = java.time.Instant.now()
         }
         rule.persist()
-        return Response.status(201).entity(mapOf("id" to rule.id, "name" to rule.name)).build()
+        return Response.status(201).entity(toRuleDto(rule)).build()
+    }
+
+    @PATCH
+    @Path("/rules/{id}")
+    @Transactional
+    fun updateRule(@PathParam("id") id: String, request: Map<String, Any>): Response {
+        val rule = em.find(AlertRule::class.java, parseUuid(id, "rule id"))
+            ?: return Response.status(404).entity(mapOf("error" to "Rule not found")).build()
+
+        request["name"]?.let { rule.name = it as String }
+        request["description"]?.let { rule.description = it as String }
+        request["condition"]?.let {
+            rule.condition = when (it) {
+                is String -> it
+                else -> serializeJsonValue(it)
+            }
+        }
+        request["channelId"]?.let {
+            val channel = em.find(AlertChannel::class.java, parseUuid(it as String, "channelId"))
+                ?: return Response.status(400).entity(mapOf("error" to "Channel not found")).build()
+            rule.channel = channel
+        }
+        request["pipelineId"]?.let {
+            if ((it as String).isBlank()) {
+                rule.pipeline = null
+            } else {
+                val pipeline = em.find(Pipeline::class.java, parseUuid(it, "pipelineId"))
+                    ?: return Response.status(400).entity(mapOf("error" to "Pipeline not found")).build()
+                rule.pipeline = pipeline
+            }
+        }
+        request["enabled"]?.let { rule.enabled = it as Boolean }
+        request["cooldownSeconds"]?.let { rule.cooldownSeconds = (it as Number).toInt() }
+        rule.updatedAt = java.time.Instant.now()
+        rule.persist()
+
+        return Response.ok(toRuleDto(rule)).build()
     }
     
     @DELETE
