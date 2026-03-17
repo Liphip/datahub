@@ -7,12 +7,23 @@ interface TenantWithChildren extends Tenant {
   children?: TenantWithChildren[];
 }
 
+type LineageDefaultsField = 'safeScopePolicy' | 'defaultFetchMode' | 'defaultDepth' | 'maxDepthCap';
+type LineageMergeChoice = Record<LineageDefaultsField, 'MINE' | 'LATEST'>;
+
+interface LineageDefaultsConflictState {
+  pending: TenantLineageDefaultsConfig;
+  latest: TenantLineageDefaults;
+  mergeChoice: LineageMergeChoice;
+}
+
 const DEFAULT_TENANT_LINEAGE_DEFAULTS: TenantLineageDefaults = {
   safeScopePolicy: 'AUTO',
   defaultFetchMode: 'SUMMARY',
   defaultDepth: 20,
   maxDepthCap: 200,
 };
+
+const LINEAGE_DEFAULT_FIELDS: LineageDefaultsField[] = ['safeScopePolicy', 'defaultFetchMode', 'defaultDepth', 'maxDepthCap'];
 
 export default function Tenants() {
   const { user } = useAuthStore();
@@ -35,6 +46,7 @@ export default function Tenants() {
   const [lineageDefaults, setLineageDefaults] = useState<TenantLineageDefaults>(DEFAULT_TENANT_LINEAGE_DEFAULTS);
   const [loadingLineageDefaults, setLoadingLineageDefaults] = useState(false);
   const [savingLineageDefaults, setSavingLineageDefaults] = useState(false);
+  const [lineageDefaultsConflict, setLineageDefaultsConflict] = useState<LineageDefaultsConflictState | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -109,26 +121,43 @@ export default function Tenants() {
     void loadLineageDefaults();
   }, [lineageDefaultsTenantId]);
 
+  useEffect(() => {
+    setLineageDefaultsConflict(null);
+  }, [lineageDefaultsTenantId]);
+
   const saveLineageDefaults = async () => {
     if (!lineageDefaultsTenantId) return;
     setSavingLineageDefaults(true);
     try {
       const defaultDepth = Math.min(200, Math.max(1, lineageDefaults.defaultDepth));
       const maxDepthCap = Math.min(200, Math.max(20, Math.max(defaultDepth, lineageDefaults.maxDepthCap)));
-      const updated = await api.updateTenantLineageDefaults(lineageDefaultsTenantId, {
+      const pending: TenantLineageDefaultsConfig = {
         safeScopePolicy: lineageDefaults.safeScopePolicy,
         defaultFetchMode: lineageDefaults.defaultFetchMode,
         defaultDepth,
         maxDepthCap,
-      }, lineageDefaults.version);
+      };
+      const updated = await api.updateTenantLineageDefaults(lineageDefaultsTenantId, pending, lineageDefaults.version);
       setLineageDefaults(updated);
       showToast('Tenant lineage defaults saved', 'success');
     } catch (err: any) {
       if (err?.response?.status === 409) {
-        showToast('Defaults changed by another user. Reloading latest values.', 'error');
+        showToast('Defaults changed by another user. Resolve conflict before saving.', 'error');
         try {
           const latest = await api.getTenantLineageDefaults(lineageDefaultsTenantId);
-          setLineageDefaults(latest);
+          const defaultDepth = Math.min(200, Math.max(1, lineageDefaults.defaultDepth));
+          const maxDepthCap = Math.min(200, Math.max(20, Math.max(defaultDepth, lineageDefaults.maxDepthCap)));
+          const pending: TenantLineageDefaultsConfig = {
+            safeScopePolicy: lineageDefaults.safeScopePolicy,
+            defaultFetchMode: lineageDefaults.defaultFetchMode,
+            defaultDepth,
+            maxDepthCap,
+          };
+          const mergeChoice = LINEAGE_DEFAULT_FIELDS.reduce((acc, field) => {
+            acc[field] = pending[field] === latest[field] ? 'LATEST' : 'MINE';
+            return acc;
+          }, {} as LineageMergeChoice);
+          setLineageDefaultsConflict({ pending, latest, mergeChoice });
         } catch {
           // ignore secondary reload errors
         }
@@ -144,20 +173,31 @@ export default function Tenants() {
     if (!lineageDefaultsTenantId) return;
     setSavingLineageDefaults(true);
     try {
-      const updated = await api.updateTenantLineageDefaults(lineageDefaultsTenantId, {
+      const pending: TenantLineageDefaultsConfig = {
         safeScopePolicy: defaults.safeScopePolicy,
         defaultFetchMode: defaults.defaultFetchMode,
         defaultDepth: defaults.defaultDepth,
         maxDepthCap: defaults.maxDepthCap,
-      }, lineageDefaults.version);
+      };
+      const updated = await api.updateTenantLineageDefaults(lineageDefaultsTenantId, pending, lineageDefaults.version);
       setLineageDefaults(updated);
       showToast('Lineage defaults restored from history', 'success');
     } catch (err: any) {
       if (err?.response?.status === 409) {
-        showToast('Defaults changed by another user. Reloading latest values.', 'error');
+        showToast('Defaults changed by another user. Resolve conflict before restoring.', 'error');
         try {
           const latest = await api.getTenantLineageDefaults(lineageDefaultsTenantId);
-          setLineageDefaults(latest);
+          const pending: TenantLineageDefaultsConfig = {
+            safeScopePolicy: defaults.safeScopePolicy,
+            defaultFetchMode: defaults.defaultFetchMode,
+            defaultDepth: defaults.defaultDepth,
+            maxDepthCap: defaults.maxDepthCap,
+          };
+          const mergeChoice = LINEAGE_DEFAULT_FIELDS.reduce((acc, field) => {
+            acc[field] = pending[field] === latest[field] ? 'LATEST' : 'MINE';
+            return acc;
+          }, {} as LineageMergeChoice);
+          setLineageDefaultsConflict({ pending, latest, mergeChoice });
         } catch {
           // ignore secondary reload errors
         }
@@ -260,6 +300,57 @@ export default function Tenants() {
 
   const allTenants = flattenTenants(tenants);
   const selectedLineageDefaultsTenant = allTenants.find((t) => t.id === lineageDefaultsTenantId);
+
+  const resolveConflictUseLatest = () => {
+    if (!lineageDefaultsConflict) return;
+    setLineageDefaults(lineageDefaultsConflict.latest);
+    setLineageDefaultsConflict(null);
+    showToast('Loaded latest server values', 'success');
+  };
+
+  const resolveConflictReapplyMine = async () => {
+    if (!lineageDefaultsTenantId || !lineageDefaultsConflict) return;
+    setSavingLineageDefaults(true);
+    try {
+      const updated = await api.updateTenantLineageDefaults(
+        lineageDefaultsTenantId,
+        lineageDefaultsConflict.pending,
+        lineageDefaultsConflict.latest.version
+      );
+      setLineageDefaults(updated);
+      setLineageDefaultsConflict(null);
+      showToast('Reapplied your defaults successfully', 'success');
+    } catch {
+      showToast('Failed to reapply your defaults', 'error');
+    } finally {
+      setSavingLineageDefaults(false);
+    }
+  };
+
+  const resolveConflictSaveMerged = async () => {
+    if (!lineageDefaultsTenantId || !lineageDefaultsConflict) return;
+    const merged: TenantLineageDefaultsConfig = {
+      safeScopePolicy: lineageDefaultsConflict.mergeChoice.safeScopePolicy === 'MINE' ? lineageDefaultsConflict.pending.safeScopePolicy : lineageDefaultsConflict.latest.safeScopePolicy,
+      defaultFetchMode: lineageDefaultsConflict.mergeChoice.defaultFetchMode === 'MINE' ? lineageDefaultsConflict.pending.defaultFetchMode : lineageDefaultsConflict.latest.defaultFetchMode,
+      defaultDepth: lineageDefaultsConflict.mergeChoice.defaultDepth === 'MINE' ? lineageDefaultsConflict.pending.defaultDepth : lineageDefaultsConflict.latest.defaultDepth,
+      maxDepthCap: lineageDefaultsConflict.mergeChoice.maxDepthCap === 'MINE' ? lineageDefaultsConflict.pending.maxDepthCap : lineageDefaultsConflict.latest.maxDepthCap,
+    };
+    setSavingLineageDefaults(true);
+    try {
+      const updated = await api.updateTenantLineageDefaults(
+        lineageDefaultsTenantId,
+        merged,
+        lineageDefaultsConflict.latest.version
+      );
+      setLineageDefaults(updated);
+      setLineageDefaultsConflict(null);
+      showToast('Saved merged defaults', 'success');
+    } catch {
+      showToast('Failed to save merged defaults', 'error');
+    } finally {
+      setSavingLineageDefaults(false);
+    }
+  };
 
   const renderTenantTree = (tenant: TenantWithChildren, depth: number = 0) => {
     const hasChildren = tenant.children && tenant.children.length > 0;
@@ -612,6 +703,70 @@ export default function Tenants() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {lineageDefaultsConflict && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full">
+            <h2 className="text-xl font-bold mb-2">Lineage Defaults Conflict</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Another user updated these defaults while you were editing. Choose how to resolve the conflict.
+            </p>
+            <div className="space-y-2 mb-4">
+              {LINEAGE_DEFAULT_FIELDS.map((field) => (
+                <div key={`conflict-${field}`} className="border border-gray-200 rounded p-2">
+                  <div className="text-xs font-semibold text-gray-700 mb-1">{field}</div>
+                  <div className="text-xs text-gray-600 mb-2">
+                    <span className="mr-3">Latest: {String(lineageDefaultsConflict.latest[field])}</span>
+                    <span>Mine: {String(lineageDefaultsConflict.pending[field])}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      className={`px-2 py-0.5 rounded border ${lineageDefaultsConflict.mergeChoice[field] === 'LATEST' ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-gray-300 bg-white text-gray-700'}`}
+                      onClick={() => setLineageDefaultsConflict((prev) => prev ? ({ ...prev, mergeChoice: { ...prev.mergeChoice, [field]: 'LATEST' } }) : prev)}
+                    >
+                      Use latest
+                    </button>
+                    <button
+                      className={`px-2 py-0.5 rounded border ${lineageDefaultsConflict.mergeChoice[field] === 'MINE' ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-gray-300 bg-white text-gray-700'}`}
+                      onClick={() => setLineageDefaultsConflict((prev) => prev ? ({ ...prev, mergeChoice: { ...prev.mergeChoice, [field]: 'MINE' } }) : prev)}
+                    >
+                      Use mine
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                onClick={() => setLineageDefaultsConflict(null)}
+              >
+                Close
+              </button>
+              <button
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                onClick={resolveConflictUseLatest}
+              >
+                Use Latest
+              </button>
+              <button
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                disabled={savingLineageDefaults}
+                onClick={() => { void resolveConflictReapplyMine(); }}
+              >
+                Reapply Mine
+              </button>
+              <button
+                className="btn-primary"
+                disabled={savingLineageDefaults}
+                onClick={() => { void resolveConflictSaveMerged(); }}
+              >
+                Merge And Save
+              </button>
+            </div>
           </div>
         </div>
       )}
