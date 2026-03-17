@@ -67,6 +67,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Pipelines page now has expandable run details (status/timing/error + alert evaluation breakdown + raw result payload) for faster debugging.
 - Pipeline listing now supports health-focused filtering (`problematic`, `running`, `failed`, `healthy`) and sort modes for faster incident triage.
 - Pipeline list API supports optional `includeRunSummary=true` to return latest run status/timestamp metadata.
+- Dashboard now highlights "Problem Pipelines" with direct links and a one-click jump to the pipelines triage view (`/pipelines?health=PROBLEMATIC`).
 
 ---
 

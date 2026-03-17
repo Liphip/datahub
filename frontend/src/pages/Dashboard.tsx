@@ -20,7 +20,7 @@ export default function Dashboard() {
       if (!tenantId) { setLoading(false); return; }
       try {
         const [pipelinesData, modulesData, connectorsData] = await Promise.all([
-          api.getPipelines(tenantId),
+          api.getPipelines(tenantId, { includeRunSummary: true }),
           api.getModules(tenantId),
           api.getConnectors(tenantId),
         ]);
@@ -57,6 +57,16 @@ export default function Dashboard() {
   const activePipelines = pipelines.filter((p) => p.isActive).length;
   const failedRuns = allRuns.filter((r) => r.status === 'FAILED').length;
   const successRuns = allRuns.filter((r) => r.status === 'SUCCESS').length;
+  const problematicPipelines = pipelines
+    .filter((p) => p.latestRunStatus === 'FAILED' || p.latestRunStatus === 'RUNNING' || p.latestRunStatus === 'PENDING')
+    .sort((a, b) => {
+      const weight = (s?: string) => (s === 'FAILED' ? 0 : s === 'RUNNING' || s === 'PENDING' ? 1 : 2);
+      const w = weight(a.latestRunStatus) - weight(b.latestRunStatus);
+      if (w !== 0) return w;
+      const aTime = a.latestRunStartedAt ? new Date(a.latestRunStartedAt).getTime() : 0;
+      const bTime = b.latestRunStartedAt ? new Date(b.latestRunStartedAt).getTime() : 0;
+      return bTime - aTime;
+    });
 
   const runStatusColor: Record<string, string> = {
     SUCCESS: 'bg-green-500',
@@ -144,6 +154,40 @@ export default function Dashboard() {
 
         {/* Sidebar — 1/3 width */}
         <div className="space-y-6">
+          {!loading && (
+            <div className="card border-l-4 border-l-amber-500">
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-base font-semibold">Problem Pipelines</h2>
+                <span className={`text-xs px-2 py-0.5 rounded ${problematicPipelines.length > 0 ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
+                  {problematicPipelines.length}
+                </span>
+              </div>
+              {problematicPipelines.length > 0 ? (
+                <>
+                  <ul className="space-y-2 mb-3">
+                    {problematicPipelines.slice(0, 5).map((p) => (
+                      <li key={p.id} className="flex items-center justify-between text-sm">
+                        <Link to={`/pipelines/${p.id}`} className="text-primary-600 hover:underline truncate">
+                          {p.name}
+                        </Link>
+                        <span className={`ml-2 px-2 py-0.5 rounded text-xs ${
+                          p.latestRunStatus === 'FAILED'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-yellow-100 text-yellow-800'
+                        }`}>
+                          {p.latestRunStatus}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <Link to="/pipelines?health=PROBLEMATIC" className="btn-secondary block text-center text-sm">Open Problem View</Link>
+                </>
+              ) : (
+                <p className="text-sm text-gray-500">No failing or running pipelines right now.</p>
+              )}
+            </div>
+          )}
+
           {/* Quick actions */}
           <div className="card">
             <h2 className="text-base font-semibold mb-3">Quick Actions</h2>

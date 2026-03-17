@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { Pipeline, PipelineRun } from '../types';
@@ -11,6 +11,7 @@ type SortMode = 'RECENT_RUN' | 'NAME';
 export default function Pipelines() {
   const { user, selectedTenantId } = useAuthStore();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [runsMap, setRunsMap] = useState<RunMap>({});
   const [loading, setLoading] = useState(true);
@@ -23,7 +24,13 @@ export default function Pipelines() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [expandedPipelineId, setExpandedPipelineId] = useState<string | null>(null);
   const [selectedRunIdByPipeline, setSelectedRunIdByPipeline] = useState<Record<string, string>>({});
-  const [healthFilter, setHealthFilter] = useState<HealthFilter>('ALL');
+  const initialHealth = (() => {
+    const raw = (searchParams.get('health') || '').toUpperCase();
+    return (['ALL', 'PROBLEMATIC', 'RUNNING', 'FAILED', 'HEALTHY'] as const).includes(raw as HealthFilter)
+      ? (raw as HealthFilter)
+      : 'ALL';
+  })();
+  const [healthFilter, setHealthFilter] = useState<HealthFilter>(initialHealth);
   const [sortMode, setSortMode] = useState<SortMode>('RECENT_RUN');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [error, setError] = useState('');
@@ -209,6 +216,17 @@ export default function Pipelines() {
       return bTime - aTime;
     });
 
+  const applyHealthFilter = (filter: HealthFilter) => {
+    setHealthFilter(filter);
+    const next = new URLSearchParams(searchParams);
+    if (filter === 'ALL') {
+      next.delete('health');
+    } else {
+      next.set('health', filter);
+    }
+    setSearchParams(next, { replace: true });
+  };
+
   return (
     <div className="px-4 py-6 sm:px-0">
       {/* Toast */}
@@ -231,7 +249,7 @@ export default function Pipelines() {
         {(['ALL', 'PROBLEMATIC', 'RUNNING', 'FAILED', 'HEALTHY'] as const).map((filter) => (
           <button
             key={filter}
-            onClick={() => setHealthFilter(filter)}
+            onClick={() => applyHealthFilter(filter)}
             className={`px-3 py-1.5 text-xs rounded border ${
               healthFilter === filter ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
             }`}
