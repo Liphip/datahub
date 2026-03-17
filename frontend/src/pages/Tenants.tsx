@@ -17,6 +17,7 @@ interface LineageDefaultsConflictState {
 }
 
 type TenantDefaultsConflictTelemetry = Record<string, { count: number; lastConflictAt?: string }>;
+type LineagePollStatus = 'IDLE' | 'FRESH' | 'STALE' | 'OFFLINE';
 
 const DEFAULT_TENANT_LINEAGE_DEFAULTS: TenantLineageDefaults = {
   safeScopePolicy: 'AUTO',
@@ -53,6 +54,8 @@ export default function Tenants() {
   const [savingLineageDefaults, setSavingLineageDefaults] = useState(false);
   const [lineageDefaultsConflict, setLineageDefaultsConflict] = useState<LineageDefaultsConflictState | null>(null);
   const [lineageDefaultsStaleLatest, setLineageDefaultsStaleLatest] = useState<TenantLineageDefaults | null>(null);
+  const [lineagePollStatus, setLineagePollStatus] = useState<LineagePollStatus>('IDLE');
+  const [lineagePollCheckedAt, setLineagePollCheckedAt] = useState<string | null>(null);
   const [conflictTelemetryByTenant, setConflictTelemetryByTenant] = useState<TenantDefaultsConflictTelemetry>(() => {
     try {
       const raw = localStorage.getItem(TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY);
@@ -164,6 +167,8 @@ export default function Tenants() {
     const loadLineageDefaults = async () => {
       if (!lineageDefaultsTenantId) {
         setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+        setLineagePollStatus('IDLE');
+        setLineagePollCheckedAt(null);
         return;
       }
       setLoadingLineageDefaults(true);
@@ -174,11 +179,15 @@ export default function Tenants() {
           setLineageDefaultsBase(toLineageDefaultsConfig(response.data));
           setLineageDefaultsEtag(response.etag);
         }
+        setLineagePollStatus('FRESH');
+        setLineagePollCheckedAt(new Date().toISOString());
         setLineageDefaultsStaleLatest(null);
       } catch {
         setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
         setLineageDefaultsBase(DEFAULT_TENANT_LINEAGE_DEFAULTS);
         setLineageDefaultsEtag(undefined);
+        setLineagePollStatus('OFFLINE');
+        setLineagePollCheckedAt(new Date().toISOString());
         setLineageDefaultsStaleLatest(null);
       } finally {
         setLoadingLineageDefaults(false);
@@ -195,6 +204,8 @@ export default function Tenants() {
     setLineageDefaultsConflict(null);
     setLineageDefaultsStaleLatest(null);
     setLineageDefaultsEtag(undefined);
+    setLineagePollStatus('IDLE');
+    setLineagePollCheckedAt(null);
   }, [lineageDefaultsTenantId]);
 
   const isLineageDefaultsDirty = !isSameLineageConfig(toLineageDefaultsConfig(lineageDefaults), lineageDefaultsBase);
@@ -208,12 +219,19 @@ export default function Tenants() {
           setLineageDefaultsEtag(latestResponse.etag);
           if (latestResponse.data.version && lineageDefaults.version && latestResponse.data.version !== lineageDefaults.version) {
             setLineageDefaultsStaleLatest(latestResponse.data);
+            setLineagePollStatus('STALE');
           } else {
             setLineageDefaultsStaleLatest(null);
+            setLineagePollStatus('FRESH');
           }
+          setLineagePollCheckedAt(new Date().toISOString());
+        } else if (latestResponse.notModified) {
+          setLineagePollStatus((prev) => (prev === 'STALE' ? 'STALE' : 'FRESH'));
+          setLineagePollCheckedAt(new Date().toISOString());
         }
       } catch {
-        // ignore stale check errors
+        setLineagePollStatus('OFFLINE');
+        setLineagePollCheckedAt(new Date().toISOString());
       }
     }, 30000);
     return () => window.clearInterval(timer);
@@ -236,11 +254,15 @@ export default function Tenants() {
       setLineageDefaultsBase(toLineageDefaultsConfig(updated));
       setLineageDefaultsEtag(undefined);
       setLineageDefaultsStaleLatest(null);
+      setLineagePollStatus('FRESH');
+      setLineagePollCheckedAt(new Date().toISOString());
       showToast('Tenant lineage defaults saved', 'success');
     } catch (err: any) {
       if (err?.response?.status === 409) {
         showToast('Defaults changed by another user. Resolve conflict before saving.', 'error');
         trackDefaultsConflict(lineageDefaultsTenantId);
+        setLineagePollStatus('STALE');
+        setLineagePollCheckedAt(new Date().toISOString());
         try {
           const latest = await api.getTenantLineageDefaults(lineageDefaultsTenantId);
           const defaultDepth = Math.min(200, Math.max(1, lineageDefaults.defaultDepth));
@@ -258,6 +280,8 @@ export default function Tenants() {
           // ignore secondary reload errors
         }
       } else {
+        setLineagePollStatus('OFFLINE');
+        setLineagePollCheckedAt(new Date().toISOString());
         showToast('Failed to save tenant lineage defaults', 'error');
       }
     } finally {
@@ -280,11 +304,15 @@ export default function Tenants() {
       setLineageDefaultsBase(toLineageDefaultsConfig(updated));
       setLineageDefaultsEtag(undefined);
       setLineageDefaultsStaleLatest(null);
+      setLineagePollStatus('FRESH');
+      setLineagePollCheckedAt(new Date().toISOString());
       showToast('Lineage defaults restored from history', 'success');
     } catch (err: any) {
       if (err?.response?.status === 409) {
         showToast('Defaults changed by another user. Resolve conflict before restoring.', 'error');
         trackDefaultsConflict(lineageDefaultsTenantId);
+        setLineagePollStatus('STALE');
+        setLineagePollCheckedAt(new Date().toISOString());
         try {
           const latest = await api.getTenantLineageDefaults(lineageDefaultsTenantId);
           const pending: TenantLineageDefaultsConfig = {
@@ -300,6 +328,8 @@ export default function Tenants() {
           // ignore secondary reload errors
         }
       } else {
+        setLineagePollStatus('OFFLINE');
+        setLineagePollCheckedAt(new Date().toISOString());
         showToast('Failed to restore lineage defaults from history', 'error');
       }
     } finally {
@@ -399,6 +429,13 @@ export default function Tenants() {
   const allTenants = flattenTenants(tenants);
   const selectedLineageDefaultsTenant = allTenants.find((t) => t.id === lineageDefaultsTenantId);
   const selectedTenantConflictTelemetry = lineageDefaultsTenantId ? conflictTelemetryByTenant[lineageDefaultsTenantId] : undefined;
+  const pollStatusClass = lineagePollStatus === 'OFFLINE'
+    ? 'border-red-300 bg-red-50 text-red-800'
+    : lineagePollStatus === 'STALE'
+      ? 'border-amber-300 bg-amber-50 text-amber-900'
+      : lineagePollStatus === 'FRESH'
+        ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
+        : 'border-slate-300 bg-slate-50 text-slate-700';
 
   const resolveConflictUseLatest = () => {
     if (!lineageDefaultsConflict) return;
@@ -406,6 +443,8 @@ export default function Tenants() {
     setLineageDefaultsBase(toLineageDefaultsConfig(lineageDefaultsConflict.latest));
     setLineageDefaultsEtag(undefined);
     setLineageDefaultsStaleLatest(null);
+    setLineagePollStatus('FRESH');
+    setLineagePollCheckedAt(new Date().toISOString());
     setLineageDefaultsConflict(null);
     showToast('Loaded latest server values', 'success');
   };
@@ -423,6 +462,8 @@ export default function Tenants() {
       setLineageDefaultsBase(toLineageDefaultsConfig(updated));
       setLineageDefaultsEtag(undefined);
       setLineageDefaultsStaleLatest(null);
+      setLineagePollStatus('FRESH');
+      setLineagePollCheckedAt(new Date().toISOString());
       setLineageDefaultsConflict(null);
       showToast('Reapplied your defaults successfully', 'success');
     } catch {
@@ -451,6 +492,8 @@ export default function Tenants() {
       setLineageDefaultsBase(toLineageDefaultsConfig(updated));
       setLineageDefaultsEtag(undefined);
       setLineageDefaultsStaleLatest(null);
+      setLineagePollStatus('FRESH');
+      setLineagePollCheckedAt(new Date().toISOString());
       setLineageDefaultsConflict(null);
       showToast('Saved merged defaults', 'success');
     } catch {
@@ -606,6 +649,14 @@ export default function Tenants() {
                   Tenant updated: {new Date(selectedLineageDefaultsTenant.updatedAt).toLocaleString()}
                 </span>
               )}
+              <span className={`px-2 py-0.5 rounded border ${pollStatusClass}`}>
+                Poll: {lineagePollStatus.toLowerCase()}
+              </span>
+              {lineagePollCheckedAt && (
+                <span>
+                  Checked: {new Date(lineagePollCheckedAt).toLocaleTimeString()}
+                </span>
+              )}
               {selectedTenantConflictTelemetry && (
                 <>
                   <span className="px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900">
@@ -638,6 +689,8 @@ export default function Tenants() {
                   setLineageDefaults(lineageDefaultsStaleLatest);
                   setLineageDefaultsBase(toLineageDefaultsConfig(lineageDefaultsStaleLatest));
                   setLineageDefaultsStaleLatest(null);
+                  setLineagePollStatus('FRESH');
+                  setLineagePollCheckedAt(new Date().toISOString());
                   showToast('Loaded latest tenant defaults', 'success');
                 }}
               >

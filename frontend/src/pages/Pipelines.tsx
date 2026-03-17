@@ -33,6 +33,7 @@ type TenantLineageDefaultsConflict = {
   mergeChoice: TenantLineageMergeChoice;
 };
 type TenantDefaultsConflictTelemetry = Record<string, { count: number; lastConflictAt?: string }>;
+type TenantDefaultsPollStatus = 'IDLE' | 'FRESH' | 'STALE' | 'OFFLINE';
 
 type TriagePreset = {
   name: string;
@@ -88,6 +89,8 @@ export default function Pipelines() {
   const [savingTenantLineageDefaults, setSavingTenantLineageDefaults] = useState(false);
   const [tenantDefaultsConflict, setTenantDefaultsConflict] = useState<TenantLineageDefaultsConflict | null>(null);
   const [tenantDefaultsStaleLatest, setTenantDefaultsStaleLatest] = useState<TenantLineageDefaults | null>(null);
+  const [tenantDefaultsPollStatus, setTenantDefaultsPollStatus] = useState<TenantDefaultsPollStatus>('IDLE');
+  const [tenantDefaultsPollCheckedAt, setTenantDefaultsPollCheckedAt] = useState<string | null>(null);
   const [tenantDefaultsConflictTelemetry, setTenantDefaultsConflictTelemetry] = useState<TenantDefaultsConflictTelemetry>(() => {
     try {
       const raw = localStorage.getItem(TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY);
@@ -316,6 +319,8 @@ export default function Pipelines() {
       if (!tenantId || !canReadPipelines) {
         setTenantLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
         setTenantLineageDefaultsEtag(undefined);
+        setTenantDefaultsPollStatus('IDLE');
+        setTenantDefaultsPollCheckedAt(null);
         setTenantDefaultsStaleLatest(null);
         return;
       }
@@ -332,10 +337,14 @@ export default function Pipelines() {
           });
           setTenantLineageDefaultsEtag(response.etag);
         }
+        setTenantDefaultsPollStatus('FRESH');
+        setTenantDefaultsPollCheckedAt(new Date().toISOString());
         setTenantDefaultsStaleLatest(null);
       } catch {
         setTenantLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
         setTenantLineageDefaultsEtag(undefined);
+        setTenantDefaultsPollStatus('OFFLINE');
+        setTenantDefaultsPollCheckedAt(new Date().toISOString());
         setTenantDefaultsStaleLatest(null);
       }
     };
@@ -345,6 +354,8 @@ export default function Pipelines() {
   useEffect(() => {
     setTenantDefaultsConflict(null);
     setTenantLineageDefaultsEtag(undefined);
+    setTenantDefaultsPollStatus('IDLE');
+    setTenantDefaultsPollCheckedAt(null);
   }, [tenantId]);
 
   useEffect(() => {
@@ -357,12 +368,19 @@ export default function Pipelines() {
           const latest = latestResponse.data;
           if (latest.version && tenantLineageDefaults.version && latest.version !== tenantLineageDefaults.version) {
             setTenantDefaultsStaleLatest(latest);
+            setTenantDefaultsPollStatus('STALE');
           } else {
             setTenantDefaultsStaleLatest(null);
+            setTenantDefaultsPollStatus('FRESH');
           }
+          setTenantDefaultsPollCheckedAt(new Date().toISOString());
+        } else if (latestResponse.notModified) {
+          setTenantDefaultsPollStatus((prev) => (prev === 'STALE' ? 'STALE' : 'FRESH'));
+          setTenantDefaultsPollCheckedAt(new Date().toISOString());
         }
       } catch {
-        // ignore background stale checks
+        setTenantDefaultsPollStatus('OFFLINE');
+        setTenantDefaultsPollCheckedAt(new Date().toISOString());
       }
     }, 30000);
     return () => window.clearInterval(timer);
@@ -1128,12 +1146,16 @@ export default function Pipelines() {
       setTenantLineageDefaults(updated);
       setTenantLineageDefaultsEtag(undefined);
       setTenantDefaultsStaleLatest(null);
+      setTenantDefaultsPollStatus('FRESH');
+      setTenantDefaultsPollCheckedAt(new Date().toISOString());
       showToast('Tenant lineage defaults updated', 'success');
       await handleLoadRunLineage(pipelineId, runId, depth, undefined, undefined, mode, policy);
     } catch (err: any) {
       if (err?.response?.status === 409) {
         showToast('Tenant defaults changed elsewhere. Resolve conflict to continue.', 'error');
         trackTenantDefaultsConflict(tenantId);
+        setTenantDefaultsPollStatus('STALE');
+        setTenantDefaultsPollCheckedAt(new Date().toISOString());
         try {
           const latest = await api.getTenantLineageDefaults(tenantId);
           setTenantLineageDefaultsEtag(undefined);
@@ -1143,6 +1165,8 @@ export default function Pipelines() {
           // ignore secondary refresh errors
         }
       } else {
+        setTenantDefaultsPollStatus('OFFLINE');
+        setTenantDefaultsPollCheckedAt(new Date().toISOString());
         showToast('Failed to update tenant lineage defaults', 'error');
       }
     } finally {
@@ -1155,6 +1179,8 @@ export default function Pipelines() {
     setTenantLineageDefaults(tenantDefaultsConflict.latest);
     setTenantLineageDefaultsEtag(undefined);
     setTenantDefaultsStaleLatest(null);
+    setTenantDefaultsPollStatus('FRESH');
+    setTenantDefaultsPollCheckedAt(new Date().toISOString());
     setTenantDefaultsConflict(null);
     showToast('Loaded latest tenant defaults', 'success');
   };
@@ -1171,6 +1197,8 @@ export default function Pipelines() {
       setTenantLineageDefaults(updated);
       setTenantLineageDefaultsEtag(undefined);
       setTenantDefaultsStaleLatest(null);
+      setTenantDefaultsPollStatus('FRESH');
+      setTenantDefaultsPollCheckedAt(new Date().toISOString());
       const { pipelineId, runId, pending } = tenantDefaultsConflict;
       setTenantDefaultsConflict(null);
       showToast('Reapplied your tenant defaults', 'success');
@@ -1184,6 +1212,8 @@ export default function Pipelines() {
         pending.safeScopePolicy
       );
     } catch {
+      setTenantDefaultsPollStatus('OFFLINE');
+      setTenantDefaultsPollCheckedAt(new Date().toISOString());
       showToast('Failed to reapply tenant defaults', 'error');
     } finally {
       setSavingTenantLineageDefaults(false);
@@ -1216,6 +1246,8 @@ export default function Pipelines() {
       setTenantLineageDefaults(updated);
       setTenantLineageDefaultsEtag(undefined);
       setTenantDefaultsStaleLatest(null);
+      setTenantDefaultsPollStatus('FRESH');
+      setTenantDefaultsPollCheckedAt(new Date().toISOString());
       const { pipelineId, runId } = tenantDefaultsConflict;
       setTenantDefaultsConflict(null);
       showToast('Saved merged tenant defaults', 'success');
@@ -1229,6 +1261,8 @@ export default function Pipelines() {
         merged.safeScopePolicy
       );
     } catch {
+      setTenantDefaultsPollStatus('OFFLINE');
+      setTenantDefaultsPollCheckedAt(new Date().toISOString());
       showToast('Failed to save merged tenant defaults', 'error');
     } finally {
       setSavingTenantLineageDefaults(false);
@@ -2803,6 +2837,14 @@ export default function Pipelines() {
                                     <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
                                       Tenant defaults: {tenantLineageDefaults.defaultFetchMode} d{tenantLineageDefaults.defaultDepth} cap d{tenantLineageDefaults.maxDepthCap} {tenantLineageDefaults.safeScopePolicy.toLowerCase()}
                                     </span>
+                                    <span className={`px-2 py-0.5 rounded border ${tenantDefaultsPollStatus === 'OFFLINE' ? 'border-red-300 bg-red-50 text-red-800' : tenantDefaultsPollStatus === 'STALE' ? 'border-amber-300 bg-amber-50 text-amber-900' : tenantDefaultsPollStatus === 'FRESH' ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-slate-300 bg-slate-50 text-slate-700'}`}>
+                                      Poll: {tenantDefaultsPollStatus.toLowerCase()}
+                                    </span>
+                                    {tenantDefaultsPollCheckedAt && (
+                                      <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                        Checked: {new Date(tenantDefaultsPollCheckedAt).toLocaleTimeString()}
+                                      </span>
+                                    )}
                                     {tenantDefaultsStaleLatest && (
                                       <>
                                         <span className="px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900">
@@ -2814,6 +2856,8 @@ export default function Pipelines() {
                                             e.preventDefault();
                                             setTenantLineageDefaults(tenantDefaultsStaleLatest);
                                             setTenantDefaultsStaleLatest(null);
+                                            setTenantDefaultsPollStatus('FRESH');
+                                            setTenantDefaultsPollCheckedAt(new Date().toISOString());
                                             showToast('Loaded latest tenant defaults', 'success');
                                           }}
                                         >
