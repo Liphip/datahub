@@ -114,6 +114,55 @@ class PipelineResource {
     }
     
     @GET
+    @Path("/runs/summary")
+    fun getRunSummary(@QueryParam("tenantId") tenantId: String, @QueryParam("limit") limit: Int?): Response {
+        val tenantUuid = try {
+            parseUuid(tenantId, "tenantId")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+
+        val maxRows = (limit ?: 50).coerceIn(1, 500)
+        val runs = em.createQuery(
+            "SELECT r FROM PipelineRun r WHERE r.pipeline.tenant.id = :tenantId ORDER BY r.startedAt DESC",
+            PipelineRun::class.java
+        )
+            .setParameter("tenantId", tenantUuid)
+            .setMaxResults(maxRows)
+            .resultList
+
+        val total = runs.size
+        val success = runs.count { it.status.name == "SUCCESS" }
+        val failed = runs.count { it.status.name == "FAILED" }
+        val running = runs.count { it.status.name == "RUNNING" || it.status.name == "PENDING" }
+        val completedDurations = runs.mapNotNull { run ->
+            if (run.startedAt != null && run.completedAt != null) {
+                java.time.Duration.between(run.startedAt, run.completedAt).toMillis()
+            } else {
+                null
+            }
+        }
+        val avgDurationMs = if (completedDurations.isNotEmpty()) {
+            completedDurations.average().toLong()
+        } else {
+            null
+        }
+        val successRate = if (total > 0) (success.toDouble() / total) else 0.0
+
+        return Response.ok(
+            mapOf(
+                "windowSize" to maxRows,
+                "totalRuns" to total,
+                "successRuns" to success,
+                "failedRuns" to failed,
+                "inFlightRuns" to running,
+                "successRate" to successRate,
+                "avgDurationMs" to avgDurationMs
+            )
+        ).build()
+    }
+
+    @GET
     fun list(
         @QueryParam("tenantId") tenantId: String,
         @QueryParam("includeRunSummary") includeRunSummary: String?,

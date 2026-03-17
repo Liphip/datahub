@@ -77,6 +77,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Tenant API recursive listing now supports `query` filtering to return matching branches only.
 - Tenants UI now includes tenant-name search and expand/collapse controls for large hierarchies.
 - Dashboard now includes superadmin tenant topology insights (total/root/leaf/depth + last update) powered by recursive tenant metadata.
+- Added `GET /pipelines/runs/summary` aggregate endpoint and dashboard reliability panel (success rate, failures, in-flight runs, average duration).
 
 ---
 

@@ -216,4 +216,34 @@ class PipelineResourceTest {
             .statusCode(400)
             .body("error", equalTo("Invalid pipeline id"))
     }
+
+    @Test
+    fun testGetRunSummaryReturnsAggregateFields() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("tenantId", tenantId)
+            .queryParam("limit", 25)
+        .`when`()
+            .get("/api/internal/v1/pipelines/runs/summary")
+        .then()
+            .statusCode(200)
+            .body("windowSize", equalTo(25))
+            .body("totalRuns", notNullValue())
+            .body("successRate", notNullValue())
+            .body("failedRuns", notNullValue())
+            .body("inFlightRuns", notNullValue())
+    }
 }

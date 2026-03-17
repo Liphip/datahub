@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Pipeline, PipelineRun, CodeModule, Connector, Tenant } from '../types';
+import type { Pipeline, PipelineRun, CodeModule, Connector, Tenant, PipelineRunSummary } from '../types';
 
 interface TenantNode extends Tenant {
   children?: TenantNode[];
@@ -15,6 +15,7 @@ export default function Dashboard() {
   const [modules, setModules] = useState<CodeModule[]>([]);
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [tenantTree, setTenantTree] = useState<TenantNode[]>([]);
+  const [runSummary, setRunSummary] = useState<PipelineRunSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -49,6 +50,13 @@ export default function Dashboard() {
           .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
           .slice(0, 10);
         setAllRuns(combined);
+
+        try {
+          const summary = await api.getPipelineRunSummary(tenantId, 50);
+          setRunSummary(summary);
+        } catch {
+          setRunSummary(null);
+        }
 
         if (user?.superadmin) {
           try {
@@ -222,6 +230,32 @@ export default function Dashboard() {
               )}
             </div>
           )}
+
+          {/* Quick actions */}
+          <div className="card">
+            <h2 className="text-base font-semibold mb-3">Execution Reliability</h2>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <p className="text-gray-500">Window</p>
+                <p className="font-semibold text-gray-900">{runSummary?.windowSize ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-gray-500">Success Rate</p>
+                <p className={`font-semibold ${(runSummary?.successRate ?? 0) >= 0.9 ? 'text-green-700' : (runSummary?.successRate ?? 0) >= 0.75 ? 'text-amber-700' : 'text-red-700'}`}>
+                  {runSummary ? `${Math.round(runSummary.successRate * 100)}%` : 'n/a'}
+                </p>
+              </div>
+              <div>
+                <p className="text-gray-500">Failures</p>
+                <p className="font-semibold text-gray-900">{runSummary?.failedRuns ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-gray-500">In Flight</p>
+                <p className="font-semibold text-gray-900">{runSummary?.inFlightRuns ?? 0}</p>
+              </div>
+            </div>
+            <p className="mt-3 text-xs text-gray-500">Average duration: {runSummary?.avgDurationMs != null ? `${runSummary.avgDurationMs} ms` : 'n/a'}</p>
+          </div>
 
           {/* Quick actions */}
           <div className="card">

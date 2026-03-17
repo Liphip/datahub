@@ -104,6 +104,16 @@ export interface PipelineRun {
   metrics: Record<string, unknown>;
 }
 
+export interface PipelineRunSummary {
+  windowSize: number;
+  totalRuns: number;
+  successRuns: number;
+  failedRuns: number;
+  inFlightRuns: number;
+  successRate: number;
+  avgDurationMs?: number;
+}
+
 export interface AlertChannel {
   id: string;
   tenantId?: string;
