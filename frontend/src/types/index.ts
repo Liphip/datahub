@@ -102,6 +102,19 @@ export interface PipelineRun {
   errorMessage?: string;
   alertsFired?: number;
   alertEvaluation?: Record<string, unknown>;
+  moduleLogs?: Array<{
+    stage: 'IMPORT' | 'PROCESSING' | 'EXPORT' | string;
+    order?: number;
+    moduleVersionId?: string;
+    moduleName?: string;
+    success?: boolean;
+    stdout?: string;
+    stderr?: string;
+    exitCode?: number;
+    durationMs?: number;
+    error?: string;
+  }>;
+  executionLog?: string[];
   metrics: Record<string, unknown>;
 }
 

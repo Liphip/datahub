@@ -37,6 +37,11 @@ class PipelineConsumer {
     
     private val LOG = Logger.getLogger(PipelineConsumer::class.java)
     private val objectMapper = ObjectMapper()
+
+    private fun trimLog(value: String, maxLength: Int = 8000): String {
+        if (value.length <= maxLength) return value
+        return value.take(maxLength) + "\n...<truncated>"
+    }
     
     @Inject
     lateinit var dockerService: DockerService
@@ -158,7 +163,9 @@ class PipelineConsumer {
                 run.metrics = objectMapper.writeValueAsString(
                     mapOf(
                         "executionMs" to executionMs,
-                        "result" to result
+                        "result" to result["result"],
+                        "moduleLogs" to result["moduleLogs"],
+                        "executionLog" to result["executionLog"]
                     )
                 )
                 run.persist()
@@ -169,7 +176,7 @@ class PipelineConsumer {
                 pipelineId = pipelineId,
                 stage = "complete",
                 success = true,
-                result = result
+                result = result["result"]
             )
         } catch (e: Exception) {
             LOG.errorf("Pipeline execution failed: %s", e.message)
@@ -179,10 +186,14 @@ class PipelineConsumer {
                 run.status = PipelineRunStatus.FAILED
                 run.completedAt = java.time.Instant.now()
                 run.errorMessage = e.message
+                val moduleException = e as? ModuleExecutionException
                 run.metrics = objectMapper.writeValueAsString(
                     mapOf(
                         "executionMs" to executionMs,
-                        "error" to (e.message ?: "Pipeline execution failed")
+                        "error" to (e.message ?: "Pipeline execution failed"),
+                        "stdout" to (moduleException?.stdout?.let { trimLog(it) }),
+                        "stderr" to (moduleException?.stderr?.let { trimLog(it) }),
+                        "exitCode" to moduleException?.exitCode
                     )
                 )
                 run.persist()
@@ -200,6 +211,8 @@ class PipelineConsumer {
     
     private fun executePipeline(pipeline: Pipeline, runId: String, inputData: Map<String, Any>?): Map<String, Any?> {
         val results = mutableMapOf<String, Any?>()
+        val moduleLogs = mutableListOf<Map<String, Any?>>()
+        val executionLog = mutableListOf<String>()
         
         var data = inputData
         
@@ -207,17 +220,45 @@ class PipelineConsumer {
             val importVersion = ModuleVersion.findById(importId)
             if (importVersion != null) {
                 LOG.infof("Executing import module: %s", importVersion.module?.name)
-                val importResult = dockerService.executeModule(
-                    importVersion,
-                    data,
-                    pipeline.id.toString(),
-                    runId,
-                    ModuleType.IMPORT
-                )
-                results["import"] = importResult
-                if (importResult is Map<*, *>) {
-                    @Suppress("UNCHECKED_CAST")
-                    data = importResult as? Map<String, Any>
+                executionLog.add("START IMPORT ${importVersion.module?.name ?: importVersion.id}")
+                try {
+                    val importOutput = dockerService.executeModule(
+                        importVersion,
+                        data,
+                        pipeline.id.toString(),
+                        runId,
+                        ModuleType.IMPORT
+                    )
+                    val importResult = importOutput.result
+                    results["import"] = importResult
+                    moduleLogs.add(mapOf(
+                        "stage" to "IMPORT",
+                        "moduleVersionId" to importVersion.id,
+                        "moduleName" to importVersion.module?.name,
+                        "success" to true,
+                        "stdout" to trimLog(importOutput.stdout),
+                        "stderr" to trimLog(importOutput.stderr),
+                        "exitCode" to importOutput.exitCode,
+                        "durationMs" to importOutput.durationMs
+                    ))
+                    executionLog.add("DONE IMPORT ${importVersion.module?.name ?: importVersion.id} (${importOutput.durationMs}ms)")
+                    if (importResult is Map<*, *>) {
+                        @Suppress("UNCHECKED_CAST")
+                        data = importResult as? Map<String, Any>
+                    }
+                } catch (e: ModuleExecutionException) {
+                    moduleLogs.add(mapOf(
+                        "stage" to "IMPORT",
+                        "moduleVersionId" to importVersion.id,
+                        "moduleName" to importVersion.module?.name,
+                        "success" to false,
+                        "stdout" to trimLog(e.stdout),
+                        "stderr" to trimLog(e.stderr),
+                        "exitCode" to e.exitCode,
+                        "error" to e.message
+                    ))
+                    executionLog.add("FAIL IMPORT ${importVersion.module?.name ?: importVersion.id}: ${e.message}")
+                    throw e
                 }
             }
         }
@@ -226,17 +267,47 @@ class PipelineConsumer {
             val processingVersion = ModuleVersion.findById(processingId)
             if (processingVersion != null && data != null) {
                 LOG.infof("Executing processing module %d: %s", index + 1, processingVersion.module?.name)
-                val processingResult = dockerService.executeModule(
-                    processingVersion,
-                    data,
-                    pipeline.id.toString(),
-                    runId,
-                    ModuleType.PROCESSING
-                )
-                results["processing_${index + 1}"] = processingResult
-                if (processingResult is Map<*, *>) {
-                    @Suppress("UNCHECKED_CAST")
-                    data = processingResult as? Map<String, Any>
+                executionLog.add("START PROCESSING #${index + 1} ${processingVersion.module?.name ?: processingVersion.id}")
+                try {
+                    val processingOutput = dockerService.executeModule(
+                        processingVersion,
+                        data,
+                        pipeline.id.toString(),
+                        runId,
+                        ModuleType.PROCESSING
+                    )
+                    val processingResult = processingOutput.result
+                    results["processing_${index + 1}"] = processingResult
+                    moduleLogs.add(mapOf(
+                        "stage" to "PROCESSING",
+                        "order" to (index + 1),
+                        "moduleVersionId" to processingVersion.id,
+                        "moduleName" to processingVersion.module?.name,
+                        "success" to true,
+                        "stdout" to trimLog(processingOutput.stdout),
+                        "stderr" to trimLog(processingOutput.stderr),
+                        "exitCode" to processingOutput.exitCode,
+                        "durationMs" to processingOutput.durationMs
+                    ))
+                    executionLog.add("DONE PROCESSING #${index + 1} ${processingVersion.module?.name ?: processingVersion.id} (${processingOutput.durationMs}ms)")
+                    if (processingResult is Map<*, *>) {
+                        @Suppress("UNCHECKED_CAST")
+                        data = processingResult as? Map<String, Any>
+                    }
+                } catch (e: ModuleExecutionException) {
+                    moduleLogs.add(mapOf(
+                        "stage" to "PROCESSING",
+                        "order" to (index + 1),
+                        "moduleVersionId" to processingVersion.id,
+                        "moduleName" to processingVersion.module?.name,
+                        "success" to false,
+                        "stdout" to trimLog(e.stdout),
+                        "stderr" to trimLog(e.stderr),
+                        "exitCode" to e.exitCode,
+                        "error" to e.message
+                    ))
+                    executionLog.add("FAIL PROCESSING #${index + 1} ${processingVersion.module?.name ?: processingVersion.id}: ${e.message}")
+                    throw e
                 }
             }
         }
@@ -245,14 +316,44 @@ class PipelineConsumer {
             val exportVersion = ModuleVersion.findById(exportId)
             if (exportVersion != null && data != null) {
                 LOG.infof("Executing export module %d: %s", index + 1, exportVersion.module?.name)
-                val exportResult = dockerService.executeModule(
-                    exportVersion,
-                    data,
-                    pipeline.id.toString(),
-                    runId,
-                    ModuleType.EXPORT
-                )
-                results["export_${index + 1}"] = exportResult
+                executionLog.add("START EXPORT #${index + 1} ${exportVersion.module?.name ?: exportVersion.id}")
+                try {
+                    val exportOutput = dockerService.executeModule(
+                        exportVersion,
+                        data,
+                        pipeline.id.toString(),
+                        runId,
+                        ModuleType.EXPORT
+                    )
+                    val exportResult = exportOutput.result
+                    results["export_${index + 1}"] = exportResult
+                    moduleLogs.add(mapOf(
+                        "stage" to "EXPORT",
+                        "order" to (index + 1),
+                        "moduleVersionId" to exportVersion.id,
+                        "moduleName" to exportVersion.module?.name,
+                        "success" to true,
+                        "stdout" to trimLog(exportOutput.stdout),
+                        "stderr" to trimLog(exportOutput.stderr),
+                        "exitCode" to exportOutput.exitCode,
+                        "durationMs" to exportOutput.durationMs
+                    ))
+                    executionLog.add("DONE EXPORT #${index + 1} ${exportVersion.module?.name ?: exportVersion.id} (${exportOutput.durationMs}ms)")
+                } catch (e: ModuleExecutionException) {
+                    moduleLogs.add(mapOf(
+                        "stage" to "EXPORT",
+                        "order" to (index + 1),
+                        "moduleVersionId" to exportVersion.id,
+                        "moduleName" to exportVersion.module?.name,
+                        "success" to false,
+                        "stdout" to trimLog(e.stdout),
+                        "stderr" to trimLog(e.stderr),
+                        "exitCode" to e.exitCode,
+                        "error" to e.message
+                    ))
+                    executionLog.add("FAIL EXPORT #${index + 1} ${exportVersion.module?.name ?: exportVersion.id}: ${e.message}")
+                    throw e
+                }
             }
         }
 
@@ -267,7 +368,11 @@ class PipelineConsumer {
                 "cooldownSkipped" to alertReport.cooldownSkipped
             )
         }
-        
-        return results
+
+        return mapOf(
+            "result" to results,
+            "moduleLogs" to moduleLogs,
+            "executionLog" to executionLog
+        )
     }
 }

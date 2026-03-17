@@ -1473,6 +1473,8 @@ export default function Pipelines() {
                           const resultPayload = (selectedRun.metrics?.result as Record<string, unknown> | undefined) ?? selectedRun.metrics;
                           const alertEvaluation = (selectedRun.alertEvaluation as Record<string, unknown> | undefined)
                             ?? (resultPayload?.alertEvaluation as Record<string, unknown> | undefined);
+                          const moduleLogs = selectedRun.moduleLogs ?? (selectedRun.metrics?.moduleLogs as PipelineRun['moduleLogs']);
+                          const executionLog = selectedRun.executionLog ?? (selectedRun.metrics?.executionLog as string[] | undefined);
                           return (
                             <div className="text-xs text-gray-700 space-y-2">
                               <div className="flex flex-wrap gap-4">
@@ -1491,6 +1493,40 @@ export default function Pipelines() {
                               )}
                               {selectedRun.errorMessage && (
                                 <div className="text-red-700">Error: {selectedRun.errorMessage}</div>
+                              )}
+                              {Array.isArray(executionLog) && executionLog.length > 0 && (
+                                <div>
+                                  <div className="font-semibold text-gray-800 mb-1">Execution Timeline</div>
+                                  <pre className="mt-1 max-h-28 overflow-auto rounded bg-white border border-gray-200 p-2 text-[11px] text-gray-700">{executionLog.join('\n')}</pre>
+                                </div>
+                              )}
+                              {Array.isArray(moduleLogs) && moduleLogs.length > 0 && (
+                                <div className="space-y-2">
+                                  <div className="font-semibold text-gray-800">Module Logs</div>
+                                  {moduleLogs.map((moduleLog, index) => (
+                                    <div key={`${selectedRun.id}-log-${index}`} className="rounded border border-gray-200 bg-white p-2">
+                                      <div className="flex flex-wrap gap-3 mb-1 text-[11px]">
+                                        <span>Stage: <strong>{moduleLog.stage}</strong></span>
+                                        {moduleLog.order != null && <span>Order: <strong>{moduleLog.order}</strong></span>}
+                                        <span>Module: <strong>{moduleLog.moduleName || moduleLog.moduleVersionId || 'unknown'}</strong></span>
+                                        <span>Status: <strong>{moduleLog.success === false ? 'FAILED' : 'SUCCESS'}</strong></span>
+                                        {moduleLog.durationMs != null && <span>Duration: <strong>{moduleLog.durationMs} ms</strong></span>}
+                                        {moduleLog.exitCode != null && <span>Exit: <strong>{moduleLog.exitCode}</strong></span>}
+                                      </div>
+                                      {moduleLog.error && <div className="text-red-700 mb-1">Error: {moduleLog.error}</div>}
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                        <div>
+                                          <div className="font-medium text-gray-700 mb-1">stdout</div>
+                                          <pre className="max-h-32 overflow-auto rounded bg-gray-50 border border-gray-200 p-2 text-[11px] text-gray-700 whitespace-pre-wrap">{moduleLog.stdout || '(empty)'}</pre>
+                                        </div>
+                                        <div>
+                                          <div className="font-medium text-gray-700 mb-1">stderr</div>
+                                          <pre className="max-h-32 overflow-auto rounded bg-gray-50 border border-gray-200 p-2 text-[11px] text-gray-700 whitespace-pre-wrap">{moduleLog.stderr || '(empty)'}</pre>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
                               )}
                               <pre className="mt-2 max-h-40 overflow-auto rounded bg-white border border-gray-200 p-2 text-[11px] text-gray-700">
                                 {JSON.stringify(resultPayload, null, 2)}

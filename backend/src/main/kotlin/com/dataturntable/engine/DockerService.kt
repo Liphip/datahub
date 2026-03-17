@@ -12,6 +12,29 @@ import java.io.InputStreamReader
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
+data class ModuleExecutionOutput(
+    val result: Any?,
+    val stdout: String,
+    val stderr: String,
+    val exitCode: Int,
+    val durationMs: Long
+)
+
+class ModuleExecutionException(
+    message: String,
+    val stdout: String = "",
+    val stderr: String = "",
+    val exitCode: Int? = null,
+    cause: Throwable? = null
+) : RuntimeException(message, cause)
+
+private data class RawContainerResult(
+    val stdout: String,
+    val stderr: String,
+    val exitCode: Int,
+    val durationMs: Long
+)
+
 @ApplicationScoped
 class DockerService {
     
@@ -42,7 +65,7 @@ class DockerService {
         pipelineId: String,
         runId: String,
         moduleType: ModuleType
-    ): Any? {
+    ): ModuleExecutionOutput {
         val containerName = "dt-${pipelineId}-${runId}-${moduleType.name.lowercase()}-${UUID.randomUUID()}"
         
         LOG.infof("Executing module %s in container %s", moduleVersion.module?.name, containerName)
@@ -51,7 +74,7 @@ class DockerService {
             val code = moduleVersion.code ?: throw IllegalStateException("Module code is empty")
             val requirements = moduleVersion.requirements ?: ""
             
-            val result = runContainer(
+            val output = runContainer(
                 containerName = containerName,
                 code = code,
                 requirements = requirements,
@@ -61,19 +84,42 @@ class DockerService {
             
             cleanupContainer(containerName)
             
-            if (result.isNotBlank()) {
-                try {
-                    objectMapper.readValue(result, Any::class.java)
-                } catch (e: Exception) {
-                    result
-                }
-            } else {
-                null
-            }
+            val parsedResult = parseResultPayload(output.stdout)
+            ModuleExecutionOutput(
+                result = parsedResult,
+                stdout = output.stdout,
+                stderr = output.stderr,
+                exitCode = output.exitCode,
+                durationMs = output.durationMs
+            )
+        } catch (e: ModuleExecutionException) {
+            LOG.errorf("Module execution failed: %s", e.message)
+            cleanupContainer(containerName)
+            throw e
         } catch (e: Exception) {
             LOG.errorf("Module execution failed: %s", e.message)
             cleanupContainer(containerName)
-            throw RuntimeException("Module execution failed: ${e.message}", e)
+            throw ModuleExecutionException(
+                message = "Module execution failed: ${e.message}",
+                cause = e
+            )
+        }
+    }
+
+    private fun parseResultPayload(stdout: String): Any? {
+        val trimmed = stdout.trim()
+        if (trimmed.isBlank()) return null
+
+        val lines = trimmed.lines().map { it.trim() }.filter { it.isNotBlank() }
+        val candidate = lines.lastOrNull() ?: return trimmed
+        return try {
+            objectMapper.readValue(candidate, Any::class.java)
+        } catch (_: Exception) {
+            try {
+                objectMapper.readValue(trimmed, Any::class.java)
+            } catch (_: Exception) {
+                trimmed
+            }
         }
     }
     
@@ -83,7 +129,7 @@ class DockerService {
         requirements: String,
         inputData: Any?,
         moduleType: ModuleType
-    ): String {
+    ): RawContainerResult {
         val scriptContent = buildModuleScript(code, moduleType)
         
         val dockerArgs = mutableListOf(
@@ -121,34 +167,63 @@ class DockerService {
         
         return try {
             val processBuilder = ProcessBuilder(dockerArgs)
-            processBuilder.redirectErrorStream(true)
             val process = processBuilder.start()
-            
-            val output = StringBuilder()
-            val reader = BufferedReader(InputStreamReader(process.inputStream))
-            
+
+            val stdoutBuilder = StringBuilder()
+            val stderrBuilder = StringBuilder()
+
+            fun startCollector(reader: BufferedReader, sink: StringBuilder): Thread {
+                val thread = Thread {
+                    var line: String? = reader.readLine()
+                    while (line != null) {
+                        sink.append(line).append("\n")
+                        line = reader.readLine()
+                    }
+                }
+                thread.start()
+                return thread
+            }
+
+            val stdoutReader = BufferedReader(InputStreamReader(process.inputStream))
+            val stderrReader = BufferedReader(InputStreamReader(process.errorStream))
+            val stdoutThread = startCollector(stdoutReader, stdoutBuilder)
+            val stderrThread = startCollector(stderrReader, stderrBuilder)
+
+            val startedAt = System.currentTimeMillis()
             val finished = process.waitFor(timeoutSeconds.toLong(), TimeUnit.SECONDS)
-            
+
             if (!finished) {
                 process.destroyForcibly()
-                throw RuntimeException("Module execution timed out after $timeoutSeconds seconds")
+                throw ModuleExecutionException("Module execution timed out after $timeoutSeconds seconds")
             }
-            
-            var line: String? = reader.readLine()
-            while (line != null) {
-                output.append(line).append("\n")
-                line = reader.readLine()
-            }
-            
+
+            stdoutThread.join(1000)
+            stderrThread.join(1000)
+
+            val durationMs = System.currentTimeMillis() - startedAt
+
             val exitCode = process.exitValue()
-            
+            val stdout = stdoutBuilder.toString().trim()
+            val stderr = stderrBuilder.toString().trim()
+
             if (exitCode != 0) {
-                throw RuntimeException("Container exited with code $exitCode: $output")
+                throw ModuleExecutionException(
+                    message = "Container exited with code $exitCode",
+                    stdout = stdout,
+                    stderr = stderr,
+                    exitCode = exitCode
+                )
             }
-            
-            output.toString().trim()
+
+            RawContainerResult(
+                stdout = stdout,
+                stderr = stderr,
+                exitCode = exitCode,
+                durationMs = durationMs
+            )
         } catch (e: Exception) {
-            throw RuntimeException("Failed to run container: ${e.message}", e)
+            if (e is ModuleExecutionException) throw e
+            throw ModuleExecutionException("Failed to run container: ${e.message}", cause = e)
         }
     }
     

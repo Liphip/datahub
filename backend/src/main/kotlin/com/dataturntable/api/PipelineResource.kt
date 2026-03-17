@@ -678,6 +678,8 @@ class PipelineResource {
                     is Number -> value.toInt()
                     else -> null
                 }
+                val moduleLogs = metrics["moduleLogs"]
+                val executionLog = metrics["executionLog"]
 
                 mapOf(
                     "id" to it.id,
@@ -688,6 +690,8 @@ class PipelineResource {
                     "durationMs" to durationMs,
                     "errorMessage" to it.errorMessage,
                     "metrics" to metrics,
+                    "moduleLogs" to moduleLogs,
+                    "executionLog" to executionLog,
                     "alertEvaluation" to alertEvaluation,
                     "alertsFired" to alertsFired
                 )
