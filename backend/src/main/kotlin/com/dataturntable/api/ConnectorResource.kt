@@ -748,7 +748,7 @@ class ConnectorResource {
 
     @GET
     @Path("/{id}/impact")
-    fun getImpact(@PathParam("id") id: String): Response {
+    fun getImpact(@PathParam("id") id: String, @QueryParam("sinceHours") sinceHours: Int?): Response {
         val connectorId = parseUuid(id)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
         val connector = em.find(Connector::class.java, connectorId)
@@ -759,6 +759,12 @@ class ConnectorResource {
         if (!canReadConnector(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
+
+        val hours = sinceHours ?: 24
+        if (hours !in setOf(1, 24, 168)) {
+            return Response.status(400).entity(mapOf("error" to "Invalid sinceHours")).build()
+        }
+        val sinceInstant = java.time.Instant.now().minus(java.time.Duration.ofHours(hours.toLong()))
 
         val references = connector.tenant?.id?.let { connectorReferenceSummaries(it, connectorId) } ?: emptyList()
         val grouped = references.groupBy { it["pipelineId"]?.toString() ?: "" }.filterKeys { it.isNotBlank() }
@@ -774,6 +780,19 @@ class ConnectorResource {
                 .setMaxResults(1)
                 .resultList
                 .firstOrNull()
+            val recentRuns = em.createQuery(
+                "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId AND r.startedAt >= :since ORDER BY r.startedAt DESC",
+                PipelineRun::class.java
+            )
+                .setParameter("pipelineId", pipelineUuid)
+                .setParameter("since", sinceInstant)
+                .setMaxResults(200)
+                .resultList
+            val recentTotal = recentRuns.size
+            val recentFailed = recentRuns.count { it.status.name == "FAILED" }
+            val recentSuccess = recentRuns.count { it.status.name == "SUCCESS" }
+            val recentInFlight = recentRuns.count { it.status.name == "RUNNING" || it.status.name == "PENDING" }
+            val recentSuccessRate = if (recentTotal > 0) recentSuccess.toDouble() / recentTotal else 0.0
 
             mapOf(
                 "pipelineId" to pipeline.id,
@@ -788,7 +807,12 @@ class ConnectorResource {
                 },
                 "latestRunId" to latestRun?.id,
                 "latestRunStatus" to latestRun?.status?.name,
-                "latestRunStartedAt" to latestRun?.startedAt
+                "latestRunStartedAt" to latestRun?.startedAt,
+                "windowSinceHours" to hours,
+                "recentRuns" to recentTotal,
+                "recentFailedRuns" to recentFailed,
+                "recentInFlightRuns" to recentInFlight,
+                "recentSuccessRate" to recentSuccessRate
             )
         }.sortedBy { (it["pipelineName"] ?: "").toString() }
 
@@ -796,6 +820,7 @@ class ConnectorResource {
             mapOf(
                 "connectorId" to connector.id,
                 "connectorName" to connector.name,
+                "sinceHours" to hours,
                 "referenceCount" to references.size,
                 "impactedPipelineCount" to impactedPipelines.size,
                 "impactedPipelines" to impactedPipelines

@@ -230,6 +230,7 @@ export interface ConnectorReferenceSummary {
 export interface ConnectorImpactSummary {
   connectorId: string;
   connectorName: string;
+  sinceHours?: number;
   referenceCount: number;
   impactedPipelineCount: number;
   impactedPipelines: Array<{
@@ -241,6 +242,11 @@ export interface ConnectorImpactSummary {
     latestRunId?: string;
     latestRunStatus?: string;
     latestRunStartedAt?: string;
+    windowSinceHours?: number;
+    recentRuns?: number;
+    recentFailedRuns?: number;
+    recentInFlightRuns?: number;
+    recentSuccessRate?: number;
   }>;
 }
 

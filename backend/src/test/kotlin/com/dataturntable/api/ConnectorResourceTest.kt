@@ -510,15 +510,28 @@ class ConnectorResourceTest {
 
         given()
             .header("Authorization", "Bearer $token")
+            .queryParam("sinceHours", 24)
         .`when`()
             .get("/api/internal/v1/connectors/$connectorId/impact")
         .then()
             .statusCode(200)
             .body("connectorId", equalTo(connectorId))
+            .body("sinceHours", equalTo(24))
             .body("referenceCount", equalTo(1))
             .body("impactedPipelineCount", equalTo(1))
             .body("impactedPipelines[0].pipelineName", equalTo("Impact Pipeline"))
+            .body("impactedPipelines[0].recentRuns", equalTo(1))
+            .body("impactedPipelines[0].recentFailedRuns", equalTo(1))
             .body("impactedPipelines[0].latestRunStatus", equalTo("FAILED"))
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("sinceHours", 5)
+        .`when`()
+            .get("/api/internal/v1/connectors/$connectorId/impact")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid sinceHours"))
     }
 
     @Test

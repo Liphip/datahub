@@ -494,8 +494,8 @@ class ApiService {
     return response.data;
   }
 
-  async getConnectorImpact(id: string): Promise<ConnectorImpactSummary> {
-    const response = await this.client.get<ConnectorImpactSummary>(`/connectors/${id}/impact`);
+  async getConnectorImpact(id: string, sinceHours: 1 | 24 | 168 = 24): Promise<ConnectorImpactSummary> {
+    const response = await this.client.get<ConnectorImpactSummary>(`/connectors/${id}/impact?sinceHours=${sinceHours}`);
     return response.data;
   }
 

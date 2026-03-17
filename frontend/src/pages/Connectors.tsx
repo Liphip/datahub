@@ -119,6 +119,7 @@ export default function Connectors() {
   const [loadingUsageId, setLoadingUsageId] = useState<string | null>(null);
   const [impactModal, setImpactModal] = useState<ConnectorImpactSummary | null>(null);
   const [loadingImpactId, setLoadingImpactId] = useState<string | null>(null);
+  const [impactWindowHours, setImpactWindowHours] = useState<1 | 24 | 168>(24);
   const [brokerForm, setBrokerForm] = useState({
     name: '',
     username: '',
@@ -516,10 +517,11 @@ export default function Connectors() {
     }
   };
 
-  const handleViewImpact = async (connector: Connector) => {
+  const handleViewImpact = async (connector: Connector, sinceHours: 1 | 24 | 168 = impactWindowHours) => {
     setLoadingImpactId(connector.id);
     try {
-      const impact = await api.getConnectorImpact(connector.id);
+      const impact = await api.getConnectorImpact(connector.id, sinceHours);
+      setImpactWindowHours(sinceHours);
       setImpactModal(impact);
     } catch (err: any) {
       setError(err?.response?.data?.error || 'Failed to load connector impact');
@@ -889,10 +891,27 @@ export default function Connectors() {
               <div>
                 <h2 className="text-xl font-bold">Connector Impact</h2>
                 <p className="text-sm text-gray-600">
-                  {impactModal.connectorName} impacts {impactModal.impactedPipelineCount} pipeline(s), {impactModal.referenceCount} node reference(s).
+                  {impactModal.connectorName} impacts {impactModal.impactedPipelineCount} pipeline(s), {impactModal.referenceCount} node reference(s) over last {impactModal.sinceHours || impactWindowHours}h.
                 </p>
               </div>
               <button className="btn-secondary" onClick={() => setImpactModal(null)}>Close</button>
+            </div>
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-xs text-gray-600">Window:</span>
+              {([1, 24, 168] as const).map((hours) => (
+                <button
+                  key={hours}
+                  className={`px-2 py-0.5 rounded text-xs border ${impactWindowHours === hours ? 'border-indigo-500 text-indigo-700 bg-white' : 'border-slate-300 text-slate-700 bg-slate-50'}`}
+                  onClick={async () => {
+                    if (!impactModal) return;
+                    const connector = connectors.find((item) => item.id === impactModal.connectorId);
+                    if (!connector) return;
+                    await handleViewImpact(connector, hours);
+                  }}
+                >
+                  {hours === 1 ? '1h' : hours === 24 ? '24h' : '7d'}
+                </button>
+              ))}
             </div>
             {impactModal.impactedPipelines.length === 0 ? (
               <p className="text-sm text-gray-500">No impacted pipelines found.</p>
@@ -904,6 +923,7 @@ export default function Connectors() {
                       <th className="py-2 pr-3">Pipeline</th>
                       <th className="py-2 pr-3">State</th>
                       <th className="py-2 pr-3">Node refs</th>
+                      <th className="py-2 pr-3">Recent health</th>
                       <th className="py-2 pr-3">Latest run</th>
                       <th className="py-2 text-right">Action</th>
                     </tr>
@@ -921,6 +941,12 @@ export default function Connectors() {
                           </span>
                         </td>
                         <td className="py-2 pr-3">{pipeline.nodeReferenceCount}</td>
+                        <td className="py-2 pr-3 text-xs">
+                          <div>Runs: <strong>{pipeline.recentRuns ?? 0}</strong></div>
+                          <div>Failed: <strong>{pipeline.recentFailedRuns ?? 0}</strong></div>
+                          <div>In-flight: <strong>{pipeline.recentInFlightRuns ?? 0}</strong></div>
+                          <div>Success: <strong>{Math.round((pipeline.recentSuccessRate ?? 0) * 100)}%</strong></div>
+                        </td>
                         <td className="py-2 pr-3">
                           {pipeline.latestRunStatus ? (
                             <span className="text-xs">

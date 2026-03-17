@@ -157,6 +157,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Hardened connector cloning defaults: clone now strips sensitive config keys by default (`password`/`token`/`apiKey`/etc.) while preserving non-sensitive fields, and Connectors UI explicitly labels clone behavior as a safe disconnected copy.
 - Expanded connector clone ergonomics: clone API now accepts optional `direction` and `description` overrides with validation, and Connectors UI now uses a dedicated clone modal (name/direction/description + keep-secrets toggle) instead of one-click cloning for safer operator control.
 - Added connector impact analysis endpoint/UI: backend now exposes `GET /connectors/{id}/impact` with impacted pipelines and latest run status context, and Connectors UI adds an `Impact` modal to prioritize dependency remediation.
+- Expanded connector impact analysis with time-windowed health: impact endpoint now accepts `sinceHours` (`1|24|168`) and returns recent run stats per impacted pipeline (runs/failed/in-flight/success rate); Connectors impact modal now supports window toggles and displays operational health columns.
 
 ---
 
