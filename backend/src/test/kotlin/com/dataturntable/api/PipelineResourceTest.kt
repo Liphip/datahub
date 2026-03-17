@@ -428,6 +428,70 @@ class PipelineResourceTest {
     }
 
     @Test
+    fun testGetPipelineRunSummaryByPipeline() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        val pipelineId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("name" to "Summary Pipeline", "graphDefinition" to mapOf("nodes" to emptyList<Any>(), "edges" to emptyList<Any>())))
+        .`when`()
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        QuarkusTransaction.requiringNew().run {
+            val pipeline = em.find(Pipeline::class.java, java.util.UUID.fromString(pipelineId))
+            val successRun = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.SUCCESS
+                this.triggerType = TriggerType.MANUAL
+                this.startedAt = java.time.Instant.now().minusSeconds(120)
+                this.completedAt = java.time.Instant.now().minusSeconds(60)
+                this.metrics = "{}"
+            }
+            val failedRun = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.FAILED
+                this.triggerType = TriggerType.MANUAL
+                this.startedAt = java.time.Instant.now().minusSeconds(50)
+                this.completedAt = java.time.Instant.now().minusSeconds(20)
+                this.metrics = "{}"
+            }
+            em.persist(successRun)
+            em.persist(failedRun)
+            em.flush()
+        }
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/pipelines/$pipelineId/runs/summary?sinceHours=24")
+        .then()
+            .statusCode(200)
+            .body("pipelineId", equalTo(pipelineId))
+            .body("totalRuns", equalTo(2))
+            .body("successRuns", equalTo(1))
+            .body("failedRuns", equalTo(1))
+            .body("trendBuckets.size()", equalTo(24))
+    }
+
+    @Test
     fun testTriggerPipelineTransitionsRunOutOfPending() {
         val token = TestAuthHelpers.createAdminToken()
 

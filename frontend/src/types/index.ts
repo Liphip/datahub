@@ -135,7 +135,9 @@ export interface TenantPipelineRun extends PipelineRun {
 }
 
 export interface PipelineRunSummary {
-  windowSize: number;
+  pipelineId?: string;
+  pipelineName?: string;
+  windowSize?: number;
   sinceHours: number;
   bucketSeconds: number;
   totalRuns: number;

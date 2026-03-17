@@ -279,6 +279,14 @@ class ApiService {
     return response.data;
   }
 
+  async getPipelineRunSummaryByPipeline(
+    pipelineId: string,
+    sinceHours: 1 | 24 | 168 = 24,
+  ): Promise<PipelineRunSummary> {
+    const response = await this.client.get<PipelineRunSummary>(`/pipelines/${pipelineId}/runs/summary?sinceHours=${sinceHours}`);
+    return response.data;
+  }
+
   async getTenantPipelineRuns(
     tenantId: string,
     options?: {

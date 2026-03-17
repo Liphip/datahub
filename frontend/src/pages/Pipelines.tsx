@@ -2,7 +2,7 @@ import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Pipeline, PipelineRun, TenantPipelineRun } from '../types';
+import type { Pipeline, PipelineRun, PipelineRunSummary, TenantPipelineRun } from '../types';
 
 type RunMap = Record<string, PipelineRun[]>;
 type HealthFilter = 'ALL' | 'PROBLEMATIC' | 'RUNNING' | 'FAILED' | 'HEALTHY';
@@ -29,6 +29,8 @@ export default function Pipelines() {
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [runsMap, setRunsMap] = useState<RunMap>({});
   const [detailedRunsMap, setDetailedRunsMap] = useState<RunMap>({});
+  const [pipelineSummaries, setPipelineSummaries] = useState<Record<string, PipelineRunSummary>>({});
+  const [summaryWindowByPipeline, setSummaryWindowByPipeline] = useState<Record<string, 1 | 24 | 168>>({});
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newPipelineName, setNewPipelineName] = useState('');
@@ -137,6 +139,13 @@ export default function Pipelines() {
     });
     setPipelines(data);
     return data;
+  };
+
+  const loadPipelineSummary = async (pipelineId: string, sinceHours?: 1 | 24 | 168) => {
+    const window = sinceHours ?? summaryWindowByPipeline[pipelineId] ?? 24;
+    const summary = await api.getPipelineRunSummaryByPipeline(pipelineId, window);
+    setPipelineSummaries((prev) => ({ ...prev, [pipelineId]: summary }));
+    setSummaryWindowByPipeline((prev) => ({ ...prev, [pipelineId]: window }));
   };
 
   useEffect(() => {
@@ -305,6 +314,11 @@ export default function Pipelines() {
       if (expandedPipelineId === pipelineId) {
         const detailedRuns = await api.getPipelineRuns(pipelineId, { limit: 12, includeDetails: true });
         setDetailedRunsMap((prev) => ({ ...prev, [pipelineId]: detailedRuns }));
+        try {
+          await loadPipelineSummary(pipelineId);
+        } catch {
+          // keep run details available even if summary refresh fails
+        }
       }
     } catch {
       showToast('Failed to trigger pipeline', 'error');
@@ -322,6 +336,8 @@ export default function Pipelines() {
       if (tenantId) await loadPipelines(tenantId, healthFilter);
       setRunsMap((prev) => { const next = { ...prev }; delete next[pipelineId]; return next; });
       setDetailedRunsMap((prev) => { const next = { ...prev }; delete next[pipelineId]; return next; });
+      setPipelineSummaries((prev) => { const next = { ...prev }; delete next[pipelineId]; return next; });
+      setSummaryWindowByPipeline((prev) => { const next = { ...prev }; delete next[pipelineId]; return next; });
       setConfirmDeleteId(null);
       showToast('Pipeline deleted', 'success');
     } catch {
@@ -1397,6 +1413,13 @@ export default function Pipelines() {
                                 // keep lightweight runs if detailed fetch fails
                               }
                             }
+                            if (nextExpandedId === pipeline.id && !pipelineSummaries[pipeline.id]) {
+                              try {
+                                await loadPipelineSummary(pipeline.id);
+                              } catch {
+                                // keep UI usable when summary fetch fails
+                              }
+                            }
                             if (!selectedRunIdByPipeline[pipeline.id] && runs[0]?.id) {
                               setSelectedRunIdByPipeline((prev) => ({ ...prev, [pipeline.id]: runs[0].id }));
                             }
@@ -1459,6 +1482,49 @@ export default function Pipelines() {
                 {expandedPipelineId === pipeline.id && (
                   <div className="mt-4 rounded border border-gray-200 bg-gray-50 p-3">
                     <div className="text-xs font-semibold text-gray-700 mb-2">Run Details</div>
+                    <div className="mb-3 rounded border border-indigo-100 bg-indigo-50 p-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                        <div className="text-[11px] font-semibold text-indigo-900">Reliability Snapshot</div>
+                        <div className="flex items-center gap-2">
+                          {([1, 24, 168] as const).map((hours) => (
+                            <button
+                              key={hours}
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                try {
+                                  await loadPipelineSummary(pipeline.id, hours);
+                                } catch {
+                                  showToast('Failed to load run summary', 'error');
+                                }
+                              }}
+                              className={`px-2 py-0.5 rounded text-[11px] border ${
+                                (summaryWindowByPipeline[pipeline.id] ?? 24) === hours
+                                  ? 'border-indigo-500 text-indigo-700 bg-white'
+                                  : 'border-indigo-200 text-indigo-800 bg-indigo-100'
+                              }`}
+                            >
+                              {hours === 1 ? '1h' : hours === 24 ? '24h' : '7d'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      {pipelineSummaries[pipeline.id] ? (
+                        <>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px] text-indigo-900">
+                            <div>Total: <strong>{pipelineSummaries[pipeline.id].totalRuns}</strong></div>
+                            <div>Success: <strong>{pipelineSummaries[pipeline.id].successRuns}</strong></div>
+                            <div>Failed: <strong>{pipelineSummaries[pipeline.id].failedRuns}</strong></div>
+                            <div>In-flight: <strong>{pipelineSummaries[pipeline.id].inFlightRuns}</strong></div>
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-indigo-900">
+                            <span>Success rate: <strong>{Math.round((pipelineSummaries[pipeline.id].successRate || 0) * 100)}%</strong></span>
+                            <span>Avg duration: <strong>{pipelineSummaries[pipeline.id].avgDurationMs != null ? `${pipelineSummaries[pipeline.id].avgDurationMs} ms` : '-'}</strong></span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-[11px] text-indigo-800">No summary loaded yet.</div>
+                      )}
+                    </div>
                     {(() => {
                       const detailRuns = detailedRunsMap[pipeline.id] ?? runs;
                       return detailRuns.length === 0;

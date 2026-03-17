@@ -414,6 +414,109 @@ class PipelineResource {
     }
 
     @GET
+    @Path("/{id}/runs/summary")
+    fun getPipelineRunSummary(
+        @PathParam("id") id: String,
+        @QueryParam("sinceHours") sinceHours: Int?
+    ): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val pipelineId = try {
+            UUID.fromString(id)
+        } catch (_: Exception) {
+            return Response.status(400).entity(mapOf("error" to "Invalid pipeline id")).build()
+        }
+        val pipeline = em.find(Pipeline::class.java, pipelineId)
+            ?: return Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
+        val tenantId = pipeline.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
+        requireTenantAccess(currentUser, tenantId, "pipeline:read")?.let { return it }
+
+        val hours = sinceHours ?: 24
+        if (hours !in setOf(1, 24, 168)) {
+            return Response.status(400).entity(mapOf("error" to "Invalid sinceHours"))
+                .build()
+        }
+
+        val bucketSeconds = when (hours) {
+            1 -> 10 * 60L
+            24 -> 60 * 60L
+            else -> 6 * 60 * 60L
+        }
+        val bucketCount = when (hours) {
+            1 -> 6
+            24 -> 24
+            else -> 28
+        }
+        val sinceInstant = java.time.Instant.now().minus(java.time.Duration.ofHours(hours.toLong()))
+
+        val runs = em.createQuery(
+            "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId AND r.startedAt >= :since ORDER BY r.startedAt DESC",
+            PipelineRun::class.java
+        )
+            .setParameter("pipelineId", pipelineId)
+            .setParameter("since", sinceInstant)
+            .setMaxResults(500)
+            .resultList
+
+        val total = runs.size
+        val success = runs.count { it.status.name == "SUCCESS" }
+        val failed = runs.count { it.status.name == "FAILED" }
+        val running = runs.count { it.status.name == "RUNNING" || it.status.name == "PENDING" }
+        val completedDurations = runs.mapNotNull { run ->
+            if (run.startedAt != null && run.completedAt != null) {
+                java.time.Duration.between(run.startedAt, run.completedAt).toMillis()
+            } else {
+                null
+            }
+        }
+        val avgDurationMs = if (completedDurations.isNotEmpty()) {
+            completedDurations.average().toLong()
+        } else {
+            null
+        }
+        val successRate = if (total > 0) (success.toDouble() / total) else 0.0
+
+        val buckets = MutableList(bucketCount) { index ->
+            mutableMapOf<String, Any>(
+                "bucketStart" to sinceInstant.plusSeconds(index.toLong() * bucketSeconds).toString(),
+                "totalRuns" to 0,
+                "successRuns" to 0,
+                "failedRuns" to 0,
+                "inFlightRuns" to 0
+            )
+        }
+        runs.forEach { run ->
+            val startedAt = run.startedAt ?: return@forEach
+            val secondsFromStart = java.time.Duration.between(sinceInstant, startedAt).seconds
+            if (secondsFromStart < 0) return@forEach
+            val index = (secondsFromStart / bucketSeconds).toInt().coerceIn(0, bucketCount - 1)
+            val bucket = buckets[index]
+            bucket["totalRuns"] = (bucket["totalRuns"] as Int) + 1
+            when (run.status.name) {
+                "SUCCESS" -> bucket["successRuns"] = (bucket["successRuns"] as Int) + 1
+                "FAILED" -> bucket["failedRuns"] = (bucket["failedRuns"] as Int) + 1
+                "RUNNING", "PENDING" -> bucket["inFlightRuns"] = (bucket["inFlightRuns"] as Int) + 1
+            }
+        }
+
+        return Response.ok(
+            mapOf(
+                "pipelineId" to pipeline.id,
+                "pipelineName" to pipeline.name,
+                "sinceHours" to hours,
+                "bucketSeconds" to bucketSeconds,
+                "totalRuns" to total,
+                "successRuns" to success,
+                "failedRuns" to failed,
+                "inFlightRuns" to running,
+                "successRate" to successRate,
+                "avgDurationMs" to avgDurationMs,
+                "trendBuckets" to buckets
+            )
+        ).build()
+    }
+
+    @GET
     fun list(
         @QueryParam("tenantId") tenantId: String,
         @QueryParam("includeRunSummary") includeRunSummary: String?,

@@ -141,6 +141,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Hardened graph contract validation end-to-end: backend `PipelineResource` now validates graph node module-version existence/tenant ownership/type alignment (`IMPORT/PROCESSING/ALERT/EXPORT`) plus edge node references, while `PipelineEditor` pre-validates stale module-version selections and duplicate export-connector assignments before save.
 - Added DAG safety and editor guidance: backend graph validation now rejects cyclic pipelines, and `PipelineEditor` includes a live "Configuration Health" checklist panel to surface missing/stale module selections and export-connector issues before save.
 - Improved pipeline run retrieval performance and UX: `/pipelines/{id}/runs` now supports `limit` and `includeDetails` query parameters, enabling lightweight recent-run polling; the Pipelines page now uses lightweight polling for cards and fetches detailed run payloads only when a pipeline is expanded.
+- Added per-pipeline reliability summaries: backend now provides `GET /pipelines/{id}/runs/summary?sinceHours=...` with trend buckets/success stats, and the Pipelines details panel now shows a timeframe-switchable reliability snapshot (`1h`/`24h`/`7d`) alongside run logs.
 
 ---
 
