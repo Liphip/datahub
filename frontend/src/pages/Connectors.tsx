@@ -80,6 +80,14 @@ export default function Connectors() {
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [cloningId, setCloningId] = useState<string | null>(null);
+  const [cloneSource, setCloneSource] = useState<Connector | null>(null);
+  const [showCloneModal, setShowCloneModal] = useState(false);
+  const [cloneForm, setCloneForm] = useState({
+    name: '',
+    direction: 'INPUT' as Connector['direction'],
+    description: '',
+    keepSecrets: false,
+  });
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<string>('ALL');
   const [filterDirection, setFilterDirection] = useState<string>('ALL');
@@ -454,16 +462,39 @@ export default function Connectors() {
     }
   };
 
-  const handleCloneConnector = async (connector: Connector) => {
+  const openCloneModal = (connector: Connector) => {
+    setCloneSource(connector);
+    setCloneForm({
+      name: `${connector.name} Copy`,
+      direction: connector.direction,
+      description: connector.description || '',
+      keepSecrets: false,
+    });
+    setShowCloneModal(true);
+  };
+
+  const handleCloneConnector = async () => {
+    const connector = cloneSource;
+    if (!connector) return;
     if (!canWriteConnectors) {
       showToast('You do not have permission to clone connectors', 'error');
       return;
     }
     setCloningId(connector.id);
     try {
-      const cloned = await api.cloneConnector(connector.id, `${connector.name} Copy`, false);
+      const cloned = await api.cloneConnector(
+        connector.id,
+        {
+          name: cloneForm.name.trim() || `${connector.name} Copy`,
+          direction: cloneForm.direction,
+          description: cloneForm.description,
+          keepSecrets: cloneForm.keepSecrets,
+        }
+      );
       if (tenantId) await loadConnectors(tenantId);
       showToast(cloned.message || 'Connector cloned as disconnected copy', 'success');
+      setShowCloneModal(false);
+      setCloneSource(null);
     } catch (err: any) {
       setError(err?.response?.data?.error || 'Failed to clone connector');
     } finally {
@@ -720,12 +751,12 @@ export default function Connectors() {
                 )}
                 {canWriteConnectors && (
                   <button
-                    onClick={() => handleCloneConnector(connector)}
+                    onClick={() => openCloneModal(connector)}
                     disabled={cloningId === connector.id}
                     title="Clone as disconnected copy (sensitive config removed)"
                     className="text-violet-700 hover:text-violet-900 text-sm disabled:opacity-40"
                   >
-                    {cloningId === connector.id ? 'Cloning...' : 'Clone'}
+                    Clone
                   </button>
                 )}
                 {canWriteConnectors && (
@@ -1105,6 +1136,77 @@ export default function Connectors() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {showCloneModal && cloneSource && canWriteConnectors && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h2 className="text-xl font-bold mb-4">Clone Connector</h2>
+            <div className="space-y-4">
+              <div className="text-sm text-gray-600">
+                Cloning <strong>{cloneSource.name}</strong>. New connector starts disconnected.
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <input
+                  className="input"
+                  value={cloneForm.name}
+                  onChange={(e) => setCloneForm((prev) => ({ ...prev, name: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Direction</label>
+                <select
+                  className="input"
+                  value={cloneForm.direction}
+                  onChange={(e) => setCloneForm((prev) => ({ ...prev, direction: e.target.value as Connector['direction'] }))}
+                >
+                  {directions.map((dir) => (
+                    <option key={dir} value={dir}>{dir}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <textarea
+                  className="input"
+                  rows={2}
+                  value={cloneForm.description}
+                  onChange={(e) => setCloneForm((prev) => ({ ...prev, description: e.target.value }))}
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={cloneForm.keepSecrets}
+                  onChange={(e) => setCloneForm((prev) => ({ ...prev, keepSecrets: e.target.checked }))}
+                />
+                Keep sensitive config (tokens/passwords)
+              </label>
+              <p className="text-xs text-gray-500">
+                Recommended: keep this unchecked so cloned connectors are safer by default.
+              </p>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                className="btn-secondary"
+                onClick={() => {
+                  setShowCloneModal(false);
+                  setCloneSource(null);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => void handleCloneConnector()}
+                disabled={cloningId === cloneSource.id}
+              >
+                {cloningId === cloneSource.id ? 'Cloning...' : 'Clone Connector'}
+              </button>
+            </div>
           </div>
         </div>
       )}

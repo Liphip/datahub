@@ -155,6 +155,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Enhanced connector usage triage UX: usage drilldown now includes pipeline active/inactive state and direct "Open Pipeline" navigation to the referenced pipeline editor for faster dependency cleanup.
 - Added connector cloning workflow: backend now supports `POST /connectors/{id}/clone` (write-scope, tenant-scoped, cloned connector defaults to disconnected), and Connectors UI exposes a `Clone` action for quick safe duplication of connector configs.
 - Hardened connector cloning defaults: clone now strips sensitive config keys by default (`password`/`token`/`apiKey`/etc.) while preserving non-sensitive fields, and Connectors UI explicitly labels clone behavior as a safe disconnected copy.
+- Expanded connector clone ergonomics: clone API now accepts optional `direction` and `description` overrides with validation, and Connectors UI now uses a dedicated clone modal (name/direction/description + keep-secrets toggle) instead of one-click cloning for safer operator control.
 
 ---
 

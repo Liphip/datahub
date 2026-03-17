@@ -507,6 +507,57 @@ class ConnectorResourceTest {
     }
 
     @Test
+    fun testCloneConnectorAllowsDirectionAndDescriptionOverrides() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        val sourceId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Clone Override Source",
+                "connectorType" to "MQTT",
+                "direction" to "INPUT",
+                "description" to "old description",
+                "config" to mapOf("broker" to "mqtt://localhost:1883", "topic" to "tenant/$tenantId/clone/in")
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Override Clone",
+                "direction" to "BOTH",
+                "description" to "new description"
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors/$sourceId/clone")
+        .then()
+            .statusCode(201)
+            .body("name", equalTo("Override Clone"))
+            .body("direction", equalTo("BOTH"))
+            .body("description", equalTo("new description"))
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("direction" to "SIDEWAYS"))
+        .`when`()
+            .post("/api/internal/v1/connectors/$sourceId/clone")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid direction"))
+    }
+
+    @Test
     fun testTestConnectorValidatesConfig() {
         val token = TestAuthHelpers.createAdminToken()
 

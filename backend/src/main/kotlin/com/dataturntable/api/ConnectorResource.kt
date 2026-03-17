@@ -764,6 +764,18 @@ class ConnectorResource {
         val requestedName = request?.get("name")?.toString()?.trim()
         val cloneName = if (!requestedName.isNullOrBlank()) requestedName else "${source.name} Copy"
         val keepSecrets = request?.get("keepSecrets") as? Boolean ?: false
+        val requestedDirection = request?.get("direction")?.toString()?.trim()
+        val cloneDirection = if (!requestedDirection.isNullOrBlank()) {
+            parseDirection(requestedDirection)
+                ?: return Response.status(400).entity(mapOf("error" to "Invalid direction")).build()
+        } else {
+            source.direction
+        }
+        val cloneDescription = if (request?.containsKey("description") == true) {
+            request["description"]?.toString()?.trim()?.ifBlank { null }
+        } else {
+            source.description
+        }
 
         val decryptedSourceConfig = try {
             EncryptionUtils.decrypt(source.config ?: "{}")
@@ -786,9 +798,9 @@ class ConnectorResource {
             this.name = cloneName
             this.tenant = source.tenant
             this.connectorType = source.connectorType
-            this.direction = source.direction
+            this.direction = cloneDirection
             this.config = EncryptionUtils.encrypt(clonedConfigJson)
-            this.description = source.description
+            this.description = cloneDescription
             this.isActive = false
             this.createdAt = java.time.Instant.now()
             this.updatedAt = java.time.Instant.now()
