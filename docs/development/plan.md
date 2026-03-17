@@ -109,6 +109,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added per-preset and global usage-stat reset actions to rebaseline triage playbook popularity tracking.
 - Added optional confirmation guardrails for destructive preset actions (delete/reset), with persisted preference toggle.
 - Expanded keyboard triage shortcuts to preset workflows (`n` focus new preset, `p` apply top visible preset).
+- Hardened tenant read APIs (`GET /tenants`, `GET /tenants/{id}`, `GET /tenants/{id}/children`) to require superadmin access, with coverage for authenticated non-superadmin `403` paths.
 
 ---
 

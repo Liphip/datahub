@@ -82,6 +82,8 @@ class TenantResource {
     
     @GET
     fun list(@QueryParam("recursive") recursive: String?, @QueryParam("query") query: String?): Response {
+        requireSuperadmin()?.let { return it }
+
         if (recursive.equals("true", ignoreCase = true)) {
             val allTenants = em.createQuery("SELECT t FROM Tenant t", Tenant::class.java).resultList
             return Response.ok(buildTenantTree(allTenants, null, query)).build()
@@ -134,6 +136,8 @@ class TenantResource {
     @GET
     @Path("/{id}")
     fun get(@PathParam("id") id: String): Response {
+        requireSuperadmin()?.let { return it }
+
         val tenantId = try {
             parseUuid(id, "tenant id")
         } catch (e: WebApplicationException) {
@@ -200,6 +204,8 @@ class TenantResource {
     @GET
     @Path("/{id}/children")
     fun getChildren(@PathParam("id") id: String): Response {
+        requireSuperadmin()?.let { return it }
+
         val parentId = try {
             parseUuid(id, "tenant id")
         } catch (e: WebApplicationException) {
