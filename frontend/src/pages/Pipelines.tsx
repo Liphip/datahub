@@ -603,6 +603,26 @@ export default function Pipelines() {
     showToast('Preset removed', 'success');
   };
 
+  const resetPresetUsage = (name: string) => {
+    const next = triagePresets.map((preset) =>
+      preset.name === name
+        ? { ...preset, useCount: 0, lastUsedAt: undefined }
+        : preset
+    );
+    persistTriagePresets(next);
+    showToast('Preset usage reset', 'success');
+  };
+
+  const resetAllPresetUsage = () => {
+    const next = triagePresets.map((preset) => ({
+      ...preset,
+      useCount: 0,
+      lastUsedAt: undefined,
+    }));
+    persistTriagePresets(next);
+    showToast('All preset usage stats reset', 'success');
+  };
+
   const duplicateTriagePreset = (name: string) => {
     const original = triagePresets.find((p) => p.name === name);
     if (!original) return;
@@ -921,6 +941,15 @@ export default function Pipelines() {
               </select>
             )}
             {triagePresets.length > 0 && (
+              <button
+                onClick={resetAllPresetUsage}
+                className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
+                title="Reset usage stats for all presets"
+              >
+                Reset usage
+              </button>
+            )}
+            {triagePresets.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {visibleTriagePresets.slice(0, 8).map((preset) => (
                   <span
@@ -970,6 +999,7 @@ export default function Pipelines() {
                     )}
                     {preset.tag && <span className="text-gray-500">[{preset.tag}]</span>}
                     <span className="text-gray-400" title="Usage count">#{preset.useCount || 0}</span>
+                    <button onClick={() => resetPresetUsage(preset.name)} className="text-gray-500 hover:text-gray-700" title="Reset usage stats">↺</button>
                     <button onClick={() => duplicateTriagePreset(preset.name)} className="text-gray-500 hover:text-gray-700" title="Duplicate preset">⧉</button>
                     <button onClick={() => startRenameTriagePreset(preset.name)} className="text-gray-500 hover:text-gray-700" title="Rename preset">✎</button>
                     <button onClick={() => deleteTriagePreset(preset.name)} className="text-gray-500 hover:text-red-600">x</button>
