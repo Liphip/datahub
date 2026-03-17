@@ -29,6 +29,14 @@ class PipelineResource {
     @PersistenceContext
     lateinit var em: EntityManager
 
+    private fun parseUuid(value: String, field: String): UUID {
+        return try {
+            UUID.fromString(value)
+        } catch (_: Exception) {
+            throw WebApplicationException(Response.status(400).entity(mapOf("error" to "Invalid $field")).build())
+        }
+    }
+
     private fun parseGraphDefinition(graphDefinition: String?): Any? {
         if (graphDefinition.isNullOrBlank()) return null
         return try {
@@ -106,14 +114,26 @@ class PipelineResource {
     }
     
     @GET
-    fun list(@QueryParam("tenantId") tenantId: String, @QueryParam("includeRunSummary") includeRunSummary: String?): Response {
+    fun list(
+        @QueryParam("tenantId") tenantId: String,
+        @QueryParam("includeRunSummary") includeRunSummary: String?,
+        @QueryParam("runHealth") runHealth: String?
+    ): Response {
+        val tenantUuid = try {
+            parseUuid(tenantId, "tenantId")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+
         val pipelines = em.createQuery(
             "SELECT p FROM Pipeline p WHERE p.tenant.id = :tenantId",
             Pipeline::class.java
         )
-            .setParameter("tenantId", UUID.fromString(tenantId))
+            .setParameter("tenantId", tenantUuid)
             .resultList
         val withRunSummary = includeRunSummary.equals("true", ignoreCase = true)
+        val requestedHealth = runHealth?.uppercase()
+
         return Response.ok(
             pipelines.map {
                 val base = pipelineToMap(it)
@@ -123,6 +143,22 @@ class PipelineResource {
                     base + latestRunSummary(it.id!!)
                 }
             }
+                .filter { pipelineMap ->
+                    when (requestedHealth) {
+                        null, "", "ALL" -> true
+                        "PROBLEMATIC" -> {
+                            val status = pipelineMap["latestRunStatus"] as? String
+                            status == "FAILED" || status == "RUNNING" || status == "PENDING"
+                        }
+                        "RUNNING" -> {
+                            val status = pipelineMap["latestRunStatus"] as? String
+                            status == "RUNNING" || status == "PENDING"
+                        }
+                        "FAILED" -> (pipelineMap["latestRunStatus"] as? String) == "FAILED"
+                        "HEALTHY" -> (pipelineMap["latestRunStatus"] as? String) == "SUCCESS"
+                        else -> true
+                    }
+                }
         ).build()
     }
     
@@ -166,7 +202,12 @@ class PipelineResource {
     @GET
     @Path("/{id}")
     fun get(@PathParam("id") id: String): Response {
-        val pipeline = em.find(Pipeline::class.java, UUID.fromString(id))
+        val pipelineId = try {
+            parseUuid(id, "pipeline id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val pipeline = em.find(Pipeline::class.java, pipelineId)
         return if (pipeline != null) {
             Response.ok(pipelineToMap(pipeline)).build()
         } else {
@@ -178,7 +219,12 @@ class PipelineResource {
     @Path("/{id}")
     @Transactional
     fun delete(@PathParam("id") id: String): Response {
-        val pipeline = em.find(Pipeline::class.java, UUID.fromString(id))
+        val pipelineId = try {
+            parseUuid(id, "pipeline id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val pipeline = em.find(Pipeline::class.java, pipelineId)
         return if (pipeline != null) {
             pipeline.delete()
             Response.noContent().build()
@@ -191,7 +237,12 @@ class PipelineResource {
     @Path("/{id}")
     @Transactional
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
-        val pipeline = em.find(Pipeline::class.java, UUID.fromString(id))
+        val pipelineId = try {
+            parseUuid(id, "pipeline id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val pipeline = em.find(Pipeline::class.java, pipelineId)
         return if (pipeline != null) {
             request["name"]?.let { pipeline.name = it as String }
             request["description"]?.let { pipeline.description = it as String }
@@ -229,7 +280,12 @@ class PipelineResource {
     @Path("/{id}/run")
     @Transactional
     fun trigger(@PathParam("id") id: String, @QueryParam("triggerType") triggerType: String?): Response {
-        val pipeline = em.find(Pipeline::class.java, UUID.fromString(id))
+        val pipelineId = try {
+            parseUuid(id, "pipeline id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val pipeline = em.find(Pipeline::class.java, pipelineId)
         return if (pipeline != null) {
             val run = PipelineRun().apply {
                 this.pipeline = pipeline

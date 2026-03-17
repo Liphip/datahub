@@ -153,4 +153,41 @@ class PipelineResourceTest {
             .body("id", notNullValue())
             .body("status", anyOf(equalTo("SUCCESS"), equalTo("FAILED"), equalTo("RUNNING"), equalTo("PENDING")))
     }
+
+    @Test
+    fun testPipelineListRejectsInvalidTenantId() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("tenantId", "not-a-uuid")
+        .`when`()
+            .get("/api/internal/v1/pipelines")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid tenantId"))
+    }
+
+    @Test
+    fun testPipelineEndpointsRejectInvalidPipelineId() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/pipelines/not-a-uuid")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid pipeline id"))
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(emptyMap<String, Any>())
+        .`when`()
+            .post("/api/internal/v1/pipelines/not-a-uuid/run")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid pipeline id"))
+    }
 }

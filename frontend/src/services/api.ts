@@ -188,9 +188,10 @@ class ApiService {
   }
 
   // Pipelines
-  async getPipelines(tenantId: string, options?: { includeRunSummary?: boolean }): Promise<Pipeline[]> {
+  async getPipelines(tenantId: string, options?: { includeRunSummary?: boolean; runHealth?: 'ALL' | 'PROBLEMATIC' | 'RUNNING' | 'FAILED' | 'HEALTHY' }): Promise<Pipeline[]> {
     const includeRunSummary = options?.includeRunSummary ? '&includeRunSummary=true' : '';
-    const response = await this.client.get<Pipeline[]>(`/pipelines?tenantId=${tenantId}${includeRunSummary}`);
+    const runHealth = options?.runHealth && options.runHealth !== 'ALL' ? `&runHealth=${options.runHealth}` : '';
+    const response = await this.client.get<Pipeline[]>(`/pipelines?tenantId=${tenantId}${includeRunSummary}${runHealth}`);
     return response.data;
   }
 

@@ -68,6 +68,8 @@ This section catalogues every known gap between the current codebase and a shipp
 - Pipeline listing now supports health-focused filtering (`problematic`, `running`, `failed`, `healthy`) and sort modes for faster incident triage.
 - Pipeline list API supports optional `includeRunSummary=true` to return latest run status/timestamp metadata.
 - Dashboard now highlights "Problem Pipelines" with direct links and a one-click jump to the pipelines triage view (`/pipelines?health=PROBLEMATIC`).
+- Pipeline API now validates tenant/pipeline UUID inputs consistently (returns `400` instead of unhandled parse errors).
+- Added backend-supported pipeline health filtering via `GET /pipelines?runHealth=...` and wired frontend list loading to use server-side filters.
 
 ---
 

@@ -42,8 +42,8 @@ export default function Pipelines() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  const loadPipelines = async (tid: string) => {
-    const data = await api.getPipelines(tid, { includeRunSummary: true });
+  const loadPipelines = async (tid: string, filter: HealthFilter = healthFilter) => {
+    const data = await api.getPipelines(tid, { includeRunSummary: true, runHealth: filter });
     setPipelines(data);
     return data;
   };
@@ -52,7 +52,7 @@ export default function Pipelines() {
     const fetchAll = async () => {
       if (!tenantId) { setLoading(false); return; }
       try {
-        const data = await loadPipelines(tenantId);
+        const data = await loadPipelines(tenantId, healthFilter);
         // Fetch latest 3 runs for each pipeline concurrently
         const runsEntries = await Promise.all(
           data.map(async (p) => {
@@ -74,7 +74,7 @@ export default function Pipelines() {
       }
     };
     fetchAll();
-  }, [tenantId]);
+  }, [tenantId, healthFilter]);
 
   useEffect(() => {
     if (!tenantId || pipelines.length === 0) return;
@@ -141,7 +141,7 @@ export default function Pipelines() {
     setDeletingId(pipelineId);
     try {
       await api.deletePipeline(pipelineId);
-      if (tenantId) await loadPipelines(tenantId);
+      if (tenantId) await loadPipelines(tenantId, healthFilter);
       setRunsMap((prev) => { const next = { ...prev }; delete next[pipelineId]; return next; });
       setConfirmDeleteId(null);
       showToast('Pipeline deleted', 'success');
