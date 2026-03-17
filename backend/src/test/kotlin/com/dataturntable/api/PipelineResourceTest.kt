@@ -762,6 +762,7 @@ class PipelineResourceTest {
             .statusCode(200)
             .body("run.id", equalTo(ids["retry"]))
             .body("maxDepth", equalTo(20))
+            .body("direction", equalTo("both"))
             .body("rootRunId", equalTo(ids["root"]))
             .body("latestDescendantRunId", equalTo(ids["retryChild"]))
             .body("ancestors.size()", equalTo(1))
@@ -860,6 +861,106 @@ class PipelineResourceTest {
             .body("maxDepth", equalTo(1))
             .body("descendants.size()", equalTo(1))
             .body("descendantsTruncated", equalTo(true))
+    }
+
+    @Test
+    fun testGetPipelineRunLineageSupportsDirectionFiltering() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        val pipelineId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("name" to "Lineage Direction Pipeline", "graphDefinition" to mapOf("nodes" to emptyList<Any>(), "edges" to emptyList<Any>())))
+        .`when`()
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        val ids = QuarkusTransaction.requiringNew().call<Map<String, String>> {
+            val pipeline = em.find(Pipeline::class.java, java.util.UUID.fromString(pipelineId))
+            val root = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.FAILED
+                this.triggerType = TriggerType.MANUAL
+                this.startedAt = java.time.Instant.now().minusSeconds(120)
+                this.completedAt = java.time.Instant.now().minusSeconds(110)
+            }
+            em.persist(root)
+            em.flush()
+            val retry = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.SUCCESS
+                this.triggerType = TriggerType.MANUAL
+                this.retryOfRunId = root.id
+                this.startedAt = java.time.Instant.now().minusSeconds(90)
+                this.completedAt = java.time.Instant.now().minusSeconds(80)
+            }
+            em.persist(retry)
+            em.flush()
+            val retryChild = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.SUCCESS
+                this.triggerType = TriggerType.MANUAL
+                this.retryOfRunId = retry.id
+                this.startedAt = java.time.Instant.now().minusSeconds(60)
+                this.completedAt = java.time.Instant.now().minusSeconds(50)
+            }
+            em.persist(retryChild)
+            em.flush()
+            mapOf(
+                "root" to root.id.toString(),
+                "retry" to retry.id.toString(),
+                "retryChild" to retryChild.id.toString()
+            )
+        }
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("direction", "ancestors")
+        .`when`()
+            .get("/api/internal/v1/pipelines/$pipelineId/runs/${ids["retry"]}/lineage")
+        .then()
+            .statusCode(200)
+            .body("direction", equalTo("ancestors"))
+            .body("ancestors.size()", equalTo(1))
+            .body("descendants.size()", equalTo(0))
+            .body("latestDescendantRunId", nullValue())
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("direction", "descendants")
+        .`when`()
+            .get("/api/internal/v1/pipelines/$pipelineId/runs/${ids["retry"]}/lineage")
+        .then()
+            .statusCode(200)
+            .body("direction", equalTo("descendants"))
+            .body("ancestors.size()", equalTo(0))
+            .body("descendants.size()", equalTo(1))
+            .body("descendants[0].id", equalTo(ids["retryChild"]))
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("direction", "invalid")
+        .`when`()
+            .get("/api/internal/v1/pipelines/$pipelineId/runs/${ids["retry"]}/lineage")
+        .then()
+            .statusCode(400)
+            .body("error", containsString("Invalid direction"))
     }
 
     @Test

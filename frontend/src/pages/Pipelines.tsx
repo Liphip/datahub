@@ -16,6 +16,7 @@ type SortMode = 'RECENT_RUN' | 'NAME';
 type SinceHoursFilter = 1 | 24 | 168 | null;
 type BucketSortMode = 'NEWEST' | 'FAILED_FIRST';
 type BucketRunStatusFilter = 'ALL' | 'RUNNING' | 'PENDING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+type LineageDirection = 'both' | 'ancestors' | 'descendants';
 
 type TriagePreset = {
   name: string;
@@ -50,6 +51,7 @@ export default function Pipelines() {
   const [lineageByRunId, setLineageByRunId] = useState<Record<string, PipelineRunLineage>>({});
   const [loadingLineageRunId, setLoadingLineageRunId] = useState<string | null>(null);
   const [lineageDepthByRunId, setLineageDepthByRunId] = useState<Record<string, number>>({});
+  const [lineageDirectionByRunId, setLineageDirectionByRunId] = useState<Record<string, LineageDirection>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [expandedPipelineId, setExpandedPipelineId] = useState<string | null>(null);
@@ -494,7 +496,12 @@ export default function Pipelines() {
     }
   };
 
-  const handleLoadRunLineage = async (pipelineId: string, runId: string, maxDepth?: number) => {
+  const handleLoadRunLineage = async (
+    pipelineId: string,
+    runId: string,
+    maxDepth?: number,
+    direction?: LineageDirection
+  ) => {
     if (!canReadPipelines) {
       showToast('You need pipeline read permission to inspect run lineage', 'error');
       return;
@@ -502,8 +509,10 @@ export default function Pipelines() {
     setLoadingLineageRunId(runId);
     try {
       const depth = maxDepth ?? lineageDepthByRunId[runId] ?? 20;
-      const lineage = await api.getPipelineRunLineage(pipelineId, runId, depth);
+      const requestedDirection = direction ?? lineageDirectionByRunId[runId] ?? 'both';
+      const lineage = await api.getPipelineRunLineage(pipelineId, runId, depth, requestedDirection);
       setLineageDepthByRunId((prev) => ({ ...prev, [runId]: depth }));
+      setLineageDirectionByRunId((prev) => ({ ...prev, [runId]: requestedDirection }));
       setLineageByRunId((prev) => ({ ...prev, [runId]: lineage }));
     } catch {
       showToast('Failed to load run lineage', 'error');
@@ -1863,7 +1872,9 @@ export default function Pipelines() {
                                   disabled={loadingLineageRunId === selectedRun.id}
                                   className="px-2 py-0.5 rounded border border-indigo-200 text-indigo-700 bg-white"
                                 >
-                                  {loadingLineageRunId === selectedRun.id ? 'Loading lineage...' : `Load lineage (d${lineageDepthByRunId[selectedRun.id] ?? 20})`}
+                                  {loadingLineageRunId === selectedRun.id
+                                    ? 'Loading lineage...'
+                                    : `Load lineage (${lineageDirectionByRunId[selectedRun.id] ?? 'both'} d${lineageDepthByRunId[selectedRun.id] ?? 20})`}
                                 </button>
                                 {(selectedRun.status === 'RUNNING' || selectedRun.status === 'PENDING') && (
                                   <button
@@ -1897,6 +1908,25 @@ export default function Pipelines() {
                                   <div className="font-semibold mb-1">Retry Lineage</div>
                                   <div className="mb-1">
                                     Ancestors: {lineageByRunId[selectedRun.id].ancestors.length} · Descendants: {lineageByRunId[selectedRun.id].descendants.length}
+                                  </div>
+                                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                                    <span className="text-[11px] text-indigo-800">Direction:</span>
+                                    {(['both', 'ancestors', 'descendants'] as const).map((option) => {
+                                      const active = (lineageByRunId[selectedRun.id].direction ?? lineageDirectionByRunId[selectedRun.id] ?? 'both') === option;
+                                      return (
+                                        <button
+                                          key={`${selectedRun.id}-lineage-direction-${option}`}
+                                          className={`px-2 py-0.5 rounded border ${active ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-indigo-300 bg-white text-indigo-800'}`}
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
+                                            void handleLoadRunLineage(pipeline.id, selectedRun.id, currentDepth, option);
+                                          }}
+                                        >
+                                          {option}
+                                        </button>
+                                      );
+                                    })}
                                   </div>
                                   <div className="mb-2 flex flex-wrap gap-2">
                                     {lineageByRunId[selectedRun.id].rootRunId && (
@@ -1951,7 +1981,12 @@ export default function Pipelines() {
                                           e.preventDefault();
                                           const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
                                           const nextDepth = Math.min(200, currentDepth + 20);
-                                          void handleLoadRunLineage(pipeline.id, selectedRun.id, nextDepth);
+                                          void handleLoadRunLineage(
+                                            pipeline.id,
+                                            selectedRun.id,
+                                            nextDepth,
+                                            lineageDirectionByRunId[selectedRun.id] ?? 'both'
+                                          );
                                         }}
                                       >
                                         Load deeper

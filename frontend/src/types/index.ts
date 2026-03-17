@@ -164,6 +164,7 @@ export interface PipelineRunLineage {
   rootRunId?: string;
   latestDescendantRunId?: string;
   maxDepth?: number;
+  direction?: 'both' | 'ancestors' | 'descendants';
   ancestorsTruncated?: boolean;
   descendantsTruncated?: boolean;
 }

@@ -1130,7 +1130,8 @@ class PipelineResource {
     fun getRunLineage(
         @PathParam("id") id: String,
         @PathParam("runId") runId: String,
-        @QueryParam("maxDepth") maxDepth: Int?
+        @QueryParam("maxDepth") maxDepth: Int?,
+        @QueryParam("direction") direction: String?
     ): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
@@ -1156,6 +1157,16 @@ class PipelineResource {
             return Response.status(404).entity(mapOf("error" to "Run not found for this pipeline")).build()
         }
         val depthLimit = (maxDepth ?: 20).coerceIn(1, 200)
+        val normalizedDirection = when (direction?.trim()?.lowercase()) {
+            null, "", "both" -> "both"
+            "ancestors" -> "ancestors"
+            "descendants" -> "descendants"
+            else -> return Response.status(400)
+                .entity(mapOf("error" to "Invalid direction. Allowed values: both, ancestors, descendants"))
+                .build()
+        }
+        val includeAncestors = normalizedDirection != "descendants"
+        val includeDescendants = normalizedDirection != "ancestors"
 
         fun runSummary(item: PipelineRun, lineageDepth: Int? = null): Map<String, Any?> {
             val durationMs = if (item.completedAt != null) {
@@ -1181,16 +1192,18 @@ class PipelineResource {
         var ancestorDepth = -1
         var guard = 0
         var ancestorsTruncated = false
-        while (currentRetryId != null && guard < depthLimit) {
-            val ancestor = em.find(PipelineRun::class.java, currentRetryId) ?: break
-            if (ancestor.pipeline?.id != pipeline.id) break
-            ancestors.add(runSummary(ancestor, ancestorDepth))
-            currentRetryId = ancestor.retryOfRunId
-            ancestorDepth -= 1
-            guard += 1
-        }
-        if (currentRetryId != null && guard >= depthLimit) {
-            ancestorsTruncated = true
+        if (includeAncestors) {
+            while (currentRetryId != null && guard < depthLimit) {
+                val ancestor = em.find(PipelineRun::class.java, currentRetryId) ?: break
+                if (ancestor.pipeline?.id != pipeline.id) break
+                ancestors.add(runSummary(ancestor, ancestorDepth))
+                currentRetryId = ancestor.retryOfRunId
+                ancestorDepth -= 1
+                guard += 1
+            }
+            if (currentRetryId != null && guard >= depthLimit) {
+                ancestorsTruncated = true
+            }
         }
 
         val descendants = mutableListOf<Map<String, Any?>>()
@@ -1199,41 +1212,43 @@ class PipelineResource {
         run.id?.let { queue.add(it to 0) }
         var visited = 0
         var descendantsTruncated = false
-        while (queue.isNotEmpty() && visited < (depthLimit * 10)) {
-            val (parentId, parentDepth) = queue.removeFirst()
-            if (parentDepth >= depthLimit) {
-                val hasChildrenBeyondDepth = em.createQuery(
-                    "SELECT COUNT(r) FROM PipelineRun r WHERE r.pipeline.id = :pipelineId AND r.retryOfRunId = :retryOf",
-                    java.lang.Long::class.java
+        if (includeDescendants) {
+            while (queue.isNotEmpty() && visited < (depthLimit * 10)) {
+                val (parentId, parentDepth) = queue.removeFirst()
+                if (parentDepth >= depthLimit) {
+                    val hasChildrenBeyondDepth = em.createQuery(
+                        "SELECT COUNT(r) FROM PipelineRun r WHERE r.pipeline.id = :pipelineId AND r.retryOfRunId = :retryOf",
+                        java.lang.Long::class.java
+                    )
+                        .setParameter("pipelineId", pipeline.id)
+                        .setParameter("retryOf", parentId)
+                        .singleResult > 0
+                    descendantsTruncated = descendantsTruncated || hasChildrenBeyondDepth || queue.isNotEmpty()
+                    continue
+                }
+                val children = em.createQuery(
+                    "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId AND r.retryOfRunId = :retryOf ORDER BY r.startedAt ASC",
+                    PipelineRun::class.java
                 )
                     .setParameter("pipelineId", pipeline.id)
                     .setParameter("retryOf", parentId)
-                    .singleResult > 0
-                descendantsTruncated = descendantsTruncated || hasChildrenBeyondDepth || queue.isNotEmpty()
-                continue
-            }
-            val children = em.createQuery(
-                "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId AND r.retryOfRunId = :retryOf ORDER BY r.startedAt ASC",
-                PipelineRun::class.java
-            )
-                .setParameter("pipelineId", pipeline.id)
-                .setParameter("retryOf", parentId)
-                .resultList
-            children.forEach { child ->
-                descendants.add(runSummary(child, parentDepth + 1))
-                if (latestDescendant == null || child.startedAt.isAfter(latestDescendant?.startedAt)) {
-                    latestDescendant = child
+                    .resultList
+                children.forEach { child ->
+                    descendants.add(runSummary(child, parentDepth + 1))
+                    if (latestDescendant == null || child.startedAt.isAfter(latestDescendant?.startedAt)) {
+                        latestDescendant = child
+                    }
+                    child.id?.let { queue.add(it to (parentDepth + 1)) }
                 }
-                child.id?.let { queue.add(it to (parentDepth + 1)) }
+                visited += 1
             }
-            visited += 1
-        }
-        if (queue.isNotEmpty()) {
-            descendantsTruncated = true
+            if (queue.isNotEmpty()) {
+                descendantsTruncated = true
+            }
         }
 
         val rootRunId = ancestors.lastOrNull()?.get("id") ?: run.id
-        val latestDescendantRunId = latestDescendant?.id
+        val latestDescendantRunId = if (includeDescendants) latestDescendant?.id else null
 
         return Response.ok(
             mapOf(
@@ -1243,6 +1258,7 @@ class PipelineResource {
                 "rootRunId" to rootRunId,
                 "latestDescendantRunId" to latestDescendantRunId,
                 "maxDepth" to depthLimit,
+                "direction" to normalizedDirection,
                 "ancestorsTruncated" to ancestorsTruncated,
                 "descendantsTruncated" to descendantsTruncated
             )
