@@ -73,6 +73,8 @@ export default function Pipelines() {
   const [triagePresetSortMode, setTriagePresetSortMode] = useState<'MANUAL' | 'RECENT_USED' | 'MOST_USED'>('MANUAL');
   const [editingPresetName, setEditingPresetName] = useState<string | null>(null);
   const [editingPresetNextName, setEditingPresetNextName] = useState('');
+  const [confirmPresetActions, setConfirmPresetActions] = useState(() => localStorage.getItem('pipelines.presets.confirm') !== 'false');
+  const [pendingPresetAction, setPendingPresetAction] = useState<null | { type: 'delete' | 'resetOne' | 'resetAll'; name?: string }>(null);
   const importPresetInputRef = useRef<HTMLInputElement | null>(null);
   const [showShortcutHints, setShowShortcutHints] = useState(() => {
     const stored = localStorage.getItem('pipelines.bucket.shortcuts.hidden');
@@ -597,13 +599,21 @@ export default function Pipelines() {
     showToast(`Applied preset: ${preset.name}`, 'success');
   };
 
-  const deleteTriagePreset = (name: string) => {
+  const executeDeleteTriagePreset = (name: string) => {
     const next = triagePresets.filter((p) => p.name !== name);
     persistTriagePresets(next);
     showToast('Preset removed', 'success');
   };
 
-  const resetPresetUsage = (name: string) => {
+  const deleteTriagePreset = (name: string) => {
+    if (confirmPresetActions) {
+      setPendingPresetAction({ type: 'delete', name });
+      return;
+    }
+    executeDeleteTriagePreset(name);
+  };
+
+  const executeResetPresetUsage = (name: string) => {
     const next = triagePresets.map((preset) =>
       preset.name === name
         ? { ...preset, useCount: 0, lastUsedAt: undefined }
@@ -613,7 +623,15 @@ export default function Pipelines() {
     showToast('Preset usage reset', 'success');
   };
 
-  const resetAllPresetUsage = () => {
+  const resetPresetUsage = (name: string) => {
+    if (confirmPresetActions) {
+      setPendingPresetAction({ type: 'resetOne', name });
+      return;
+    }
+    executeResetPresetUsage(name);
+  };
+
+  const executeResetAllPresetUsage = () => {
     const next = triagePresets.map((preset) => ({
       ...preset,
       useCount: 0,
@@ -622,6 +640,39 @@ export default function Pipelines() {
     persistTriagePresets(next);
     showToast('All preset usage stats reset', 'success');
   };
+
+  const resetAllPresetUsage = () => {
+    if (confirmPresetActions) {
+      setPendingPresetAction({ type: 'resetAll' });
+      return;
+    }
+    executeResetAllPresetUsage();
+  };
+
+  const setPresetConfirmPreference = (enabled: boolean) => {
+    setConfirmPresetActions(enabled);
+    localStorage.setItem('pipelines.presets.confirm', enabled ? 'true' : 'false');
+  };
+
+  const confirmPendingPresetAction = () => {
+    if (!pendingPresetAction) return;
+    if (pendingPresetAction.type === 'delete' && pendingPresetAction.name) {
+      executeDeleteTriagePreset(pendingPresetAction.name);
+    } else if (pendingPresetAction.type === 'resetOne' && pendingPresetAction.name) {
+      executeResetPresetUsage(pendingPresetAction.name);
+    } else if (pendingPresetAction.type === 'resetAll') {
+      executeResetAllPresetUsage();
+    }
+    setPendingPresetAction(null);
+  };
+
+  const pendingPresetActionLabel = pendingPresetAction == null
+    ? ''
+    : pendingPresetAction.type === 'delete'
+      ? `Delete preset "${pendingPresetAction.name}"?`
+      : pendingPresetAction.type === 'resetOne'
+        ? `Reset usage stats for "${pendingPresetAction.name}"?`
+        : 'Reset usage stats for all presets?';
 
   const duplicateTriagePreset = (name: string) => {
     const original = triagePresets.find((p) => p.name === name);
@@ -949,6 +1000,14 @@ export default function Pipelines() {
                 Reset usage
               </button>
             )}
+            <label className="inline-flex items-center gap-1 text-[11px] text-gray-600">
+              <input
+                type="checkbox"
+                checked={confirmPresetActions}
+                onChange={(e) => setPresetConfirmPreference(e.target.checked)}
+              />
+              Confirm destructive actions
+            </label>
             {triagePresets.length > 0 && (
               <div className="flex flex-wrap gap-2">
                 {visibleTriagePresets.slice(0, 8).map((preset) => (
@@ -1008,6 +1067,24 @@ export default function Pipelines() {
               </div>
             )}
           </div>
+
+          {pendingPresetAction && (
+            <div className="mb-3 flex items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <span>{pendingPresetActionLabel}</span>
+              <button
+                onClick={confirmPendingPresetAction}
+                className="px-2 py-0.5 rounded border border-amber-300 bg-white hover:bg-amber-100"
+              >
+                Confirm
+              </button>
+              <button
+                onClick={() => setPendingPresetAction(null)}
+                className="px-2 py-0.5 rounded border border-amber-300 bg-white hover:bg-amber-100"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
 
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-gray-900">Runs In Selected Bucket</h2>

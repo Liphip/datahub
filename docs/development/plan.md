@@ -107,6 +107,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added triage preset usage metadata (`useCount`, `lastUsedAt`) and preset sort modes (`favorites`, `recently used`, `most used`).
 - Preset chips now expose quick usage context (count + relative last-used tooltip) to help choose fresher playbooks.
 - Added per-preset and global usage-stat reset actions to rebaseline triage playbook popularity tracking.
+- Added optional confirmation guardrails for destructive preset actions (delete/reset), with persisted preference toggle.
 
 ---
 
