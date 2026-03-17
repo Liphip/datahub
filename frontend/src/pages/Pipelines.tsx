@@ -803,6 +803,30 @@ export default function Pipelines() {
     await handleLoadRunLineage(pipelineId, runId, defaultDepth, 'both', 'ALL');
   };
 
+  const focusLineageTargetRun = async (pipelineId: string, runId: string, prefetched?: PipelineRun) => {
+    if (prefetched) {
+      setDetailedRunsMap((prev) => {
+        const existing = prev[pipelineId] ?? [];
+        if (existing.some((item) => item.id === prefetched.id)) return prev;
+        return { ...prev, [pipelineId]: [{ ...prefetched, metrics: prefetched.metrics ?? {} }, ...existing] };
+      });
+      setSelectedRunIdByPipeline((prev) => ({ ...prev, [pipelineId]: runId }));
+      return;
+    }
+
+    try {
+      const loaded = await api.getPipelineRun(pipelineId, runId, true);
+      setDetailedRunsMap((prev) => {
+        const existing = prev[pipelineId] ?? [];
+        const without = existing.filter((item) => item.id !== loaded.id);
+        return { ...prev, [pipelineId]: [loaded, ...without] };
+      });
+      setSelectedRunIdByPipeline((prev) => ({ ...prev, [pipelineId]: runId }));
+    } catch {
+      showToast('Failed to load selected lineage run', 'error');
+    }
+  };
+
   const handleManualBucketRefresh = async () => {
     if (!tenantId || !bucketStart || !bucketEnd) return;
     await refreshBucketRuns(tenantId, bucketStart, bucketEnd);
@@ -2180,48 +2204,40 @@ export default function Pipelines() {
                                     </button>
                                   </div>
                                   <div className="mb-2 flex flex-wrap gap-2">
-                                    {lineageByRunId[selectedRun.id].rootRunId && (
-                                      <button
-                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          const rootId = lineageByRunId[selectedRun.id].rootRunId;
-                                          if (!rootId) return;
-                                          const rootRun = lineageByRunId[selectedRun.id].ancestors.find((item) => item.id === rootId);
-                                          if (rootRun) {
-                                            setDetailedRunsMap((prev) => {
-                                              const existing = prev[pipeline.id] ?? [];
-                                              if (existing.some((item) => item.id === rootRun.id)) return prev;
-                                              return { ...prev, [pipeline.id]: [{ ...rootRun, metrics: rootRun.metrics ?? {} }, ...existing] };
-                                            });
-                                          }
-                                          setSelectedRunIdByPipeline((prev) => ({ ...prev, [pipeline.id]: rootId }));
-                                        }}
-                                      >
-                                        Go to root
-                                      </button>
-                                    )}
-                                    {lineageByRunId[selectedRun.id].latestDescendantRunId && (
-                                      <button
-                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          const latestId = lineageByRunId[selectedRun.id].latestDescendantRunId;
-                                          if (!latestId) return;
-                                          const latestRun = lineageByRunId[selectedRun.id].descendants.find((item) => item.id === latestId);
-                                          if (latestRun) {
-                                            setDetailedRunsMap((prev) => {
-                                              const existing = prev[pipeline.id] ?? [];
-                                              if (existing.some((item) => item.id === latestRun.id)) return prev;
-                                              return { ...prev, [pipeline.id]: [{ ...latestRun, metrics: latestRun.metrics ?? {} }, ...existing] };
-                                            });
-                                          }
-                                          setSelectedRunIdByPipeline((prev) => ({ ...prev, [pipeline.id]: latestId }));
-                                        }}
-                                      >
-                                        Go to latest retry
-                                      </button>
-                                    )}
+                                    <span className={`px-2 py-0.5 rounded border ${(lineageByRunId[selectedRun.id].rootRunInView ?? false) ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
+                                      Root {(lineageByRunId[selectedRun.id].rootRunInView ?? false) ? 'loaded' : 'hidden by filters'}
+                                    </span>
+                                    <span className={`px-2 py-0.5 rounded border ${(lineageByRunId[selectedRun.id].latestDescendantRunInView ?? false) ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
+                                      Latest retry {(lineageByRunId[selectedRun.id].latestDescendantRunInView ?? false) ? 'loaded' : 'hidden or unavailable'}
+                                    </span>
+                                    <button
+                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        const rootId = lineageByRunId[selectedRun.id].rootRunId;
+                                        if (!rootId) return;
+                                        const rootRun = lineageByRunId[selectedRun.id].ancestors.find((item) => item.id === rootId);
+                                        void focusLineageTargetRun(pipeline.id, rootId, rootRun);
+                                      }}
+                                      disabled={!lineageByRunId[selectedRun.id].rootRunId}
+                                      title={!lineageByRunId[selectedRun.id].rootRunId ? 'No root run available for this lineage view' : undefined}
+                                    >
+                                      Go to root
+                                    </button>
+                                    <button
+                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        const latestId = lineageByRunId[selectedRun.id].latestDescendantRunId;
+                                        if (!latestId) return;
+                                        const latestRun = lineageByRunId[selectedRun.id].descendants.find((item) => item.id === latestId);
+                                        void focusLineageTargetRun(pipeline.id, latestId, latestRun);
+                                      }}
+                                      disabled={!lineageByRunId[selectedRun.id].latestDescendantRunId}
+                                      title={!lineageByRunId[selectedRun.id].latestDescendantRunId ? 'Latest retry is unavailable for current direction/filter' : undefined}
+                                    >
+                                      Go to latest retry
+                                    </button>
                                   </div>
                                   {(lineageByRunId[selectedRun.id].ancestorsTruncated || lineageByRunId[selectedRun.id].descendantsTruncated) && (
                                     <div className="mb-2 flex items-center gap-2">

@@ -1310,6 +1310,8 @@ class PipelineResource {
 
         val rootRunId = ancestors.lastOrNull()?.get("id") ?: run.id
         val latestDescendantRunId = if (includeDescendants) latestDescendant?.id else null
+        val rootRunInView = rootRunId == run.id || ancestors.any { it["id"] == rootRunId }
+        val latestDescendantRunInView = latestDescendantRunId != null && descendants.any { it["id"] == latestDescendantRunId }
         val isLineageTruncated = ancestorsTruncated || descendantsTruncated
         val nextRecommendedDepth = if (isLineageTruncated && depthLimit < 200) {
             minOf(200, if (depthLimit < 20) 20 else depthLimit + 20)
@@ -1330,6 +1332,8 @@ class PipelineResource {
                 "statuses" to orderedStatuses,
                 "statusPreset" to resolvedStatusPreset,
                 "statusFiltered" to (statusFilter != null),
+                "rootRunInView" to rootRunInView,
+                "latestDescendantRunInView" to latestDescendantRunInView,
                 "ancestorsTotal" to ancestorsTotal,
                 "ancestorsStatusCounts" to ancestorsStatusCounts,
                 "descendantsTotal" to descendantsTotal,
