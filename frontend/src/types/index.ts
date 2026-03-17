@@ -12,7 +12,11 @@ export interface User {
 export interface Membership {
   id: string;
   authUserId: string;
+  authUserEmail?: string;
+  authUserFirstName?: string;
+  authUserLastName?: string;
   roleId?: string;
+  roleName?: string;
   abilities?: string[] | string;
 }
 

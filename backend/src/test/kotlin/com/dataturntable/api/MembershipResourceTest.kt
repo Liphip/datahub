@@ -70,6 +70,7 @@ class MembershipResourceTest {
             .jsonPath()
 
         val userId = userResp.getString("id")
+        val userEmail = userResp.getString("email")
 
         // Create membership
         val createResp = given()
@@ -81,6 +82,8 @@ class MembershipResourceTest {
         .then()
             .statusCode(201)
             .body("id", notNullValue())
+            .body("authUserEmail", equalTo(userEmail))
+            .body("roleName", equalTo("Test Role"))
             .extract()
             .body()
             .jsonPath()
@@ -106,6 +109,21 @@ class MembershipResourceTest {
             .statusCode(200)
             .body("size()", greaterThan(0))
             .body("find { it.id == '${membershipId}' }", notNullValue())
+            .body("find { it.id == '${membershipId}' }.authUserEmail", equalTo(userEmail))
+            .body("find { it.id == '${membershipId}' }.roleName", equalTo("Test Role"))
+    }
+
+    @Test
+    fun testListMembershipsRejectsInvalidTenantId() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants/not-a-uuid/memberships")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid tenantId"))
     }
 
     @Test

@@ -29,6 +29,12 @@ export default function Users() {
   const [savingEdit, setSavingEdit] = useState(false);
 
   const tenantId = selectedTenantId || user?.tenantId;
+  const abilities = user?.abilities || [];
+  const hasAbility = (ability: string) => user?.superadmin || abilities.includes('*') || abilities.includes(ability);
+  const canReadUsers = hasAbility('read:user');
+  const canWriteUsers = hasAbility('write:user');
+  const canManageTenant = hasAbility('manage:tenant');
+  const canInviteUsers = canWriteUsers && canManageTenant;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -36,14 +42,33 @@ export default function Users() {
   };
 
   const loadData = async (tid: string) => {
-    const [usersData, membershipsData, rolesData] = await Promise.all([
-      api.getUsers(tid),
-      api.getTenantMemberships(tid),
-      api.getRoles(tid),
+    if (!canReadUsers && !canManageTenant) {
+      setUsers([]);
+      setMemberships([]);
+      setRoles([]);
+      return [] as Role[];
+    }
+
+    const [usersResult, membershipsResult, rolesResult] = await Promise.allSettled([
+      canReadUsers ? api.getUsers(tid) : Promise.resolve([] as User[]),
+      canManageTenant ? api.getTenantMemberships(tid) : Promise.resolve([] as Membership[]),
+      canManageTenant ? api.getRoles(tid) : Promise.resolve([] as Role[]),
     ]);
+
+    const usersData = usersResult.status === 'fulfilled' ? usersResult.value : [];
+    const membershipsData = membershipsResult.status === 'fulfilled' ? membershipsResult.value : [];
+    const rolesData = rolesResult.status === 'fulfilled' ? rolesResult.value : [];
+
     setUsers(usersData);
     setMemberships(membershipsData);
     setRoles(rolesData);
+
+    if (usersResult.status === 'rejected' || membershipsResult.status === 'rejected' || rolesResult.status === 'rejected') {
+      setError('Some user-management data could not be loaded due to permission limits.');
+    } else {
+      setError('');
+    }
+
     return rolesData;
   };
 
@@ -61,7 +86,7 @@ export default function Users() {
       }
     };
     init();
-  }, [tenantId]);
+  }, [tenantId, canReadUsers, canManageTenant]);
 
   const getMembershipForUser = (userId: string) => memberships.find((m) => m.authUserId === userId);
   const getRoleForMembership = (m?: Membership) => roles.find((r) => r.id === m?.roleId);
@@ -73,6 +98,10 @@ export default function Users() {
 
   const handleInviteUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canInviteUsers) {
+      showToast('You do not have permission to invite users', 'error');
+      return;
+    }
     if (!tenantId || !newUserEmail || !newUserPassword) return;
     setInviting(true);
     try {
@@ -97,6 +126,10 @@ export default function Users() {
   };
 
   const handleSaveRoleEdit = async () => {
+    if (!canManageTenant) {
+      showToast('You do not have permission to update memberships', 'error');
+      return;
+    }
     if (!tenantId || !editState) return;
     setSavingEdit(true);
     try {
@@ -112,6 +145,10 @@ export default function Users() {
   };
 
   const handleDeleteMembership = async (membershipId: string) => {
+    if (!canManageTenant) {
+      showToast('You do not have permission to remove memberships', 'error');
+      return;
+    }
     if (!tenantId) return;
     setDeletingId(membershipId);
     try {
@@ -139,8 +176,16 @@ export default function Users() {
 
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Users</h1>
-        <button onClick={() => setShowInviteModal(true)} className="btn-primary">Invite User</button>
+        {canInviteUsers && (
+          <button onClick={() => setShowInviteModal(true)} className="btn-primary">Invite User</button>
+        )}
       </div>
+
+      {!canReadUsers && !canManageTenant && (
+        <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+          You do not have permission to view users in this tenant.
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700 flex justify-between items-center">
@@ -159,10 +204,10 @@ export default function Users() {
         <div className="card text-center py-12">
           <p className="text-gray-500">No tenant ID found.</p>
         </div>
-      ) : users.length === 0 ? (
+      ) : users.length === 0 && memberships.length === 0 ? (
         <div className="card text-center py-12">
           <p className="text-gray-500 mb-4">No users yet</p>
-          <button onClick={() => setShowInviteModal(true)} className="btn-primary">Invite First User</button>
+          {canInviteUsers && <button onClick={() => setShowInviteModal(true)} className="btn-primary">Invite First User</button>}
         </div>
       ) : (
         <div className="card overflow-hidden">
@@ -172,11 +217,20 @@ export default function Users() {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Abilities</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                {canManageTenant && (
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                )}
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {users.map((u) => {
+              {(canReadUsers ? users : memberships.map((m) => ({
+                id: m.authUserId,
+                email: m.authUserEmail || `user:${m.authUserId.slice(0, 8)}`,
+                firstName: m.authUserFirstName,
+                lastName: m.authUserLastName,
+                abilities: [],
+                superadmin: false,
+              } as User))).map((u) => {
                 const membership = getMembershipForUser(u.id);
                 const role = getRoleForMembership(membership);
                 const abilities = parseAbilities(membership?.abilities);
@@ -227,7 +281,7 @@ export default function Users() {
                         </div>
                       ) : (
                         <span className="px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-800">
-                          {role?.name ?? 'No Role'}
+                          {role?.name ?? membership?.roleName ?? 'No Role'}
                         </span>
                       )}
                     </td>
@@ -243,39 +297,41 @@ export default function Users() {
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      {isConfirmingDelete ? (
-                        <span className="space-x-2">
-                          <span className="text-gray-600 text-xs">Remove?</span>
-                          <button
-                            onClick={() => handleDeleteMembership(membership!.id)}
-                            disabled={isDeleting}
-                            className="text-red-600 hover:text-red-900"
-                          >
-                            {isDeleting ? '…' : 'Yes'}
-                          </button>
-                          <button onClick={() => setConfirmDeleteId(null)} className="text-gray-500 hover:text-gray-700">No</button>
-                        </span>
-                      ) : (
-                        <span className="space-x-3">
-                          {membership && !isEditingThis && (
+                    {canManageTenant && (
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        {isConfirmingDelete ? (
+                          <span className="space-x-2">
+                            <span className="text-gray-600 text-xs">Remove?</span>
                             <button
-                              onClick={() => setEditState({ membershipId: membership.id, roleId: membership.roleId ?? roles[0]?.id ?? '' })}
-                              className="text-primary-600 hover:text-primary-900"
+                              onClick={() => handleDeleteMembership(membership!.id)}
+                              disabled={isDeleting}
+                              className="text-red-600 hover:text-red-900"
                             >
-                              Edit Role
+                              {isDeleting ? '…' : 'Yes'}
                             </button>
-                          )}
-                          <button
-                            onClick={() => setConfirmDeleteId(membership?.id ?? null)}
-                            disabled={!membership?.id}
-                            className="text-red-600 hover:text-red-900 disabled:opacity-40"
-                          >
-                            Remove
-                          </button>
-                        </span>
-                      )}
-                    </td>
+                            <button onClick={() => setConfirmDeleteId(null)} className="text-gray-500 hover:text-gray-700">No</button>
+                          </span>
+                        ) : (
+                          <span className="space-x-3">
+                            {membership && !isEditingThis && (
+                              <button
+                                onClick={() => setEditState({ membershipId: membership.id, roleId: membership.roleId ?? roles[0]?.id ?? '' })}
+                                className="text-primary-600 hover:text-primary-900"
+                              >
+                                Edit Role
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setConfirmDeleteId(membership?.id ?? null)}
+                              disabled={!membership?.id}
+                              className="text-red-600 hover:text-red-900 disabled:opacity-40"
+                            >
+                              Remove
+                            </button>
+                          </span>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -284,7 +340,7 @@ export default function Users() {
         </div>
       )}
 
-      {showInviteModal && (
+      {showInviteModal && canInviteUsers && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <h2 className="text-xl font-bold mb-4">Invite User</h2>

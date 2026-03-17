@@ -52,6 +52,27 @@ class MembershipResource {
         return roleTenantId == null || roleTenantId == tenant.id
     }
 
+    private fun parseTenantUuid(tenantId: String): UUID {
+        return try {
+            UUID.fromString(tenantId)
+        } catch (_: Exception) {
+            throw WebApplicationException(Response.status(400).entity(mapOf("error" to "Invalid tenantId")).build())
+        }
+    }
+
+    private fun toMembershipDto(membership: Membership): Map<String, Any?> {
+        return mapOf(
+            "id" to membership.id,
+            "authUserId" to membership.authUser?.id,
+            "authUserEmail" to membership.authUser?.email,
+            "authUserFirstName" to membership.authUser?.firstName,
+            "authUserLastName" to membership.authUser?.lastName,
+            "roleId" to membership.role?.id,
+            "roleName" to membership.role?.name,
+            "abilities" to membership.abilities
+        )
+    }
+
     @GET
     fun list(@PathParam("tenantId") tenantId: String): Response {
         val currentUser = getCurrentUser()
@@ -62,18 +83,19 @@ class MembershipResource {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
 
+        val tenantUuid = try {
+            parseTenantUuid(tenantId)
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+
         val memberships = em.createQuery(
-            "SELECT m FROM Membership m WHERE m.tenant.id = :tenantId",
+            "SELECT m FROM Membership m LEFT JOIN FETCH m.authUser LEFT JOIN FETCH m.role WHERE m.tenant.id = :tenantId",
             Membership::class.java
         )
-            .setParameter("tenantId", UUID.fromString(tenantId))
+            .setParameter("tenantId", tenantUuid)
             .resultList
-        return Response.ok(memberships.map { m -> mapOf(
-            "id" to m.id,
-            "authUserId" to m.authUser?.id,
-            "roleId" to m.role?.id,
-            "abilities" to m.abilities
-        ) }).build()
+        return Response.ok(memberships.map { toMembershipDto(it) }).build()
     }
 
     @POST
@@ -90,7 +112,13 @@ class MembershipResource {
         val authUserId = request["authUserId"] as? String ?: return Response.status(400).entity(mapOf("error" to "authUserId is required")).build()
         val roleId = request["roleId"] as? String ?: return Response.status(400).entity(mapOf("error" to "roleId is required")).build()
 
-        val tenant = em.find(Tenant::class.java, UUID.fromString(tenantId))
+        val tenantUuid = try {
+            parseTenantUuid(tenantId)
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+
+        val tenant = em.find(Tenant::class.java, tenantUuid)
             ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
         val user = em.find(com.dataturntable.auth.User::class.java, UUID.fromString(authUserId))
             ?: return Response.status(404).entity(mapOf("error" to "User not found")).build()
@@ -125,7 +153,7 @@ class MembershipResource {
         }
         membership.persist()
 
-        return Response.status(201).entity(mapOf("id" to membership.id)).build()
+        return Response.status(201).entity(toMembershipDto(membership)).build()
     }
 
     @DELETE
@@ -179,13 +207,6 @@ class MembershipResource {
         request["abilities"]?.let { membership.abilities = it.toString() }
         membership.persist()
 
-        return Response.ok(
-            mapOf(
-                "id" to membership.id,
-                "authUserId" to membership.authUser?.id,
-                "roleId" to membership.role?.id,
-                "abilities" to membership.abilities
-            )
-        ).build()
+        return Response.ok(toMembershipDto(membership)).build()
     }
 }
