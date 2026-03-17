@@ -785,6 +785,15 @@ class ConnectorResource {
                 .setMaxResults(1)
                 .resultList
                 .firstOrNull()
+            val latestFailedRun = em.createQuery(
+                "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId AND r.status = :failedStatus ORDER BY r.startedAt DESC",
+                PipelineRun::class.java
+            )
+                .setParameter("pipelineId", pipelineUuid)
+                .setParameter("failedStatus", com.dataturntable.pipeline.PipelineRunStatus.FAILED)
+                .setMaxResults(1)
+                .resultList
+                .firstOrNull()
             val recentRuns = em.createQuery(
                 "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId AND r.startedAt >= :since ORDER BY r.startedAt DESC",
                 PipelineRun::class.java
@@ -825,6 +834,9 @@ class ConnectorResource {
                 "latestRunId" to latestRun?.id,
                 "latestRunStatus" to latestRun?.status?.name,
                 "latestRunStartedAt" to latestRun?.startedAt,
+                "latestFailedRunId" to latestFailedRun?.id,
+                "latestFailedRunStartedAt" to latestFailedRun?.startedAt,
+                "latestFailedRunErrorMessage" to latestFailedRun?.errorMessage,
                 "windowSinceHours" to hours,
                 "recentRuns" to recentTotal,
                 "recentFailedRuns" to recentFailed,

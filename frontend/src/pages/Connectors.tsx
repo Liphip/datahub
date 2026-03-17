@@ -997,24 +997,45 @@ export default function Connectors() {
                         </td>
                         <td className="py-2 pr-3">
                           {pipeline.latestRunStatus ? (
-                            <span className="text-xs">
-                              {pipeline.latestRunStatus}
-                              {pipeline.latestRunStartedAt ? ` (${new Date(pipeline.latestRunStartedAt).toLocaleString()})` : ''}
-                            </span>
+                            <div className="text-xs">
+                              <div>
+                                {pipeline.latestRunStatus}
+                                {pipeline.latestRunStartedAt ? ` (${new Date(pipeline.latestRunStartedAt).toLocaleString()})` : ''}
+                              </div>
+                              {pipeline.latestFailedRunId && (
+                                <div className="text-red-700" title={pipeline.latestFailedRunErrorMessage || ''}>
+                                  Latest failure: {pipeline.latestFailedRunStartedAt ? new Date(pipeline.latestFailedRunStartedAt).toLocaleString() : 'unknown'}
+                                </div>
+                              )}
+                            </div>
                           ) : (
                             <span className="text-xs text-gray-500">No runs</span>
                           )}
                         </td>
                         <td className="py-2 text-right">
-                          <button
-                            className="text-indigo-700 hover:text-indigo-900 text-xs"
-                            onClick={() => {
-                              setImpactModal(null);
-                              navigate(`/pipelines/${pipeline.pipelineId}`);
-                            }}
-                          >
-                            Open Pipeline
-                          </button>
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              className="text-indigo-700 hover:text-indigo-900 text-xs"
+                              onClick={() => {
+                                setImpactModal(null);
+                                navigate(`/pipelines/${pipeline.pipelineId}`);
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="text-amber-700 hover:text-amber-900 text-xs"
+                              onClick={() => {
+                                setImpactModal(null);
+                                const targetRunId = pipeline.latestFailedRunId || pipeline.latestRunId;
+                                const params = new URLSearchParams({ focusPipelineId: pipeline.pipelineId });
+                                if (targetRunId) params.set('focusRunId', targetRunId);
+                                navigate(`/pipelines?${params.toString()}`);
+                              }}
+                            >
+                              Triage Runs
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}

@@ -247,6 +247,9 @@ export interface ConnectorImpactSummary {
     latestRunId?: string;
     latestRunStatus?: string;
     latestRunStartedAt?: string;
+    latestFailedRunId?: string;
+    latestFailedRunStartedAt?: string;
+    latestFailedRunErrorMessage?: string;
     windowSinceHours?: number;
     recentRuns?: number;
     recentFailedRuns?: number;

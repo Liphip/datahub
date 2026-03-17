@@ -536,6 +536,7 @@ class ConnectorResourceTest {
             .body("impactedPipelines[0].recentFailedRuns", equalTo(1))
             .body("impactedPipelines[0].impactPriorityScore", equalTo(100))
             .body("impactedPipelines[0].riskLevel", equalTo("HIGH"))
+            .body("impactedPipelines[0].latestFailedRunId", notNullValue())
             .body("impactedPipelines[0].latestRunStatus", equalTo("FAILED"))
 
         given()

@@ -92,6 +92,7 @@ export default function Pipelines() {
   const [confirmPresetActions, setConfirmPresetActions] = useState(() => localStorage.getItem('pipelines.presets.confirm') !== 'false');
   const [pendingPresetAction, setPendingPresetAction] = useState<null | { type: 'delete' | 'resetOne' | 'resetAll'; name?: string }>(null);
   const importPresetInputRef = useRef<HTMLInputElement | null>(null);
+  const handledFocusRef = useRef<string | null>(null);
   const [showShortcutHints, setShowShortcutHints] = useState(() => {
     const stored = localStorage.getItem('pipelines.bucket.shortcuts.hidden');
     return stored !== 'true';
@@ -105,6 +106,8 @@ export default function Pipelines() {
   const [refreshNowTick, setRefreshNowTick] = useState(() => Date.now());
 
   const bucketStartParam = searchParams.get('bucketStart');
+  const focusPipelineIdParam = searchParams.get('focusPipelineId');
+  const focusRunIdParam = searchParams.get('focusRunId');
   const bucketSecondsParam = Number(searchParams.get('bucketSeconds') || '');
   const bucketStart = bucketStartParam ? new Date(bucketStartParam) : null;
   const bucketSeconds = Number.isFinite(bucketSecondsParam) && bucketSecondsParam > 0 ? bucketSecondsParam : null;
@@ -226,6 +229,37 @@ export default function Pipelines() {
     };
     fetchAll();
   }, [tenantId, canReadPipelines, healthFilter, sinceHoursFilter, bucketStartParam, bucketSeconds, bucketStatusFilter, bucketPipelineIdFilter]);
+
+  useEffect(() => {
+    if (!focusPipelineIdParam || !canReadPipelines) return;
+    const signature = `${focusPipelineIdParam}:${focusRunIdParam || ''}`;
+    if (handledFocusRef.current === signature) return;
+    const pipelineExists = pipelines.some((pipeline) => pipeline.id === focusPipelineIdParam);
+    if (!pipelineExists) return;
+
+    handledFocusRef.current = signature;
+    const applyFocus = async () => {
+      setExpandedPipelineId(focusPipelineIdParam);
+      try {
+        await loadDetailedPipelineRuns(focusPipelineIdParam);
+      } catch {
+        // keep current runs rendering
+      }
+      try {
+        await loadPipelineSummary(focusPipelineIdParam);
+      } catch {
+        // summary is optional for deep-link focus
+      }
+
+      const fallbackRunId = runsMap[focusPipelineIdParam]?.[0]?.id;
+      const runIdToSelect = focusRunIdParam || fallbackRunId;
+      if (runIdToSelect) {
+        setSelectedRunIdByPipeline((prev) => ({ ...prev, [focusPipelineIdParam]: runIdToSelect }));
+      }
+    };
+
+    void applyFocus();
+  }, [focusPipelineIdParam, focusRunIdParam, canReadPipelines, pipelines, runsMap]);
 
   useEffect(() => {
     try {
