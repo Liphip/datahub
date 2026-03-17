@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
@@ -64,6 +64,7 @@ export default function Pipelines() {
   const bucketQueryInputRef = useRef<HTMLInputElement | null>(null);
   const [triagePresets, setTriagePresets] = useState<TriagePreset[]>([]);
   const [triagePresetName, setTriagePresetName] = useState('');
+  const importPresetInputRef = useRef<HTMLInputElement | null>(null);
   const [showShortcutHints, setShowShortcutHints] = useState(() => {
     const stored = localStorage.getItem('pipelines.bucket.shortcuts.hidden');
     return stored !== 'true';
@@ -575,6 +576,68 @@ export default function Pipelines() {
     showToast('Preset removed', 'success');
   };
 
+  const exportTriagePresets = () => {
+    if (triagePresets.length === 0) {
+      showToast('No presets to export', 'error');
+      return;
+    }
+
+    try {
+      const payload = JSON.stringify({
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        presets: triagePresets,
+      }, null, 2);
+      const blob = new Blob([payload], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `triage-presets-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      showToast('Presets exported', 'success');
+    } catch {
+      showToast('Failed to export presets', 'error');
+    }
+  };
+
+  const triggerImportTriagePresets = () => {
+    importPresetInputRef.current?.click();
+  };
+
+  const importTriagePresets = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as { presets?: TriagePreset[] };
+      const imported = Array.isArray(parsed?.presets)
+        ? parsed.presets.filter((p) => typeof p?.name === 'string' && typeof p?.query === 'string')
+        : [];
+
+      if (imported.length === 0) {
+        showToast('No valid presets found in file', 'error');
+        return;
+      }
+
+      const merged = [...imported, ...triagePresets]
+        .reduce<TriagePreset[]>((acc, preset) => {
+          if (acc.some((p) => p.name.toLowerCase() === preset.name.toLowerCase())) return acc;
+          acc.push(preset);
+          return acc;
+        }, [])
+        .slice(0, 20);
+
+      persistTriagePresets(merged);
+      showToast(`Imported ${imported.length} preset(s)`, 'success');
+    } catch {
+      showToast('Failed to import presets', 'error');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
   const toggleShortcutHints = () => {
     setShowShortcutHints((prev) => {
       const next = !prev;
@@ -651,6 +714,13 @@ export default function Pipelines() {
         <div className="mb-4 card">
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <input
+              ref={importPresetInputRef}
+              type="file"
+              accept="application/json"
+              onChange={importTriagePresets}
+              className="hidden"
+            />
+            <input
               value={triagePresetName}
               onChange={(e) => setTriagePresetName(e.target.value)}
               placeholder="Save triage preset"
@@ -661,6 +731,18 @@ export default function Pipelines() {
               className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
             >
               Save preset
+            </button>
+            <button
+              onClick={exportTriagePresets}
+              className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
+            >
+              Export
+            </button>
+            <button
+              onClick={triggerImportTriagePresets}
+              className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
+            >
+              Import
             </button>
             {triagePresets.length > 0 && (
               <div className="flex flex-wrap gap-2">
