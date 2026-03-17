@@ -443,6 +443,7 @@ class TenantResourceTest {
             .body("defaultFetchMode", equalTo("SUMMARY"))
             .body("defaultDepth", equalTo(20))
             .body("maxDepthCap", equalTo(200))
+            .body("history.size()", equalTo(0))
 
         given()
             .header("Authorization", "Bearer $managerToken")
@@ -461,6 +462,9 @@ class TenantResourceTest {
             .body("defaultFetchMode", equalTo("DETAILS"))
             .body("defaultDepth", equalTo(40))
             .body("maxDepthCap", equalTo(120))
+            .body("history.size()", equalTo(1))
+            .body("history[0].changedByEmail", equalTo("tenant-admin@example.com"))
+            .body("history[0].defaults.safeScopePolicy", equalTo("PIPELINE"))
 
         given()
             .header("Authorization", "Bearer $managerToken")

@@ -55,11 +55,26 @@ export interface CodeModule {
   versions: ModuleVersion[];
 }
 
+export interface TenantLineageDefaultsConfig {
+  safeScopePolicy: 'AUTO' | 'RUN' | 'PIPELINE';
+  defaultFetchMode: 'SUMMARY' | 'DETAILS';
+  defaultDepth: number;
+  maxDepthCap: number;
+}
+
+export interface TenantLineageDefaultsHistoryEntry {
+  changedAt: string;
+  changedByUserId?: string;
+  changedByEmail?: string;
+  defaults: TenantLineageDefaultsConfig;
+}
+
 export interface TenantLineageDefaults {
   safeScopePolicy: 'AUTO' | 'RUN' | 'PIPELINE';
   defaultFetchMode: 'SUMMARY' | 'DETAILS';
   defaultDepth: number;
   maxDepthCap: number;
+  history?: TenantLineageDefaultsHistoryEntry[];
 }
 
 export interface ModuleVersion {

@@ -184,6 +184,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added safe-scope policy controls for lineage learning: lineage API now accepts `safeScopePolicy` (`auto|run|pipeline`) and returns both policy and `appliedSafeScope`, while the lineage panel now provides an `auto/run/pipeline` policy selector so teams can govern whether newly learned defaults are persisted per run or shared at pipeline scope.
 - Added tenant-level lineage defaults management: backend now exposes `GET/PATCH /tenants/{id}/lineage-defaults` for `safeScopePolicy`, `defaultFetchMode`, `defaultDepth`, and `maxDepthCap`, and the Pipelines lineage panel now loads these defaults, applies them as fallbacks/caps, and allows tenant managers to save current lineage context as tenant defaults.
 - Added dedicated tenant settings UI for lineage defaults: Tenants page now includes a focused `Lineage Defaults` section with tenant selector, editable defaults form, and save/reset controls so tenant managers can configure baseline lineage behavior directly instead of only deriving defaults from the Pipelines view.
+- Added lineage defaults change history and rollback-friendly UX: tenant lineage defaults responses now include bounded change history metadata (when/who/default snapshot), and the Tenants settings panel now surfaces recent entries with `Apply to form` actions for quick rollback/replay before saving.
 
 ---
 

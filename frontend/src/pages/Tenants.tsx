@@ -116,7 +116,8 @@ export default function Tenants() {
       const defaultDepth = Math.min(200, Math.max(1, lineageDefaults.defaultDepth));
       const maxDepthCap = Math.min(200, Math.max(20, Math.max(defaultDepth, lineageDefaults.maxDepthCap)));
       const updated = await api.updateTenantLineageDefaults(lineageDefaultsTenantId, {
-        ...lineageDefaults,
+        safeScopePolicy: lineageDefaults.safeScopePolicy,
+        defaultFetchMode: lineageDefaults.defaultFetchMode,
         defaultDepth,
         maxDepthCap,
       });
@@ -448,6 +449,35 @@ export default function Tenants() {
             >
               Reset Form
             </button>
+          </div>
+          <div className="rounded border border-indigo-200 bg-white p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-indigo-900">Recent Changes</h3>
+              <span className="text-xs text-indigo-700">{lineageDefaults.history?.length ?? 0} entries</span>
+            </div>
+            {(lineageDefaults.history && lineageDefaults.history.length > 0) ? (
+              <div className="space-y-2 max-h-48 overflow-auto pr-1">
+                {lineageDefaults.history.slice().reverse().map((entry, idx) => (
+                  <div key={`${entry.changedAt}-${idx}`} className="flex flex-wrap items-center justify-between gap-2 border border-gray-200 rounded px-2 py-1 text-xs">
+                    <div className="text-gray-700">
+                      <span className="font-medium">{new Date(entry.changedAt).toLocaleString()}</span>
+                      {' · '}
+                      <span>{entry.changedByEmail || entry.changedByUserId || 'unknown user'}</span>
+                      {' · '}
+                      <span>{entry.defaults.defaultFetchMode} d{entry.defaults.defaultDepth} cap d{entry.defaults.maxDepthCap} {entry.defaults.safeScopePolicy.toLowerCase()}</span>
+                    </div>
+                    <button
+                      className="text-indigo-700 hover:text-indigo-900"
+                      onClick={() => setLineageDefaults((prev) => ({ ...prev, ...entry.defaults }))}
+                    >
+                      Apply to form
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500">No lineage defaults changes recorded yet.</p>
+            )}
           </div>
         </div>
       </div>

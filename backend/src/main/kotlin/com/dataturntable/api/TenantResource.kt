@@ -97,6 +97,30 @@ class TenantResource {
         return normalizeLineageDefaults(lineageDefaultsRaw)
     }
 
+    private fun extractLineageDefaultsHistory(settingsRaw: String?): List<Map<String, Any?>> {
+        val settings = parseSettings(settingsRaw)
+        @Suppress("UNCHECKED_CAST")
+        val historyRaw = settings["lineageDefaultsHistory"] as? List<Map<String, Any?>> ?: return emptyList()
+        return historyRaw.mapNotNull { entry ->
+            @Suppress("UNCHECKED_CAST")
+            val defaultsRaw = entry["defaults"] as? Map<String, Any?>
+            val changedAt = entry["changedAt"] as? String
+            if (changedAt.isNullOrBlank() || defaultsRaw == null) return@mapNotNull null
+            mapOf(
+                "changedAt" to changedAt,
+                "changedByUserId" to (entry["changedByUserId"] as? String),
+                "changedByEmail" to (entry["changedByEmail"] as? String),
+                "defaults" to normalizeLineageDefaults(defaultsRaw)
+            )
+        }
+    }
+
+    private fun buildLineageDefaultsResponse(settingsRaw: String?): Map<String, Any?> {
+        val defaults = extractLineageDefaults(settingsRaw)
+        val history = extractLineageDefaultsHistory(settingsRaw)
+        return defaults + mapOf("history" to history)
+    }
+
     private fun toTenantMap(tenant: Tenant, children: List<Map<String, Any?>>? = null): Map<String, Any?> {
         val base = mutableMapOf<String, Any?>(
             "id" to tenant.id,
@@ -342,7 +366,7 @@ class TenantResource {
 
         val tenant = em.find(Tenant::class.java, tenantId)
             ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
-        return Response.ok(extractLineageDefaults(tenant.settings)).build()
+        return Response.ok(buildLineageDefaultsResponse(tenant.settings)).build()
     }
 
     @PATCH
@@ -365,7 +389,6 @@ class TenantResource {
         val tenant = em.find(Tenant::class.java, tenantId)
             ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
 
-        @Suppress("UNCHECKED_CAST")
         val currentLineageDefaults = extractLineageDefaults(tenant.settings).toMutableMap()
         val merged = currentLineageDefaults.toMutableMap()
         request["safeScopePolicy"]?.let {
@@ -398,11 +421,24 @@ class TenantResource {
         }
 
         val settings = parseSettings(tenant.settings)
-        settings["lineageDefaults"] = normalizeLineageDefaults(merged)
+        val normalizedDefaults = normalizeLineageDefaults(merged)
+        val currentHistory = extractLineageDefaultsHistory(tenant.settings).toMutableList()
+        if (normalizedDefaults != extractLineageDefaults(tenant.settings)) {
+            currentHistory.add(
+                mapOf(
+                    "changedAt" to java.time.Instant.now().toString(),
+                    "changedByUserId" to user.id?.toString(),
+                    "changedByEmail" to user.email,
+                    "defaults" to normalizedDefaults
+                )
+            )
+        }
+        settings["lineageDefaults"] = normalizedDefaults
+        settings["lineageDefaultsHistory"] = currentHistory.takeLast(20)
         tenant.settings = objectMapper.writeValueAsString(settings)
         tenant.updatedAt = java.time.Instant.now()
         em.merge(tenant)
 
-        return Response.ok(extractLineageDefaults(tenant.settings)).build()
+        return Response.ok(buildLineageDefaultsResponse(tenant.settings)).build()
     }
 }
