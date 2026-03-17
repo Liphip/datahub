@@ -54,6 +54,10 @@ export default function Pipelines() {
   const [bucketStatusFilter, setBucketStatusFilter] = useState<BucketRunStatusFilter>(initialBucketStatus);
   const [bucketPipelineQuery, setBucketPipelineQuery] = useState(searchParams.get('bucketQ') || '');
   const bucketQueryInputRef = useRef<HTMLInputElement | null>(null);
+  const [showShortcutHints, setShowShortcutHints] = useState(() => {
+    const stored = localStorage.getItem('pipelines.bucket.shortcuts.hidden');
+    return stored !== 'true';
+  });
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [error, setError] = useState('');
   const [bucketRuns, setBucketRuns] = useState<TenantPipelineRun[]>([]);
@@ -468,6 +472,14 @@ export default function Pipelines() {
   const clearBucketPipelineQuery = () => applyBucketPipelineQuery('');
   const clearBucketSort = () => applyBucketSortMode('NEWEST');
 
+  const toggleShortcutHints = () => {
+    setShowShortcutHints((prev) => {
+      const next = !prev;
+      localStorage.setItem('pipelines.bucket.shortcuts.hidden', next ? 'false' : 'true');
+      return next;
+    });
+  };
+
   return (
     <div className="px-4 py-6 sm:px-0">
       {/* Toast */}
@@ -567,8 +579,22 @@ export default function Pipelines() {
                 <option value="NEWEST">Newest first</option>
                 <option value="FAILED_FIRST">Failed first</option>
               </select>
+              <button
+                onClick={toggleShortcutHints}
+                className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
+              >
+                {showShortcutHints ? 'Hide shortcuts' : 'Show shortcuts'}
+              </button>
             </div>
           </div>
+          {showShortcutHints && (
+            <div className="mb-2 flex flex-wrap gap-2 text-[11px] text-gray-600">
+              <span className="px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50">`/` focus search</span>
+              <span className="px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50">`f` failed</span>
+              <span className="px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50">`r` running</span>
+              <span className="px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50">`a` all</span>
+            </div>
+          )}
           {bucketLastRefreshedAt && (
             <div className="mb-2 flex items-center gap-2 text-[11px]">
               <span className="text-gray-500">
