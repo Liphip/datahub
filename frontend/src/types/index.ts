@@ -167,7 +167,9 @@ export interface PipelineRunLineage {
   direction?: 'both' | 'ancestors' | 'descendants';
   statuses?: Array<'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED'>;
   ancestorsTotal?: number;
+  ancestorsStatusCounts?: Partial<Record<'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED', number>>;
   descendantsTotal?: number;
+  descendantsStatusCounts?: Partial<Record<'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED', number>>;
   ancestorsTruncated?: boolean;
   descendantsTruncated?: boolean;
   nextRecommendedDepth?: number;

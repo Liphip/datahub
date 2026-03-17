@@ -29,6 +29,7 @@ type TriagePreset = {
 };
 
 const TRIAGE_PRESETS_KEY = 'pipelines.triage.presets.v1';
+const LINEAGE_STATUS_OPTIONS: LineageStatusFilter[] = ['ALL', 'FAILED', 'RUNNING', 'PENDING', 'SUCCESS', 'CANCELLED'];
 
 export default function Pipelines() {
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
@@ -1942,14 +1943,22 @@ export default function Pipelines() {
                                   </div>
                                   <div className="mb-2 flex flex-wrap items-center gap-2">
                                     <span className="text-[11px] text-indigo-800">Status:</span>
-                                    {(['ALL', 'FAILED', 'RUNNING', 'PENDING', 'SUCCESS', 'CANCELLED'] as const).map((option) => {
+                                    {LINEAGE_STATUS_OPTIONS.map((option) => {
                                       const active = (lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL') === option;
+                                      const statusCount = option === 'ALL'
+                                        ? (lineageByRunId[selectedRun.id].ancestorsTotal ?? lineageByRunId[selectedRun.id].ancestors.length)
+                                          + (lineageByRunId[selectedRun.id].descendantsTotal ?? lineageByRunId[selectedRun.id].descendants.length)
+                                        : (lineageByRunId[selectedRun.id].ancestorsStatusCounts?.[option] ?? 0)
+                                          + (lineageByRunId[selectedRun.id].descendantsStatusCounts?.[option] ?? 0);
+                                      const disabled = option !== 'ALL' && statusCount === 0;
                                       return (
                                         <button
                                           key={`${selectedRun.id}-lineage-status-${option}`}
-                                          className={`px-2 py-0.5 rounded border ${active ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-indigo-300 bg-white text-indigo-800'}`}
+                                          disabled={disabled}
+                                          className={`px-2 py-0.5 rounded border ${active ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-indigo-300 bg-white text-indigo-800'} ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                                           onClick={(e) => {
                                             e.preventDefault();
+                                            if (disabled) return;
                                             const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
                                             void handleLoadRunLineage(
                                               pipeline.id,
@@ -1960,10 +1969,61 @@ export default function Pipelines() {
                                             );
                                           }}
                                         >
-                                          {option}
+                                          {`${option} (${statusCount})`}
                                         </button>
                                       );
                                     })}
+                                  </div>
+                                  <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
+                                    <span className="text-indigo-800">Quick presets:</span>
+                                    <button
+                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
+                                        void handleLoadRunLineage(
+                                          pipeline.id,
+                                          selectedRun.id,
+                                          currentDepth,
+                                          lineageDirectionByRunId[selectedRun.id] ?? 'both',
+                                          'FAILED'
+                                        );
+                                      }}
+                                    >
+                                      Failures only
+                                    </button>
+                                    <button
+                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
+                                        void handleLoadRunLineage(
+                                          pipeline.id,
+                                          selectedRun.id,
+                                          currentDepth,
+                                          lineageDirectionByRunId[selectedRun.id] ?? 'both',
+                                          'RUNNING'
+                                        );
+                                      }}
+                                    >
+                                      In-flight only
+                                    </button>
+                                    <button
+                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
+                                        void handleLoadRunLineage(
+                                          pipeline.id,
+                                          selectedRun.id,
+                                          currentDepth,
+                                          lineageDirectionByRunId[selectedRun.id] ?? 'both',
+                                          'ALL'
+                                        );
+                                      }}
+                                    >
+                                      Clear status filter
+                                    </button>
                                   </div>
                                   <div className="mb-2 flex flex-wrap gap-2">
                                     {lineageByRunId[selectedRun.id].rootRunId && (

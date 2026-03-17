@@ -1215,6 +1215,7 @@ class PipelineResource {
 
         val ancestors = mutableListOf<Map<String, Any?>>()
         var ancestorsTotal = 0
+        val ancestorsStatusCounts = mutableMapOf<String, Int>()
         var currentRetryId = run.retryOfRunId
         var ancestorDepth = -1
         var guard = 0
@@ -1224,6 +1225,7 @@ class PipelineResource {
                 val ancestor = em.find(PipelineRun::class.java, currentRetryId) ?: break
                 if (ancestor.pipeline?.id != pipeline.id) break
                 ancestorsTotal += 1
+                ancestorsStatusCounts[ancestor.status.name] = (ancestorsStatusCounts[ancestor.status.name] ?: 0) + 1
                 if (includeByStatus(ancestor.status)) {
                     ancestors.add(runSummary(ancestor, ancestorDepth))
                 }
@@ -1238,6 +1240,7 @@ class PipelineResource {
 
         val descendants = mutableListOf<Map<String, Any?>>()
         var descendantsTotal = 0
+        val descendantsStatusCounts = mutableMapOf<String, Int>()
         var latestDescendant: PipelineRun? = null
         val queue = ArrayDeque<Pair<UUID, Int>>()
         val frontierAtDepthLimit = mutableSetOf<UUID>()
@@ -1260,6 +1263,7 @@ class PipelineResource {
                     .resultList
                 children.forEach { child ->
                     descendantsTotal += 1
+                    descendantsStatusCounts[child.status.name] = (descendantsStatusCounts[child.status.name] ?: 0) + 1
                     if (includeByStatus(child.status)) {
                         descendants.add(runSummary(child, parentDepth + 1))
                     }
@@ -1304,7 +1308,9 @@ class PipelineResource {
                 "direction" to normalizedDirection,
                 "statuses" to statusFilter?.map { it.name },
                 "ancestorsTotal" to ancestorsTotal,
+                "ancestorsStatusCounts" to ancestorsStatusCounts,
                 "descendantsTotal" to descendantsTotal,
+                "descendantsStatusCounts" to descendantsStatusCounts,
                 "ancestorsTruncated" to ancestorsTruncated,
                 "descendantsTruncated" to descendantsTruncated,
                 "nextRecommendedDepth" to nextRecommendedDepth
