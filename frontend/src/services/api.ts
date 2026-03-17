@@ -514,8 +514,14 @@ class ApiService {
     await this.client.delete(`/connectors/${id}`);
   }
 
-  async cloneConnector(id: string, name?: string): Promise<Connector> {
-    const response = await this.client.post<Connector>(`/connectors/${id}/clone`, name ? { name } : {});
+  async cloneConnector(id: string, name?: string, keepSecrets = false): Promise<Connector & { message?: string; secretsStripped?: boolean }> {
+    const response = await this.client.post<Connector & { message?: string; secretsStripped?: boolean }>(
+      `/connectors/${id}/clone`,
+      {
+        ...(name ? { name } : {}),
+        keepSecrets,
+      }
+    );
     return response.data;
   }
 

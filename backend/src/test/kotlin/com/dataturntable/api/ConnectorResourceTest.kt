@@ -469,10 +469,14 @@ class ConnectorResourceTest {
             .contentType("application/json")
             .body(mapOf(
                 "name" to "Clone Source",
-                "connectorType" to "MQTT",
+                "connectorType" to "REST",
                 "direction" to "OUTPUT",
                 "description" to "clone me",
-                "config" to mapOf("broker" to "mqtt://localhost:1883", "topic" to "tenant/$tenantId/clone/out")
+                "config" to mapOf(
+                    "baseUrl" to "https://api.example.com",
+                    "path" to "/ingest",
+                    "apiKey" to "super-secret-key"
+                )
             ))
         .`when`()
             .post("/api/internal/v1/connectors?tenantId=$tenantId")
@@ -496,7 +500,10 @@ class ConnectorResourceTest {
             .body("direction", equalTo("OUTPUT"))
             .body("clonedFromConnectorId", equalTo(sourceId))
             .body("description", equalTo("clone me"))
-            .body("config.topic", equalTo("tenant/$tenantId/clone/out"))
+            .body("secretsStripped", equalTo(true))
+            .body("config.baseUrl", equalTo("https://api.example.com"))
+            .body("config.path", equalTo("/ingest"))
+            .body("config.apiKey", nullValue())
     }
 
     @Test

@@ -82,6 +82,23 @@ class ConnectorResource {
         return result
     }
 
+    private fun stripSensitiveConfig(raw: Any?): Any? {
+        val sensitiveFragments = listOf("password", "secret", "token", "apikey", "api_key", "key")
+        return when (raw) {
+            is Map<*, *> -> raw.entries
+                .filterNot { (k, _) ->
+                    val key = k?.toString()?.lowercase() ?: return@filterNot false
+                    sensitiveFragments.any { key.contains(it) }
+                }
+                .associate { (k, v) ->
+                    (k?.toString() ?: "") to stripSensitiveConfig(v)
+                }
+                .filterKeys { it.isNotBlank() }
+            is List<*> -> raw.map { stripSensitiveConfig(it) }
+            else -> raw
+        }
+    }
+
     private fun parseConnectorType(type: String): ConnectorType? {
         return try {
             ConnectorType.valueOf(type.uppercase())
@@ -746,13 +763,31 @@ class ConnectorResource {
 
         val requestedName = request?.get("name")?.toString()?.trim()
         val cloneName = if (!requestedName.isNullOrBlank()) requestedName else "${source.name} Copy"
+        val keepSecrets = request?.get("keepSecrets") as? Boolean ?: false
+
+        val decryptedSourceConfig = try {
+            EncryptionUtils.decrypt(source.config ?: "{}")
+        } catch (_: Exception) {
+            "{}"
+        }
+        val parsedSourceConfig = try {
+            objectMapper.readValue(decryptedSourceConfig, Any::class.java)
+        } catch (_: Exception) {
+            emptyMap<String, Any>()
+        }
+        val clonedConfig = if (keepSecrets) parsedSourceConfig else stripSensitiveConfig(parsedSourceConfig)
+        val clonedConfigJson = try {
+            objectMapper.writeValueAsString(clonedConfig)
+        } catch (_: Exception) {
+            "{}"
+        }
 
         val clone = Connector().apply {
             this.name = cloneName
             this.tenant = source.tenant
             this.connectorType = source.connectorType
             this.direction = source.direction
-            this.config = source.config
+            this.config = EncryptionUtils.encrypt(clonedConfigJson)
             this.description = source.description
             this.isActive = false
             this.createdAt = java.time.Instant.now()
@@ -763,7 +798,8 @@ class ConnectorResource {
         return Response.status(201).entity(
             connectorToMap(clone, 0) + mapOf(
                 "clonedFromConnectorId" to source.id,
-                "message" to "Connector cloned in disconnected state"
+                "secretsStripped" to !keepSecrets,
+                "message" to if (keepSecrets) "Connector cloned in disconnected state" else "Connector cloned in disconnected state with sensitive config removed"
             )
         ).build()
     }

@@ -461,9 +461,9 @@ export default function Connectors() {
     }
     setCloningId(connector.id);
     try {
-      await api.cloneConnector(connector.id, `${connector.name} Copy`);
+      const cloned = await api.cloneConnector(connector.id, `${connector.name} Copy`, false);
       if (tenantId) await loadConnectors(tenantId);
-      showToast('Connector cloned as disconnected copy', 'success');
+      showToast(cloned.message || 'Connector cloned as disconnected copy', 'success');
     } catch (err: any) {
       setError(err?.response?.data?.error || 'Failed to clone connector');
     } finally {
@@ -722,6 +722,7 @@ export default function Connectors() {
                   <button
                     onClick={() => handleCloneConnector(connector)}
                     disabled={cloningId === connector.id}
+                    title="Clone as disconnected copy (sensitive config removed)"
                     className="text-violet-700 hover:text-violet-900 text-sm disabled:opacity-40"
                   >
                     {cloningId === connector.id ? 'Cloning...' : 'Clone'}
