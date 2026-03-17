@@ -60,6 +60,8 @@ This section catalogues every known gap between the current codebase and a shipp
 - Improved Alerts rule UX with JSON condition templates and inline validation errors.
 - Alert Rule API now validates condition JSON structure on create/update (rejects malformed or incomplete condition objects).
 - Fixed ingest/websocket pipeline lookup to use JPA entity manager lookups (avoids Panache static lookup failures in runtime/tests).
+- Alert history API now returns full history payload fields (`severity`, `message`, `sentAt`, linked ids) for frontend consistency.
+- Alerts UI now includes a guided condition builder (single/any/all logic) that generates valid JSON conditions.
 
 ---
 

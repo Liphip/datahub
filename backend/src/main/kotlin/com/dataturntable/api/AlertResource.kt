@@ -135,6 +135,21 @@ class AlertResource {
             "createdAt" to rule.createdAt.toString()
         )
     }
+
+    private fun toHistoryDto(history: AlertHistory): Map<String, Any?> {
+        return mapOf(
+            "id" to history.id,
+            "tenantId" to history.tenant?.id,
+            "ruleId" to history.rule?.id,
+            "channelId" to history.channel?.id,
+            "severity" to history.severity?.name,
+            "title" to history.title,
+            "message" to history.message,
+            "payload" to parseJsonValue(history.payload),
+            "sentAt" to history.sentAt,
+            "status" to history.status.name
+        )
+    }
     
     @GET
     @Path("/channels")
@@ -331,6 +346,6 @@ class AlertResource {
             .setParameter("tenantId", parseUuid(tenantId, "tenantId"))
             .setMaxResults(limit ?: 100)
             .resultList
-        return Response.ok(history.map { mapOf("id" to it.id, "title" to it.title, "status" to it.status.name) }).build()
+        return Response.ok(history.map { toHistoryDto(it) }).build()
     }
 }

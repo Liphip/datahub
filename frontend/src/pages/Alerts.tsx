@@ -23,6 +23,15 @@ export default function Alerts() {
   const [newRuleName, setNewRuleName] = useState('');
   const [newRuleCondition, setNewRuleCondition] = useState('');
   const [ruleConditionError, setRuleConditionError] = useState('');
+  const [builderLogic, setBuilderLogic] = useState<'single' | 'any' | 'all'>('single');
+  const [builderFieldA, setBuilderFieldA] = useState('temperature');
+  const [builderOperatorA, setBuilderOperatorA] = useState('>');
+  const [builderValueA, setBuilderValueA] = useState('80');
+  const [builderFieldB, setBuilderFieldB] = useState('status');
+  const [builderOperatorB, setBuilderOperatorB] = useState('==');
+  const [builderValueB, setBuilderValueB] = useState('CRITICAL');
+  const [builderSeverity, setBuilderSeverity] = useState('WARNING');
+  const [builderMessage, setBuilderMessage] = useState('Threshold exceeded');
   const [newRuleChannelId, setNewRuleChannelId] = useState('');
   const [newRulePipelineId, setNewRulePipelineId] = useState('');
   const [creatingRule, setCreatingRule] = useState(false);
@@ -153,6 +162,46 @@ export default function Alerts() {
     } else {
       setNewRuleCondition(JSON.stringify({ any: [{ field: 'temperature', operator: '>', value: 80 }, { field: 'status', operator: '==', value: 'CRITICAL' }], severity: 'CRITICAL', message: 'Critical condition met' }, null, 2));
     }
+    setRuleConditionError('');
+  };
+
+  const coerceConditionValue = (value: string): string | number | boolean => {
+    const normalized = value.trim();
+    if (normalized.toLowerCase() === 'true') return true;
+    if (normalized.toLowerCase() === 'false') return false;
+    const asNumber = Number(normalized);
+    if (!Number.isNaN(asNumber) && normalized !== '') return asNumber;
+    return normalized;
+  };
+
+  const buildConditionObject = () => {
+    const makeClause = (field: string, operator: string, value: string) => {
+      if (operator === 'exists') {
+        return { field, operator };
+      }
+      return { field, operator, value: coerceConditionValue(value) };
+    };
+
+    const clauseA = makeClause(builderFieldA, builderOperatorA, builderValueA);
+    const clauseB = makeClause(builderFieldB, builderOperatorB, builderValueB);
+    const meta = {
+      severity: builderSeverity,
+      message: builderMessage,
+    };
+
+    if (builderLogic === 'single') {
+      return { ...clauseA, ...meta };
+    }
+
+    return {
+      [builderLogic]: [clauseA, clauseB],
+      ...meta,
+    };
+  };
+
+  const applyBuilderToJson = () => {
+    const condition = buildConditionObject();
+    setNewRuleCondition(JSON.stringify(condition, null, 2));
     setRuleConditionError('');
   };
 
@@ -522,6 +571,55 @@ export default function Alerts() {
               </div>
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Condition (JSON)</label>
+                <div className="mb-3 rounded border border-gray-200 p-3 bg-gray-50">
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    <select value={builderLogic} onChange={(e) => setBuilderLogic(e.target.value as 'single' | 'any' | 'all')} className="input w-full">
+                      <option value="single">Single Condition</option>
+                      <option value="any">Any Of (OR)</option>
+                      <option value="all">All Of (AND)</option>
+                    </select>
+                    <select value={builderSeverity} onChange={(e) => setBuilderSeverity(e.target.value)} className="input w-full">
+                      <option value="INFO">INFO</option>
+                      <option value="WARNING">WARNING</option>
+                      <option value="CRITICAL">CRITICAL</option>
+                      <option value="ERROR">ERROR</option>
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mb-2">
+                    <input value={builderFieldA} onChange={(e) => setBuilderFieldA(e.target.value)} className="input w-full" placeholder="field" />
+                    <select value={builderOperatorA} onChange={(e) => setBuilderOperatorA(e.target.value)} className="input w-full">
+                      <option value=">">&gt;</option>
+                      <option value=">=">&gt;=</option>
+                      <option value="<">&lt;</option>
+                      <option value="<=">&lt;=</option>
+                      <option value="==">==</option>
+                      <option value="!=">!=</option>
+                      <option value="contains">contains</option>
+                      <option value="exists">exists</option>
+                    </select>
+                    <input value={builderValueA} onChange={(e) => setBuilderValueA(e.target.value)} className="input w-full" placeholder="value" disabled={builderOperatorA === 'exists'} />
+                  </div>
+                  {builderLogic !== 'single' && (
+                    <div className="grid grid-cols-3 gap-2 mb-2">
+                      <input value={builderFieldB} onChange={(e) => setBuilderFieldB(e.target.value)} className="input w-full" placeholder="field" />
+                      <select value={builderOperatorB} onChange={(e) => setBuilderOperatorB(e.target.value)} className="input w-full">
+                        <option value=">">&gt;</option>
+                        <option value=">=">&gt;=</option>
+                        <option value="<">&lt;</option>
+                        <option value="<=">&lt;=</option>
+                        <option value="==">==</option>
+                        <option value="!=">!=</option>
+                        <option value="contains">contains</option>
+                        <option value="exists">exists</option>
+                      </select>
+                      <input value={builderValueB} onChange={(e) => setBuilderValueB(e.target.value)} className="input w-full" placeholder="value" disabled={builderOperatorB === 'exists'} />
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <input value={builderMessage} onChange={(e) => setBuilderMessage(e.target.value)} className="input w-full" placeholder="Alert message" />
+                    <button type="button" onClick={applyBuilderToJson} className="px-3 py-2 text-xs border border-gray-300 rounded hover:bg-white">Apply Builder</button>
+                  </div>
+                </div>
                 <div className="mb-2 flex gap-2 flex-wrap">
                   <button type="button" onClick={() => useConditionTemplate('threshold')} className="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50">Threshold</button>
                   <button type="button" onClick={() => useConditionTemplate('exists')} className="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50">Exists</button>
