@@ -50,6 +50,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Updated frontend 401 interceptor to skip redirects for public setup/register/login auth calls.
 - Improved Users page permission handling: partial-data loading, ability-gated actions, and graceful read-only states for non-admin roles.
 - Membership API list/create/update responses now include `authUserEmail` and `roleName` fields for simpler frontend rendering.
+- Hardened `SecurityUtils` tenant parsing and DTO conversion to avoid invalid UUID crashes and null tenant string leakage.
 
 ---
 
