@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 
 export default function Login() {
@@ -84,6 +84,13 @@ export default function Login() {
             >
               {loading ? 'Signing in...' : 'Sign in'}
             </button>
+          </div>
+
+          <div className="text-center text-sm text-gray-500">
+            First deployment?{' '}
+            <Link to="/setup" className="text-primary-600 hover:text-primary-700">
+              Run initial setup
+            </Link>
           </div>
         </form>
       </div>

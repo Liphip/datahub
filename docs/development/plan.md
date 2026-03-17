@@ -39,6 +39,8 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added schema alignment migration `V2__auth_users_and_enum_schema_alignment.sql` for auth-user/membership column naming, enum CHECK constraints, and global email uniqueness.
 - Updated frontend `PipelineEditor` to resolve selected modules to latest module version IDs before save.
 - Updated frontend `PipelineEditor` and `ModuleEditor` to use toast notifications instead of blocking browser alerts.
+- Added frontend `/setup` page and route for first-run bootstrap and linked it from login.
+- Updated Tenants UI to replace browser confirm/alert flows with inline confirmation and toast notifications.
 
 ---
 

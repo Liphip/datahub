@@ -18,7 +18,14 @@ export default function Tenants() {
   const [newTenantParentId, setNewTenantParentId] = useState('');
   const [creating, setCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
 
   const fetchTenants = async () => {
     try {
@@ -57,6 +64,7 @@ export default function Tenants() {
       setNewTenantName('');
       setNewTenantParentId('');
       await fetchTenants();
+      showToast('Tenant created successfully', 'success');
     } catch (err: any) {
       const errorMsg = err.response?.data?.error || 'Failed to create tenant';
       setError(errorMsg);
@@ -82,8 +90,10 @@ export default function Tenants() {
       setShowEditModal(false);
       setEditingTenant(null);
       setNewTenantName('');
+      showToast('Tenant updated', 'success');
     } catch (err) {
       console.error('Error updating tenant:', err);
+      showToast('Failed to update tenant', 'error');
     } finally {
       setCreating(false);
     }
@@ -95,19 +105,19 @@ export default function Tenants() {
     const rootCount = tenants.length;
     
     if (isRoot && rootCount <= 1) {
-      alert('Cannot delete the last root tenant');
+      showToast('Cannot delete the last root tenant', 'error');
       return;
     }
-    
-    if (!confirm('Are you sure you want to delete this tenant and all its children?')) return;
-    
+
     setDeletingId(tenantId);
     try {
       await api.deleteTenant(tenantId);
       await fetchTenants();
+      setConfirmDeleteId(null);
+      showToast('Tenant deleted', 'success');
     } catch (err) {
       console.error('Error deleting tenant:', err);
-      alert('Failed to delete tenant');
+      showToast('Failed to delete tenant', 'error');
     } finally {
       setDeletingId(null);
     }
@@ -143,13 +153,31 @@ export default function Tenants() {
                 </button>
               )}
               <button onClick={() => handleEditTenant(tenant)} className="btn-secondary text-sm">Edit</button>
-              <button 
-                onClick={() => handleDeleteTenant(tenant.id)}
-                disabled={deletingId === tenant.id}
-                className="text-red-600 hover:text-red-700 text-sm"
-              >
-                {deletingId === tenant.id ? 'Deleting...' : 'Delete'}
-              </button>
+              {confirmDeleteId === tenant.id ? (
+                <div className="flex items-center space-x-2">
+                  <span className="text-xs text-gray-500">Delete?</span>
+                  <button
+                    onClick={() => handleDeleteTenant(tenant.id)}
+                    disabled={deletingId === tenant.id}
+                    className="text-red-600 hover:text-red-700 text-sm"
+                  >
+                    {deletingId === tenant.id ? 'Deleting...' : 'Yes'}
+                  </button>
+                  <button
+                    onClick={() => setConfirmDeleteId(null)}
+                    className="text-gray-500 hover:text-gray-700 text-sm"
+                  >
+                    No
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmDeleteId(tenant.id)}
+                  className="text-red-600 hover:text-red-700 text-sm"
+                >
+                  Delete
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -172,6 +200,14 @@ export default function Tenants() {
 
   return (
     <div className="px-4 py-6 sm:px-0">
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded shadow-lg text-white text-sm ${
+          toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+        }`}>
+          {toast.message}
+        </div>
+      )}
+
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Tenants</h1>
         <button 
