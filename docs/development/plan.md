@@ -151,6 +151,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added retry-lineage drilldown: backend now exposes `GET /pipelines/{id}/runs/{runId}/lineage` with ancestor/descendant retry chains, and Pipelines run details now provide on-demand `Load lineage` navigation buttons for faster root-cause and recovery tracing.
 - Improved connector list filtering and scalability: connector list API now supports combined filtering (`type` + `direction` + `isActive` + `q` search), and the Connectors page adds status/search controls backed by server-side filtering for faster large-tenant navigation.
 - Added connector deletion safety against pipeline graph dependencies: connector list responses now include `pipelineReferenceCount`, connector delete rejects with `409` when graph nodes still reference the connector (with reference details), and Connectors UI surfaces usage count + disables delete until references are removed.
+- Added connector usage drilldown API/UI: backend now exposes `GET /connectors/{id}/references` for pipeline/node-level dependency visibility, and Connectors UI provides a `Usage` modal for quick investigation before edit/delete operations.
 
 ---
 

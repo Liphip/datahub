@@ -212,6 +212,20 @@ export interface Connector {
   createdAt: string;
 }
 
+export interface ConnectorReference {
+  pipelineId: string;
+  pipelineName: string;
+  nodeId: string;
+  nodeType: string;
+}
+
+export interface ConnectorReferenceSummary {
+  connectorId: string;
+  connectorName: string;
+  referenceCount: number;
+  references: ConnectorReference[];
+}
+
 export interface BrokerCredential {
   id: string;
   tenantId: string;

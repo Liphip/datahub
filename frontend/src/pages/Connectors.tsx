@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Connector, BrokerCredential } from '../types';
+import type { Connector, BrokerCredential, ConnectorReferenceSummary } from '../types';
 
 const connectorTypes = ['MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'CUSTOM'] as const;
 const directions = ['INPUT', 'OUTPUT', 'BOTH'] as const;
@@ -104,6 +104,8 @@ export default function Connectors() {
   const [deletingBrokerCredentialId, setDeletingBrokerCredentialId] = useState<string | null>(null);
   const [rotatingBrokerCredentialId, setRotatingBrokerCredentialId] = useState<string | null>(null);
   const [revealedBrokerPassword, setRevealedBrokerPassword] = useState<string>('');
+  const [usageModal, setUsageModal] = useState<ConnectorReferenceSummary | null>(null);
+  const [loadingUsageId, setLoadingUsageId] = useState<string | null>(null);
   const [brokerForm, setBrokerForm] = useState({
     name: '',
     username: '',
@@ -449,6 +451,18 @@ export default function Connectors() {
     }
   };
 
+  const handleViewUsage = async (connector: Connector) => {
+    setLoadingUsageId(connector.id);
+    try {
+      const usage = await api.getConnectorReferences(connector.id);
+      setUsageModal(usage);
+    } catch (err: any) {
+      setError(err?.response?.data?.error || 'Failed to load connector usage');
+    } finally {
+      setLoadingUsageId(null);
+    }
+  };
+
   const handleEdit = (connector: Connector) => {
     if (!canWriteConnectors) return;
     setEditingConnector(connector);
@@ -668,6 +682,13 @@ export default function Connectors() {
                 >
                   {testingId === connector.id ? 'Testing...' : 'Test'}
                 </button>
+                <button
+                  onClick={() => handleViewUsage(connector)}
+                  disabled={loadingUsageId === connector.id}
+                  className="text-slate-700 hover:text-slate-900 text-sm disabled:opacity-40"
+                >
+                  {loadingUsageId === connector.id ? 'Loading...' : 'Usage'}
+                </button>
                 {canWriteConnectors && (
                   <button
                     onClick={() => handleToggleConnection(connector)}
@@ -715,6 +736,49 @@ export default function Connectors() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {usageModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4">
+            <div className="flex items-start justify-between mb-4 gap-3">
+              <div>
+                <h2 className="text-xl font-bold">Connector Usage</h2>
+                <p className="text-sm text-gray-600">
+                  {usageModal.connectorName} is referenced by {usageModal.referenceCount} pipeline node(s).
+                </p>
+              </div>
+              <button className="btn-secondary" onClick={() => setUsageModal(null)}>Close</button>
+            </div>
+            {usageModal.references.length === 0 ? (
+              <p className="text-sm text-gray-500">No pipeline references found.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left border-b border-gray-200">
+                      <th className="py-2 pr-3">Pipeline</th>
+                      <th className="py-2 pr-3">Node ID</th>
+                      <th className="py-2">Node Type</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usageModal.references.map((reference) => (
+                      <tr key={`${reference.pipelineId}-${reference.nodeId}`} className="border-b border-gray-100 last:border-0">
+                        <td className="py-2 pr-3">
+                          <div className="font-medium text-gray-900">{reference.pipelineName}</div>
+                          <div className="text-xs text-gray-500">{reference.pipelineId}</div>
+                        </td>
+                        <td className="py-2 pr-3"><code>{reference.nodeId}</code></td>
+                        <td className="py-2">{reference.nodeType}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

@@ -702,6 +702,31 @@ class ConnectorResource {
         }
     }
 
+    @GET
+    @Path("/{id}/references")
+    fun getReferences(@PathParam("id") id: String): Response {
+        val connectorId = parseUuid(id)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
+        val connector = em.find(Connector::class.java, connectorId)
+            ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
+        val tenantId = connector.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Connector tenant not found")).build()
+        val currentUser = getCurrentUser()
+        if (!canReadConnector(currentUser, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        val references = connector.tenant?.id?.let { connectorReferenceSummaries(it, connectorId) } ?: emptyList()
+        return Response.ok(
+            mapOf(
+                "connectorId" to connector.id,
+                "connectorName" to connector.name,
+                "referenceCount" to references.size,
+                "references" to references
+            )
+        ).build()
+    }
+
     @POST
     @Path("/{id}/connect")
     @Consumes(MediaType.WILDCARD)

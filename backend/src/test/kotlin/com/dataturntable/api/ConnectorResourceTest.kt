@@ -413,6 +413,52 @@ class ConnectorResourceTest {
     }
 
     @Test
+    fun testGetConnectorReferences() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        val connectorId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Usage Endpoint Connector",
+                "connectorType" to "MQTT",
+                "direction" to "INPUT",
+                "config" to mapOf("broker" to "mqtt://localhost:1883", "topic" to "tenant/$tenantId/ref/in")
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        QuarkusTransaction.requiringNew().run {
+            val tenant = em.find(com.dataturntable.tenant.Tenant::class.java, java.util.UUID.fromString(tenantId))
+            val pipeline = Pipeline().apply {
+                this.tenant = tenant
+                this.name = "Reference Endpoint Pipeline"
+                this.graphDefinition = "{\"nodes\":[{\"id\":\"n-in\",\"type\":\"IMPORT\",\"connectorId\":\"$connectorId\"}],\"edges\":[]}"
+            }
+            em.persist(pipeline)
+            em.flush()
+        }
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/connectors/$connectorId/references")
+        .then()
+            .statusCode(200)
+            .body("connectorId", equalTo(connectorId))
+            .body("referenceCount", equalTo(1))
+            .body("references[0].pipelineName", equalTo("Reference Endpoint Pipeline"))
+            .body("references[0].nodeType", equalTo("IMPORT"))
+    }
+
+    @Test
     fun testTestConnectorValidatesConfig() {
         val token = TestAuthHelpers.createAdminToken()
 

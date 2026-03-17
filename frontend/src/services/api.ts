@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, Connector, Role, Membership, TenantContext, BrokerCredential } from '../types';
+import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, Connector, ConnectorReferenceSummary, Role, Membership, TenantContext, BrokerCredential } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 export const API_STATUS_EVENT = 'dataturntable:api-status';
@@ -486,6 +486,11 @@ class ApiService {
 
   async getConnector(id: string): Promise<Connector> {
     const response = await this.client.get<Connector>(`/connectors/${id}`);
+    return response.data;
+  }
+
+  async getConnectorReferences(id: string): Promise<ConnectorReferenceSummary> {
+    const response = await this.client.get<ConnectorReferenceSummary>(`/connectors/${id}/references`);
     return response.data;
   }
 
