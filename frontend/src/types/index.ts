@@ -184,6 +184,7 @@ export interface PipelineRunLineage {
   recommendedSafeFetchMode?: 'SUMMARY' | 'DETAILS';
   recommendedSafeDepth?: number;
   recommendedSafeReason?: 'SWITCH_TO_SUMMARY' | 'REDUCE_DEPTH' | null;
+  recommendedSafeTtlHours?: number;
   ancestorsTotal?: number;
   ancestorsStatusCounts?: Partial<Record<'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED', number>>;
   descendantsTotal?: number;

@@ -20,7 +20,7 @@ type LineageDirection = 'both' | 'ancestors' | 'descendants';
 type LineageStatusFilter = 'ALL' | 'INFLIGHT' | 'TERMINAL' | 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
 type LineageFetchMode = 'SUMMARY' | 'DETAILS';
 type LineagePerfSample = { totalMs: number; payloadBytes: number; measuredAt?: string };
-type LineageSafeDefault = { mode: LineageFetchMode; depth: number; updatedAt: string; reason?: string };
+type LineageSafeDefault = { mode: LineageFetchMode; depth: number; updatedAt: string; reason?: string; expiresAt?: string };
 
 type TriagePreset = {
   name: string;
@@ -33,6 +33,7 @@ type TriagePreset = {
 
 const TRIAGE_PRESETS_KEY = 'pipelines.triage.presets.v1';
 const LINEAGE_SAFE_DEFAULTS_KEY = 'pipelines.lineage.safe-defaults.v1';
+const LINEAGE_SAFE_DEFAULT_TTL_HOURS = 168;
 const LINEAGE_STATUS_OPTIONS: LineageStatusFilter[] = ['ALL', 'INFLIGHT', 'TERMINAL', 'FAILED', 'RUNNING', 'PENDING', 'SUCCESS', 'CANCELLED'];
 
 export default function Pipelines() {
@@ -66,7 +67,16 @@ export default function Pipelines() {
       const raw = localStorage.getItem(LINEAGE_SAFE_DEFAULTS_KEY);
       if (!raw) return {};
       const parsed = JSON.parse(raw) as Record<string, LineageSafeDefault>;
-      return parsed && typeof parsed === 'object' ? parsed : {};
+      if (!parsed || typeof parsed !== 'object') return {};
+      const now = Date.now();
+      const filtered = Object.fromEntries(
+        Object.entries(parsed).filter(([, value]) => {
+          if (!value?.expiresAt) return true;
+          const expiresAtMs = Date.parse(value.expiresAt);
+          return Number.isFinite(expiresAtMs) && expiresAtMs > now;
+        })
+      ) as Record<string, LineageSafeDefault>;
+      return filtered;
     } catch {
       return {};
     }
@@ -177,6 +187,18 @@ export default function Pipelines() {
     const sorted = [...values].sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
     return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  };
+
+  const addHoursIso = (baseIso: string, hours: number) => {
+    const baseMs = Date.parse(baseIso);
+    const safeBase = Number.isFinite(baseMs) ? baseMs : Date.now();
+    return new Date(safeBase + hours * 60 * 60 * 1000).toISOString();
+  };
+
+  const isSafeDefaultExpired = (safe?: LineageSafeDefault) => {
+    if (!safe?.expiresAt) return false;
+    const expiresAtMs = Date.parse(safe.expiresAt);
+    return Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() : false;
   };
 
   const persistTriagePresets = (presets: TriagePreset[]) => {
@@ -566,10 +588,18 @@ export default function Pipelines() {
     setLoadingLineageRunId(runId);
     try {
       const rememberedSafeDefault = lineageSafeDefaultsByRunId[runId];
-      const depth = maxDepth ?? lineageDepthByRunId[runId] ?? rememberedSafeDefault?.depth ?? 20;
+      if (isSafeDefaultExpired(rememberedSafeDefault)) {
+        setLineageSafeDefaultsByRunId((prev) => {
+          const next = { ...prev };
+          delete next[runId];
+          return next;
+        });
+      }
+      const usableSafeDefault = isSafeDefaultExpired(rememberedSafeDefault) ? undefined : rememberedSafeDefault;
+      const depth = maxDepth ?? lineageDepthByRunId[runId] ?? usableSafeDefault?.depth ?? 20;
       const requestedDirection = direction ?? lineageDirectionByRunId[runId] ?? 'both';
       const requestedStatus = statusFilter ?? lineageStatusFilterByRunId[runId] ?? 'ALL';
-      const requestedFetchMode = fetchMode ?? lineageFetchModeByRunId[runId] ?? rememberedSafeDefault?.mode ?? 'SUMMARY';
+      const requestedFetchMode = fetchMode ?? lineageFetchModeByRunId[runId] ?? usableSafeDefault?.mode ?? 'SUMMARY';
       const statusPreset = requestedStatus === 'INFLIGHT'
         ? 'inflight'
         : requestedStatus === 'TERMINAL'
@@ -616,6 +646,7 @@ export default function Pipelines() {
             depth: suggestedDepth,
             updatedAt: new Date().toISOString(),
             reason: lineage.recommendedSafeReason ?? lineage.recommendedAction,
+            expiresAt: addHoursIso(new Date().toISOString(), lineage.recommendedSafeTtlHours ?? LINEAGE_SAFE_DEFAULT_TTL_HOURS),
           },
         }));
       }
@@ -897,6 +928,24 @@ export default function Pipelines() {
   const clearAllSafeDefaults = () => {
     setLineageSafeDefaultsByRunId({});
     showToast('All lineage safe defaults cleared', 'success');
+  };
+
+  const refreshSafeDefaultTtl = (runId: string) => {
+    setLineageSafeDefaultsByRunId((prev) => {
+      const current = prev[runId];
+      if (!current) return prev;
+      const nowIso = new Date().toISOString();
+      const nextExpiry = addHoursIso(nowIso, LINEAGE_SAFE_DEFAULT_TTL_HOURS);
+      return {
+        ...prev,
+        [runId]: {
+          ...current,
+          updatedAt: nowIso,
+          expiresAt: nextExpiry,
+        },
+      };
+    });
+    showToast('Safe default expiry refreshed', 'success');
   };
 
   const focusLineageTargetRun = async (
@@ -2147,11 +2196,16 @@ export default function Pipelines() {
                                       {lineageByRunId[selectedRun.id].ancestorsTruncated || lineageByRunId[selectedRun.id].descendantsTruncated ? 'Truncated' : 'Complete'}
                                     </span>
                                   </div>
-                                  {lineageSafeDefaultsByRunId[selectedRun.id] && (
+                                  {lineageSafeDefaultsByRunId[selectedRun.id] && !isSafeDefaultExpired(lineageSafeDefaultsByRunId[selectedRun.id]) && (
                                     <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-indigo-800">
                                       <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
                                         Safe defaults: {lineageSafeDefaultsByRunId[selectedRun.id].mode} d{lineageSafeDefaultsByRunId[selectedRun.id].depth}
                                       </span>
+                                      {lineageSafeDefaultsByRunId[selectedRun.id].expiresAt && (
+                                        <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                          expires: {new Date(lineageSafeDefaultsByRunId[selectedRun.id].expiresAt as string).toLocaleString()}
+                                        </span>
+                                      )}
                                       {lineageSafeDefaultsByRunId[selectedRun.id].reason && (
                                         <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
                                           reason: {lineageSafeDefaultsByRunId[selectedRun.id].reason?.toLowerCase().replace(/_/g, ' ')}
@@ -2174,6 +2228,15 @@ export default function Pipelines() {
                                         }}
                                       >
                                         Apply safe defaults
+                                      </button>
+                                      <button
+                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          refreshSafeDefaultTtl(selectedRun.id);
+                                        }}
+                                      >
+                                        Refresh expiry
                                       </button>
                                       <button
                                         className="px-2 py-0.5 rounded border border-indigo-300 bg-white"

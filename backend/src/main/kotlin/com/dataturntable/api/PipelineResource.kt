@@ -1380,6 +1380,7 @@ class PipelineResource {
             depthLimit
         }
         val recommendedSafeReason = if (recommendedAction == "NONE") null else recommendedAction
+        val recommendedSafeTtlHours = 168
 
         return Response.ok(
             mapOf(
@@ -1409,6 +1410,7 @@ class PipelineResource {
                 "recommendedSafeFetchMode" to recommendedSafeFetchMode,
                 "recommendedSafeDepth" to recommendedSafeDepth,
                 "recommendedSafeReason" to recommendedSafeReason,
+                "recommendedSafeTtlHours" to recommendedSafeTtlHours,
                 "ancestorsTotal" to ancestorsTotal,
                 "ancestorsStatusCounts" to ancestorsStatusCounts,
                 "descendantsTotal" to descendantsTotal,
