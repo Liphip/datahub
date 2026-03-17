@@ -41,6 +41,8 @@ This section catalogues every known gap between the current codebase and a shipp
 - Updated frontend `PipelineEditor` and `ModuleEditor` to use toast notifications instead of blocking browser alerts.
 - Added frontend `/setup` page and route for first-run bootstrap and linked it from login.
 - Updated Tenants UI to replace browser confirm/alert flows with inline confirmation and toast notifications.
+- Hardened Data API query/insert/delete endpoints with strict table name validation and parameterized SQL inputs for time/device/value/tags.
+- Role API now enforces RBAC for create/update/delete and serializes abilities as JSON arrays in responses and persistence.
 
 ---
 

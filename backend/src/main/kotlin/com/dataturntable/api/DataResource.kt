@@ -10,6 +10,7 @@ import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
 import java.time.Instant
+import java.util.UUID
 
 @Path("/data")
 @Produces(MediaType.APPLICATION_JSON)
@@ -22,14 +23,44 @@ class DataResource {
     
     private val objectMapper = ObjectMapper()
 
-    private fun parseTenantUuid(tenantId: String): java.util.UUID {
+    private fun parseTenantUuid(tenantId: String): UUID {
         return try {
-            java.util.UUID.fromString(tenantId)
+            UUID.fromString(tenantId)
         } catch (_: Exception) {
             throw WebApplicationException(
                 Response.status(400).entity(mapOf("error" to "Invalid tenantId")).build()
             )
         }
+    }
+
+    private fun requireValidTableName(table: String?): String {
+        val resolved = sanitizeTableName(table ?: "measurements")
+        if (resolved.isBlank()) {
+            throw WebApplicationException(Response.status(400).entity(mapOf("error" to "Invalid table name")).build())
+        }
+        if ((table ?: "measurements") != resolved) {
+            throw WebApplicationException(Response.status(400).entity(mapOf("error" to "Invalid table name")).build())
+        }
+        return resolved
+    }
+
+    private fun parseIsoInstant(value: String?, field: String): Instant? {
+        if (value.isNullOrBlank()) return null
+        return try {
+            Instant.parse(value)
+        } catch (_: Exception) {
+            throw WebApplicationException(
+                Response.status(400).entity(mapOf("error" to "Invalid $field timestamp")).build()
+            )
+        }
+    }
+
+    private fun normalizeLimit(limit: Int?): Int {
+        val resolved = limit ?: 100
+        if (resolved <= 0 || resolved > 10000) {
+            throw WebApplicationException(Response.status(400).entity(mapOf("error" to "Invalid limit")).build())
+        }
+        return resolved
     }
     
     @GET
@@ -45,18 +76,33 @@ class DataResource {
         if (em.find(Tenant::class.java, tenantUuid) == null) {
             return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
         }
-        
-        val tableName = table ?: "measurements"
-        val limitValue = limit ?: 100
-        
-        val query = buildDataQuery(tenantId, tableName, start, end, limitValue)
-        
+
         return try {
-            val result = em.createNativeQuery(query).resultList
+            val tableName = requireValidTableName(table)
+            val limitValue = normalizeLimit(limit)
+            val startInstant = parseIsoInstant(start, "start")
+            val endInstant = parseIsoInstant(end, "end")
+
+            val tableFullName = "tenant_${tenantId.replace("-", "_")}_${tableName}"
+            val sb = StringBuilder("SELECT * FROM $tableFullName")
+            val conditions = mutableListOf<String>()
+            if (startInstant != null) conditions.add("time >= :start")
+            if (endInstant != null) conditions.add("time <= :end")
+            if (conditions.isNotEmpty()) sb.append(" WHERE ").append(conditions.joinToString(" AND "))
+            sb.append(" ORDER BY time DESC LIMIT :limit")
+
+            val nativeQuery = em.createNativeQuery(sb.toString())
+            if (startInstant != null) nativeQuery.setParameter("start", startInstant)
+            if (endInstant != null) nativeQuery.setParameter("end", endInstant)
+            nativeQuery.setParameter("limit", limitValue)
+
+            val result = nativeQuery.resultList
             Response.ok(mapOf(
                 "data" to result,
                 "count" to result.size
             )).build()
+        } catch (e: WebApplicationException) {
+            e.response
         } catch (e: Exception) {
             Response.status(500).entity(mapOf("error" to "Query failed: ${e.message}")).build()
         }
@@ -73,20 +119,21 @@ class DataResource {
         if (em.find(Tenant::class.java, tenantUuid) == null) {
             return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
         }
-        
-        val tableName = table ?: "measurements"
-        
+
         if (data.isEmpty()) {
             return Response.status(400).entity(mapOf("error" to "No data to insert")).build()
         }
-        
+
         return try {
+            val tableName = requireValidTableName(table)
             ensureTableExists(tenantId, tableName)
             insertDataIntoTable(tenantId, tableName, data)
             Response.ok(mapOf(
                 "inserted" to data.size,
                 "table" to tableName
             )).build()
+        } catch (e: WebApplicationException) {
+            e.response
         } catch (e: Exception) {
             Response.status(500).entity(mapOf("error" to "Insert failed: ${e.message}")).build()
         }
@@ -133,7 +180,11 @@ class DataResource {
             return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
         }
         
-        val sanitizedTable = sanitizeTableName(table)
+        val sanitizedTable = try {
+            requireValidTableName(table)
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
         
         return try {
             em.createNativeQuery("DROP TABLE IF EXISTS tenant_${tenantId.replace("-", "_")}_$sanitizedTable").executeUpdate()
@@ -141,38 +192,6 @@ class DataResource {
         } catch (e: Exception) {
             Response.status(500).entity(mapOf("error" to "Delete failed: ${e.message}")).build()
         }
-    }
-    
-    private fun buildDataQuery(
-        tenantId: String,
-        tableName: String,
-        start: String?,
-        end: String?,
-        limit: Int
-    ): String {
-        val tableFullName = "tenant_${tenantId.replace("-", "_")}_$tableName"
-        
-        val sb = StringBuilder()
-        sb.append("SELECT * FROM $tableFullName")
-        
-        val conditions = mutableListOf<String>()
-        
-        if (start != null) {
-            conditions.add("time >= '${formatTimestamp(start)}'")
-        }
-        if (end != null) {
-            conditions.add("time <= '${formatTimestamp(end)}'")
-        }
-        
-        if (conditions.isNotEmpty()) {
-            sb.append(" WHERE ")
-            sb.append(conditions.joinToString(" AND "))
-        }
-        
-        sb.append(" ORDER BY time DESC")
-        sb.append(" LIMIT $limit")
-        
-        return sb.toString()
     }
     
     private fun ensureTableExists(tenantId: String, tableName: String) {
@@ -220,33 +239,39 @@ class DataResource {
             val deviceId = record["device_id"]?.toString() ?: "unknown"
             val value = record["value"]
             val tags = record["tags"]?.let {
-                if (it is Map<*, *>) objectMapper.writeValueAsString(it) else null
+                if (it is Map<*, *> || it is List<*>) objectMapper.writeValueAsString(it) else it.toString()
             } ?: "{}"
-            
-            val insertQuery = """
+
+            val instant = try {
+                Instant.parse(time)
+            } catch (_: Exception) {
+                throw WebApplicationException(
+                    Response.status(400).entity(mapOf("error" to "Invalid time timestamp")).build()
+                )
+            }
+
+            val insertQuery = em.createNativeQuery(
+                """
                 INSERT INTO $tableFullName (time, device_id, value, tags, tenant_id)
-                VALUES ('${formatTimestamp(time)}', '$deviceId', ${formatValue(value)}, '$tags', '$tenantId')
+                VALUES (:time, :deviceId, :value, :tags, :tenantId)
                 ON CONFLICT (time, device_id) DO UPDATE SET value = EXCLUDED.value, tags = EXCLUDED.tags
-            """.trimIndent()
-            
-            em.createNativeQuery(insertQuery).executeUpdate()
+                """.trimIndent()
+            )
+            insertQuery.setParameter("time", instant)
+            insertQuery.setParameter("deviceId", deviceId)
+            insertQuery.setParameter("value", formatValue(value))
+            insertQuery.setParameter("tags", tags)
+            insertQuery.setParameter("tenantId", tenantId)
+            insertQuery.executeUpdate()
         }
     }
-    
-    private fun formatTimestamp(ts: String): String {
-        return try {
-            val instant = Instant.parse(ts)
-            instant.toString()
-        } catch (e: Exception) {
-            ts
-        }
-    }
-    
-    private fun formatValue(value: Any?): String {
+
+    private fun formatValue(value: Any?): Double? {
         return when (value) {
-            null -> "NULL"
-            is Number -> value.toString()
-            else -> "'$value'"
+            null -> null
+            is Number -> value.toDouble()
+            is String -> value.toDoubleOrNull()
+            else -> null
         }
     }
     
