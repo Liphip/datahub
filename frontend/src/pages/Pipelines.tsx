@@ -2,7 +2,7 @@ import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Pipeline, PipelineRun, PipelineRunLineage, PipelineRunSummary, TenantLineageDefaults, TenantPipelineRun } from '../types';
+import type { Pipeline, PipelineRun, PipelineRunLineage, PipelineRunSummary, TenantLineageDefaults, TenantLineageDefaultsConfig, TenantPipelineRun } from '../types';
 
 type RunMap = Record<string, PipelineRun[]>;
 type PipelineRunDetailFilter = {
@@ -23,6 +23,15 @@ type LineageSafeScopePolicy = 'AUTO' | 'RUN' | 'PIPELINE';
 type LineagePerfSample = { totalMs: number; payloadBytes: number; measuredAt?: string };
 type LineageSafeScope = 'RUN' | 'PIPELINE';
 type LineageSafeDefault = { scope: LineageSafeScope; targetId: string; mode: LineageFetchMode; depth: number; updatedAt: string; reason?: string; expiresAt?: string };
+type TenantLineageDefaultsField = 'safeScopePolicy' | 'defaultFetchMode' | 'defaultDepth' | 'maxDepthCap';
+type TenantLineageMergeChoice = Record<TenantLineageDefaultsField, 'MINE' | 'LATEST'>;
+type TenantLineageDefaultsConflict = {
+  pipelineId: string;
+  runId: string;
+  pending: TenantLineageDefaultsConfig;
+  latest: TenantLineageDefaults;
+  mergeChoice: TenantLineageMergeChoice;
+};
 
 type TriagePreset = {
   name: string;
@@ -43,6 +52,7 @@ const DEFAULT_TENANT_LINEAGE_DEFAULTS: TenantLineageDefaults = {
   maxDepthCap: 200,
 };
 const LINEAGE_STATUS_OPTIONS: LineageStatusFilter[] = ['ALL', 'INFLIGHT', 'TERMINAL', 'FAILED', 'RUNNING', 'PENDING', 'SUCCESS', 'CANCELLED'];
+const TENANT_LINEAGE_FIELDS: TenantLineageDefaultsField[] = ['safeScopePolicy', 'defaultFetchMode', 'defaultDepth', 'maxDepthCap'];
 
 export default function Pipelines() {
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
@@ -73,6 +83,7 @@ export default function Pipelines() {
   const [lineagePerfHistoryByRunId, setLineagePerfHistoryByRunId] = useState<Record<string, LineagePerfSample[]>>({});
   const [tenantLineageDefaults, setTenantLineageDefaults] = useState<TenantLineageDefaults>(DEFAULT_TENANT_LINEAGE_DEFAULTS);
   const [savingTenantLineageDefaults, setSavingTenantLineageDefaults] = useState(false);
+  const [tenantDefaultsConflict, setTenantDefaultsConflict] = useState<TenantLineageDefaultsConflict | null>(null);
   const [lineageSafeDefaultsByRunId, setLineageSafeDefaultsByRunId] = useState<Record<string, LineageSafeDefault>>(() => {
     try {
       const raw = localStorage.getItem(LINEAGE_SAFE_DEFAULTS_KEY);
@@ -257,6 +268,7 @@ export default function Pipelines() {
       try {
         const defaults = await api.getTenantLineageDefaults(tenantId);
         setTenantLineageDefaults({
+          ...defaults,
           safeScopePolicy: defaults.safeScopePolicy ?? 'AUTO',
           defaultFetchMode: defaults.defaultFetchMode ?? 'SUMMARY',
           defaultDepth: defaults.defaultDepth ?? 20,
@@ -268,6 +280,10 @@ export default function Pipelines() {
     };
     void loadTenantLineageDefaults();
   }, [tenantId, canReadPipelines]);
+
+  useEffect(() => {
+    setTenantDefaultsConflict(null);
+  }, [tenantId]);
 
   const refreshBucketRuns = async (tid: string, fromDate: Date, toDate: Date, silent = false) => {
     if (!silent) setLoadingBucketRuns(true);
@@ -1017,29 +1033,119 @@ export default function Pipelines() {
     const mode = lineageFetchModeByRunId[runId] ?? tenantLineageDefaults.defaultFetchMode ?? 'SUMMARY';
     const policy = lineageSafeScopePolicyByRunId[runId] ?? tenantLineageDefaults.safeScopePolicy ?? 'AUTO';
     const maxDepthCap = Math.max(20, Math.min(200, Math.max(depth, tenantLineageDefaults.maxDepthCap ?? 200)));
+    const pending: TenantLineageDefaultsConfig = {
+      safeScopePolicy: policy,
+      defaultFetchMode: mode,
+      defaultDepth: depth,
+      maxDepthCap,
+    };
     setSavingTenantLineageDefaults(true);
     try {
-      const updated = await api.updateTenantLineageDefaults(tenantId, {
-        safeScopePolicy: policy,
-        defaultFetchMode: mode,
-        defaultDepth: depth,
-        maxDepthCap,
-      }, tenantLineageDefaults.version);
+      const updated = await api.updateTenantLineageDefaults(tenantId, pending, tenantLineageDefaults.version);
       setTenantLineageDefaults(updated);
       showToast('Tenant lineage defaults updated', 'success');
       await handleLoadRunLineage(pipelineId, runId, depth, undefined, undefined, mode, policy);
     } catch (err: any) {
       if (err?.response?.status === 409) {
-        showToast('Tenant defaults changed elsewhere. Reloading latest defaults.', 'error');
+        showToast('Tenant defaults changed elsewhere. Resolve conflict to continue.', 'error');
         try {
           const latest = await api.getTenantLineageDefaults(tenantId);
-          setTenantLineageDefaults(latest);
+          const mergeChoice = TENANT_LINEAGE_FIELDS.reduce((acc, field) => {
+            acc[field] = pending[field] === latest[field] ? 'LATEST' : 'MINE';
+            return acc;
+          }, {} as TenantLineageMergeChoice);
+          setTenantDefaultsConflict({
+            pipelineId,
+            runId,
+            pending,
+            latest,
+            mergeChoice,
+          });
         } catch {
           // ignore secondary refresh errors
         }
       } else {
         showToast('Failed to update tenant lineage defaults', 'error');
       }
+    } finally {
+      setSavingTenantLineageDefaults(false);
+    }
+  };
+
+  const resolveTenantDefaultsConflictUseLatest = () => {
+    if (!tenantDefaultsConflict) return;
+    setTenantLineageDefaults(tenantDefaultsConflict.latest);
+    setTenantDefaultsConflict(null);
+    showToast('Loaded latest tenant defaults', 'success');
+  };
+
+  const resolveTenantDefaultsConflictReapplyMine = async () => {
+    if (!tenantId || !tenantDefaultsConflict) return;
+    setSavingTenantLineageDefaults(true);
+    try {
+      const updated = await api.updateTenantLineageDefaults(
+        tenantId,
+        tenantDefaultsConflict.pending,
+        tenantDefaultsConflict.latest.version
+      );
+      setTenantLineageDefaults(updated);
+      const { pipelineId, runId, pending } = tenantDefaultsConflict;
+      setTenantDefaultsConflict(null);
+      showToast('Reapplied your tenant defaults', 'success');
+      await handleLoadRunLineage(
+        pipelineId,
+        runId,
+        pending.defaultDepth,
+        undefined,
+        undefined,
+        pending.defaultFetchMode,
+        pending.safeScopePolicy
+      );
+    } catch {
+      showToast('Failed to reapply tenant defaults', 'error');
+    } finally {
+      setSavingTenantLineageDefaults(false);
+    }
+  };
+
+  const resolveTenantDefaultsConflictSaveMerged = async () => {
+    if (!tenantId || !tenantDefaultsConflict) return;
+    const merged: TenantLineageDefaultsConfig = {
+      safeScopePolicy: tenantDefaultsConflict.mergeChoice.safeScopePolicy === 'MINE'
+        ? tenantDefaultsConflict.pending.safeScopePolicy
+        : tenantDefaultsConflict.latest.safeScopePolicy,
+      defaultFetchMode: tenantDefaultsConflict.mergeChoice.defaultFetchMode === 'MINE'
+        ? tenantDefaultsConflict.pending.defaultFetchMode
+        : tenantDefaultsConflict.latest.defaultFetchMode,
+      defaultDepth: tenantDefaultsConflict.mergeChoice.defaultDepth === 'MINE'
+        ? tenantDefaultsConflict.pending.defaultDepth
+        : tenantDefaultsConflict.latest.defaultDepth,
+      maxDepthCap: tenantDefaultsConflict.mergeChoice.maxDepthCap === 'MINE'
+        ? tenantDefaultsConflict.pending.maxDepthCap
+        : tenantDefaultsConflict.latest.maxDepthCap,
+    };
+    setSavingTenantLineageDefaults(true);
+    try {
+      const updated = await api.updateTenantLineageDefaults(
+        tenantId,
+        merged,
+        tenantDefaultsConflict.latest.version
+      );
+      setTenantLineageDefaults(updated);
+      const { pipelineId, runId } = tenantDefaultsConflict;
+      setTenantDefaultsConflict(null);
+      showToast('Saved merged tenant defaults', 'success');
+      await handleLoadRunLineage(
+        pipelineId,
+        runId,
+        merged.defaultDepth,
+        undefined,
+        undefined,
+        merged.defaultFetchMode,
+        merged.safeScopePolicy
+      );
+    } catch {
+      showToast('Failed to save merged tenant defaults', 'error');
     } finally {
       setSavingTenantLineageDefaults(false);
     }
@@ -2977,6 +3083,74 @@ export default function Pipelines() {
               Create Your First Pipeline
             </button>
           )}
+        </div>
+      )}
+
+      {tenantDefaultsConflict && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full">
+            <h2 className="text-xl font-bold mb-2">Tenant Defaults Conflict</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Another admin updated tenant defaults while you were saving from this lineage context.
+            </p>
+            <div className="space-y-2 mb-4 max-h-80 overflow-auto pr-1">
+              {TENANT_LINEAGE_FIELDS.map((field) => (
+                <div key={`tenant-defaults-conflict-${field}`} className="border border-gray-200 rounded p-2">
+                  <div className="text-xs font-semibold text-gray-700 mb-1">{field}</div>
+                  <div className="text-xs text-gray-600 mb-2">
+                    <span className="mr-3">Latest: {String(tenantDefaultsConflict.latest[field])}</span>
+                    <span>Mine: {String(tenantDefaultsConflict.pending[field])}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      className={`px-2 py-0.5 rounded border ${tenantDefaultsConflict.mergeChoice[field] === 'LATEST' ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-gray-300 bg-white text-gray-700'}`}
+                      onClick={() => setTenantDefaultsConflict((prev) => prev ? ({ ...prev, mergeChoice: { ...prev.mergeChoice, [field]: 'LATEST' } }) : prev)}
+                    >
+                      Use latest
+                    </button>
+                    <button
+                      className={`px-2 py-0.5 rounded border ${tenantDefaultsConflict.mergeChoice[field] === 'MINE' ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-gray-300 bg-white text-gray-700'}`}
+                      onClick={() => setTenantDefaultsConflict((prev) => prev ? ({ ...prev, mergeChoice: { ...prev.mergeChoice, [field]: 'MINE' } }) : prev)}
+                    >
+                      Use mine
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setTenantDefaultsConflict(null)}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={resolveTenantDefaultsConflictUseLatest}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+              >
+                Use Latest
+              </button>
+              <button
+                type="button"
+                disabled={savingTenantLineageDefaults}
+                onClick={() => { void resolveTenantDefaultsConflictReapplyMine(); }}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+              >
+                Reapply Mine
+              </button>
+              <button
+                type="button"
+                disabled={savingTenantLineageDefaults}
+                onClick={() => { void resolveTenantDefaultsConflictSaveMerged(); }}
+                className="btn-primary"
+              >
+                Merge And Save
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
