@@ -86,6 +86,7 @@ export default function Pipelines() {
   const [tenantLineageDefaults, setTenantLineageDefaults] = useState<TenantLineageDefaults>(DEFAULT_TENANT_LINEAGE_DEFAULTS);
   const [savingTenantLineageDefaults, setSavingTenantLineageDefaults] = useState(false);
   const [tenantDefaultsConflict, setTenantDefaultsConflict] = useState<TenantLineageDefaultsConflict | null>(null);
+  const [tenantDefaultsStaleLatest, setTenantDefaultsStaleLatest] = useState<TenantLineageDefaults | null>(null);
   const [tenantDefaultsConflictTelemetry, setTenantDefaultsConflictTelemetry] = useState<TenantDefaultsConflictTelemetry>(() => {
     try {
       const raw = localStorage.getItem(TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY);
@@ -245,6 +246,19 @@ export default function Pipelines() {
     });
   };
 
+  const buildTenantDefaultsConflict = (
+    pipelineId: string,
+    runId: string,
+    pending: TenantLineageDefaultsConfig,
+    latest: TenantLineageDefaults
+  ): TenantLineageDefaultsConflict => {
+    const mergeChoice = TENANT_LINEAGE_FIELDS.reduce((acc, field) => {
+      acc[field] = pending[field] === latest[field] ? 'LATEST' : 'MINE';
+      return acc;
+    }, {} as TenantLineageMergeChoice);
+    return { pipelineId, runId, pending, latest, mergeChoice };
+  };
+
   const formatApproxBytes = (bytes?: number) => {
     if (!bytes || bytes <= 0) return '0 B';
     if (bytes < 1024) return `${bytes} B`;
@@ -300,6 +314,7 @@ export default function Pipelines() {
     const loadTenantLineageDefaults = async () => {
       if (!tenantId || !canReadPipelines) {
         setTenantLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+        setTenantDefaultsStaleLatest(null);
         return;
       }
       try {
@@ -311,8 +326,10 @@ export default function Pipelines() {
           defaultDepth: defaults.defaultDepth ?? 20,
           maxDepthCap: defaults.maxDepthCap ?? 200,
         });
+        setTenantDefaultsStaleLatest(null);
       } catch {
         setTenantLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+        setTenantDefaultsStaleLatest(null);
       }
     };
     void loadTenantLineageDefaults();
@@ -321,6 +338,23 @@ export default function Pipelines() {
   useEffect(() => {
     setTenantDefaultsConflict(null);
   }, [tenantId]);
+
+  useEffect(() => {
+    if (!tenantId || !canManageTenantSettings) return;
+    const timer = window.setInterval(async () => {
+      try {
+        const latest = await api.getTenantLineageDefaults(tenantId);
+        if (latest.version && tenantLineageDefaults.version && latest.version !== tenantLineageDefaults.version) {
+          setTenantDefaultsStaleLatest(latest);
+        } else {
+          setTenantDefaultsStaleLatest(null);
+        }
+      } catch {
+        // ignore background stale checks
+      }
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, [tenantId, canManageTenantSettings, tenantLineageDefaults.version]);
 
   const refreshBucketRuns = async (tid: string, fromDate: Date, toDate: Date, silent = false) => {
     if (!silent) setLoadingBucketRuns(true);
@@ -1080,6 +1114,7 @@ export default function Pipelines() {
     try {
       const updated = await api.updateTenantLineageDefaults(tenantId, pending, tenantLineageDefaults.version);
       setTenantLineageDefaults(updated);
+      setTenantDefaultsStaleLatest(null);
       showToast('Tenant lineage defaults updated', 'success');
       await handleLoadRunLineage(pipelineId, runId, depth, undefined, undefined, mode, policy);
     } catch (err: any) {
@@ -1088,17 +1123,8 @@ export default function Pipelines() {
         trackTenantDefaultsConflict(tenantId);
         try {
           const latest = await api.getTenantLineageDefaults(tenantId);
-          const mergeChoice = TENANT_LINEAGE_FIELDS.reduce((acc, field) => {
-            acc[field] = pending[field] === latest[field] ? 'LATEST' : 'MINE';
-            return acc;
-          }, {} as TenantLineageMergeChoice);
-          setTenantDefaultsConflict({
-            pipelineId,
-            runId,
-            pending,
-            latest,
-            mergeChoice,
-          });
+          setTenantDefaultsStaleLatest(latest);
+          setTenantDefaultsConflict(buildTenantDefaultsConflict(pipelineId, runId, pending, latest));
         } catch {
           // ignore secondary refresh errors
         }
@@ -1113,6 +1139,7 @@ export default function Pipelines() {
   const resolveTenantDefaultsConflictUseLatest = () => {
     if (!tenantDefaultsConflict) return;
     setTenantLineageDefaults(tenantDefaultsConflict.latest);
+    setTenantDefaultsStaleLatest(null);
     setTenantDefaultsConflict(null);
     showToast('Loaded latest tenant defaults', 'success');
   };
@@ -1127,6 +1154,7 @@ export default function Pipelines() {
         tenantDefaultsConflict.latest.version
       );
       setTenantLineageDefaults(updated);
+      setTenantDefaultsStaleLatest(null);
       const { pipelineId, runId, pending } = tenantDefaultsConflict;
       setTenantDefaultsConflict(null);
       showToast('Reapplied your tenant defaults', 'success');
@@ -1170,6 +1198,7 @@ export default function Pipelines() {
         tenantDefaultsConflict.latest.version
       );
       setTenantLineageDefaults(updated);
+      setTenantDefaultsStaleLatest(null);
       const { pipelineId, runId } = tenantDefaultsConflict;
       setTenantDefaultsConflict(null);
       showToast('Saved merged tenant defaults', 'success');
@@ -2757,6 +2786,40 @@ export default function Pipelines() {
                                     <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
                                       Tenant defaults: {tenantLineageDefaults.defaultFetchMode} d{tenantLineageDefaults.defaultDepth} cap d{tenantLineageDefaults.maxDepthCap} {tenantLineageDefaults.safeScopePolicy.toLowerCase()}
                                     </span>
+                                    {tenantDefaultsStaleLatest && (
+                                      <>
+                                        <span className="px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900">
+                                          Defaults may be stale
+                                        </span>
+                                        <button
+                                          className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            setTenantLineageDefaults(tenantDefaultsStaleLatest);
+                                            setTenantDefaultsStaleLatest(null);
+                                            showToast('Loaded latest tenant defaults', 'success');
+                                          }}
+                                        >
+                                          Refresh latest
+                                        </button>
+                                        <button
+                                          className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            const depth = lineageDepthByRunId[selectedRun.id] ?? tenantLineageDefaults.defaultDepth ?? 20;
+                                            const pending: TenantLineageDefaultsConfig = {
+                                              safeScopePolicy: lineageSafeScopePolicyByRunId[selectedRun.id] ?? tenantLineageDefaults.safeScopePolicy ?? 'AUTO',
+                                              defaultFetchMode: lineageFetchModeByRunId[selectedRun.id] ?? tenantLineageDefaults.defaultFetchMode ?? 'SUMMARY',
+                                              defaultDepth: depth,
+                                              maxDepthCap: Math.max(20, Math.min(200, Math.max(depth, tenantLineageDefaults.maxDepthCap ?? 200))),
+                                            };
+                                            setTenantDefaultsConflict(buildTenantDefaultsConflict(pipeline.id, selectedRun.id, pending, tenantDefaultsStaleLatest));
+                                          }}
+                                        >
+                                          Resolve now
+                                        </button>
+                                      </>
+                                    )}
                                     {tenantId && tenantDefaultsConflictTelemetry[tenantId] && (
                                       <>
                                         <span className="px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900">

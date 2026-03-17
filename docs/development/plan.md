@@ -190,6 +190,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added interactive conflict resolution UX for lineage defaults: when Tenants settings detects a version conflict, it now opens a resolution modal with side-by-side latest vs pending values and explicit actions (`Use Latest`, `Reapply Mine`, `Merge And Save` with per-field latest/mine toggles) instead of silently discarding edits.
 - Extended conflict-resolution parity to Pipelines: `Save current as tenant defaults` now uses the same interactive merge workflow (latest vs pending with per-field choices and `Use Latest` / `Reapply Mine` / `Merge And Save`) so both tenant-default entry points provide consistent concurrent-edit handling.
 - Added tenant-default conflict telemetry in UI sessions: Tenants and Pipelines now track per-tenant conflict counts and last-conflict timestamps in local storage, surface these metrics inline near lineage defaults controls, and allow clearing conflict stats to aid operational triage and UX tuning.
+- Added proactive stale-default warnings: Tenants now polls tenant lineage defaults version while forms are dirty and surfaces `Defaults may be stale` guidance before save; Pipelines now also polls tenant-default version and shows stale badges with `Refresh latest` / `Resolve now` actions to reduce avoidable conflict-modal interrupts.
 
 ---
 
