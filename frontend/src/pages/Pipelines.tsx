@@ -160,6 +160,13 @@ export default function Pipelines() {
     return `${mb.toFixed(mb >= 100 ? 0 : 1)} MB`;
   };
 
+  const median = (values: number[]) => {
+    if (values.length === 0) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  };
+
   const persistTriagePresets = (presets: TriagePreset[]) => {
     localStorage.setItem(TRIAGE_PRESETS_KEY, JSON.stringify(presets));
     setTriagePresets(presets);
@@ -2132,6 +2139,65 @@ export default function Pipelines() {
                                     <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">build {lineageByRunId[selectedRun.id].lineageBuildMs ?? 0} ms</span>
                                     <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">total {lineageByRunId[selectedRun.id].lineageTotalMs ?? 0} ms</span>
                                   </div>
+                                  {(() => {
+                                    const perf = lineagePerfHistoryByRunId[selectedRun.id] ?? [];
+                                    const latest = perf[perf.length - 1];
+                                    const baseline = perf.length >= 4 ? median(perf.slice(0, -1).map((item) => item.totalMs)) : 0;
+                                    const regression = perf.length >= 4 && latest && baseline > 0 && latest.totalMs > baseline * 1.5;
+                                    const backendHint = lineageByRunId[selectedRun.id].lineagePerformanceHint;
+                                    const showHint = regression || (backendHint && backendHint !== 'NORMAL');
+                                    if (!showHint) return null;
+
+                                    return (
+                                      <div className="mb-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
+                                        <div className="mb-1">
+                                          {regression
+                                            ? `Timing regression: latest ${latest?.totalMs ?? 0} ms vs median ${Math.round(baseline)} ms`
+                                            : `Performance hint: ${(backendHint || 'NORMAL').toLowerCase().replace(/_/g, ' ')}`}
+                                          {lineageByRunId[selectedRun.id].recommendedAction && lineageByRunId[selectedRun.id].recommendedAction !== 'NONE' && (
+                                            <span>{` · recommended action: ${lineageByRunId[selectedRun.id].recommendedAction?.toLowerCase().replace(/_/g, ' ')}`}</span>
+                                          )}
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <button
+                                            className="px-2 py-0.5 rounded border border-amber-400 bg-white"
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
+                                              void handleLoadRunLineage(
+                                                pipeline.id,
+                                                selectedRun.id,
+                                                currentDepth,
+                                                lineageDirectionByRunId[selectedRun.id] ?? 'both',
+                                                lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL',
+                                                'SUMMARY'
+                                              );
+                                            }}
+                                          >
+                                            Use summary mode
+                                          </button>
+                                          <button
+                                            className="px-2 py-0.5 rounded border border-amber-400 bg-white"
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
+                                              const nextDepth = Math.max(lineageByRunId[selectedRun.id].defaultDepth ?? 20, currentDepth - 20);
+                                              void handleLoadRunLineage(
+                                                pipeline.id,
+                                                selectedRun.id,
+                                                nextDepth,
+                                                lineageDirectionByRunId[selectedRun.id] ?? 'both',
+                                                lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL',
+                                                lineageFetchModeByRunId[selectedRun.id] ?? 'SUMMARY'
+                                              );
+                                            }}
+                                          >
+                                            Reduce depth
+                                          </button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
                                   <div className="mb-2 flex flex-wrap items-end gap-2 text-[11px] text-indigo-800">
                                     <span>Recent loads:</span>
                                     <div className="flex items-end gap-1 rounded border border-indigo-200 bg-white px-2 py-1">

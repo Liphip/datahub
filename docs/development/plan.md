@@ -176,6 +176,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added lineage payload guidance for operators: lineage API now returns estimated response size metadata (`estimatedNodesInResponse`, `estimatedPayloadBytes`, `estimatedPayloadClass`), and the lineage panel now surfaces a human-readable payload hint with a one-click fallback to summary mode when a detailed lineage view is large.
 - Added lineage timing observability for triage: lineage API now returns server-side timing metadata (`lineageQueryMs`, `lineageBuildMs`, `lineageTotalMs`), and the lineage panel surfaces these timings inline so operators can quickly identify expensive lineage requests while debugging.
 - Added lightweight lineage performance trend visibility: lineage API now includes `lineageMeasuredAt`, and the lineage panel keeps a short in-memory history of recent loads with compact timing/payload micro-bars so operators can quickly spot regressions while changing depth, filters, and fetch mode.
+- Added actionable lineage performance guardrails: lineage API now emits `lineagePerformanceHint` and `recommendedAction` (`NONE|SWITCH_TO_SUMMARY|REDUCE_DEPTH`), and the lineage panel now detects timing regressions vs recent medians and surfaces one-click mitigations (`Use summary mode`, `Reduce depth`) directly in the triage flow.
 
 ---
 

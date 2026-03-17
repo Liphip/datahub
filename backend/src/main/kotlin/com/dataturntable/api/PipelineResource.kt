@@ -1360,6 +1360,19 @@ class PipelineResource {
         val lineageBuildMs = (System.nanoTime() - buildStartedNs) / 1_000_000
         val lineageTotalMs = (System.nanoTime() - lineageStartedNs) / 1_000_000
         val lineageMeasuredAt = java.time.Instant.now()
+        val heavyQuery = lineageTotalMs >= 250
+        val heavyPayload = estimatedPayloadClass == "LARGE"
+        val lineagePerformanceHint = when {
+            heavyQuery && heavyPayload -> "HEAVY_BOTH"
+            heavyQuery -> "HEAVY_QUERY"
+            heavyPayload -> "HEAVY_PAYLOAD"
+            else -> "NORMAL"
+        }
+        val recommendedAction = when {
+            withDetails && heavyPayload -> "SWITCH_TO_SUMMARY"
+            heavyQuery && depthLimit > defaultDepth -> "REDUCE_DEPTH"
+            else -> "NONE"
+        }
 
         return Response.ok(
             mapOf(
@@ -1384,6 +1397,8 @@ class PipelineResource {
                 "lineageBuildMs" to lineageBuildMs,
                 "lineageTotalMs" to lineageTotalMs,
                 "lineageMeasuredAt" to lineageMeasuredAt,
+                "lineagePerformanceHint" to lineagePerformanceHint,
+                "recommendedAction" to recommendedAction,
                 "ancestorsTotal" to ancestorsTotal,
                 "ancestorsStatusCounts" to ancestorsStatusCounts,
                 "descendantsTotal" to descendantsTotal,
