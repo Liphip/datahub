@@ -101,8 +101,13 @@ export default function ModuleEditor() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [loadedVersionId, setLoadedVersionId] = useState<string | null>(null);
+  const [loadedCodeSnapshot, setLoadedCodeSnapshot] = useState('');
+  const [loadedRequirementsSnapshot, setLoadedRequirementsSnapshot] = useState('');
+  const [pendingLoadVersionId, setPendingLoadVersionId] = useState<string | null>(null);
 
   const tenantId = selectedTenantId || user?.tenantId;
+  const hasUnsavedChanges = code !== loadedCodeSnapshot || requirements !== loadedRequirementsSnapshot;
 
   useEffect(() => {
     const fetchModule = async () => {
@@ -114,11 +119,22 @@ export default function ModuleEditor() {
         
         // Load latest version code if available
         if (data.versions && data.versions.length > 0) {
-          setCode(data.versions[0].code || TEMPLATES[data.moduleType as keyof typeof TEMPLATES] || TEMPLATES.PROCESSING);
-          setRequirements(data.versions[0].requirements || 'pandas\nnumpy');
+          const latestCode = data.versions[0].code || TEMPLATES[data.moduleType as keyof typeof TEMPLATES] || TEMPLATES.PROCESSING;
+          const latestRequirements = data.versions[0].requirements || 'pandas\nnumpy';
+          setCode(latestCode);
+          setRequirements(latestRequirements);
+          setLoadedVersionId(data.versions[0].id);
+          setLoadedCodeSnapshot(latestCode);
+          setLoadedRequirementsSnapshot(latestRequirements);
         } else {
           // Set template based on module type
-          setCode(TEMPLATES[data.moduleType as keyof typeof TEMPLATES] || TEMPLATES.PROCESSING);
+          const templateCode = TEMPLATES[data.moduleType as keyof typeof TEMPLATES] || TEMPLATES.PROCESSING;
+          const defaultRequirements = 'pandas\nnumpy';
+          setCode(templateCode);
+          setRequirements(defaultRequirements);
+          setLoadedVersionId(null);
+          setLoadedCodeSnapshot(templateCode);
+          setLoadedRequirementsSnapshot(defaultRequirements);
         }
       } catch (error) {
         console.error('Error fetching module:', error);
@@ -144,6 +160,12 @@ export default function ModuleEditor() {
       await api.createModuleVersion(id, code, requirements, versionTag || undefined);
       const versions = await api.getModuleVersions(id);
       setModule((prev) => prev ? { ...prev, versions } : prev);
+      if (versions.length > 0) {
+        setLoadedVersionId(versions[0].id);
+      }
+      setLoadedCodeSnapshot(code);
+      setLoadedRequirementsSnapshot(requirements);
+      setPendingLoadVersionId(null);
       setVersionTag('');
       showToast('Version saved successfully', 'success');
     } catch (error) {
@@ -173,6 +195,25 @@ export default function ModuleEditor() {
     );
   }
 
+  const loadVersionIntoEditor = (versionId: string, skipDirtyGuard = false) => {
+    const selectedVersion = module.versions.find((version) => version.id === versionId);
+    if (!selectedVersion) return;
+    if (hasUnsavedChanges && !skipDirtyGuard) {
+      setPendingLoadVersionId(versionId);
+      return;
+    }
+
+    const nextCode = selectedVersion.code || TEMPLATES[module.moduleType as keyof typeof TEMPLATES] || TEMPLATES.PROCESSING;
+    const nextRequirements = selectedVersion.requirements || 'pandas\nnumpy';
+    setCode(nextCode);
+    setRequirements(nextRequirements);
+    setLoadedVersionId(selectedVersion.id);
+    setLoadedCodeSnapshot(nextCode);
+    setLoadedRequirementsSnapshot(nextRequirements);
+    setPendingLoadVersionId(null);
+    showToast(`Loaded v${selectedVersion.version}`, 'success');
+  };
+
   return (
     <div className="h-screen flex flex-col">
       {toast && (
@@ -187,6 +228,9 @@ export default function ModuleEditor() {
         <div>
           <h1 className="text-xl font-bold">{module.name}</h1>
           <p className="text-sm text-gray-500">{module.moduleType} Module</p>
+          {hasUnsavedChanges && (
+            <p className="text-xs text-amber-700 mt-1">Unsaved changes</p>
+          )}
         </div>
         <div className="flex space-x-3">
           <button
@@ -253,6 +297,25 @@ export default function ModuleEditor() {
 
           <div className="border-t pt-4 mt-4">
             <h4 className="font-medium text-sm mb-2">Version History</h4>
+            {pendingLoadVersionId && (
+              <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <p className="mb-2">You have unsaved changes. Load selected version anyway?</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => loadVersionIntoEditor(pendingLoadVersionId, true)}
+                    className="px-2 py-0.5 rounded border border-amber-300 bg-white hover:bg-amber-100"
+                  >
+                    Load anyway
+                  </button>
+                  <button
+                    onClick={() => setPendingLoadVersionId(null)}
+                    className="px-2 py-0.5 rounded border border-amber-300 bg-white hover:bg-amber-100"
+                  >
+                    Keep editing
+                  </button>
+                </div>
+              </div>
+            )}
             {module.versions.length > 0 ? (
               <div className="space-y-2">
                 {module.versions.map((v) => (
@@ -267,6 +330,17 @@ export default function ModuleEditor() {
                     </div>
                     <div className="text-xs text-gray-500">
                       {new Date(v.createdAt).toLocaleString()}
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <button
+                        onClick={() => loadVersionIntoEditor(v.id)}
+                        className="px-2 py-0.5 text-xs rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
+                      >
+                        Load
+                      </button>
+                      {loadedVersionId === v.id && (
+                        <span className="text-[11px] text-green-700">Loaded</span>
+                      )}
                     </div>
                   </div>
                 ))}
