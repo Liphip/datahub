@@ -592,6 +592,21 @@ export default function Pipelines() {
     persistTriagePresets(next);
   };
 
+  const moveFavoritePreset = (name: string, direction: 'up' | 'down') => {
+    const favorites = triagePresets.filter((p) => p.favorite);
+    const others = triagePresets.filter((p) => !p.favorite);
+    const index = favorites.findIndex((p) => p.name === name);
+    if (index < 0) return;
+
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= favorites.length) return;
+
+    const reordered = [...favorites];
+    const [item] = reordered.splice(index, 1);
+    reordered.splice(targetIndex, 0, item);
+    persistTriagePresets([...reordered, ...others]);
+  };
+
   const availablePresetTags = Array.from(
     new Set(triagePresets.map((p) => p.tag?.trim()).filter((v): v is string => Boolean(v)))
   ).sort((a, b) => a.localeCompare(b));
@@ -810,6 +825,24 @@ export default function Pipelines() {
                     >
                       {preset.favorite ? '★' : '☆'}
                     </button>
+                    {preset.favorite && (
+                      <>
+                        <button
+                          onClick={() => moveFavoritePreset(preset.name, 'up')}
+                          className="text-gray-500 hover:text-gray-800"
+                          title="Move favorite up"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          onClick={() => moveFavoritePreset(preset.name, 'down')}
+                          className="text-gray-500 hover:text-gray-800"
+                          title="Move favorite down"
+                        >
+                          ↓
+                        </button>
+                      </>
+                    )}
                     <button onClick={() => applyTriagePreset(preset)} className="text-primary-700 hover:text-primary-900">
                       {preset.name}
                     </button>

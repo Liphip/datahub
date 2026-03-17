@@ -102,6 +102,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added triage preset export/import (JSON) for cross-machine/team sharing of incident filter playbooks.
 - Added triage preset tagging + tag filter dropdown to organize and quickly reuse larger preset collections.
 - Added favorite triage presets (star/unstar) with favorites automatically pinned to the top of preset lists.
+- Added manual ordering controls for favorite presets (up/down) so on-call teams can prioritize top incident playbooks.
 
 ---
 
