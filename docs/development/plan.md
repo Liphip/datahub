@@ -124,6 +124,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added mobile navigation chips in `Layout` so all pages (including Connectors) are reachable on small screens, and widened Connectors page ability fallback to include `manage:tenant` for legacy-role compatibility.
 - Fixed PostgreSQL bootstrap migration for optional Timescale hypertable creation (`PERFORM create_hypertable(...)` in `V1__Initial_schema.sql`) to prevent backend startup failure on empty schemas.
 - Fixed setup-password handling so `/auth/setup` correctly hashes provided plaintext passwords before BCrypt storage (restoring custom-password login compatibility), with regression coverage in `AuthResourceTest`.
+- Fixed pipeline entity mapping regression by binding `importModuleVersionId` to `import_module_version_id` directly (removing duplicate implicit camelCase column selection) to stop `/pipelines?...includeRunSummary=true` SQL 500 errors.
 
 ---
 

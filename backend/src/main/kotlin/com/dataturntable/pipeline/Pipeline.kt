@@ -1,8 +1,8 @@
 package com.dataturntable.pipeline
 
 import com.dataturntable.auth.User
-import com.dataturntable.module.ModuleVersion
 import com.dataturntable.tenant.Tenant
+import com.dataturntable.module.ModuleVersion
 import io.quarkus.hibernate.orm.panache.PanacheEntityBase
 import jakarta.persistence.*
 import java.time.Instant
@@ -26,10 +26,7 @@ open class Pipeline : PanacheEntityBase() {
     @Column
     var description: String? = null
     
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "import_module_version_id")
-    var importModuleVersion: ModuleVersion? = null
-    
+    @Column(name = "import_module_version_id")
     var importModuleVersionId: UUID? = null
     
     @Column(name = "processing_module_version_ids", columnDefinition = "UUID ARRAY")
