@@ -1210,6 +1210,7 @@ class PipelineResource {
         val orderedStatuses = statusFilter
             ?.let { selected -> PipelineRunStatus.entries.filter { selected.contains(it) } }
             ?.map { it.name }
+        val defaultDepth = 20
 
         fun includeByStatus(status: PipelineRunStatus): Boolean = statusFilter?.contains(status) ?: true
 
@@ -1324,9 +1325,11 @@ class PipelineResource {
                 "rootRunId" to rootRunId,
                 "latestDescendantRunId" to latestDescendantRunId,
                 "maxDepth" to depthLimit,
+                "defaultDepth" to defaultDepth,
                 "direction" to normalizedDirection,
                 "statuses" to orderedStatuses,
                 "statusPreset" to resolvedStatusPreset,
+                "statusFiltered" to (statusFilter != null),
                 "ancestorsTotal" to ancestorsTotal,
                 "ancestorsStatusCounts" to ancestorsStatusCounts,
                 "descendantsTotal" to descendantsTotal,

@@ -798,6 +798,11 @@ export default function Pipelines() {
     }
   };
 
+  const resetLineageView = async (pipelineId: string, runId: string) => {
+    const defaultDepth = lineageByRunId[runId]?.defaultDepth ?? 20;
+    await handleLoadRunLineage(pipelineId, runId, defaultDepth, 'both', 'ALL');
+  };
+
   const handleManualBucketRefresh = async () => {
     if (!tenantId || !bucketStart || !bucketEnd) return;
     await refreshBucketRuns(tenantId, bucketStart, bucketEnd);
@@ -2008,6 +2013,14 @@ export default function Pipelines() {
                               {lineageByRunId[selectedRun.id] && (
                                 <div className="rounded border border-indigo-100 bg-indigo-50 p-2 text-[11px] text-indigo-900">
                                   <div className="font-semibold mb-1">Retry Lineage</div>
+                                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">Direction: {lineageByRunId[selectedRun.id].direction ?? lineageDirectionByRunId[selectedRun.id] ?? 'both'}</span>
+                                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">Status: {lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL'}</span>
+                                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">Depth: {lineageByRunId[selectedRun.id].maxDepth ?? lineageDepthByRunId[selectedRun.id] ?? lineageByRunId[selectedRun.id].defaultDepth ?? 20}</span>
+                                    <span className={`px-2 py-0.5 rounded border ${lineageByRunId[selectedRun.id].ancestorsTruncated || lineageByRunId[selectedRun.id].descendantsTruncated ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-300 bg-emerald-50 text-emerald-900'}`}>
+                                      {lineageByRunId[selectedRun.id].ancestorsTruncated || lineageByRunId[selectedRun.id].descendantsTruncated ? 'Truncated' : 'Complete'}
+                                    </span>
+                                  </div>
                                   <div className="mb-1">
                                     Ancestors: {lineageByRunId[selectedRun.id].ancestors.length}/{lineageByRunId[selectedRun.id].ancestorsTotal ?? lineageByRunId[selectedRun.id].ancestors.length} · Descendants: {lineageByRunId[selectedRun.id].descendants.length}/{lineageByRunId[selectedRun.id].descendantsTotal ?? lineageByRunId[selectedRun.id].descendants.length}
                                   </div>
@@ -2155,6 +2168,15 @@ export default function Pipelines() {
                                       }}
                                     >
                                       Copy lineage link
+                                    </button>
+                                    <button
+                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        void resetLineageView(pipeline.id, selectedRun.id);
+                                      }}
+                                    >
+                                      Reset lineage view
                                     </button>
                                   </div>
                                   <div className="mb-2 flex flex-wrap gap-2">
