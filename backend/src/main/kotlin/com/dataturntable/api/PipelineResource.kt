@@ -1381,6 +1381,11 @@ class PipelineResource {
         }
         val recommendedSafeReason = if (recommendedAction == "NONE") null else recommendedAction
         val recommendedSafeTtlHours = 168
+        val recommendedSafeScope = when {
+            recommendedAction == "NONE" -> "RUN"
+            heavyQuery || heavyPayload -> "PIPELINE"
+            else -> "RUN"
+        }
 
         return Response.ok(
             mapOf(
@@ -1411,6 +1416,7 @@ class PipelineResource {
                 "recommendedSafeDepth" to recommendedSafeDepth,
                 "recommendedSafeReason" to recommendedSafeReason,
                 "recommendedSafeTtlHours" to recommendedSafeTtlHours,
+                "recommendedSafeScope" to recommendedSafeScope,
                 "ancestorsTotal" to ancestorsTotal,
                 "ancestorsStatusCounts" to ancestorsStatusCounts,
                 "descendantsTotal" to descendantsTotal,

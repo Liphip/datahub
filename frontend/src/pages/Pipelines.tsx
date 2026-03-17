@@ -20,7 +20,8 @@ type LineageDirection = 'both' | 'ancestors' | 'descendants';
 type LineageStatusFilter = 'ALL' | 'INFLIGHT' | 'TERMINAL' | 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
 type LineageFetchMode = 'SUMMARY' | 'DETAILS';
 type LineagePerfSample = { totalMs: number; payloadBytes: number; measuredAt?: string };
-type LineageSafeDefault = { mode: LineageFetchMode; depth: number; updatedAt: string; reason?: string; expiresAt?: string };
+type LineageSafeScope = 'RUN' | 'PIPELINE';
+type LineageSafeDefault = { scope: LineageSafeScope; targetId: string; mode: LineageFetchMode; depth: number; updatedAt: string; reason?: string; expiresAt?: string };
 
 type TriagePreset = {
   name: string;
@@ -66,14 +67,26 @@ export default function Pipelines() {
     try {
       const raw = localStorage.getItem(LINEAGE_SAFE_DEFAULTS_KEY);
       if (!raw) return {};
-      const parsed = JSON.parse(raw) as Record<string, LineageSafeDefault>;
+      const parsed = JSON.parse(raw) as Record<string, Partial<LineageSafeDefault>>;
       if (!parsed || typeof parsed !== 'object') return {};
       const now = Date.now();
       const filtered = Object.fromEntries(
-        Object.entries(parsed).filter(([, value]) => {
-          if (!value?.expiresAt) return true;
+        Object.entries(parsed).flatMap(([key, value]) => {
+          const scope = value?.scope === 'PIPELINE' ? 'PIPELINE' : 'RUN';
+          const targetId = value?.targetId || key.replace(/^RUN:/, '').replace(/^PIPELINE:/, '') || key;
+          const normalized: LineageSafeDefault = {
+            scope,
+            targetId,
+            mode: value?.mode === 'DETAILS' ? 'DETAILS' : 'SUMMARY',
+            depth: typeof value?.depth === 'number' ? value.depth : 20,
+            updatedAt: value?.updatedAt || new Date().toISOString(),
+            reason: value?.reason,
+            expiresAt: value?.expiresAt,
+          };
+          if (!value?.expiresAt) return [[`${normalized.scope}:${normalized.targetId}`, normalized]];
           const expiresAtMs = Date.parse(value.expiresAt);
-          return Number.isFinite(expiresAtMs) && expiresAtMs > now;
+          if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now) return [];
+          return [[`${normalized.scope}:${normalized.targetId}`, normalized]];
         })
       ) as Record<string, LineageSafeDefault>;
       return filtered;
@@ -199,6 +212,16 @@ export default function Pipelines() {
     if (!safe?.expiresAt) return false;
     const expiresAtMs = Date.parse(safe.expiresAt);
     return Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() : false;
+  };
+
+  const safeDefaultKey = (scope: LineageSafeScope, targetId: string) => `${scope}:${targetId}`;
+
+  const getActiveSafeDefault = (pipelineId: string, runId: string) => {
+    const runScoped = lineageSafeDefaultsByRunId[safeDefaultKey('RUN', runId)];
+    if (runScoped && !isSafeDefaultExpired(runScoped)) return runScoped;
+    const pipelineScoped = lineageSafeDefaultsByRunId[safeDefaultKey('PIPELINE', pipelineId)];
+    if (pipelineScoped && !isSafeDefaultExpired(pipelineScoped)) return pipelineScoped;
+    return undefined;
   };
 
   const persistTriagePresets = (presets: TriagePreset[]) => {
@@ -587,15 +610,23 @@ export default function Pipelines() {
     }
     setLoadingLineageRunId(runId);
     try {
-      const rememberedSafeDefault = lineageSafeDefaultsByRunId[runId];
-      if (isSafeDefaultExpired(rememberedSafeDefault)) {
+      const runSafeKey = safeDefaultKey('RUN', runId);
+      const pipelineSafeKey = safeDefaultKey('PIPELINE', pipelineId);
+      const runScopedSafe = lineageSafeDefaultsByRunId[runSafeKey];
+      const pipelineScopedSafe = lineageSafeDefaultsByRunId[pipelineSafeKey];
+      if (isSafeDefaultExpired(runScopedSafe) || isSafeDefaultExpired(pipelineScopedSafe)) {
         setLineageSafeDefaultsByRunId((prev) => {
           const next = { ...prev };
-          delete next[runId];
+          if (isSafeDefaultExpired(next[runSafeKey])) delete next[runSafeKey];
+          if (isSafeDefaultExpired(next[pipelineSafeKey])) delete next[pipelineSafeKey];
           return next;
         });
       }
-      const usableSafeDefault = isSafeDefaultExpired(rememberedSafeDefault) ? undefined : rememberedSafeDefault;
+      const usableSafeDefault = !isSafeDefaultExpired(runScopedSafe)
+        ? runScopedSafe
+        : !isSafeDefaultExpired(pipelineScopedSafe)
+          ? pipelineScopedSafe
+          : undefined;
       const depth = maxDepth ?? lineageDepthByRunId[runId] ?? usableSafeDefault?.depth ?? 20;
       const requestedDirection = direction ?? lineageDirectionByRunId[runId] ?? 'both';
       const requestedStatus = statusFilter ?? lineageStatusFilterByRunId[runId] ?? 'ALL';
@@ -641,7 +672,9 @@ export default function Pipelines() {
         const suggestedDepth = lineage.recommendedSafeDepth ?? (lineage.recommendedAction === 'REDUCE_DEPTH' ? Math.max(20, depth - 20) : depth);
         setLineageSafeDefaultsByRunId((prev) => ({
           ...prev,
-          [runId]: {
+          [safeDefaultKey((lineage.recommendedSafeScope ?? 'RUN') as LineageSafeScope, (lineage.recommendedSafeScope ?? 'RUN') === 'PIPELINE' ? pipelineId : runId)]: {
+            scope: ((lineage.recommendedSafeScope ?? 'RUN') as LineageSafeScope),
+            targetId: (lineage.recommendedSafeScope ?? 'RUN') === 'PIPELINE' ? pipelineId : runId,
             mode: suggestedMode,
             depth: suggestedDepth,
             updatedAt: new Date().toISOString(),
@@ -915,14 +948,15 @@ export default function Pipelines() {
     await handleLoadRunLineage(pipelineId, runId, defaultDepth, 'both', 'ALL', 'SUMMARY');
   };
 
-  const forgetSafeDefaultsForRun = (runId: string) => {
+  const forgetSafeDefault = (scope: LineageSafeScope, targetId: string) => {
+    const key = safeDefaultKey(scope, targetId);
     setLineageSafeDefaultsByRunId((prev) => {
-      if (!prev[runId]) return prev;
+      if (!prev[key]) return prev;
       const next = { ...prev };
-      delete next[runId];
+      delete next[key];
       return next;
     });
-    showToast('Safe defaults removed for this run', 'success');
+    showToast(`Safe defaults removed for ${scope.toLowerCase()} scope`, 'success');
   };
 
   const clearAllSafeDefaults = () => {
@@ -930,15 +964,16 @@ export default function Pipelines() {
     showToast('All lineage safe defaults cleared', 'success');
   };
 
-  const refreshSafeDefaultTtl = (runId: string) => {
+  const refreshSafeDefaultTtl = (scope: LineageSafeScope, targetId: string) => {
+    const key = safeDefaultKey(scope, targetId);
     setLineageSafeDefaultsByRunId((prev) => {
-      const current = prev[runId];
+      const current = prev[key];
       if (!current) return prev;
       const nowIso = new Date().toISOString();
       const nextExpiry = addHoursIso(nowIso, LINEAGE_SAFE_DEFAULT_TTL_HOURS);
       return {
         ...prev,
-        [runId]: {
+        [key]: {
           ...current,
           updatedAt: nowIso,
           expiresAt: nextExpiry,
@@ -946,6 +981,30 @@ export default function Pipelines() {
       };
     });
     showToast('Safe default expiry refreshed', 'success');
+  };
+
+  const moveSafeDefaultScope = (
+    fromScope: LineageSafeScope,
+    fromTargetId: string,
+    toScope: LineageSafeScope,
+    toTargetId: string
+  ) => {
+    const fromKey = safeDefaultKey(fromScope, fromTargetId);
+    const toKey = safeDefaultKey(toScope, toTargetId);
+    setLineageSafeDefaultsByRunId((prev) => {
+      const current = prev[fromKey];
+      if (!current) return prev;
+      const next = { ...prev };
+      delete next[fromKey];
+      next[toKey] = {
+        ...current,
+        scope: toScope,
+        targetId: toTargetId,
+        updatedAt: new Date().toISOString(),
+      };
+      return next;
+    });
+    showToast(`Safe defaults moved to ${toScope.toLowerCase()} scope`, 'success');
   };
 
   const focusLineageTargetRun = async (
@@ -2196,70 +2255,93 @@ export default function Pipelines() {
                                       {lineageByRunId[selectedRun.id].ancestorsTruncated || lineageByRunId[selectedRun.id].descendantsTruncated ? 'Truncated' : 'Complete'}
                                     </span>
                                   </div>
-                                  {lineageSafeDefaultsByRunId[selectedRun.id] && !isSafeDefaultExpired(lineageSafeDefaultsByRunId[selectedRun.id]) && (
-                                    <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-indigo-800">
-                                      <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
-                                        Safe defaults: {lineageSafeDefaultsByRunId[selectedRun.id].mode} d{lineageSafeDefaultsByRunId[selectedRun.id].depth}
-                                      </span>
-                                      {lineageSafeDefaultsByRunId[selectedRun.id].expiresAt && (
+                                  {(() => {
+                                    const safe = getActiveSafeDefault(pipeline.id, selectedRun.id);
+                                    if (!safe) return null;
+                                    return (
+                                      <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-indigo-800">
                                         <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
-                                          expires: {new Date(lineageSafeDefaultsByRunId[selectedRun.id].expiresAt as string).toLocaleString()}
+                                          Safe defaults ({safe.scope.toLowerCase()}): {safe.mode} d{safe.depth}
                                         </span>
-                                      )}
-                                      {lineageSafeDefaultsByRunId[selectedRun.id].reason && (
-                                        <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
-                                          reason: {lineageSafeDefaultsByRunId[selectedRun.id].reason?.toLowerCase().replace(/_/g, ' ')}
-                                        </span>
-                                      )}
-                                      <button
-                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          const safe = lineageSafeDefaultsByRunId[selectedRun.id];
-                                          if (!safe) return;
-                                          void handleLoadRunLineage(
-                                            pipeline.id,
-                                            selectedRun.id,
-                                            safe.depth,
-                                            lineageDirectionByRunId[selectedRun.id] ?? 'both',
-                                            lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL',
-                                            safe.mode
-                                          );
-                                        }}
-                                      >
-                                        Apply safe defaults
-                                      </button>
-                                      <button
-                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          refreshSafeDefaultTtl(selectedRun.id);
-                                        }}
-                                      >
-                                        Refresh expiry
-                                      </button>
-                                      <button
-                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          forgetSafeDefaultsForRun(selectedRun.id);
-                                        }}
-                                      >
-                                        Forget this run
-                                      </button>
-                                      {Object.keys(lineageSafeDefaultsByRunId).length > 1 && (
+                                        {safe.expiresAt && (
+                                          <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                            expires: {new Date(safe.expiresAt).toLocaleString()}
+                                          </span>
+                                        )}
+                                        {safe.reason && (
+                                          <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                            reason: {safe.reason.toLowerCase().replace(/_/g, ' ')}
+                                          </span>
+                                        )}
                                         <button
                                           className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
                                           onClick={(e) => {
                                             e.preventDefault();
-                                            clearAllSafeDefaults();
+                                            void handleLoadRunLineage(
+                                              pipeline.id,
+                                              selectedRun.id,
+                                              safe.depth,
+                                              lineageDirectionByRunId[selectedRun.id] ?? 'both',
+                                              lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL',
+                                              safe.mode
+                                            );
                                           }}
                                         >
-                                          Clear all safe defaults
+                                          Apply safe defaults
                                         </button>
-                                      )}
-                                    </div>
-                                  )}
+                                        <button
+                                          className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            refreshSafeDefaultTtl(safe.scope, safe.targetId);
+                                          }}
+                                        >
+                                          Refresh expiry
+                                        </button>
+                                        {safe.scope === 'RUN' ? (
+                                          <button
+                                            className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              moveSafeDefaultScope('RUN', selectedRun.id, 'PIPELINE', pipeline.id);
+                                            }}
+                                          >
+                                            Promote to pipeline scope
+                                          </button>
+                                        ) : (
+                                          <button
+                                            className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              moveSafeDefaultScope('PIPELINE', pipeline.id, 'RUN', selectedRun.id);
+                                            }}
+                                          >
+                                            Copy to run scope
+                                          </button>
+                                        )}
+                                        <button
+                                          className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            forgetSafeDefault(safe.scope, safe.targetId);
+                                          }}
+                                        >
+                                          Forget {safe.scope === 'RUN' ? 'this run' : 'this pipeline'}
+                                        </button>
+                                        {Object.keys(lineageSafeDefaultsByRunId).length > 1 && (
+                                          <button
+                                            className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              clearAllSafeDefaults();
+                                            }}
+                                          >
+                                            Clear all safe defaults
+                                          </button>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
                                   <div className="mb-1">
                                     Ancestors: {lineageByRunId[selectedRun.id].ancestors.length}/{lineageByRunId[selectedRun.id].ancestorsTotal ?? lineageByRunId[selectedRun.id].ancestors.length} · Descendants: {lineageByRunId[selectedRun.id].descendants.length}/{lineageByRunId[selectedRun.id].descendantsTotal ?? lineageByRunId[selectedRun.id].descendants.length}
                                   </div>
