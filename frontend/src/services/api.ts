@@ -219,10 +219,11 @@ class ApiService {
   }
 
   // Pipelines
-  async getPipelines(tenantId: string, options?: { includeRunSummary?: boolean; runHealth?: 'ALL' | 'PROBLEMATIC' | 'RUNNING' | 'FAILED' | 'HEALTHY' }): Promise<Pipeline[]> {
+  async getPipelines(tenantId: string, options?: { includeRunSummary?: boolean; runHealth?: 'ALL' | 'PROBLEMATIC' | 'RUNNING' | 'FAILED' | 'HEALTHY'; latestSinceHours?: 1 | 24 | 168 }): Promise<Pipeline[]> {
     const includeRunSummary = options?.includeRunSummary ? '&includeRunSummary=true' : '';
     const runHealth = options?.runHealth && options.runHealth !== 'ALL' ? `&runHealth=${options.runHealth}` : '';
-    const response = await this.client.get<Pipeline[]>(`/pipelines?tenantId=${tenantId}${includeRunSummary}${runHealth}`);
+    const latestSinceHours = options?.latestSinceHours ? `&latestSinceHours=${options.latestSinceHours}` : '';
+    const response = await this.client.get<Pipeline[]>(`/pipelines?tenantId=${tenantId}${includeRunSummary}${runHealth}${latestSinceHours}`);
     return response.data;
   }
 

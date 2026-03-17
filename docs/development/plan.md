@@ -80,6 +80,8 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added `GET /pipelines/runs/summary` aggregate endpoint and dashboard reliability panel (success rate, failures, in-flight runs, average duration).
 - Added reliability timeframe controls (`1h`/`24h`/`7d`) on dashboard and `sinceHours` support on run-summary API.
 - Run summary API now includes trend buckets (`bucketSeconds`, `trendBuckets`) and dashboard shows a compact reliability trend sparkline.
+- Dashboard trend bars now deep-link into pipelines triage with pre-applied health/time filters.
+- Pipeline list API supports `latestSinceHours` filtering and validates allowed values (`1`, `24`, `168`).
 
 ---
 

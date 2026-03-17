@@ -7,6 +7,7 @@ import type { Pipeline, PipelineRun } from '../types';
 type RunMap = Record<string, PipelineRun[]>;
 type HealthFilter = 'ALL' | 'PROBLEMATIC' | 'RUNNING' | 'FAILED' | 'HEALTHY';
 type SortMode = 'RECENT_RUN' | 'NAME';
+type SinceHoursFilter = 1 | 24 | 168 | null;
 
 export default function Pipelines() {
   const { user, selectedTenantId } = useAuthStore();
@@ -30,7 +31,12 @@ export default function Pipelines() {
       ? (raw as HealthFilter)
       : 'ALL';
   })();
+  const initialSinceHours = (() => {
+    const raw = Number(searchParams.get('sinceHours'));
+    return raw === 1 || raw === 24 || raw === 168 ? (raw as 1 | 24 | 168) : null;
+  })();
   const [healthFilter, setHealthFilter] = useState<HealthFilter>(initialHealth);
+  const [sinceHoursFilter, setSinceHoursFilter] = useState<SinceHoursFilter>(initialSinceHours);
   const [sortMode, setSortMode] = useState<SortMode>('RECENT_RUN');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [error, setError] = useState('');
@@ -43,7 +49,11 @@ export default function Pipelines() {
   };
 
   const loadPipelines = async (tid: string, filter: HealthFilter = healthFilter) => {
-    const data = await api.getPipelines(tid, { includeRunSummary: true, runHealth: filter });
+    const data = await api.getPipelines(tid, {
+      includeRunSummary: true,
+      runHealth: filter,
+      latestSinceHours: sinceHoursFilter ?? undefined,
+    });
     setPipelines(data);
     return data;
   };
@@ -74,7 +84,7 @@ export default function Pipelines() {
       }
     };
     fetchAll();
-  }, [tenantId, healthFilter]);
+  }, [tenantId, healthFilter, sinceHoursFilter]);
 
   useEffect(() => {
     if (!tenantId || pipelines.length === 0) return;
@@ -227,6 +237,17 @@ export default function Pipelines() {
     setSearchParams(next, { replace: true });
   };
 
+  const applySinceHoursFilter = (hours: SinceHoursFilter) => {
+    setSinceHoursFilter(hours);
+    const next = new URLSearchParams(searchParams);
+    if (hours == null) {
+      next.delete('sinceHours');
+    } else {
+      next.set('sinceHours', String(hours));
+    }
+    setSearchParams(next, { replace: true });
+  };
+
   return (
     <div className="px-4 py-6 sm:px-0">
       {/* Toast */}
@@ -260,12 +281,29 @@ export default function Pipelines() {
         <select
           value={sortMode}
           onChange={(e) => setSortMode(e.target.value as SortMode)}
-          className="ml-auto input text-xs max-w-[180px]"
+          className="input text-xs max-w-[180px]"
         >
           <option value="RECENT_RUN">Sort: Recent Run</option>
           <option value="NAME">Sort: Name</option>
         </select>
+        <select
+          value={sinceHoursFilter ?? ''}
+          onChange={(e) => applySinceHoursFilter(e.target.value === '' ? null : (Number(e.target.value) as 1 | 24 | 168))}
+          className="input text-xs max-w-[170px]"
+        >
+          <option value="">All time</option>
+          <option value={1}>Last 1h</option>
+          <option value={24}>Last 24h</option>
+          <option value={168}>Last 7d</option>
+        </select>
       </div>
+
+      {sinceHoursFilter && (
+        <div className="mb-3 text-xs text-gray-600">
+          Showing pipelines with latest run in last <span className="font-medium">{sinceHoursFilter}h</span>.
+          <button onClick={() => applySinceHoursFilter(null)} className="ml-2 text-primary-600 hover:text-primary-800">Clear</button>
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">

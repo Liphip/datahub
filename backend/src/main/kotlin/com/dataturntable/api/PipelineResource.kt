@@ -215,7 +215,8 @@ class PipelineResource {
     fun list(
         @QueryParam("tenantId") tenantId: String,
         @QueryParam("includeRunSummary") includeRunSummary: String?,
-        @QueryParam("runHealth") runHealth: String?
+        @QueryParam("runHealth") runHealth: String?,
+        @QueryParam("latestSinceHours") latestSinceHours: Int?
     ): Response {
         val tenantUuid = try {
             parseUuid(tenantId, "tenantId")
@@ -235,17 +236,28 @@ class PipelineResource {
         if (requestedHealth != null && requestedHealth !in allowedHealthFilters) {
             return Response.status(400).entity(mapOf("error" to "Invalid runHealth")).build()
         }
+        if (latestSinceHours != null && latestSinceHours !in setOf(1, 24, 168)) {
+            return Response.status(400).entity(mapOf("error" to "Invalid latestSinceHours")).build()
+        }
+        val latestCutoff = latestSinceHours?.let {
+            java.time.Instant.now().minus(java.time.Duration.ofHours(it.toLong()))
+        }
+
+        data class PipelineListEntry(
+            val base: Map<String, Any?>,
+            val summary: Map<String, Any?>
+        )
+
+        val entries = pipelines.map {
+            val base = pipelineToMap(it)
+            val summary = if (it.id == null) emptyMap() else latestRunSummary(it.id!!)
+            PipelineListEntry(base, summary)
+        }
 
         return Response.ok(
-            pipelines.map {
-                val base = pipelineToMap(it)
-                if (!withRunSummary || it.id == null) {
-                    base
-                } else {
-                    base + latestRunSummary(it.id!!)
-                }
-            }
-                .filter { pipelineMap ->
+            entries
+                .filter { entry ->
+                    val pipelineMap = entry.summary
                     when (requestedHealth) {
                         null, "", "ALL" -> true
                         "PROBLEMATIC" -> {
@@ -260,6 +272,19 @@ class PipelineResource {
                         "HEALTHY" -> (pipelineMap["latestRunStatus"] as? String) == "SUCCESS"
                         else -> true
                     }
+                }
+                .filter { entry ->
+                    if (latestCutoff == null) return@filter true
+                    val startedAt = entry.summary["latestRunStartedAt"]?.toString() ?: return@filter false
+                    val instant = try {
+                        java.time.Instant.parse(startedAt)
+                    } catch (_: Exception) {
+                        return@filter false
+                    }
+                    !instant.isBefore(latestCutoff)
+                }
+                .map { entry ->
+                    if (withRunSummary) entry.base + entry.summary else entry.base
                 }
         ).build()
     }

@@ -195,6 +195,32 @@ class PipelineResourceTest {
     }
 
     @Test
+    fun testPipelineListRejectsInvalidLatestSinceHours() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("tenantId", tenantId)
+            .queryParam("latestSinceHours", 12)
+        .`when`()
+            .get("/api/internal/v1/pipelines")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid latestSinceHours"))
+    }
+
+    @Test
     fun testPipelineEndpointsRejectInvalidPipelineId() {
         val token = TestAuthHelpers.createAdminToken()
 

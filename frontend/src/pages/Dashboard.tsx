@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { Pipeline, PipelineRun, CodeModule, Connector, Tenant, PipelineRunSummary } from '../types';
@@ -10,6 +10,7 @@ interface TenantNode extends Tenant {
 
 export default function Dashboard() {
   const { user, selectedTenantId } = useAuthStore();
+  const navigate = useNavigate();
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [allRuns, setAllRuns] = useState<(PipelineRun & { pipelineName?: string })[]>([]);
   const [modules, setModules] = useState<CodeModule[]>([]);
@@ -285,12 +286,15 @@ export default function Dashboard() {
                   const ratio = bucket.totalRuns / maxTrendTotal;
                   const failureShare = bucket.totalRuns > 0 ? bucket.failedRuns / bucket.totalRuns : 0;
                   const bg = failureShare > 0.4 ? 'bg-red-400' : failureShare > 0 ? 'bg-amber-400' : 'bg-green-400';
+                  const targetHealth = bucket.failedRuns > 0 ? 'FAILED' : bucket.inFlightRuns > 0 ? 'RUNNING' : 'HEALTHY';
                   return (
-                    <div
+                    <button
+                      type="button"
                       key={bucket.bucketStart}
                       className={`flex-1 rounded-t ${bg}`}
                       title={`${new Date(bucket.bucketStart).toLocaleString()} | total:${bucket.totalRuns} success:${bucket.successRuns} failed:${bucket.failedRuns} running:${bucket.inFlightRuns}`}
                       style={{ height: `${Math.max(8, Math.round(ratio * 100))}%` }}
+                      onClick={() => navigate(`/pipelines?health=${targetHealth}&sinceHours=${reliabilityWindow}`)}
                     />
                   );
                 })}
