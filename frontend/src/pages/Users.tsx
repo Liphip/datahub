@@ -28,6 +28,9 @@ export default function Users() {
   const [editState, setEditState] = useState<EditState | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
+  const [roleFilter, setRoleFilter] = useState<string>('ALL');
 
   const tenantId = selectedTenantId || user?.tenantId;
   const abilities = user?.abilities || [];
@@ -182,6 +185,26 @@ export default function Users() {
     }
   };
 
+  const tableUsers = (canReadUsers ? users : memberships.map((m) => ({
+    id: m.authUserId,
+    email: m.authUserEmail || `user:${m.authUserId.slice(0, 8)}`,
+    firstName: m.authUserFirstName,
+    lastName: m.authUserLastName,
+    abilities: [],
+    superadmin: false,
+  } as User))).filter((u) => {
+    const membership = getMembershipForUser(u.id);
+    const role = getRoleForMembership(membership);
+    const matchesRole = roleFilter === 'ALL' || role?.id === roleFilter;
+    const active = u.isActive ?? true;
+    const matchesStatus = statusFilter === 'ALL' || (statusFilter === 'ACTIVE' ? active : !active);
+    const query = searchQuery.trim().toLowerCase();
+    const fullName = `${u.firstName || ''} ${u.lastName || ''}`.trim().toLowerCase();
+    const roleName = (role?.name || membership?.roleName || '').toLowerCase();
+    const matchesQuery = !query || u.email.toLowerCase().includes(query) || fullName.includes(query) || roleName.includes(query);
+    return matchesRole && matchesStatus && matchesQuery;
+  });
+
   return (
     <div className="px-4 py-6 sm:px-0">
       {/* Toast */}
@@ -210,6 +233,31 @@ export default function Users() {
         <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700 flex justify-between items-center">
           <span>{error}</span>
           <button onClick={() => setError('')} className="text-red-400 hover:text-red-600 ml-4">✕</button>
+        </div>
+      )}
+
+      {(canReadUsers || canManageTenant) && (
+        <div className="mb-4 card">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="input"
+              placeholder="Search by email, name, or role"
+            />
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as 'ALL' | 'ACTIVE' | 'INACTIVE')} className="input">
+              <option value="ALL">All statuses</option>
+              <option value="ACTIVE">Active</option>
+              <option value="INACTIVE">Inactive</option>
+            </select>
+            <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="input">
+              <option value="ALL">All roles</option>
+              {roles.map((role) => (
+                <option key={role.id} value={role.id}>{role.name}</option>
+              ))}
+            </select>
+          </div>
+          <p className="mt-2 text-xs text-gray-500">Showing {tableUsers.length} user(s)</p>
         </div>
       )}
 
@@ -243,14 +291,14 @@ export default function Users() {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {(canReadUsers ? users : memberships.map((m) => ({
-                id: m.authUserId,
-                email: m.authUserEmail || `user:${m.authUserId.slice(0, 8)}`,
-                firstName: m.authUserFirstName,
-                lastName: m.authUserLastName,
-                abilities: [],
-                superadmin: false,
-              } as User))).map((u) => {
+              {tableUsers.length === 0 && (
+                <tr>
+                  <td colSpan={canManageTenant ? 5 : 4} className="px-6 py-8 text-center text-sm text-gray-500">
+                    No users match the current filters.
+                  </td>
+                </tr>
+              )}
+              {tableUsers.map((u) => {
                 const membership = getMembershipForUser(u.id);
                 const role = getRoleForMembership(membership);
                 const abilities = parseAbilities(membership?.abilities);

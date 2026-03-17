@@ -118,6 +118,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Hardened Alert API authorization/tenant scoping (`alert:read`/`alert:configure`) including cross-tenant rule/channel/pipeline reference guards, and updated Alerts UI to present permission-aware read/configure states.
 - Hardened Data API tenant RBAC (`data:read`/`data:write` + tenant scope) and updated Data Explorer to provide permission-aware read/write states (including guarded create/delete/query flows).
 - Added connector scoped-access coverage for forbidden tenant access and updated Connectors page UX to enforce read/write/delete permission states in-page.
+- Scoped `AuthUserResource` tenant operations to tenant memberships (including tenant-aware get/update/delete with safer delete semantics), and improved Users page UX with search/status/role filters plus filtered empty-state messaging.
 
 ---
 

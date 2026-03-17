@@ -30,6 +30,22 @@ class AuthUserResource {
         return if (tid.isNullOrBlank()) null else tid
     }
 
+    private fun currentUser(): User? {
+        return try {
+            jwt.subject?.let { em.find(User::class.java, UUID.fromString(it)) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun resolveTenantIdOrBadRequest(tenantIdQuery: String?): String? {
+        return tenantIdQuery ?: getTenantIdFromToken()
+    }
+
+    private fun userHasMembershipInTenant(user: User, tenantId: UUID): Boolean {
+        return user.memberships.any { membership -> membership.tenant?.id == tenantId }
+    }
+
     private fun extractPasswordHash(request: Map<String, Any>): String? {
         return (request["passwordHash"] as? String)?.takeIf { it.isNotBlank() }
             ?: (request["password"] as? String)?.takeIf { it.isNotBlank() }
@@ -49,7 +65,7 @@ class AuthUserResource {
 
     @GET
     fun list(@QueryParam("tenantId") tenantId: String?): Response {
-        val resolvedTenantId = tenantId ?: getTenantIdFromToken()
+        val resolvedTenantId = resolveTenantIdOrBadRequest(tenantId)
             ?: return Response.status(400).entity(mapOf("error" to "tenantId is required")).build()
         val tenantUuid = try {
             parseUuid(resolvedTenantId, "tenantId")
@@ -57,7 +73,7 @@ class AuthUserResource {
             return e.response
         }
 
-        val currentUser = try { jwt.subject?.let { em.find(User::class.java, UUID.fromString(it)) } } catch (_: Exception) { null }
+        val currentUser = currentUser()
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, resolvedTenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
@@ -87,8 +103,8 @@ class AuthUserResource {
     @POST
     @Transactional
     fun create(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
-        val currentUser = try { jwt.subject?.let { em.find(User::class.java, UUID.fromString(it)) } } catch (_: Exception) { null }
-        val tenantId = tenantIdQuery ?: getTenantIdFromToken()
+        val currentUser = currentUser()
+        val tenantId = resolveTenantIdOrBadRequest(tenantIdQuery)
         if (currentUser == null || tenantId == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
@@ -125,7 +141,7 @@ class AuthUserResource {
 
     @GET
     @Path("/{id}")
-    fun get(@PathParam("id") id: String): Response {
+    fun get(@PathParam("id") id: String, @QueryParam("tenantId") tenantIdQuery: String?): Response {
         val userId = try {
             parseUuid(id, "user id")
         } catch (e: WebApplicationException) {
@@ -134,13 +150,22 @@ class AuthUserResource {
         val user = em.find(User::class.java, userId)
             ?: return Response.status(404).entity(mapOf("error" to "User not found")).build()
 
-        val tenantId = getTenantIdFromToken()
-        val currentUser = try { jwt.subject?.let { em.find(User::class.java, UUID.fromString(it)) } } catch (_: Exception) { null }
+        val tenantId = resolveTenantIdOrBadRequest(tenantIdQuery)
+            ?: return Response.status(400).entity(mapOf("error" to "tenantId is required")).build()
+        val tenantUuid = try {
+            parseUuid(tenantId, "tenantId")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val currentUser = currentUser()
         if (currentUser == null || tenantId == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
         if (!SecurityUtils.hasAbility(currentUser, "read:user")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
+        }
+        if (!userHasMembershipInTenant(user, tenantUuid)) {
+            return Response.status(404).entity(mapOf("error" to "User not found")).build()
         }
 
         return Response.ok(
@@ -157,7 +182,7 @@ class AuthUserResource {
     @PATCH
     @Path("/{id}")
     @Transactional
-    fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
+    fun update(@PathParam("id") id: String, @QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
         val userId = try {
             parseUuid(id, "user id")
         } catch (e: WebApplicationException) {
@@ -166,13 +191,22 @@ class AuthUserResource {
         val user = em.find(User::class.java, userId)
             ?: return Response.status(404).entity(mapOf("error" to "User not found")).build()
 
-        val tenantId = getTenantIdFromToken()
-        val currentUser = try { jwt.subject?.let { em.find(User::class.java, UUID.fromString(it)) } } catch (_: Exception) { null }
+        val tenantId = resolveTenantIdOrBadRequest(tenantIdQuery)
+            ?: return Response.status(400).entity(mapOf("error" to "tenantId is required")).build()
+        val tenantUuid = try {
+            parseUuid(tenantId, "tenantId")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val currentUser = currentUser()
         if (currentUser == null || tenantId == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
         if (!SecurityUtils.hasAbility(currentUser, "write:user")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
+        }
+        if (!userHasMembershipInTenant(user, tenantUuid)) {
+            return Response.status(404).entity(mapOf("error" to "User not found")).build()
         }
 
         request["email"]?.let { user.email = it as String }
@@ -189,7 +223,7 @@ class AuthUserResource {
     @DELETE
     @Path("/{id}")
     @Transactional
-    fun delete(@PathParam("id") id: String): Response {
+    fun delete(@PathParam("id") id: String, @QueryParam("tenantId") tenantIdQuery: String?): Response {
         val userId = try {
             parseUuid(id, "user id")
         } catch (e: WebApplicationException) {
@@ -198,17 +232,38 @@ class AuthUserResource {
         val user = em.find(User::class.java, userId)
             ?: return Response.status(404).entity(mapOf("error" to "User not found")).build()
 
-        val tenantId = getTenantIdFromToken()
-        val currentUser = try { jwt.subject?.let { em.find(User::class.java, UUID.fromString(it)) } } catch (_: Exception) { null }
+        val tenantId = resolveTenantIdOrBadRequest(tenantIdQuery)
+            ?: return Response.status(400).entity(mapOf("error" to "tenantId is required")).build()
+        val tenantUuid = try {
+            parseUuid(tenantId, "tenantId")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val currentUser = currentUser()
         if (currentUser == null || tenantId == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
         if (!SecurityUtils.hasAbility(currentUser, "delete:user")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
+        if (!userHasMembershipInTenant(user, tenantUuid)) {
+            return Response.status(404).entity(mapOf("error" to "User not found")).build()
+        }
 
-        user.memberships.forEach { it.delete() }
-        user.delete()
+        val membershipToRemove = user.memberships.firstOrNull { it.tenant?.id == tenantUuid }
+            ?: return Response.status(404).entity(mapOf("error" to "User not found")).build()
+        membershipToRemove.delete()
+
+        val remainingMemberships = em.createQuery(
+            "SELECT COUNT(m) FROM Membership m WHERE m.authUser.id = :userId",
+            java.lang.Long::class.java
+        )
+            .setParameter("userId", userId)
+            .singleResult
+
+        if (remainingMemberships == 0L) {
+            user.delete()
+        }
         return Response.noContent().build()
     }
 }
