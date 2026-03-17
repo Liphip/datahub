@@ -97,6 +97,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added in-panel shortcut hint chips with hide/show toggle, persisted via localStorage for repeat triage users.
 - Bucket drilldown now supports shareable pipeline pinning (`bucketPipelineId`) with one-click "Only" actions per run row.
 - Bucket panel now exposes an "Open pinned" shortcut when pipeline pinning is active.
+- Added one-click "Clear all triage" action to reset health/time/bucket drilldown filters back to default pipelines view.
 
 ---
 

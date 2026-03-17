@@ -426,6 +426,26 @@ export default function Pipelines() {
     setSearchParams(next, { replace: true });
   };
 
+  const clearAllTriageFilters = () => {
+    setHealthFilter('ALL');
+    setSinceHoursFilter(null);
+    setBucketSortMode('NEWEST');
+    setBucketStatusFilter('ALL');
+    setBucketPipelineQuery('');
+    setBucketPipelineIdFilter(null);
+
+    const next = new URLSearchParams(searchParams);
+    next.delete('health');
+    next.delete('sinceHours');
+    next.delete('bucketStart');
+    next.delete('bucketSeconds');
+    next.delete('bucketSort');
+    next.delete('bucketStatus');
+    next.delete('bucketQ');
+    next.delete('bucketPipelineId');
+    setSearchParams(next, { replace: true });
+  };
+
   const copyTriageLink = async () => {
     try {
       const url = `${window.location.origin}${window.location.pathname}?${searchParams.toString()}`;
@@ -568,6 +588,12 @@ export default function Pipelines() {
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-gray-900">Runs In Selected Bucket</h2>
             <div className="flex items-center gap-2">
+              <button
+                onClick={clearAllTriageFilters}
+                className="px-2 py-1 rounded border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 text-xs"
+              >
+                Clear all triage
+              </button>
               <label className="flex items-center gap-1 text-xs text-gray-600">
                 <input
                   type="checkbox"
