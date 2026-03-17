@@ -318,6 +318,16 @@ export default function Pipelines() {
     setSearchParams(next, { replace: true });
   };
 
+  const copyTriageLink = async () => {
+    try {
+      const url = `${window.location.origin}${window.location.pathname}?${searchParams.toString()}`;
+      await navigator.clipboard.writeText(url);
+      showToast('Triage link copied to clipboard', 'success');
+    } catch {
+      showToast('Failed to copy triage link', 'error');
+    }
+  };
+
   const applyBucketSortMode = (mode: BucketSortMode) => {
     setBucketSortMode(mode);
     const next = new URLSearchParams(searchParams);
@@ -398,6 +408,12 @@ export default function Pipelines() {
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-gray-900">Runs In Selected Bucket</h2>
             <div className="flex items-center gap-2">
+              <button
+                onClick={copyTriageLink}
+                className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
+              >
+                Copy link
+              </button>
               <span className="text-xs text-gray-500">{bucketRuns.length} runs</span>
               <select
                 value={bucketSortMode}
