@@ -1373,6 +1373,12 @@ class PipelineResource {
             heavyQuery && depthLimit > defaultDepth -> "REDUCE_DEPTH"
             else -> "NONE"
         }
+        val recommendedSafeFetchMode = if (recommendedAction == "SWITCH_TO_SUMMARY") "SUMMARY" else if (withDetails) "DETAILS" else "SUMMARY"
+        val recommendedSafeDepth = if (recommendedAction == "REDUCE_DEPTH") {
+            maxOf(defaultDepth, depthLimit - 20)
+        } else {
+            depthLimit
+        }
 
         return Response.ok(
             mapOf(
@@ -1399,6 +1405,8 @@ class PipelineResource {
                 "lineageMeasuredAt" to lineageMeasuredAt,
                 "lineagePerformanceHint" to lineagePerformanceHint,
                 "recommendedAction" to recommendedAction,
+                "recommendedSafeFetchMode" to recommendedSafeFetchMode,
+                "recommendedSafeDepth" to recommendedSafeDepth,
                 "ancestorsTotal" to ancestorsTotal,
                 "ancestorsStatusCounts" to ancestorsStatusCounts,
                 "descendantsTotal" to descendantsTotal,

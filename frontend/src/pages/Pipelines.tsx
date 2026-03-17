@@ -20,6 +20,7 @@ type LineageDirection = 'both' | 'ancestors' | 'descendants';
 type LineageStatusFilter = 'ALL' | 'INFLIGHT' | 'TERMINAL' | 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
 type LineageFetchMode = 'SUMMARY' | 'DETAILS';
 type LineagePerfSample = { totalMs: number; payloadBytes: number; measuredAt?: string };
+type LineageSafeDefault = { mode: LineageFetchMode; depth: number; updatedAt: string; reason?: string };
 
 type TriagePreset = {
   name: string;
@@ -31,6 +32,7 @@ type TriagePreset = {
 };
 
 const TRIAGE_PRESETS_KEY = 'pipelines.triage.presets.v1';
+const LINEAGE_SAFE_DEFAULTS_KEY = 'pipelines.lineage.safe-defaults.v1';
 const LINEAGE_STATUS_OPTIONS: LineageStatusFilter[] = ['ALL', 'INFLIGHT', 'TERMINAL', 'FAILED', 'RUNNING', 'PENDING', 'SUCCESS', 'CANCELLED'];
 
 export default function Pipelines() {
@@ -59,6 +61,16 @@ export default function Pipelines() {
   const [lineageStatusFilterByRunId, setLineageStatusFilterByRunId] = useState<Record<string, LineageStatusFilter>>({});
   const [lineageFetchModeByRunId, setLineageFetchModeByRunId] = useState<Record<string, LineageFetchMode>>({});
   const [lineagePerfHistoryByRunId, setLineagePerfHistoryByRunId] = useState<Record<string, LineagePerfSample[]>>({});
+  const [lineageSafeDefaultsByRunId, setLineageSafeDefaultsByRunId] = useState<Record<string, LineageSafeDefault>>(() => {
+    try {
+      const raw = localStorage.getItem(LINEAGE_SAFE_DEFAULTS_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as Record<string, LineageSafeDefault>;
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [expandedPipelineId, setExpandedPipelineId] = useState<string | null>(null);
@@ -171,6 +183,10 @@ export default function Pipelines() {
     localStorage.setItem(TRIAGE_PRESETS_KEY, JSON.stringify(presets));
     setTriagePresets(presets);
   };
+
+  useEffect(() => {
+    localStorage.setItem(LINEAGE_SAFE_DEFAULTS_KEY, JSON.stringify(lineageSafeDefaultsByRunId));
+  }, [lineageSafeDefaultsByRunId]);
 
   const refreshBucketRuns = async (tid: string, fromDate: Date, toDate: Date, silent = false) => {
     if (!silent) setLoadingBucketRuns(true);
@@ -549,10 +565,11 @@ export default function Pipelines() {
     }
     setLoadingLineageRunId(runId);
     try {
-      const depth = maxDepth ?? lineageDepthByRunId[runId] ?? 20;
+      const rememberedSafeDefault = lineageSafeDefaultsByRunId[runId];
+      const depth = maxDepth ?? lineageDepthByRunId[runId] ?? rememberedSafeDefault?.depth ?? 20;
       const requestedDirection = direction ?? lineageDirectionByRunId[runId] ?? 'both';
       const requestedStatus = statusFilter ?? lineageStatusFilterByRunId[runId] ?? 'ALL';
-      const requestedFetchMode = fetchMode ?? lineageFetchModeByRunId[runId] ?? 'SUMMARY';
+      const requestedFetchMode = fetchMode ?? lineageFetchModeByRunId[runId] ?? rememberedSafeDefault?.mode ?? 'SUMMARY';
       const statusPreset = requestedStatus === 'INFLIGHT'
         ? 'inflight'
         : requestedStatus === 'TERMINAL'
@@ -589,6 +606,19 @@ export default function Pipelines() {
         const next = [...existing, nextSample].slice(-8);
         return { ...prev, [runId]: next };
       });
+      if (lineage.recommendedAction && lineage.recommendedAction !== 'NONE') {
+        const suggestedMode = lineage.recommendedSafeFetchMode ?? (lineage.recommendedAction === 'SWITCH_TO_SUMMARY' ? 'SUMMARY' : requestedFetchMode);
+        const suggestedDepth = lineage.recommendedSafeDepth ?? (lineage.recommendedAction === 'REDUCE_DEPTH' ? Math.max(20, depth - 20) : depth);
+        setLineageSafeDefaultsByRunId((prev) => ({
+          ...prev,
+          [runId]: {
+            mode: suggestedMode,
+            depth: suggestedDepth,
+            updatedAt: new Date().toISOString(),
+            reason: lineage.recommendedAction,
+          },
+        }));
+      }
 
       const next = new URLSearchParams(searchParams);
       next.set('focusPipelineId', pipelineId);
@@ -2102,6 +2132,31 @@ export default function Pipelines() {
                                       {lineageByRunId[selectedRun.id].ancestorsTruncated || lineageByRunId[selectedRun.id].descendantsTruncated ? 'Truncated' : 'Complete'}
                                     </span>
                                   </div>
+                                  {lineageSafeDefaultsByRunId[selectedRun.id] && (
+                                    <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-indigo-800">
+                                      <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                        Safe defaults: {lineageSafeDefaultsByRunId[selectedRun.id].mode} d{lineageSafeDefaultsByRunId[selectedRun.id].depth}
+                                      </span>
+                                      <button
+                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          const safe = lineageSafeDefaultsByRunId[selectedRun.id];
+                                          if (!safe) return;
+                                          void handleLoadRunLineage(
+                                            pipeline.id,
+                                            selectedRun.id,
+                                            safe.depth,
+                                            lineageDirectionByRunId[selectedRun.id] ?? 'both',
+                                            lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL',
+                                            safe.mode
+                                          );
+                                        }}
+                                      >
+                                        Apply safe defaults
+                                      </button>
+                                    </div>
+                                  )}
                                   <div className="mb-1">
                                     Ancestors: {lineageByRunId[selectedRun.id].ancestors.length}/{lineageByRunId[selectedRun.id].ancestorsTotal ?? lineageByRunId[selectedRun.id].ancestors.length} · Descendants: {lineageByRunId[selectedRun.id].descendants.length}/{lineageByRunId[selectedRun.id].descendantsTotal ?? lineageByRunId[selectedRun.id].descendants.length}
                                   </div>

@@ -181,6 +181,8 @@ export interface PipelineRunLineage {
   lineageMeasuredAt?: string;
   lineagePerformanceHint?: 'NORMAL' | 'HEAVY_QUERY' | 'HEAVY_PAYLOAD' | 'HEAVY_BOTH';
   recommendedAction?: 'NONE' | 'SWITCH_TO_SUMMARY' | 'REDUCE_DEPTH';
+  recommendedSafeFetchMode?: 'SUMMARY' | 'DETAILS';
+  recommendedSafeDepth?: number;
   ancestorsTotal?: number;
   ancestorsStatusCounts?: Partial<Record<'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED', number>>;
   descendantsTotal?: number;
