@@ -146,13 +146,21 @@ class PipelineConsumer {
             run.startedAt = java.time.Instant.now()
             run.persist()
         }
-        
+        val executionStartedAt = System.currentTimeMillis()
+
         try {
             val result = executePipeline(pipeline, runId, dataPayload)
+            val executionMs = System.currentTimeMillis() - executionStartedAt
             
             if (run != null) {
                 run.status = PipelineRunStatus.SUCCESS
                 run.completedAt = java.time.Instant.now()
+                run.metrics = objectMapper.writeValueAsString(
+                    mapOf(
+                        "executionMs" to executionMs,
+                        "result" to result
+                    )
+                )
                 run.persist()
             }
             
@@ -165,11 +173,18 @@ class PipelineConsumer {
             )
         } catch (e: Exception) {
             LOG.errorf("Pipeline execution failed: %s", e.message)
+            val executionMs = System.currentTimeMillis() - executionStartedAt
             
             if (run != null) {
                 run.status = PipelineRunStatus.FAILED
                 run.completedAt = java.time.Instant.now()
                 run.errorMessage = e.message
+                run.metrics = objectMapper.writeValueAsString(
+                    mapOf(
+                        "executionMs" to executionMs,
+                        "error" to (e.message ?: "Pipeline execution failed")
+                    )
+                )
                 run.persist()
             }
             
@@ -243,8 +258,14 @@ class PipelineConsumer {
 
         val alertPayload = data ?: inputData
         if (alertPayload != null) {
-            val alertsFired = alertDispatcher.evaluateRulesForPipeline(pipeline, alertPayload)
-            results["alertsFired"] = alertsFired
+            val alertReport = alertDispatcher.evaluateRulesForPipeline(pipeline, alertPayload)
+            results["alertsFired"] = alertReport.firedAlerts
+            results["alertEvaluation"] = mapOf(
+                "evaluatedRules" to alertReport.evaluatedRules,
+                "matchedRules" to alertReport.matchedRules,
+                "firedAlerts" to alertReport.firedAlerts,
+                "cooldownSkipped" to alertReport.cooldownSkipped
+            )
         }
         
         return results

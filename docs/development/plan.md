@@ -62,6 +62,8 @@ This section catalogues every known gap between the current codebase and a shipp
 - Fixed ingest/websocket pipeline lookup to use JPA entity manager lookups (avoids Panache static lookup failures in runtime/tests).
 - Alert history API now returns full history payload fields (`severity`, `message`, `sentAt`, linked ids) for frontend consistency.
 - Alerts UI now includes a guided condition builder (single/any/all logic) that generates valid JSON conditions.
+- Pipeline runs now persist structured metrics (`executionMs`, result/error payloads, alert evaluation stats) and expose parsed metrics in `/pipelines/{id}/runs` responses.
+- Pipelines list UI now surfaces latest run execution time and alerts-fired counters for quick operational visibility.
 
 ---
 

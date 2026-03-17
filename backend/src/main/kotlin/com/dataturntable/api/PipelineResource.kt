@@ -253,6 +253,12 @@ class PipelineResource {
             .resultList
         return Response.ok(
             runs.map {
+                val metrics = try {
+                    if (it.metrics.isNullOrBlank()) emptyMap<String, Any>()
+                    else objectMapper.readValue(it.metrics, Map::class.java)
+                } catch (_: Exception) {
+                    mapOf("raw" to it.metrics)
+                }
                 mapOf(
                     "id" to it.id,
                     "status" to it.status.name,
@@ -260,7 +266,7 @@ class PipelineResource {
                     "startedAt" to it.startedAt,
                     "completedAt" to it.completedAt,
                     "errorMessage" to it.errorMessage,
-                    "metrics" to it.metrics
+                    "metrics" to metrics
                 )
             }
         ).build()

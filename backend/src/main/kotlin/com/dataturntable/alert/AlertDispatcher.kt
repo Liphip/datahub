@@ -19,6 +19,13 @@ import java.net.http.HttpResponse
 
 @ApplicationScoped
 class AlertDispatcher {
+
+    data class AlertEvaluationReport(
+        val evaluatedRules: Int,
+        val matchedRules: Int,
+        val firedAlerts: Int,
+        val cooldownSkipped: Int
+    )
     
     private val LOG = Logger.getLogger(AlertDispatcher::class.java)
     private val objectMapper = ObjectMapper()
@@ -31,9 +38,9 @@ class AlertDispatcher {
     lateinit var em: EntityManager
 
     @Transactional
-    fun evaluateRulesForPipeline(pipeline: Pipeline, payload: Map<String, Any>?): Int {
-        val pipelineId = pipeline.id ?: return 0
-        val tenantId = pipeline.tenant?.id ?: return 0
+    fun evaluateRulesForPipeline(pipeline: Pipeline, payload: Map<String, Any>?): AlertEvaluationReport {
+        val pipelineId = pipeline.id ?: return AlertEvaluationReport(0, 0, 0, 0)
+        val tenantId = pipeline.tenant?.id ?: return AlertEvaluationReport(0, 0, 0, 0)
 
         val rules = em.createQuery(
             "SELECT r FROM AlertRule r WHERE r.enabled = true AND r.tenant.id = :tenantId AND (r.pipeline IS NULL OR r.pipeline.id = :pipelineId)",
@@ -43,10 +50,16 @@ class AlertDispatcher {
             .setParameter("pipelineId", pipelineId)
             .resultList
 
+        var matched = 0
         var fired = 0
+        var cooldownSkipped = 0
         for (rule in rules) {
             if (!matchesCondition(rule.condition, payload)) continue
-            if (isInCooldown(rule)) continue
+            matched++
+            if (isInCooldown(rule)) {
+                cooldownSkipped++
+                continue
+            }
 
             val condition = parseCondition(rule.condition)
             val severity = parseSeverity((condition["severity"] ?: "WARNING").toString())
@@ -57,7 +70,12 @@ class AlertDispatcher {
             fired++
         }
 
-        return fired
+        return AlertEvaluationReport(
+            evaluatedRules = rules.size,
+            matchedRules = matched,
+            firedAlerts = fired,
+            cooldownSkipped = cooldownSkipped
+        )
     }
 
     fun matchesCondition(conditionRaw: String?, payload: Map<String, Any>?): Boolean {

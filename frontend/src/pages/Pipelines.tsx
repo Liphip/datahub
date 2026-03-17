@@ -151,6 +151,24 @@ export default function Pipelines() {
     (p.graphDefinition?.nodes?.length ?? 0) ||
     (1 + (p.processingModuleVersionIds?.length ?? 0) + (p.exportModuleVersionIds?.length ?? 0));
 
+  const getRunMetricNumber = (run: PipelineRun, key: string): number | null => {
+    const metrics = run.metrics as Record<string, unknown> | undefined;
+    if (!metrics) return null;
+    const value = metrics[key];
+    if (typeof value === 'number') return value;
+    return null;
+  };
+
+  const getRunAlertsFired = (run: PipelineRun): number | null => {
+    const metrics = run.metrics as Record<string, unknown> | undefined;
+    if (!metrics) return null;
+    const direct = metrics.alertsFired;
+    if (typeof direct === 'number') return direct;
+    const result = metrics.result as Record<string, unknown> | undefined;
+    if (result && typeof result.alertsFired === 'number') return result.alertsFired;
+    return null;
+  };
+
   return (
     <div className="px-4 py-6 sm:px-0">
       {/* Toast */}
@@ -277,6 +295,12 @@ export default function Pipelines() {
                     <span className="text-xs text-gray-500 ml-2">
                       {runs[0].status === 'RUNNING' || runs[0].status === 'PENDING' ? 'Updating...' : `Last: ${runs[0].status}`}
                     </span>
+                    {getRunAlertsFired(runs[0]) != null && (
+                      <span className="text-xs text-amber-700">Alerts: {getRunAlertsFired(runs[0])}</span>
+                    )}
+                    {getRunMetricNumber(runs[0], 'executionMs') != null && (
+                      <span className="text-xs text-gray-500">{getRunMetricNumber(runs[0], 'executionMs')} ms</span>
+                    )}
                   </div>
                 )}
               </div>
