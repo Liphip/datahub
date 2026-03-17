@@ -23,7 +23,8 @@ export default function Layout({ children }: LayoutProps) {
   const { user, logout, tenantContexts, selectedTenantId, switchTenant } = useAuthStore();
   const [switchError, setSwitchError] = useState('');
   const [switchingTenant, setSwitchingTenant] = useState(false);
-  const visibleNavigation = navigation.filter((item) => item.href !== '/tenants' || user?.superadmin);
+  const canManageTenants = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('manage:tenant'));
+  const visibleNavigation = navigation.filter((item) => item.href !== '/tenants' || canManageTenants);
 
   const handleLogout = () => {
     logout();

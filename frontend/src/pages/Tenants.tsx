@@ -9,6 +9,7 @@ interface TenantWithChildren extends Tenant {
 
 export default function Tenants() {
   const { user } = useAuthStore();
+  const canManageTenants = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('manage:tenant'));
   const [tenants, setTenants] = useState<TenantWithChildren[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -224,10 +225,10 @@ export default function Tenants() {
     );
   };
 
-  if (!user?.superadmin) {
+  if (!canManageTenants) {
     return (
       <div className="px-4 py-6">
-        <p className="text-gray-500">Access denied. Admin privileges required.</p>
+        <p className="text-gray-500">Access denied. Tenant management permissions are required.</p>
       </div>
     );
   }
@@ -270,8 +271,8 @@ export default function Tenants() {
           <button 
             onClick={() => openCreateModal()} 
             className="btn-primary"
-            disabled={tenants.length > 0}
-            title={tenants.length > 0 ? "Root tenant already exists. Add sub-tenants instead." : "Create root tenant"}
+            disabled={!user?.superadmin || tenants.length > 0}
+            title={!user?.superadmin ? 'Only superadmin can create root tenants' : tenants.length > 0 ? 'Root tenant already exists. Add sub-tenants instead.' : 'Create root tenant'}
           >
             Create Root Tenant
           </button>

@@ -70,6 +70,61 @@ class TenantResourceTest {
             .jsonPath()
             .getString("token")
     }
+
+    fun createTenantManagerToken(tenantId: String): String {
+        val email = "tenant-admin@example.com"
+        val passwordHash = java.util.Base64.getEncoder().encodeToString(
+            java.security.MessageDigest.getInstance("SHA-256").digest("TenantPass!123".toByteArray())
+        )
+
+        QuarkusTransaction.requiringNew().run {
+            val tenantUuid = java.util.UUID.fromString(tenantId)
+            val tenant = em.find(Tenant::class.java, tenantUuid)
+                ?: throw IllegalStateException("Tenant not found for manager token setup")
+            val role = em.createQuery(
+                "SELECT r FROM Role r WHERE r.tenant.id = :tenantId AND r.name = :roleName",
+                Role::class.java
+            )
+                .setParameter("tenantId", tenantUuid)
+                .setParameter("roleName", "Tenant Admin")
+                .resultList
+                .firstOrNull()
+                ?: throw IllegalStateException("Tenant Admin role missing for tenant")
+
+            val user = User().apply {
+                this.email = email
+                this.passwordHash = BCrypt.hashpw(passwordHash, BCrypt.gensalt())
+                this.isActive = true
+                this.createdAt = java.time.Instant.now()
+                this.updatedAt = java.time.Instant.now()
+            }
+            em.persist(user)
+            em.flush()
+
+            val membership = Membership().apply {
+                this.authUser = user
+                this.tenant = tenant
+                this.role = role
+                this.abilities = "[]"
+                this.createdAt = java.time.Instant.now()
+            }
+            em.persist(membership)
+            user.memberships.add(membership)
+            em.flush()
+        }
+
+        return given()
+            .contentType(ContentType.JSON)
+            .body(mapOf("email" to email, "passwordHash" to passwordHash, "tenantId" to tenantId))
+        .`when`()
+            .post("/api/internal/v1/auth/login")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("token")
+    }
     
     @Test
     fun testListTenantsRequiresAuth() {
@@ -239,6 +294,115 @@ class TenantResourceTest {
             .header("Authorization", "Bearer $token")
         .`when`()
             .get("/api/internal/v1/tenants/$tenantId/children")
+        .then()
+            .statusCode(403)
+            .body("error", equalTo("Forbidden"))
+    }
+
+    @Test
+    fun testTenantManagerCanListScopedTenantsOnly() {
+        val adminToken = TestAuthHelpers.createAdminToken()
+        val rootId = given()
+            .header("Authorization", "Bearer $adminToken")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        val alphaId = given()
+            .header("Authorization", "Bearer $adminToken")
+            .contentType(ContentType.JSON)
+            .body(mapOf("name" to "Alpha", "parentId" to rootId))
+        .`when`()
+            .post("/api/internal/v1/tenants")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $adminToken")
+            .contentType(ContentType.JSON)
+            .body(mapOf("name" to "Alpha Child", "parentId" to alphaId))
+        .`when`()
+            .post("/api/internal/v1/tenants")
+        .then()
+            .statusCode(201)
+
+        given()
+            .header("Authorization", "Bearer $adminToken")
+            .contentType(ContentType.JSON)
+            .body(mapOf("name" to "Beta", "parentId" to rootId))
+        .`when`()
+            .post("/api/internal/v1/tenants")
+        .then()
+            .statusCode(201)
+
+        val managerToken = createTenantManagerToken(alphaId)
+
+        given()
+            .header("Authorization", "Bearer $managerToken")
+            .queryParam("recursive", "true")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .body("toString()", containsString("Alpha"))
+            .body("toString()", containsString("Alpha Child"))
+            .body("toString()", not(containsString("Beta")))
+    }
+
+    @Test
+    fun testTenantManagerCannotGetUnscopedTenant() {
+        val adminToken = TestAuthHelpers.createAdminToken()
+        val rootId = given()
+            .header("Authorization", "Bearer $adminToken")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        val alphaId = given()
+            .header("Authorization", "Bearer $adminToken")
+            .contentType(ContentType.JSON)
+            .body(mapOf("name" to "Alpha", "parentId" to rootId))
+        .`when`()
+            .post("/api/internal/v1/tenants")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        val betaId = given()
+            .header("Authorization", "Bearer $adminToken")
+            .contentType(ContentType.JSON)
+            .body(mapOf("name" to "Beta", "parentId" to rootId))
+        .`when`()
+            .post("/api/internal/v1/tenants")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        val managerToken = createTenantManagerToken(alphaId)
+        given()
+            .header("Authorization", "Bearer $managerToken")
+        .`when`()
+            .get("/api/internal/v1/tenants/$betaId")
         .then()
             .statusCode(403)
             .body("error", equalTo("Forbidden"))

@@ -34,12 +34,18 @@ class TenantResource {
         return em.find(User::class.java, userId)
     }
 
-    private fun requireSuperadmin(): Response? {
-        val user = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        if (!user.isSuperAdmin()) {
-            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+    private fun requireTenantManager(): Pair<User?, Response?> {
+        val user = getCurrentUser()
+            ?: return Pair(null, Response.status(401).entity(mapOf("error" to "Unauthorized")).build())
+        if (!user.isSuperAdmin() && !user.hasAbility("manage:tenant")) {
+            return Pair(null, Response.status(403).entity(mapOf("error" to "Forbidden")).build())
         }
-        return null
+        return Pair(user, null)
+    }
+
+    private fun canManageTenant(user: User, tenantId: UUID): Boolean {
+        if (user.isSuperAdmin()) return true
+        return user.hasAbility("manage:tenant") && user.canAccessTenant(tenantId)
     }
 
     private fun parseUuid(value: String, field: String): UUID {
@@ -64,32 +70,53 @@ class TenantResource {
         return base
     }
 
-    private fun buildTenantTree(tenants: List<Tenant>, parentId: UUID?, query: String?): List<Map<String, Any?>> {
-        val nodes = tenants.filter { it.parent?.id == parentId }
+    private fun buildTenantForest(tenants: List<Tenant>, query: String?): List<Map<String, Any?>> {
+        val nodesByParentId = tenants.groupBy { it.parent?.id }
+        val visibleIds = tenants.mapNotNull { it.id }.toSet()
         val normalizedQuery = query?.trim()?.lowercase()
 
-        return nodes.mapNotNull { tenant ->
-            val children = buildTenantTree(tenants, tenant.id, normalizedQuery)
+        fun buildNode(tenant: Tenant): Map<String, Any?>? {
+            val children = (nodesByParentId[tenant.id] ?: emptyList()).mapNotNull { buildNode(it) }
             val matchesSelf = normalizedQuery.isNullOrBlank() || tenant.name?.lowercase()?.contains(normalizedQuery) == true
 
-            if (!matchesSelf && children.isEmpty()) {
+            return if (!matchesSelf && children.isEmpty()) {
                 null
             } else {
                 toTenantMap(tenant, children)
             }
         }
+
+        val roots = tenants.filter { tenant ->
+            val parentId = tenant.parent?.id
+            parentId == null || parentId !in visibleIds
+        }
+        return roots.mapNotNull { buildNode(it) }
+    }
+
+    private fun getVisibleTenantsForUser(user: User): List<Tenant> {
+        val allTenants = em.createQuery("SELECT t FROM Tenant t", Tenant::class.java).resultList
+        if (user.isSuperAdmin()) return allTenants
+        return allTenants.filter { tenant ->
+            tenant.id?.let { user.canAccessTenant(it) } == true
+        }
     }
     
     @GET
     fun list(@QueryParam("recursive") recursive: String?, @QueryParam("query") query: String?): Response {
-        requireSuperadmin()?.let { return it }
+        val (currentUser, denial) = requireTenantManager()
+        denial?.let { return it }
+        val user = currentUser ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val visibleTenants = getVisibleTenantsForUser(user)
 
         if (recursive.equals("true", ignoreCase = true)) {
-            val allTenants = em.createQuery("SELECT t FROM Tenant t", Tenant::class.java).resultList
-            return Response.ok(buildTenantTree(allTenants, null, query)).build()
+            return Response.ok(buildTenantForest(visibleTenants, query)).build()
         }
 
-        val tenants = em.createQuery("SELECT t FROM Tenant t WHERE t.parent IS NULL", Tenant::class.java).resultList
+        val visibleTenantIds = visibleTenants.mapNotNull { it.id }.toSet()
+        val tenants = visibleTenants.filter { tenant ->
+            val parentId = tenant.parent?.id
+            parentId == null || parentId !in visibleTenantIds
+        }
         val normalizedQuery = query?.trim()?.lowercase()
         val filtered = if (normalizedQuery.isNullOrBlank()) {
             tenants
@@ -102,7 +129,9 @@ class TenantResource {
     @POST
     @Transactional
     fun create(request: Map<String, Any>): Response {
-        requireSuperadmin()?.let { return it }
+        val (currentUser, denial) = requireTenantManager()
+        denial?.let { return it }
+        val user = currentUser ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
 
         val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
         
@@ -114,9 +143,17 @@ class TenantResource {
         }
         
         if (parent == null) {
+            if (!user.isSuperAdmin()) {
+                return Response.status(403).entity(mapOf("error" to "Only superadmin can create root tenants")).build()
+            }
             val rootTenants = em.createQuery("SELECT t FROM Tenant t WHERE t.parent IS NULL", Tenant::class.java).resultList
             if (rootTenants.isNotEmpty()) {
                 return Response.status(400).entity(mapOf("error" to "Root tenant already exists. Create a sub-tenant instead.")).build()
+            }
+        } else {
+            val parentTenantId = parent.id ?: return Response.status(400).entity(mapOf("error" to "Invalid parentId")).build()
+            if (!canManageTenant(user, parentTenantId)) {
+                return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
         }
         
@@ -136,12 +173,17 @@ class TenantResource {
     @GET
     @Path("/{id}")
     fun get(@PathParam("id") id: String): Response {
-        requireSuperadmin()?.let { return it }
+        val (currentUser, denial) = requireTenantManager()
+        denial?.let { return it }
+        val user = currentUser ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
 
         val tenantId = try {
             parseUuid(id, "tenant id")
         } catch (e: WebApplicationException) {
             return e.response
+        }
+        if (!canManageTenant(user, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
         val tenant = em.find(Tenant::class.java, tenantId)
         return if (tenant != null) {
@@ -155,12 +197,17 @@ class TenantResource {
     @Path("/{id}")
     @Transactional
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
-        requireSuperadmin()?.let { return it }
+        val (currentUser, denial) = requireTenantManager()
+        denial?.let { return it }
+        val user = currentUser ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
 
         val tenantId = try {
             parseUuid(id, "tenant id")
         } catch (e: WebApplicationException) {
             return e.response
+        }
+        if (!canManageTenant(user, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
         val tenant = em.find(Tenant::class.java, tenantId)
         return if (tenant != null) {
@@ -179,15 +226,23 @@ class TenantResource {
     @Path("/{id}")
     @Transactional
     fun delete(@PathParam("id") id: String): Response {
-        requireSuperadmin()?.let { return it }
+        val (currentUser, denial) = requireTenantManager()
+        denial?.let { return it }
+        val user = currentUser ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
 
         val tenantId = try {
             parseUuid(id, "tenant id")
         } catch (e: WebApplicationException) {
             return e.response
         }
+        if (!canManageTenant(user, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
         val tenant = em.find(Tenant::class.java, tenantId)
         return if (tenant != null) {
+            if (tenant.parent == null && !user.isSuperAdmin()) {
+                return Response.status(403).entity(mapOf("error" to "Only superadmin can delete root tenants")).build()
+            }
             if (tenant.parent == null) {
                 val rootCount = em.createQuery("SELECT COUNT(t) FROM Tenant t WHERE t.parent IS NULL", java.lang.Long::class.java).singleResult
                 if (rootCount <= 1) {
@@ -204,17 +259,27 @@ class TenantResource {
     @GET
     @Path("/{id}/children")
     fun getChildren(@PathParam("id") id: String): Response {
-        requireSuperadmin()?.let { return it }
+        val (currentUser, denial) = requireTenantManager()
+        denial?.let { return it }
+        val user = currentUser ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
 
         val parentId = try {
             parseUuid(id, "tenant id")
         } catch (e: WebApplicationException) {
             return e.response
         }
+        if (!canManageTenant(user, parentId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
 
         val children = em.createQuery("SELECT t FROM Tenant t WHERE t.parent.id = :parentId", Tenant::class.java)
             .setParameter("parentId", parentId)
             .resultList
-        return Response.ok(children.map { toTenantMap(it) }).build()
+        val visibleChildren = if (user.isSuperAdmin()) {
+            children
+        } else {
+            children.filter { child -> child.id?.let { user.canAccessTenant(it) } == true }
+        }
+        return Response.ok(visibleChildren.map { toTenantMap(it) }).build()
     }
 }
