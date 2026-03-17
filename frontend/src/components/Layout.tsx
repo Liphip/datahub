@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuthStore } from '../stores/auth';
 
 interface LayoutProps {
@@ -23,8 +23,20 @@ export default function Layout({ children }: LayoutProps) {
   const { user, logout, tenantContexts, selectedTenantId, switchTenant } = useAuthStore();
   const [switchError, setSwitchError] = useState('');
   const [switchingTenant, setSwitchingTenant] = useState(false);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('theme');
+    if (saved === 'light' || saved === 'dark') return saved;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
   const canManageTenants = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('manage:tenant'));
   const visibleNavigation = navigation.filter((item) => item.href !== '/tenants' || canManageTenants);
+
+  useEffect(() => {
+    const isDark = theme === 'dark';
+    document.documentElement.classList.toggle('dark', isDark);
+    document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+    localStorage.setItem('theme', theme);
+  }, [theme]);
 
   const handleLogout = () => {
     logout();
@@ -46,16 +58,16 @@ export default function Layout({ children }: LayoutProps) {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <nav className="bg-white shadow-sm">
+    <div className="min-h-screen bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100 transition-colors">
+      <nav className="bg-white dark:bg-slate-900 shadow-sm border-b border-slate-200 dark:border-slate-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex">
               <div className="flex-shrink-0 flex items-center">
-                <Link to="/" className="text-xl font-bold text-primary-600">
-                  DataTurntable
-                </Link>
-              </div>
+                  <Link to="/" className="text-xl font-bold text-primary-700 dark:text-primary-300">
+                    DataTurntable
+                  </Link>
+                </div>
               <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
                 {visibleNavigation.map((item) => (
                   <Link
@@ -63,8 +75,8 @@ export default function Layout({ children }: LayoutProps) {
                     to={item.href}
                     className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium ${
                       location.pathname === item.href
-                        ? 'border-primary-600 text-gray-900'
-                        : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                        ? 'border-primary-700 text-slate-900 dark:border-primary-300 dark:text-slate-100'
+                        : 'border-transparent text-slate-600 hover:border-slate-300 hover:text-slate-900 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:text-slate-100'
                     }`}
                   >
                     {item.name}
@@ -76,13 +88,13 @@ export default function Layout({ children }: LayoutProps) {
               <div className="flex items-center space-x-4">
                 {tenantContexts.length > 1 && (
                   <div className="flex items-center space-x-2">
-                    <label htmlFor="tenant-switch" className="text-xs text-gray-500">Tenant</label>
+                    <label htmlFor="tenant-switch" className="text-xs text-slate-500 dark:text-slate-400">Tenant</label>
                     <select
                       id="tenant-switch"
                       value={selectedTenantId || ''}
                       onChange={(e) => handleTenantSwitch(e.target.value)}
                       disabled={switchingTenant}
-                      className="text-sm border border-gray-300 rounded px-2 py-1"
+                      className="text-sm border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 rounded px-2 py-1"
                     >
                       {tenantContexts.map((ctx) => (
                         <option key={ctx.tenantId} value={ctx.tenantId}>
@@ -92,12 +104,19 @@ export default function Layout({ children }: LayoutProps) {
                     </select>
                   </div>
                 )}
-                <span className="text-sm text-gray-700">
+                <button
+                  onClick={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+                  className="text-xs rounded border border-slate-300 dark:border-slate-600 px-2 py-1 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  title="Toggle color theme"
+                >
+                  {theme === 'dark' ? 'Light' : 'Dark'}
+                </button>
+                <span className="text-sm text-slate-700 dark:text-slate-200">
                   {user?.email}
                 </span>
                 <button
                   onClick={handleLogout}
-                  className="text-sm text-gray-500 hover:text-gray-700"
+                  className="text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                 >
                   Logout
                 </button>
@@ -112,8 +131,8 @@ export default function Layout({ children }: LayoutProps) {
                   to={item.href}
                   className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium border ${
                     location.pathname === item.href
-                      ? 'border-primary-600 bg-primary-50 text-primary-700'
-                      : 'border-gray-200 text-gray-600'
+                      ? 'border-primary-700 bg-primary-100 text-primary-800 dark:border-primary-300 dark:bg-primary-900/30 dark:text-primary-200'
+                      : 'border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-300'
                   }`}
                 >
                   {item.name}
@@ -126,7 +145,7 @@ export default function Layout({ children }: LayoutProps) {
 
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         {switchError && (
-          <div className="mb-4 mx-4 sm:mx-0 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <div className="mb-4 mx-4 sm:mx-0 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
             {switchError}
           </div>
         )}
