@@ -194,6 +194,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added conditional lineage-default reads for cheaper polling: tenant lineage defaults GET now supports `If-None-Match` with `ETag`/`304 Not Modified`, and frontend stale-check polling now uses conditional requests (`getTenantLineageDefaultsIfChanged`) to avoid re-downloading unchanged payloads while retaining early stale warnings.
 - Added polling health visibility for lineage defaults editors: Tenants and Pipelines now display live poll status badges (`idle|fresh|stale|offline`) plus last-checked timestamps near lineage-default controls, giving admins immediate feedback about stale-check health and backend reachability before saving.
 - Added on-demand stale-check controls: Tenants and Pipelines poll-status areas now include a debounced `Check now` action with inline checking state/cooldown, letting operators trigger deterministic freshness checks during multi-admin coordination without waiting for the next interval.
+- Added adaptive stale-check polling behavior: Tenants and Pipelines now adjust lineage-default poll intervals dynamically (faster when stale/active, slower when stable), apply offline backoff with temporary pause after repeated failures, and expose offline retry counts in the UI so freshness remains responsive without unnecessary request load.
 
 ---
 

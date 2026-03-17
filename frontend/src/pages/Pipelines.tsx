@@ -91,6 +91,9 @@ export default function Pipelines() {
   const [tenantDefaultsStaleLatest, setTenantDefaultsStaleLatest] = useState<TenantLineageDefaults | null>(null);
   const [tenantDefaultsPollStatus, setTenantDefaultsPollStatus] = useState<TenantDefaultsPollStatus>('IDLE');
   const [tenantDefaultsPollCheckedAt, setTenantDefaultsPollCheckedAt] = useState<string | null>(null);
+  const [tenantDefaultsPollIntervalMs, setTenantDefaultsPollIntervalMs] = useState(30000);
+  const [tenantDefaultsPollOfflineFailures, setTenantDefaultsPollOfflineFailures] = useState(0);
+  const [tenantDefaultsPollPausedUntil, setTenantDefaultsPollPausedUntil] = useState<number>(0);
   const [checkingTenantDefaultsNow, setCheckingTenantDefaultsNow] = useState(false);
   const [tenantDefaultsPollCooldownUntil, setTenantDefaultsPollCooldownUntil] = useState<number>(0);
   const [tenantDefaultsConflictTelemetry, setTenantDefaultsConflictTelemetry] = useState<TenantDefaultsConflictTelemetry>(() => {
@@ -282,9 +285,21 @@ export default function Pipelines() {
       } else if (latestResponse.notModified) {
         setTenantDefaultsPollStatus((prev) => (prev === 'STALE' ? 'STALE' : 'FRESH'));
       }
+      setTenantDefaultsPollOfflineFailures(0);
+      setTenantDefaultsPollPausedUntil(0);
+      setTenantDefaultsPollIntervalMs(tenantDefaultsStaleLatest ? 15000 : 45000);
       setTenantDefaultsPollCheckedAt(new Date().toISOString());
     } catch {
       setTenantDefaultsPollStatus('OFFLINE');
+      setTenantDefaultsPollOfflineFailures((prev) => {
+        const next = prev + 1;
+        const nextInterval = Math.min(120000, 15000 * Math.pow(2, Math.max(0, next - 1)));
+        setTenantDefaultsPollIntervalMs(nextInterval);
+        if (next >= 3) {
+          setTenantDefaultsPollPausedUntil(Date.now() + 60000);
+        }
+        return next;
+      });
       setTenantDefaultsPollCheckedAt(new Date().toISOString());
     }
   };
@@ -347,6 +362,9 @@ export default function Pipelines() {
         setTenantLineageDefaultsEtag(undefined);
         setTenantDefaultsPollStatus('IDLE');
         setTenantDefaultsPollCheckedAt(null);
+        setTenantDefaultsPollIntervalMs(30000);
+        setTenantDefaultsPollOfflineFailures(0);
+        setTenantDefaultsPollPausedUntil(0);
         setTenantDefaultsStaleLatest(null);
         return;
       }
@@ -365,12 +383,18 @@ export default function Pipelines() {
         }
         setTenantDefaultsPollStatus('FRESH');
         setTenantDefaultsPollCheckedAt(new Date().toISOString());
+        setTenantDefaultsPollIntervalMs(45000);
+        setTenantDefaultsPollOfflineFailures(0);
+        setTenantDefaultsPollPausedUntil(0);
         setTenantDefaultsStaleLatest(null);
       } catch {
         setTenantLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
         setTenantLineageDefaultsEtag(undefined);
         setTenantDefaultsPollStatus('OFFLINE');
         setTenantDefaultsPollCheckedAt(new Date().toISOString());
+        setTenantDefaultsPollIntervalMs(30000);
+        setTenantDefaultsPollOfflineFailures(1);
+        setTenantDefaultsPollPausedUntil(0);
         setTenantDefaultsStaleLatest(null);
       }
     };
@@ -382,15 +406,30 @@ export default function Pipelines() {
     setTenantLineageDefaultsEtag(undefined);
     setTenantDefaultsPollStatus('IDLE');
     setTenantDefaultsPollCheckedAt(null);
+    setTenantDefaultsPollIntervalMs(30000);
+    setTenantDefaultsPollOfflineFailures(0);
+    setTenantDefaultsPollPausedUntil(0);
   }, [tenantId]);
 
   useEffect(() => {
     if (!tenantId || !canManageTenantSettings) return;
-    const timer = window.setInterval(async () => {
-      await runTenantDefaultsPollCheck();
-    }, 30000);
-    return () => window.clearInterval(timer);
-  }, [tenantId, canManageTenantSettings, tenantLineageDefaults.version, tenantLineageDefaultsEtag]);
+    const now = Date.now();
+    const delay = tenantDefaultsPollPausedUntil > now
+      ? Math.max(1000, tenantDefaultsPollPausedUntil - now)
+      : tenantDefaultsPollIntervalMs;
+    const timer = window.setTimeout(() => {
+      void runTenantDefaultsPollCheck();
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [
+    tenantId,
+    canManageTenantSettings,
+    tenantLineageDefaults.version,
+    tenantLineageDefaultsEtag,
+    tenantDefaultsPollIntervalMs,
+    tenantDefaultsPollPausedUntil,
+    tenantDefaultsPollCheckedAt,
+  ]);
 
   const checkTenantDefaultsNow = async () => {
     if (!tenantId || checkingTenantDefaultsNow) return;
@@ -1163,6 +1202,9 @@ export default function Pipelines() {
       setTenantDefaultsStaleLatest(null);
       setTenantDefaultsPollStatus('FRESH');
       setTenantDefaultsPollCheckedAt(new Date().toISOString());
+      setTenantDefaultsPollOfflineFailures(0);
+      setTenantDefaultsPollPausedUntil(0);
+      setTenantDefaultsPollIntervalMs(45000);
       showToast('Tenant lineage defaults updated', 'success');
       await handleLoadRunLineage(pipelineId, runId, depth, undefined, undefined, mode, policy);
     } catch (err: any) {
@@ -1171,6 +1213,7 @@ export default function Pipelines() {
         trackTenantDefaultsConflict(tenantId);
         setTenantDefaultsPollStatus('STALE');
         setTenantDefaultsPollCheckedAt(new Date().toISOString());
+        setTenantDefaultsPollIntervalMs(15000);
         try {
           const latest = await api.getTenantLineageDefaults(tenantId);
           setTenantLineageDefaultsEtag(undefined);
@@ -1182,6 +1225,7 @@ export default function Pipelines() {
       } else {
         setTenantDefaultsPollStatus('OFFLINE');
         setTenantDefaultsPollCheckedAt(new Date().toISOString());
+        setTenantDefaultsPollOfflineFailures((prev) => prev + 1);
         showToast('Failed to update tenant lineage defaults', 'error');
       }
     } finally {
@@ -1196,6 +1240,9 @@ export default function Pipelines() {
     setTenantDefaultsStaleLatest(null);
     setTenantDefaultsPollStatus('FRESH');
     setTenantDefaultsPollCheckedAt(new Date().toISOString());
+    setTenantDefaultsPollOfflineFailures(0);
+    setTenantDefaultsPollPausedUntil(0);
+    setTenantDefaultsPollIntervalMs(45000);
     setTenantDefaultsConflict(null);
     showToast('Loaded latest tenant defaults', 'success');
   };
@@ -1214,6 +1261,9 @@ export default function Pipelines() {
       setTenantDefaultsStaleLatest(null);
       setTenantDefaultsPollStatus('FRESH');
       setTenantDefaultsPollCheckedAt(new Date().toISOString());
+      setTenantDefaultsPollOfflineFailures(0);
+      setTenantDefaultsPollPausedUntil(0);
+      setTenantDefaultsPollIntervalMs(45000);
       const { pipelineId, runId, pending } = tenantDefaultsConflict;
       setTenantDefaultsConflict(null);
       showToast('Reapplied your tenant defaults', 'success');
@@ -1229,6 +1279,7 @@ export default function Pipelines() {
     } catch {
       setTenantDefaultsPollStatus('OFFLINE');
       setTenantDefaultsPollCheckedAt(new Date().toISOString());
+      setTenantDefaultsPollOfflineFailures((prev) => prev + 1);
       showToast('Failed to reapply tenant defaults', 'error');
     } finally {
       setSavingTenantLineageDefaults(false);
@@ -1263,6 +1314,9 @@ export default function Pipelines() {
       setTenantDefaultsStaleLatest(null);
       setTenantDefaultsPollStatus('FRESH');
       setTenantDefaultsPollCheckedAt(new Date().toISOString());
+      setTenantDefaultsPollOfflineFailures(0);
+      setTenantDefaultsPollPausedUntil(0);
+      setTenantDefaultsPollIntervalMs(45000);
       const { pipelineId, runId } = tenantDefaultsConflict;
       setTenantDefaultsConflict(null);
       showToast('Saved merged tenant defaults', 'success');
@@ -1278,6 +1332,7 @@ export default function Pipelines() {
     } catch {
       setTenantDefaultsPollStatus('OFFLINE');
       setTenantDefaultsPollCheckedAt(new Date().toISOString());
+      setTenantDefaultsPollOfflineFailures((prev) => prev + 1);
       showToast('Failed to save merged tenant defaults', 'error');
     } finally {
       setSavingTenantLineageDefaults(false);
@@ -2858,6 +2913,11 @@ export default function Pipelines() {
                                     {tenantDefaultsPollCheckedAt && (
                                       <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
                                         Checked: {new Date(tenantDefaultsPollCheckedAt).toLocaleTimeString()}
+                                      </span>
+                                    )}
+                                    {tenantDefaultsPollOfflineFailures > 0 && (
+                                      <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                        Offline retries: {tenantDefaultsPollOfflineFailures}
                                       </span>
                                     )}
                                     <button

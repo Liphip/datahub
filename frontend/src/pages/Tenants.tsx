@@ -56,6 +56,9 @@ export default function Tenants() {
   const [lineageDefaultsStaleLatest, setLineageDefaultsStaleLatest] = useState<TenantLineageDefaults | null>(null);
   const [lineagePollStatus, setLineagePollStatus] = useState<LineagePollStatus>('IDLE');
   const [lineagePollCheckedAt, setLineagePollCheckedAt] = useState<string | null>(null);
+  const [lineagePollIntervalMs, setLineagePollIntervalMs] = useState(30000);
+  const [lineagePollOfflineFailures, setLineagePollOfflineFailures] = useState(0);
+  const [lineagePollPausedUntil, setLineagePollPausedUntil] = useState<number>(0);
   const [checkingLineagePollNow, setCheckingLineagePollNow] = useState(false);
   const [lineagePollCooldownUntil, setLineagePollCooldownUntil] = useState<number>(0);
   const [conflictTelemetryByTenant, setConflictTelemetryByTenant] = useState<TenantDefaultsConflictTelemetry>(() => {
@@ -118,9 +121,21 @@ export default function Tenants() {
       } else if (latestResponse.notModified) {
         setLineagePollStatus((prev) => (prev === 'STALE' ? 'STALE' : 'FRESH'));
       }
+      setLineagePollOfflineFailures(0);
+      setLineagePollPausedUntil(0);
+      setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
       setLineagePollCheckedAt(new Date().toISOString());
     } catch {
       setLineagePollStatus('OFFLINE');
+      setLineagePollOfflineFailures((prev) => {
+        const next = prev + 1;
+        const nextInterval = Math.min(120000, 15000 * Math.pow(2, Math.max(0, next - 1)));
+        setLineagePollIntervalMs(nextInterval);
+        if (next >= 3) {
+          setLineagePollPausedUntil(Date.now() + 60000);
+        }
+        return next;
+      });
       setLineagePollCheckedAt(new Date().toISOString());
     }
   };
@@ -201,6 +216,9 @@ export default function Tenants() {
         setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
         setLineagePollStatus('IDLE');
         setLineagePollCheckedAt(null);
+        setLineagePollIntervalMs(30000);
+        setLineagePollOfflineFailures(0);
+        setLineagePollPausedUntil(0);
         return;
       }
       setLoadingLineageDefaults(true);
@@ -213,6 +231,9 @@ export default function Tenants() {
         }
         setLineagePollStatus('FRESH');
         setLineagePollCheckedAt(new Date().toISOString());
+        setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
+        setLineagePollOfflineFailures(0);
+        setLineagePollPausedUntil(0);
         setLineageDefaultsStaleLatest(null);
       } catch {
         setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
@@ -220,6 +241,9 @@ export default function Tenants() {
         setLineageDefaultsEtag(undefined);
         setLineagePollStatus('OFFLINE');
         setLineagePollCheckedAt(new Date().toISOString());
+        setLineagePollIntervalMs(30000);
+        setLineagePollOfflineFailures(1);
+        setLineagePollPausedUntil(0);
         setLineageDefaultsStaleLatest(null);
       } finally {
         setLoadingLineageDefaults(false);
@@ -238,17 +262,33 @@ export default function Tenants() {
     setLineageDefaultsEtag(undefined);
     setLineagePollStatus('IDLE');
     setLineagePollCheckedAt(null);
+    setLineagePollIntervalMs(30000);
+    setLineagePollOfflineFailures(0);
+    setLineagePollPausedUntil(0);
   }, [lineageDefaultsTenantId]);
 
   const isLineageDefaultsDirty = !isSameLineageConfig(toLineageDefaultsConfig(lineageDefaults), lineageDefaultsBase);
 
   useEffect(() => {
     if (!lineageDefaultsTenantId || !isLineageDefaultsDirty || savingLineageDefaults) return;
-    const timer = window.setInterval(async () => {
-      await runLineageDefaultsPollCheck(lineageDefaultsTenantId);
-    }, 30000);
-    return () => window.clearInterval(timer);
-  }, [lineageDefaultsTenantId, isLineageDefaultsDirty, savingLineageDefaults, lineageDefaults.version, lineageDefaultsEtag]);
+    const now = Date.now();
+    const delay = lineagePollPausedUntil > now
+      ? Math.max(1000, lineagePollPausedUntil - now)
+      : lineagePollIntervalMs;
+    const timer = window.setTimeout(() => {
+      void runLineageDefaultsPollCheck(lineageDefaultsTenantId);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [
+    lineageDefaultsTenantId,
+    isLineageDefaultsDirty,
+    savingLineageDefaults,
+    lineageDefaults.version,
+    lineageDefaultsEtag,
+    lineagePollIntervalMs,
+    lineagePollPausedUntil,
+    lineagePollCheckedAt,
+  ]);
 
   const checkLineageDefaultsNow = async () => {
     if (!lineageDefaultsTenantId || checkingLineagePollNow) return;
@@ -278,6 +318,9 @@ export default function Tenants() {
       setLineageDefaultsStaleLatest(null);
       setLineagePollStatus('FRESH');
       setLineagePollCheckedAt(new Date().toISOString());
+      setLineagePollOfflineFailures(0);
+      setLineagePollPausedUntil(0);
+      setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
       showToast('Tenant lineage defaults saved', 'success');
     } catch (err: any) {
       if (err?.response?.status === 409) {
@@ -285,6 +328,7 @@ export default function Tenants() {
         trackDefaultsConflict(lineageDefaultsTenantId);
         setLineagePollStatus('STALE');
         setLineagePollCheckedAt(new Date().toISOString());
+        setLineagePollIntervalMs(15000);
         try {
           const latest = await api.getTenantLineageDefaults(lineageDefaultsTenantId);
           const defaultDepth = Math.min(200, Math.max(1, lineageDefaults.defaultDepth));
@@ -304,6 +348,7 @@ export default function Tenants() {
       } else {
         setLineagePollStatus('OFFLINE');
         setLineagePollCheckedAt(new Date().toISOString());
+        setLineagePollOfflineFailures((prev) => prev + 1);
         showToast('Failed to save tenant lineage defaults', 'error');
       }
     } finally {
@@ -328,6 +373,9 @@ export default function Tenants() {
       setLineageDefaultsStaleLatest(null);
       setLineagePollStatus('FRESH');
       setLineagePollCheckedAt(new Date().toISOString());
+      setLineagePollOfflineFailures(0);
+      setLineagePollPausedUntil(0);
+      setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
       showToast('Lineage defaults restored from history', 'success');
     } catch (err: any) {
       if (err?.response?.status === 409) {
@@ -335,6 +383,7 @@ export default function Tenants() {
         trackDefaultsConflict(lineageDefaultsTenantId);
         setLineagePollStatus('STALE');
         setLineagePollCheckedAt(new Date().toISOString());
+        setLineagePollIntervalMs(15000);
         try {
           const latest = await api.getTenantLineageDefaults(lineageDefaultsTenantId);
           const pending: TenantLineageDefaultsConfig = {
@@ -352,6 +401,7 @@ export default function Tenants() {
       } else {
         setLineagePollStatus('OFFLINE');
         setLineagePollCheckedAt(new Date().toISOString());
+        setLineagePollOfflineFailures((prev) => prev + 1);
         showToast('Failed to restore lineage defaults from history', 'error');
       }
     } finally {
@@ -467,6 +517,9 @@ export default function Tenants() {
     setLineageDefaultsStaleLatest(null);
     setLineagePollStatus('FRESH');
     setLineagePollCheckedAt(new Date().toISOString());
+    setLineagePollOfflineFailures(0);
+    setLineagePollPausedUntil(0);
+    setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
     setLineageDefaultsConflict(null);
     showToast('Loaded latest server values', 'success');
   };
@@ -486,6 +539,9 @@ export default function Tenants() {
       setLineageDefaultsStaleLatest(null);
       setLineagePollStatus('FRESH');
       setLineagePollCheckedAt(new Date().toISOString());
+      setLineagePollOfflineFailures(0);
+      setLineagePollPausedUntil(0);
+      setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
       setLineageDefaultsConflict(null);
       showToast('Reapplied your defaults successfully', 'success');
     } catch {
@@ -516,6 +572,9 @@ export default function Tenants() {
       setLineageDefaultsStaleLatest(null);
       setLineagePollStatus('FRESH');
       setLineagePollCheckedAt(new Date().toISOString());
+      setLineagePollOfflineFailures(0);
+      setLineagePollPausedUntil(0);
+      setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
       setLineageDefaultsConflict(null);
       showToast('Saved merged defaults', 'success');
     } catch {
@@ -677,6 +736,11 @@ export default function Tenants() {
               {lineagePollCheckedAt && (
                 <span>
                   Checked: {new Date(lineagePollCheckedAt).toLocaleTimeString()}
+                </span>
+              )}
+              {lineagePollOfflineFailures > 0 && (
+                <span>
+                  Offline retries: {lineagePollOfflineFailures}
                 </span>
               )}
               <button
