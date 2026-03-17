@@ -48,6 +48,7 @@ export default function Pipelines() {
   const [error, setError] = useState('');
   const [bucketRuns, setBucketRuns] = useState<TenantPipelineRun[]>([]);
   const [loadingBucketRuns, setLoadingBucketRuns] = useState(false);
+  const [autoRefreshBucket, setAutoRefreshBucket] = useState(false);
 
   const bucketStartParam = searchParams.get('bucketStart');
   const bucketSecondsParam = Number(searchParams.get('bucketSeconds') || '');
@@ -120,6 +121,25 @@ export default function Pipelines() {
     };
     fetchAll();
   }, [tenantId, healthFilter, sinceHoursFilter, bucketStartParam, bucketSeconds]);
+
+  useEffect(() => {
+    if (!autoRefreshBucket || !tenantId || !bucketStart || !bucketEnd) return;
+
+    const intervalId = window.setInterval(async () => {
+      try {
+        const runs = await api.getTenantPipelineRuns(tenantId, {
+          from: bucketStart.toISOString(),
+          to: bucketEnd.toISOString(),
+          limit: 40,
+        });
+        setBucketRuns(runs);
+      } catch {
+        // keep last rendered bucket data
+      }
+    }, 10000);
+
+    return () => window.clearInterval(intervalId);
+  }, [autoRefreshBucket, tenantId, bucketStartParam, bucketSeconds]);
 
   useEffect(() => {
     if (!tenantId || pipelines.length === 0) return;
@@ -408,6 +428,14 @@ export default function Pipelines() {
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-gray-900">Runs In Selected Bucket</h2>
             <div className="flex items-center gap-2">
+              <label className="flex items-center gap-1 text-xs text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={autoRefreshBucket}
+                  onChange={(e) => setAutoRefreshBucket(e.target.checked)}
+                />
+                Auto-refresh
+              </label>
               <button
                 onClick={copyTriageLink}
                 className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
