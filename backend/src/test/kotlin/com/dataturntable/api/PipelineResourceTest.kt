@@ -580,6 +580,85 @@ class PipelineResourceTest {
     }
 
     @Test
+    fun testRetryPipelineRun() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        val pipelineId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("name" to "Retryable Pipeline", "graphDefinition" to mapOf("nodes" to emptyList<Any>(), "edges" to emptyList<Any>())))
+        .`when`()
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        val sourceRunId = QuarkusTransaction.requiringNew().call<String> {
+            val pipeline = em.find(Pipeline::class.java, java.util.UUID.fromString(pipelineId))
+            val run = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.FAILED
+                this.triggerType = TriggerType.MANUAL
+                this.startedAt = java.time.Instant.now().minusSeconds(40)
+                this.completedAt = java.time.Instant.now().minusSeconds(20)
+                this.errorMessage = "simulated failure"
+            }
+            em.persist(run)
+            em.flush()
+            run.id.toString()
+        }
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(emptyMap<String, Any>())
+        .`when`()
+            .post("/api/internal/v1/pipelines/$pipelineId/runs/$sourceRunId/retry")
+        .then()
+            .statusCode(201)
+            .body("id", notNullValue())
+            .body("triggerType", equalTo("MANUAL"))
+            .body("retryOfRunId", equalTo(sourceRunId))
+
+        val runningRunId = QuarkusTransaction.requiringNew().call<String> {
+            val pipeline = em.find(Pipeline::class.java, java.util.UUID.fromString(pipelineId))
+            val run = PipelineRun().apply {
+                this.pipeline = pipeline
+                this.status = PipelineRunStatus.RUNNING
+                this.triggerType = TriggerType.MANUAL
+                this.startedAt = java.time.Instant.now().minusSeconds(5)
+            }
+            em.persist(run)
+            em.flush()
+            run.id.toString()
+        }
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(emptyMap<String, Any>())
+        .`when`()
+            .post("/api/internal/v1/pipelines/$pipelineId/runs/$runningRunId/retry")
+        .then()
+            .statusCode(409)
+            .body("error", containsString("cannot be retried"))
+    }
+
+    @Test
     fun testTriggerPipelineTransitionsRunOutOfPending() {
         val token = TestAuthHelpers.createAdminToken()
 

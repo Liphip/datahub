@@ -264,6 +264,11 @@ class ApiService {
     return response.data;
   }
 
+  async retryPipelineRun(pipelineId: string, runId: string): Promise<PipelineRun> {
+    const response = await this.client.post<PipelineRun>(`/pipelines/${pipelineId}/runs/${runId}/retry`);
+    return response.data;
+  }
+
   async getPipelineRuns(
     pipelineId: string,
     options?: {

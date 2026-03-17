@@ -45,6 +45,7 @@ export default function Pipelines() {
   const [creating, setCreating] = useState(false);
   const [triggeringId, setTriggeringId] = useState<string | null>(null);
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
+  const [retryingRunId, setRetryingRunId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [expandedPipelineId, setExpandedPipelineId] = useState<string | null>(null);
@@ -411,6 +412,26 @@ export default function Pipelines() {
       showToast(error?.response?.data?.error || 'Failed to cancel run', 'error');
     } finally {
       setCancellingRunId(null);
+    }
+  };
+
+  const handleRetryRun = async (pipelineId: string, runId: string) => {
+    if (!canExecutePipelines) {
+      showToast('You need pipeline execute permission to retry runs', 'error');
+      return;
+    }
+    setRetryingRunId(runId);
+    try {
+      await api.retryPipelineRun(pipelineId, runId);
+      const runs = await api.getPipelineRuns(pipelineId, { limit: 3, includeDetails: false });
+      setRunsMap((prev) => ({ ...prev, [pipelineId]: runs }));
+      await loadDetailedPipelineRuns(pipelineId, detailFiltersByPipeline[pipelineId]);
+      await loadPipelineSummary(pipelineId);
+      showToast('Run retried', 'success');
+    } catch (error: any) {
+      showToast(error?.response?.data?.error || 'Failed to retry run', 'error');
+    } finally {
+      setRetryingRunId(null);
     }
   };
 
@@ -1753,6 +1774,19 @@ export default function Pipelines() {
                                     className="px-2 py-0.5 rounded border border-red-300 text-red-700 bg-white"
                                   >
                                     {cancellingRunId === selectedRun.id ? 'Cancelling...' : 'Cancel run'}
+                                  </button>
+                                )}
+                                {(selectedRun.status === 'FAILED' || selectedRun.status === 'CANCELLED' || selectedRun.status === 'SUCCESS') && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      void handleRetryRun(pipeline.id, selectedRun.id);
+                                    }}
+                                    disabled={retryingRunId === selectedRun.id || !canExecutePipelines}
+                                    title={!canExecutePipelines ? 'You need pipeline execute permission to retry runs' : undefined}
+                                    className="px-2 py-0.5 rounded border border-indigo-300 text-indigo-700 bg-white"
+                                  >
+                                    {retryingRunId === selectedRun.id ? 'Retrying...' : 'Retry run'}
                                   </button>
                                 )}
                               </div>

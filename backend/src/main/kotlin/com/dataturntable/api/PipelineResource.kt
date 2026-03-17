@@ -756,6 +756,42 @@ class PipelineResource {
         }
     }
     
+    private fun enqueuePipelineRun(
+        pipeline: Pipeline,
+        triggerType: TriggerType,
+        extraData: Map<String, Any?> = emptyMap()
+    ): PipelineRun {
+        val run = PipelineRun().apply {
+            this.pipeline = pipeline
+            this.triggerType = triggerType
+        }
+        run.persist()
+        em.flush()
+
+        val triggerData = mutableMapOf<String, Any?>(
+            "_pipelineId" to pipeline.id.toString(),
+            "_triggerType" to run.triggerType.name
+        )
+        triggerData.putAll(extraData)
+        val triggerMessage = mapOf(
+            "runId" to run.id.toString(),
+            "pipelineId" to pipeline.id.toString(),
+            "triggerType" to run.triggerType.name,
+            "data" to triggerData
+        )
+
+        try {
+            pipelineConsumer.consume(objectMapper.writeValueAsString(triggerMessage))
+        } catch (e: Exception) {
+            run.status = PipelineRunStatus.FAILED
+            run.completedAt = java.time.Instant.now()
+            run.errorMessage = e.message ?: "Failed to execute pipeline trigger"
+            run.persist()
+        }
+
+        return run
+    }
+
     @POST
     @Path("/{id}/run")
     @Transactional
@@ -771,35 +807,12 @@ class PipelineResource {
             val tenantId = pipeline.tenant?.id?.toString()
                 ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
             requireTenantAccess(currentUser, tenantId, "pipeline:execute")?.let { return it }
-            val run = PipelineRun().apply {
-                this.pipeline = pipeline
-                this.triggerType = try {
-                    triggerType?.let { TriggerType.valueOf(it.uppercase()) } ?: TriggerType.MANUAL
-                } catch (_: IllegalArgumentException) {
-                    return Response.status(400).entity(mapOf("error" to "Invalid triggerType")).build()
-                }
+            val parsedTriggerType = try {
+                triggerType?.let { TriggerType.valueOf(it.uppercase()) } ?: TriggerType.MANUAL
+            } catch (_: IllegalArgumentException) {
+                return Response.status(400).entity(mapOf("error" to "Invalid triggerType")).build()
             }
-            run.persist()
-            em.flush()
-
-            val triggerMessage = mapOf(
-                "runId" to run.id.toString(),
-                "pipelineId" to pipeline.id.toString(),
-                "triggerType" to run.triggerType.name,
-                "data" to mapOf(
-                    "_pipelineId" to pipeline.id.toString(),
-                    "_triggerType" to run.triggerType.name
-                )
-            )
-
-            try {
-                pipelineConsumer.consume(objectMapper.writeValueAsString(triggerMessage))
-            } catch (e: Exception) {
-                run.status = com.dataturntable.pipeline.PipelineRunStatus.FAILED
-                run.completedAt = java.time.Instant.now()
-                run.errorMessage = e.message ?: "Failed to execute pipeline trigger"
-                run.persist()
-            }
+            val run = enqueuePipelineRun(pipeline, parsedTriggerType)
 
             Response.status(201).entity(
                 mapOf(
@@ -812,6 +825,54 @@ class PipelineResource {
         } else {
             Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
         }
+    }
+
+    @POST
+    @Path("/{id}/runs/{runId}/retry")
+    @Transactional
+    fun retryRun(@PathParam("id") id: String, @PathParam("runId") runId: String): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val pipelineId = try {
+            parseUuid(id, "pipeline id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val runUuid = try {
+            parseUuid(runId, "run id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+
+        val pipeline = em.find(Pipeline::class.java, pipelineId)
+            ?: return Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
+        val tenantId = pipeline.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
+        requireTenantAccess(currentUser, tenantId, "pipeline:execute")?.let { return it }
+
+        val sourceRun = em.find(PipelineRun::class.java, runUuid)
+            ?: return Response.status(404).entity(mapOf("error" to "Run not found")).build()
+        if (sourceRun.pipeline?.id != pipeline.id) {
+            return Response.status(404).entity(mapOf("error" to "Run not found for this pipeline")).build()
+        }
+        if (sourceRun.status == PipelineRunStatus.PENDING || sourceRun.status == PipelineRunStatus.RUNNING) {
+            return Response.status(409).entity(mapOf("error" to "Run is still in progress and cannot be retried yet")).build()
+        }
+
+        val retriedRun = enqueuePipelineRun(
+            pipeline,
+            sourceRun.triggerType,
+            mapOf("_retryOfRunId" to sourceRun.id.toString())
+        )
+
+        return Response.status(201).entity(
+            mapOf(
+                "id" to retriedRun.id,
+                "status" to retriedRun.status.name,
+                "triggerType" to retriedRun.triggerType.name,
+                "startedAt" to retriedRun.startedAt,
+                "retryOfRunId" to sourceRun.id
+            )
+        ).build()
     }
 
     @POST
