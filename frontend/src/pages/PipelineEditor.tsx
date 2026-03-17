@@ -7,7 +7,7 @@ import type { Pipeline, CodeModule, Connector } from '../types';
 export default function PipelineEditor() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user } = useAuthStore();
+  const { user, selectedTenantId } = useAuthStore();
   
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
   const [modules, setModules] = useState<CodeModule[]>([]);
@@ -25,7 +25,7 @@ export default function PipelineEditor() {
   const [exportConnectorIds, setExportConnectorIds] = useState<string[]>([]);
   const [isActive, setIsActive] = useState(false);
 
-  const tenantId = user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId;
 
   useEffect(() => {
     const fetchData = async () => {

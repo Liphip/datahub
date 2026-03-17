@@ -5,7 +5,7 @@ import api from '../services/api';
 import type { Pipeline, PipelineRun, CodeModule, Connector } from '../types';
 
 export default function Dashboard() {
-  const { user } = useAuthStore();
+  const { user, selectedTenantId } = useAuthStore();
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [allRuns, setAllRuns] = useState<(PipelineRun & { pipelineName?: string })[]>([]);
   const [modules, setModules] = useState<CodeModule[]>([]);
@@ -13,7 +13,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const tenantId = user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId;
 
   useEffect(() => {
     const fetchData = async () => {

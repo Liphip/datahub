@@ -92,7 +92,7 @@ const TEMPLATES = {
 export default function ModuleEditor() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { user } = useAuthStore();
+  const { user, selectedTenantId } = useAuthStore();
   
   const [module, setModule] = useState<CodeModule | null>(null);
   const [code, setCode] = useState('');
@@ -102,7 +102,7 @@ export default function ModuleEditor() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-  const tenantId = user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId;
 
   useEffect(() => {
     const fetchModule = async () => {

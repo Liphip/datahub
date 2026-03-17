@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, AlertChannel, AlertRule, AlertHistory, Connector, Role, Membership } from '../types';
+import type { AuthResponse, User, Tenant, CodeModule, ModuleVersion, Pipeline, PipelineRun, AlertChannel, AlertRule, AlertHistory, Connector, Role, Membership, TenantContext } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 
@@ -60,6 +60,16 @@ class ApiService {
 
   async getCurrentUser(): Promise<User> {
     const response = await this.client.get<User>('/auth/me');
+    return response.data;
+  }
+
+  async getAuthTenants(): Promise<TenantContext[]> {
+    const response = await this.client.get<TenantContext[]>('/auth/tenants');
+    return response.data;
+  }
+
+  async switchTenant(tenantId: string): Promise<AuthResponse> {
+    const response = await this.client.post<AuthResponse>('/auth/switch-tenant', { tenantId });
     return response.data;
   }
 

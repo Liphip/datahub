@@ -44,6 +44,8 @@ This section catalogues every known gap between the current codebase and a shipp
 - Hardened Data API query/insert/delete endpoints with strict table name validation and parameterized SQL inputs for time/device/value/tags.
 - Role API now enforces RBAC for create/update/delete and serializes abilities as JSON arrays in responses and persistence.
 - Hardened Connector API UUID validation and PATCH behavior so empty config payloads no longer overwrite stored connector config.
+- Added authenticated tenant-context APIs (`GET /auth/tenants`, `POST /auth/switch-tenant`) and wired frontend tenant switching in the top navigation.
+- Replaced remaining browser confirm dialogs in Connectors, Alerts, and Data pages with inline/modal confirmations plus toast feedback.
 
 ---
 

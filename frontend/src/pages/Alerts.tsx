@@ -4,7 +4,7 @@ import api from '../services/api';
 import type { AlertChannel, AlertRule, AlertHistory, Pipeline } from '../types';
 
 export default function Alerts() {
-  const { user } = useAuthStore();
+  const { user, selectedTenantId } = useAuthStore();
   const [channels, setChannels] = useState<AlertChannel[]>([]);
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [history, setHistory] = useState<AlertHistory[]>([]);
@@ -23,8 +23,18 @@ export default function Alerts() {
   const [newRuleChannelId, setNewRuleChannelId] = useState('');
   const [newRulePipelineId, setNewRulePipelineId] = useState('');
   const [creatingRule, setCreatingRule] = useState(false);
+  const [confirmDeleteChannelId, setConfirmDeleteChannelId] = useState<string | null>(null);
+  const [confirmDeleteRuleId, setConfirmDeleteRuleId] = useState<string | null>(null);
+  const [deletingChannelId, setDeletingChannelId] = useState<string | null>(null);
+  const [deletingRuleId, setDeletingRuleId] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-  const tenantId = user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId;
+
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -70,6 +80,7 @@ export default function Alerts() {
       setNewChannelType('WEBHOOK');
       setNewChannelUrl('');
       setError('');
+      showToast('Alert channel created', 'success');
     } catch (error) {
       console.error('Error creating channel:', error);
       setError('Failed to create channel');
@@ -99,6 +110,7 @@ export default function Alerts() {
       setNewRuleChannelId('');
       setNewRulePipelineId('');
       setError('');
+      showToast('Alert rule created', 'success');
     } catch (error) {
       console.error('Error creating rule:', error);
       setError('Failed to create rule. Check condition JSON and selected references.');
@@ -108,31 +120,47 @@ export default function Alerts() {
   };
 
   const handleDeleteChannel = async (id: string) => {
-    if (!confirm('Delete this alert channel?')) return;
+    setDeletingChannelId(id);
     try {
       await api.deleteAlertChannel(id);
       setChannels(channels.filter((channel) => channel.id !== id));
+      setConfirmDeleteChannelId(null);
       setError('');
+      showToast('Alert channel deleted', 'success');
     } catch (err) {
       console.error('Error deleting channel:', err);
       setError('Failed to delete channel');
+    } finally {
+      setDeletingChannelId(null);
     }
   };
 
   const handleDeleteRule = async (id: string) => {
-    if (!confirm('Delete this alert rule?')) return;
+    setDeletingRuleId(id);
     try {
       await api.deleteAlertRule(id);
       setRules(rules.filter((rule) => rule.id !== id));
+      setConfirmDeleteRuleId(null);
       setError('');
+      showToast('Alert rule deleted', 'success');
     } catch (err) {
       console.error('Error deleting rule:', err);
       setError('Failed to delete rule');
+    } finally {
+      setDeletingRuleId(null);
     }
   };
 
   return (
     <div className="px-4 py-6 sm:px-0">
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded shadow-lg text-white text-sm ${
+          toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+        }`}>
+          {toast.message}
+        </div>
+      )}
+
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Alerts</h1>
       </div>
@@ -190,12 +218,31 @@ export default function Alerts() {
                       </span>
                     </div>
                     <div className="mt-4 flex justify-end">
-                      <button
-                        onClick={() => handleDeleteChannel(channel.id)}
-                        className="text-sm text-red-600 hover:text-red-800"
-                      >
-                        Delete
-                      </button>
+                      {confirmDeleteChannelId === channel.id ? (
+                        <div className="flex items-center space-x-2">
+                          <span className="text-xs text-gray-500">Delete?</span>
+                          <button
+                            onClick={() => handleDeleteChannel(channel.id)}
+                            disabled={deletingChannelId === channel.id}
+                            className="text-sm text-red-600 hover:text-red-800"
+                          >
+                            {deletingChannelId === channel.id ? 'Deleting...' : 'Yes'}
+                          </button>
+                          <button
+                            onClick={() => setConfirmDeleteChannelId(null)}
+                            className="text-sm text-gray-500 hover:text-gray-700"
+                          >
+                            No
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmDeleteChannelId(channel.id)}
+                          className="text-sm text-red-600 hover:text-red-800"
+                        >
+                          Delete
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))
@@ -225,12 +272,31 @@ export default function Alerts() {
                         </span>
                       </div>
                       <div className="mt-4 flex justify-end">
-                        <button
-                          onClick={() => handleDeleteRule(rule.id)}
-                          className="text-sm text-red-600 hover:text-red-800"
-                        >
-                          Delete
-                        </button>
+                        {confirmDeleteRuleId === rule.id ? (
+                          <div className="flex items-center space-x-2">
+                            <span className="text-xs text-gray-500">Delete?</span>
+                            <button
+                              onClick={() => handleDeleteRule(rule.id)}
+                              disabled={deletingRuleId === rule.id}
+                              className="text-sm text-red-600 hover:text-red-800"
+                            >
+                              {deletingRuleId === rule.id ? 'Deleting...' : 'Yes'}
+                            </button>
+                            <button
+                              onClick={() => setConfirmDeleteRuleId(null)}
+                              className="text-sm text-gray-500 hover:text-gray-700"
+                            >
+                              No
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmDeleteRuleId(rule.id)}
+                            className="text-sm text-red-600 hover:text-red-800"
+                          >
+                            Delete
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))

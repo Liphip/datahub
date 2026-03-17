@@ -17,7 +17,7 @@ const moduleTypeColors: Record<string, string> = {
 };
 
 export default function Modules() {
-  const { user } = useAuthStore();
+  const { user, selectedTenantId } = useAuthStore();
   const navigate = useNavigate();
   const [modules, setModules] = useState<CodeModule[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,7 +32,7 @@ export default function Modules() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  const tenantId = user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });

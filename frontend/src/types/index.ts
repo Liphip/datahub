@@ -21,6 +21,12 @@ export interface AuthResponse {
   user: User;
 }
 
+export interface TenantContext {
+  tenantId: string;
+  tenantName: string;
+  roleName?: string;
+}
+
 export interface Tenant {
   id: string;
   name: string;

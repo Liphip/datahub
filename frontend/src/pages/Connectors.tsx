@@ -7,15 +7,18 @@ const connectorTypes = ['MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'CUSTOM'] as
 const directions = ['INPUT', 'OUTPUT', 'BOTH'] as const;
 
 export default function Connectors() {
-  const { user } = useAuthStore();
+  const { user, selectedTenantId } = useAuthStore();
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingConnector, setEditingConnector] = useState<Connector | null>(null);
   const [savingConnector, setSavingConnector] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<string>('ALL');
   const [filterDirection, setFilterDirection] = useState<string>('ALL');
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     connectorType: 'MQTT',
@@ -24,7 +27,12 @@ export default function Connectors() {
     description: ''
   });
 
-  const tenantId = user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId;
+
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
 
   const loadConnectors = async (tid: string) => {
     const type = filterType === 'ALL' ? undefined : filterType;
@@ -110,6 +118,7 @@ export default function Connectors() {
 
       await loadConnectors(tenantId);
       setError('');
+      showToast(editingConnector ? 'Connector updated' : 'Connector created', 'success');
     } catch (err) {
       console.error('Error saving connector:', err);
       setError(editingConnector ? 'Failed to update connector' : 'Failed to create connector');
@@ -119,17 +128,20 @@ export default function Connectors() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this connector?')) return;
-
+    setDeletingId(id);
     try {
       await api.deleteConnector(id);
       if (tenantId) {
         await loadConnectors(tenantId);
       }
+      setConfirmDeleteId(null);
       setError('');
+      showToast('Connector deleted', 'success');
     } catch (err) {
       console.error('Error deleting connector:', err);
       setError('Failed to delete connector');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -190,6 +202,14 @@ export default function Connectors() {
 
   return (
     <div className="px-4 py-6 sm:px-0">
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded shadow-lg text-white text-sm ${
+          toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+        }`}>
+          {toast.message}
+        </div>
+      )}
+
       <div className="mb-6 flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Connectors</h1>
@@ -281,12 +301,31 @@ export default function Connectors() {
                 >
                   Edit
                 </button>
-                <button
-                  onClick={() => handleDelete(connector.id)}
-                  className="text-red-600 hover:text-red-800 text-sm"
-                >
-                  Delete
-                </button>
+                {confirmDeleteId === connector.id ? (
+                  <>
+                    <span className="text-xs text-gray-500">Delete?</span>
+                    <button
+                      onClick={() => handleDelete(connector.id)}
+                      disabled={deletingId === connector.id}
+                      className="text-red-600 hover:text-red-800 text-sm"
+                    >
+                      {deletingId === connector.id ? 'Deleting...' : 'Yes'}
+                    </button>
+                    <button
+                      onClick={() => setConfirmDeleteId(null)}
+                      className="text-gray-500 hover:text-gray-700 text-sm"
+                    >
+                      No
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => setConfirmDeleteId(connector.id)}
+                    className="text-red-600 hover:text-red-800 text-sm"
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             </div>
           ))}

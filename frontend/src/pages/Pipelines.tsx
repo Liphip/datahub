@@ -7,7 +7,7 @@ import type { Pipeline, PipelineRun } from '../types';
 type RunMap = Record<string, PipelineRun[]>;
 
 export default function Pipelines() {
-  const { user } = useAuthStore();
+  const { user, selectedTenantId } = useAuthStore();
   const navigate = useNavigate();
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [runsMap, setRunsMap] = useState<RunMap>({});
@@ -22,7 +22,7 @@ export default function Pipelines() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [error, setError] = useState('');
 
-  const tenantId = user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });

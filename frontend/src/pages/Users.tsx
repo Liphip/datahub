@@ -9,7 +9,7 @@ interface EditState {
 }
 
 export default function Users() {
-  const { user } = useAuthStore();
+  const { user, selectedTenantId } = useAuthStore();
   const [users, setUsers] = useState<User[]>([]);
   const [memberships, setMemberships] = useState<Membership[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
@@ -28,7 +28,7 @@ export default function Users() {
   const [editState, setEditState] = useState<EditState | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
 
-  const tenantId = user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });

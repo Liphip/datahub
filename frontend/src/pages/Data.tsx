@@ -9,7 +9,7 @@ type DataTable = {
 };
 
 export default function Data() {
-  const { user } = useAuthStore();
+  const { user, selectedTenantId } = useAuthStore();
   const [tables, setTables] = useState<DataTable[]>([]);
   const [selectedTable, setSelectedTable] = useState<string>('');
   const [data, setData] = useState<unknown[]>([]);
@@ -23,8 +23,15 @@ export default function Data() {
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
   const [error, setError] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-  const tenantId = user?.tenantId;
+  const tenantId = selectedTenantId || user?.tenantId;
+
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
 
   const getShortTableName = (rawName: string, tenant: string) => {
     const tenantPrefix = `tenant_${tenant.replace(/-/g, '_')}_`;
@@ -111,6 +118,7 @@ export default function Data() {
       setShowCreateModal(false);
       setNewTableName('');
       setError('');
+      showToast('Table created and initialized', 'success');
     } catch (error) {
       console.error('Error creating table:', error);
       setError('Failed to create table');
@@ -121,13 +129,14 @@ export default function Data() {
 
   const handleDeleteTable = async () => {
     if (!tenantId || !selectedTable) return;
-    if (!confirm(`Delete table '${selectedTable}'? This cannot be undone.`)) return;
 
     setDeletingTable(true);
     try {
       await api.deleteTable(tenantId, selectedTable);
       await fetchTables(tenantId);
+      setConfirmDelete(false);
       setError('');
+      showToast('Table deleted', 'success');
     } catch (error) {
       console.error('Error deleting table:', error);
       setError('Failed to delete table');
@@ -173,6 +182,14 @@ export default function Data() {
 
   return (
     <div className="px-4 py-6 sm:px-0">
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded shadow-lg text-white text-sm ${
+          toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+        }`}>
+          {toast.message}
+        </div>
+      )}
+
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Data Explorer</h1>
         <div className="flex gap-2">
@@ -247,7 +264,7 @@ export default function Data() {
             {querying ? 'Querying...' : 'Query'}
           </button>
           <button
-            onClick={handleDeleteTable}
+            onClick={() => setConfirmDelete(true)}
             disabled={!selectedTable || deletingTable}
             className="btn-secondary border-red-300 text-red-700 hover:bg-red-50"
           >
@@ -339,6 +356,32 @@ export default function Data() {
                 className="btn-primary"
               >
                 {insertingData ? 'Creating...' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDelete && selectedTable && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h2 className="text-xl font-bold mb-2">Delete Table</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Delete table <span className="font-mono">{selectedTable}</span>? This action cannot be undone.
+            </p>
+            <div className="flex justify-end space-x-2">
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteTable}
+                disabled={deletingTable}
+                className="px-4 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {deletingTable ? 'Deleting...' : 'Delete'}
               </button>
             </div>
           </div>

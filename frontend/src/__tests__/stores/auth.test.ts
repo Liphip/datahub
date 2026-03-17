@@ -7,6 +7,8 @@ vi.mock('../../services/api', () => ({
     login: vi.fn(),
     register: vi.fn(),
     getCurrentUser: vi.fn(),
+    getAuthTenants: vi.fn(),
+    switchTenant: vi.fn(),
   },
 }))
 
@@ -23,10 +25,13 @@ Object.defineProperty(globalThis, 'localStorage', { value: localStorageMock });
 describe('Auth Store', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(api.getAuthTenants).mockResolvedValue([])
     Object.keys(store).forEach(k => delete store[k]);
     useAuthStore.setState({
       user: null,
       token: null,
+      selectedTenantId: null,
+      tenantContexts: [],
       isAuthenticated: false,
       isLoading: false,
     })
@@ -42,6 +47,7 @@ describe('Auth Store', () => {
       expect(state.isAuthenticated).toBe(false)
       expect(state.user).toBe(null)
       expect(state.token).toBe(null)
+      expect(state.selectedTenantId).toBe(null)
     })
 
     it('has correct initial loading state', () => {
@@ -67,6 +73,7 @@ describe('Auth Store', () => {
         token: 'test-token',
         user: mockUser,
       })
+      vi.mocked(api.getAuthTenants).mockResolvedValue([{ tenantId: 'tenant-1', tenantName: 'Tenant 1' }])
 
       const { login } = useAuthStore.getState()
       await login('test@example.com', 'password123')
@@ -74,6 +81,7 @@ describe('Auth Store', () => {
       const state = useAuthStore.getState()
       expect(state.isAuthenticated).toBe(true)
       expect(state.user?.email).toBe('test@example.com')
+      expect(state.selectedTenantId).toBe('tenant-1')
       expect(localStorage.setItem).toHaveBeenCalledWith('token', 'test-token')
     })
 
@@ -82,6 +90,7 @@ describe('Auth Store', () => {
         token: 'test-token',
         user: { id: '1', email: 'test@example.com', abilities: [], superadmin: false },
       })
+      vi.mocked(api.getAuthTenants).mockResolvedValue([])
 
       const { login } = useAuthStore.getState()
       await login('test@example.com', 'mypassword')
@@ -107,6 +116,8 @@ describe('Auth Store', () => {
       useAuthStore.setState({
         user: { id: '1', email: 'test@example.com', abilities: [], superadmin: false },
         token: 'test-token',
+        selectedTenantId: 'tenant-1',
+        tenantContexts: [{ tenantId: 'tenant-1', tenantName: 'Tenant 1' }],
         isAuthenticated: true,
       })
 
@@ -117,6 +128,7 @@ describe('Auth Store', () => {
       expect(state.isAuthenticated).toBe(false)
       expect(state.user).toBe(null)
       expect(state.token).toBe(null)
+      expect(state.selectedTenantId).toBe(null)
       expect(localStorage.removeItem).toHaveBeenCalledWith('token')
     })
   })
@@ -131,6 +143,7 @@ describe('Auth Store', () => {
       }
 
       vi.mocked(api.getCurrentUser).mockResolvedValue(mockUser)
+      vi.mocked(api.getAuthTenants).mockResolvedValue([{ tenantId: 'tenant-1', tenantName: 'Tenant 1' }])
       vi.mocked(localStorage.getItem).mockReturnValue('existing-token')
 
       const { checkAuth } = useAuthStore.getState()
@@ -139,6 +152,7 @@ describe('Auth Store', () => {
       const state = useAuthStore.getState()
       expect(state.isAuthenticated).toBe(true)
       expect(state.user?.email).toBe('test@example.com')
+      expect(state.selectedTenantId).toBe('tenant-1')
       expect(state.isLoading).toBe(false)
     })
 
@@ -172,6 +186,8 @@ describe('Auth Store', () => {
       useAuthStore.setState({
         user: { id: '1', email: 'test@example.com', abilities: [], superadmin: false },
         token: 'test-token',
+        selectedTenantId: 'tenant-1',
+        tenantContexts: [{ tenantId: 'tenant-1', tenantName: 'Tenant 1' }],
         isAuthenticated: true,
       })
 

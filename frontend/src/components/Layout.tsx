@@ -1,4 +1,5 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 import { useAuthStore } from '../stores/auth';
 
 interface LayoutProps {
@@ -19,11 +20,27 @@ const navigation = [
 export default function Layout({ children }: LayoutProps) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, logout } = useAuthStore();
+  const { user, logout, tenantContexts, selectedTenantId, switchTenant } = useAuthStore();
+  const [switchError, setSwitchError] = useState('');
+  const [switchingTenant, setSwitchingTenant] = useState(false);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
+  };
+
+  const handleTenantSwitch = async (tenantId: string) => {
+    if (!tenantId || tenantId === selectedTenantId) return;
+    try {
+      setSwitchingTenant(true);
+      setSwitchError('');
+      await switchTenant(tenantId);
+      navigate('/');
+    } catch {
+      setSwitchError('Failed to switch tenant context');
+    } finally {
+      setSwitchingTenant(false);
+    }
   };
 
   return (
@@ -55,6 +72,24 @@ export default function Layout({ children }: LayoutProps) {
             </div>
             <div className="flex items-center">
               <div className="flex items-center space-x-4">
+                {tenantContexts.length > 1 && (
+                  <div className="flex items-center space-x-2">
+                    <label htmlFor="tenant-switch" className="text-xs text-gray-500">Tenant</label>
+                    <select
+                      id="tenant-switch"
+                      value={selectedTenantId || ''}
+                      onChange={(e) => handleTenantSwitch(e.target.value)}
+                      disabled={switchingTenant}
+                      className="text-sm border border-gray-300 rounded px-2 py-1"
+                    >
+                      {tenantContexts.map((ctx) => (
+                        <option key={ctx.tenantId} value={ctx.tenantId}>
+                          {ctx.tenantName}{ctx.roleName ? ` (${ctx.roleName})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <span className="text-sm text-gray-700">
                   {user?.email}
                 </span>
@@ -71,6 +106,11 @@ export default function Layout({ children }: LayoutProps) {
       </nav>
 
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        {switchError && (
+          <div className="mb-4 mx-4 sm:mx-0 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {switchError}
+          </div>
+        )}
         {children}
       </main>
     </div>
