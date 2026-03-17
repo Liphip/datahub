@@ -49,6 +49,7 @@ export default function Pipelines() {
   const [bucketRuns, setBucketRuns] = useState<TenantPipelineRun[]>([]);
   const [loadingBucketRuns, setLoadingBucketRuns] = useState(false);
   const [autoRefreshBucket, setAutoRefreshBucket] = useState(false);
+  const [bucketLastRefreshedAt, setBucketLastRefreshedAt] = useState<string | null>(null);
 
   const bucketStartParam = searchParams.get('bucketStart');
   const bucketSecondsParam = Number(searchParams.get('bucketSeconds') || '');
@@ -61,6 +62,23 @@ export default function Pipelines() {
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
+  };
+
+  const refreshBucketRuns = async (tid: string, fromDate: Date, toDate: Date, silent = false) => {
+    if (!silent) setLoadingBucketRuns(true);
+    try {
+      const runs = await api.getTenantPipelineRuns(tid, {
+        from: fromDate.toISOString(),
+        to: toDate.toISOString(),
+        limit: 40,
+      });
+      setBucketRuns(runs);
+      setBucketLastRefreshedAt(new Date().toISOString());
+    } catch {
+      if (!silent) setBucketRuns([]);
+    } finally {
+      if (!silent) setLoadingBucketRuns(false);
+    }
   };
 
   const loadPipelines = async (tid: string, filter: HealthFilter = healthFilter) => {
@@ -94,21 +112,10 @@ export default function Pipelines() {
         setRunsMap(Object.fromEntries(runsEntries));
 
         if (bucketStart && bucketEnd) {
-          setLoadingBucketRuns(true);
-          try {
-            const runs = await api.getTenantPipelineRuns(tenantId, {
-              from: bucketStart.toISOString(),
-              to: bucketEnd.toISOString(),
-              limit: 40,
-            });
-            setBucketRuns(runs);
-          } catch {
-            setBucketRuns([]);
-          } finally {
-            setLoadingBucketRuns(false);
-          }
+          await refreshBucketRuns(tenantId, bucketStart, bucketEnd);
         } else {
           setBucketRuns([]);
+          setBucketLastRefreshedAt(null);
         }
 
         setError('');
@@ -127,12 +134,7 @@ export default function Pipelines() {
 
     const intervalId = window.setInterval(async () => {
       try {
-        const runs = await api.getTenantPipelineRuns(tenantId, {
-          from: bucketStart.toISOString(),
-          to: bucketEnd.toISOString(),
-          limit: 40,
-        });
-        setBucketRuns(runs);
+        await refreshBucketRuns(tenantId, bucketStart, bucketEnd, true);
       } catch {
         // keep last rendered bucket data
       }
@@ -348,6 +350,12 @@ export default function Pipelines() {
     }
   };
 
+  const handleManualBucketRefresh = async () => {
+    if (!tenantId || !bucketStart || !bucketEnd) return;
+    await refreshBucketRuns(tenantId, bucketStart, bucketEnd);
+    showToast('Bucket runs refreshed', 'success');
+  };
+
   const applyBucketSortMode = (mode: BucketSortMode) => {
     setBucketSortMode(mode);
     const next = new URLSearchParams(searchParams);
@@ -437,6 +445,12 @@ export default function Pipelines() {
                 Auto-refresh
               </label>
               <button
+                onClick={handleManualBucketRefresh}
+                className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
+              >
+                Refresh now
+              </button>
+              <button
                 onClick={copyTriageLink}
                 className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
               >
@@ -453,6 +467,11 @@ export default function Pipelines() {
               </select>
             </div>
           </div>
+          {bucketLastRefreshedAt && (
+            <p className="mb-2 text-[11px] text-gray-500">
+              Last refreshed: {new Date(bucketLastRefreshedAt).toLocaleTimeString()}
+            </p>
+          )}
           {bucketRuns.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2 text-xs">
               <button

@@ -88,6 +88,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Bucket drilldown now supports shareable sort presets (`newest`, `failed-first`) persisted in URL query (`bucketSort`).
 - Added one-click "Copy link" action in bucket drilldown so triage context URLs can be shared directly.
 - Added optional auto-refresh toggle for bucket drilldown runs table to support live incident monitoring.
+- Added bucket drilldown freshness controls (`Refresh now`) plus visible last-refreshed timestamp for live triage confidence.
 
 ---
 
