@@ -5,6 +5,11 @@ import type { AlertChannel, AlertRule, AlertHistory, Pipeline } from '../types';
 
 export default function Alerts() {
   const { user, selectedTenantId } = useAuthStore();
+  const abilities = user?.abilities || [];
+  const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
+  const canReadAlerts = hasAbility('alert:read') || hasAbility('alert:configure');
+  const canConfigureAlerts = hasAbility('alert:configure');
+  const canReadPipelines = hasAbility('pipeline:read');
   const [channels, setChannels] = useState<AlertChannel[]>([]);
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [history, setHistory] = useState<AlertHistory[]>([]);
@@ -54,13 +59,22 @@ export default function Alerts() {
         setLoading(false);
         return;
       }
+      if (!canReadAlerts) {
+        setChannels([]);
+        setRules([]);
+        setHistory([]);
+        setPipelines([]);
+        setError('');
+        setLoading(false);
+        return;
+      }
       
       try {
         const [channelsData, rulesData, historyData, pipelinesData] = await Promise.all([
           api.getAlertChannels(tenantId),
           api.getAlertRules(tenantId),
           api.getAlertHistory(tenantId, 20),
-          api.getPipelines(tenantId),
+          canReadPipelines ? api.getPipelines(tenantId) : Promise.resolve([] as Pipeline[]),
         ]);
         setChannels(channelsData);
         setRules(rulesData);
@@ -76,10 +90,14 @@ export default function Alerts() {
     };
     
     fetchData();
-  }, [tenantId]);
+  }, [tenantId, canReadAlerts, canReadPipelines]);
 
   const handleCreateChannel = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canConfigureAlerts) {
+      showToast('You do not have permission to manage alert channels', 'error');
+      return;
+    }
     if (!tenantId || !newChannelName) return;
     
     setCreatingChannel(true);
@@ -113,6 +131,10 @@ export default function Alerts() {
 
   const handleCreateRule = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canConfigureAlerts) {
+      showToast('You do not have permission to manage alert rules', 'error');
+      return;
+    }
     if (!tenantId || !newRuleName) return;
     
     setCreatingRule(true);
@@ -206,6 +228,10 @@ export default function Alerts() {
   };
 
   const handleDeleteChannel = async (id: string) => {
+    if (!canConfigureAlerts) {
+      showToast('You do not have permission to delete channels', 'error');
+      return;
+    }
     setDeletingChannelId(id);
     try {
       await api.deleteAlertChannel(id);
@@ -222,6 +248,10 @@ export default function Alerts() {
   };
 
   const handleDeleteRule = async (id: string) => {
+    if (!canConfigureAlerts) {
+      showToast('You do not have permission to delete rules', 'error');
+      return;
+    }
     setDeletingRuleId(id);
     try {
       await api.deleteAlertRule(id);
@@ -238,6 +268,7 @@ export default function Alerts() {
   };
 
   const openEditChannel = (channel: AlertChannel) => {
+    if (!canConfigureAlerts) return;
     setEditingChannel(channel);
     setNewChannelName(channel.name);
     setNewChannelType(channel.channelType);
@@ -246,6 +277,7 @@ export default function Alerts() {
   };
 
   const openEditRule = (rule: AlertRule) => {
+    if (!canConfigureAlerts) return;
     setEditingRule(rule);
     setNewRuleName(rule.name);
     setNewRuleChannelId(rule.channelId || '');
@@ -277,6 +309,12 @@ export default function Alerts() {
         </div>
       )}
 
+      {!canReadAlerts && (
+        <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+          You do not have permission to view alerts for this tenant.
+        </div>
+      )}
+
       <div className="mb-4 flex space-x-2">
         {(['channels', 'rules', 'history'] as const).map((tab) => (
           <button
@@ -305,9 +343,11 @@ export default function Alerts() {
         <>
           {activeTab === 'channels' && (
             <div className="space-y-4">
-              <div className="flex justify-end">
-                <button onClick={() => setShowChannelModal(true)} className="btn-primary text-sm">Add Channel</button>
-              </div>
+              {canConfigureAlerts && (
+                <div className="flex justify-end">
+                  <button onClick={() => setShowChannelModal(true)} className="btn-primary text-sm">Add Channel</button>
+                </div>
+              )}
               {channels.length > 0 ? (
                 channels.map((channel) => (
                   <div key={channel.id} className="card">
@@ -323,39 +363,41 @@ export default function Alerts() {
                         {channel.isActive ? 'Active' : 'Inactive'}
                       </span>
                     </div>
-                    <div className="mt-4 flex justify-end">
-                      <button
-                        onClick={() => openEditChannel(channel)}
-                        className="mr-3 text-sm text-blue-600 hover:text-blue-800"
-                      >
-                        Edit
-                      </button>
-                      {confirmDeleteChannelId === channel.id ? (
-                        <div className="flex items-center space-x-2">
-                          <span className="text-xs text-gray-500">Delete?</span>
+                    {canConfigureAlerts && (
+                      <div className="mt-4 flex justify-end">
+                        <button
+                          onClick={() => openEditChannel(channel)}
+                          className="mr-3 text-sm text-blue-600 hover:text-blue-800"
+                        >
+                          Edit
+                        </button>
+                        {confirmDeleteChannelId === channel.id ? (
+                          <div className="flex items-center space-x-2">
+                            <span className="text-xs text-gray-500">Delete?</span>
+                            <button
+                              onClick={() => handleDeleteChannel(channel.id)}
+                              disabled={deletingChannelId === channel.id}
+                              className="text-sm text-red-600 hover:text-red-800"
+                            >
+                              {deletingChannelId === channel.id ? 'Deleting...' : 'Yes'}
+                            </button>
+                            <button
+                              onClick={() => setConfirmDeleteChannelId(null)}
+                              className="text-sm text-gray-500 hover:text-gray-700"
+                            >
+                              No
+                            </button>
+                          </div>
+                        ) : (
                           <button
-                            onClick={() => handleDeleteChannel(channel.id)}
-                            disabled={deletingChannelId === channel.id}
+                            onClick={() => setConfirmDeleteChannelId(channel.id)}
                             className="text-sm text-red-600 hover:text-red-800"
                           >
-                            {deletingChannelId === channel.id ? 'Deleting...' : 'Yes'}
+                            Delete
                           </button>
-                          <button
-                            onClick={() => setConfirmDeleteChannelId(null)}
-                            className="text-sm text-gray-500 hover:text-gray-700"
-                          >
-                            No
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => setConfirmDeleteChannelId(channel.id)}
-                          className="text-sm text-red-600 hover:text-red-800"
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))
               ) : (
@@ -368,9 +410,11 @@ export default function Alerts() {
 
           {activeTab === 'rules' && (
             <div className="space-y-4">
-              <div className="flex justify-end">
-                <button onClick={() => setShowRuleModal(true)} className="btn-primary text-sm">Add Rule</button>
-              </div>
+              {canConfigureAlerts && (
+                <div className="flex justify-end">
+                  <button onClick={() => setShowRuleModal(true)} className="btn-primary text-sm">Add Rule</button>
+                </div>
+              )}
               {rules.length > 0 ? (
                 rules.map((rule) => (
                   <div key={rule.id} className="card">
@@ -383,39 +427,41 @@ export default function Alerts() {
                           {rule.enabled ? 'Enabled' : 'Disabled'}
                         </span>
                       </div>
-                      <div className="mt-4 flex justify-end">
-                        <button
-                          onClick={() => openEditRule(rule)}
-                          className="mr-3 text-sm text-blue-600 hover:text-blue-800"
-                        >
-                          Edit
-                        </button>
-                        {confirmDeleteRuleId === rule.id ? (
-                          <div className="flex items-center space-x-2">
-                            <span className="text-xs text-gray-500">Delete?</span>
+                      {canConfigureAlerts && (
+                        <div className="mt-4 flex justify-end">
+                          <button
+                            onClick={() => openEditRule(rule)}
+                            className="mr-3 text-sm text-blue-600 hover:text-blue-800"
+                          >
+                            Edit
+                          </button>
+                          {confirmDeleteRuleId === rule.id ? (
+                            <div className="flex items-center space-x-2">
+                              <span className="text-xs text-gray-500">Delete?</span>
+                              <button
+                                onClick={() => handleDeleteRule(rule.id)}
+                                disabled={deletingRuleId === rule.id}
+                                className="text-sm text-red-600 hover:text-red-800"
+                              >
+                                {deletingRuleId === rule.id ? 'Deleting...' : 'Yes'}
+                              </button>
+                              <button
+                                onClick={() => setConfirmDeleteRuleId(null)}
+                                className="text-sm text-gray-500 hover:text-gray-700"
+                              >
+                                No
+                              </button>
+                            </div>
+                          ) : (
                             <button
-                              onClick={() => handleDeleteRule(rule.id)}
-                              disabled={deletingRuleId === rule.id}
+                              onClick={() => setConfirmDeleteRuleId(rule.id)}
                               className="text-sm text-red-600 hover:text-red-800"
                             >
-                              {deletingRuleId === rule.id ? 'Deleting...' : 'Yes'}
+                              Delete
                             </button>
-                            <button
-                              onClick={() => setConfirmDeleteRuleId(null)}
-                              className="text-sm text-gray-500 hover:text-gray-700"
-                            >
-                              No
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => setConfirmDeleteRuleId(rule.id)}
-                            className="text-sm text-red-600 hover:text-red-800"
-                          >
-                            Delete
-                          </button>
-                        )}
-                      </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))
               ) : (
@@ -465,7 +511,7 @@ export default function Alerts() {
         </>
       )}
 
-      {showChannelModal && (
+      {showChannelModal && canConfigureAlerts && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <h2 className="text-xl font-bold mb-4">{editingChannel ? 'Edit Alert Channel' : 'Add Alert Channel'}</h2>
@@ -528,7 +574,7 @@ export default function Alerts() {
         </div>
       )}
 
-      {showRuleModal && (
+      {showRuleModal && canConfigureAlerts && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <h2 className="text-xl font-bold mb-4">{editingRule ? 'Edit Alert Rule' : 'Add Alert Rule'}</h2>

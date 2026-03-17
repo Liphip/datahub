@@ -4,16 +4,20 @@ import com.dataturntable.alert.AlertChannel
 import com.dataturntable.alert.AlertChannelType
 import com.dataturntable.alert.AlertRule
 import com.dataturntable.alert.AlertHistory
+import com.dataturntable.auth.User
 import com.dataturntable.pipeline.Pipeline
+import com.dataturntable.security.SecurityUtils
 import com.dataturntable.tenant.Tenant
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.security.Authenticated
+import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
+import org.eclipse.microprofile.jwt.JsonWebToken
 import java.util.UUID
 
 @Path("/alerts")
@@ -24,8 +28,27 @@ class AlertResource {
 
     private val objectMapper = ObjectMapper()
 
+    @Inject
+    lateinit var jwt: JsonWebToken
+
     @PersistenceContext
     lateinit var em: EntityManager
+
+    private fun currentUser(): User? {
+        val subject = jwt.subject ?: return null
+        val userId = try { UUID.fromString(subject) } catch (_: Exception) { return null }
+        return em.find(User::class.java, userId)
+    }
+
+    private fun requireTenantAccess(user: User, tenantId: String, ability: String): Response? {
+        if (!SecurityUtils.canAccessTenant(user, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        if (!SecurityUtils.hasAbility(user, ability)) {
+            return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
+        }
+        return null
+    }
 
     private fun parseChannelType(value: String): AlertChannelType? {
         return try {
@@ -154,7 +177,9 @@ class AlertResource {
     @GET
     @Path("/channels")
     fun listChannels(@QueryParam("tenantId") tenantId: String): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseUuid(tenantId, "tenantId")
+        requireTenantAccess(currentUser, tenantUuid.toString(), "alert:read")?.let { return it }
         val channels = em.createQuery(
             "SELECT c FROM AlertChannel c WHERE c.tenant.id = :tenantId",
             AlertChannel::class.java
@@ -168,14 +193,17 @@ class AlertResource {
     @Path("/channels")
     @Transactional
     fun createChannel(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantId = tenantIdQuery ?: (request["tenantId"] as? String)
             ?: return Response.status(400).entity(mapOf("error" to "Tenant ID is required")).build()
+        val tenantUuid = parseUuid(tenantId, "tenantId")
+        requireTenantAccess(currentUser, tenantUuid.toString(), "alert:configure")?.let { return it }
         val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
         val channelType = request["channelType"] as? String ?: return Response.status(400).entity(mapOf("error" to "Channel type is required")).build()
         val parsedChannelType = parseChannelType(channelType)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid channel type")).build()
         
-        val tenant = em.find(Tenant::class.java, parseUuid(tenantId, "tenantId"))
+        val tenant = em.find(Tenant::class.java, tenantUuid)
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
         
         val channel = AlertChannel().apply {
@@ -196,8 +224,12 @@ class AlertResource {
     @Path("/channels/{id}")
     @Transactional
     fun updateChannel(@PathParam("id") id: String, request: Map<String, Any>): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val channel = em.find(AlertChannel::class.java, parseUuid(id, "channel id"))
             ?: return Response.status(404).entity(mapOf("error" to "Channel not found")).build()
+        val tenantId = channel.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Channel tenant not found")).build()
+        requireTenantAccess(currentUser, tenantId, "alert:configure")?.let { return it }
 
         request["name"]?.let { channel.name = it as String }
         request["description"]?.let { channel.description = it as String }
@@ -222,8 +254,12 @@ class AlertResource {
     @Path("/channels/{id}")
     @Transactional
     fun deleteChannel(@PathParam("id") id: String): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val channel = em.find(AlertChannel::class.java, parseUuid(id, "channel id"))
         return if (channel != null) {
+            val tenantId = channel.tenant?.id?.toString()
+                ?: return Response.status(400).entity(mapOf("error" to "Channel tenant not found")).build()
+            requireTenantAccess(currentUser, tenantId, "alert:configure")?.let { return it }
             channel.delete()
             Response.noContent().build()
         } else {
@@ -234,7 +270,9 @@ class AlertResource {
     @GET
     @Path("/rules")
     fun listRules(@QueryParam("tenantId") tenantId: String): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseUuid(tenantId, "tenantId")
+        requireTenantAccess(currentUser, tenantUuid.toString(), "alert:read")?.let { return it }
         val rules = em.createQuery(
             "SELECT r FROM AlertRule r WHERE r.tenant.id = :tenantId",
             AlertRule::class.java
@@ -248,8 +286,11 @@ class AlertResource {
     @Path("/rules")
     @Transactional
     fun createRule(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantId = tenantIdQuery ?: (request["tenantId"] as? String)
             ?: return Response.status(400).entity(mapOf("error" to "Tenant ID is required")).build()
+        val tenantUuid = parseUuid(tenantId, "tenantId")
+        requireTenantAccess(currentUser, tenantUuid.toString(), "alert:configure")?.let { return it }
         val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
         val conditionRaw = request["condition"] ?: return Response.status(400).entity(mapOf("error" to "Condition is required")).build()
         val conditionMap = parseConditionMap(conditionRaw)
@@ -259,14 +300,26 @@ class AlertResource {
         }
         val condition = serializeJsonValue(conditionMap)
         
-        val tenant = em.find(Tenant::class.java, parseUuid(tenantId, "tenantId"))
+        val tenant = em.find(Tenant::class.java, tenantUuid)
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
         
         val channelId = request["channelId"] as? String
         val channel = channelId?.let { em.find(AlertChannel::class.java, parseUuid(it, "channelId")) }
+        if (channelId != null && channel == null) {
+            return Response.status(400).entity(mapOf("error" to "Channel not found")).build()
+        }
+        if (channel != null && channel.tenant?.id != tenant.id) {
+            return Response.status(400).entity(mapOf("error" to "Channel does not belong to tenant")).build()
+        }
         
         val pipelineId = request["pipelineId"] as? String
         val pipeline = pipelineId?.let { em.find(Pipeline::class.java, parseUuid(it, "pipelineId")) }
+        if (pipelineId != null && pipeline == null) {
+            return Response.status(400).entity(mapOf("error" to "Pipeline not found")).build()
+        }
+        if (pipeline != null && pipeline.tenant?.id != tenant.id) {
+            return Response.status(400).entity(mapOf("error" to "Pipeline does not belong to tenant")).build()
+        }
         
         val rule = AlertRule().apply {
             this.tenant = tenant
@@ -288,8 +341,12 @@ class AlertResource {
     @Path("/rules/{id}")
     @Transactional
     fun updateRule(@PathParam("id") id: String, request: Map<String, Any>): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val rule = em.find(AlertRule::class.java, parseUuid(id, "rule id"))
             ?: return Response.status(404).entity(mapOf("error" to "Rule not found")).build()
+        val tenantId = rule.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Rule tenant not found")).build()
+        requireTenantAccess(currentUser, tenantId, "alert:configure")?.let { return it }
 
         request["name"]?.let { rule.name = it as String }
         request["description"]?.let { rule.description = it as String }
@@ -304,6 +361,9 @@ class AlertResource {
         request["channelId"]?.let {
             val channel = em.find(AlertChannel::class.java, parseUuid(it as String, "channelId"))
                 ?: return Response.status(400).entity(mapOf("error" to "Channel not found")).build()
+            if (channel.tenant?.id != rule.tenant?.id) {
+                return Response.status(400).entity(mapOf("error" to "Channel does not belong to tenant")).build()
+            }
             rule.channel = channel
         }
         request["pipelineId"]?.let {
@@ -312,6 +372,9 @@ class AlertResource {
             } else {
                 val pipeline = em.find(Pipeline::class.java, parseUuid(it, "pipelineId"))
                     ?: return Response.status(400).entity(mapOf("error" to "Pipeline not found")).build()
+                if (pipeline.tenant?.id != rule.tenant?.id) {
+                    return Response.status(400).entity(mapOf("error" to "Pipeline does not belong to tenant")).build()
+                }
                 rule.pipeline = pipeline
             }
         }
@@ -327,8 +390,12 @@ class AlertResource {
     @Path("/rules/{id}")
     @Transactional
     fun deleteRule(@PathParam("id") id: String): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val rule = em.find(AlertRule::class.java, parseUuid(id, "rule id"))
         return if (rule != null) {
+            val tenantId = rule.tenant?.id?.toString()
+                ?: return Response.status(400).entity(mapOf("error" to "Rule tenant not found")).build()
+            requireTenantAccess(currentUser, tenantId, "alert:configure")?.let { return it }
             rule.delete()
             Response.noContent().build()
         } else {
@@ -339,11 +406,14 @@ class AlertResource {
     @GET
     @Path("/history")
     fun getHistory(@QueryParam("tenantId") tenantId: String, @QueryParam("limit") limit: Int?): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val tenantUuid = parseUuid(tenantId, "tenantId")
+        requireTenantAccess(currentUser, tenantUuid.toString(), "alert:read")?.let { return it }
         val history = em.createQuery(
             "SELECT h FROM AlertHistory h WHERE h.tenant.id = :tenantId ORDER BY h.sentAt DESC",
             AlertHistory::class.java
         )
-            .setParameter("tenantId", parseUuid(tenantId, "tenantId"))
+            .setParameter("tenantId", tenantUuid)
             .setMaxResults(limit ?: 100)
             .resultList
         return Response.ok(history.map { toHistoryDto(it) }).build()

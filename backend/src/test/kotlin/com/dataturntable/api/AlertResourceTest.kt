@@ -1,14 +1,54 @@
 package com.dataturntable.api
 
+import com.dataturntable.auth.User
 import com.dataturntable.test.TestAuthHelpers
+import io.quarkus.narayana.jta.QuarkusTransaction
 import io.quarkus.test.junit.QuarkusTest
 import io.restassured.RestAssured.given
+import io.restassured.http.ContentType
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
 import org.hamcrest.CoreMatchers.equalTo
 import org.hamcrest.CoreMatchers.notNullValue
 import org.junit.jupiter.api.Test
+import org.mindrot.jbcrypt.BCrypt
 
 @QuarkusTest
 class AlertResourceTest {
+
+    @PersistenceContext
+    lateinit var em: EntityManager
+
+    private fun createNonMemberToken(): String {
+        val email = "alerts-outsider-${java.util.UUID.randomUUID()}@example.com"
+        val passwordHash = java.util.Base64.getEncoder().encodeToString(
+            java.security.MessageDigest.getInstance("SHA-256").digest("ViewerPass!123".toByteArray())
+        )
+
+        QuarkusTransaction.requiringNew().run {
+            val user = User().apply {
+                this.email = email
+                this.passwordHash = BCrypt.hashpw(passwordHash, BCrypt.gensalt())
+                this.isActive = true
+                this.createdAt = java.time.Instant.now()
+                this.updatedAt = java.time.Instant.now()
+            }
+            em.persist(user)
+            em.flush()
+        }
+
+        return given()
+            .contentType(ContentType.JSON)
+            .body(mapOf("email" to email, "passwordHash" to passwordHash))
+        .`when`()
+            .post("/api/internal/v1/auth/login")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("token")
+    }
 
     private fun resolveTenantId(token: String): String {
         return given()
@@ -201,6 +241,39 @@ class AlertResourceTest {
         .then()
             .statusCode(400)
             .body("error", equalTo("Invalid condition format"))
+    }
+
+    @Test
+    fun testListChannelsRejectsUnauthorizedTenantScope() {
+        val adminToken = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(adminToken)
+        val outsiderToken = createNonMemberToken()
+
+        given()
+            .header("Authorization", "Bearer $outsiderToken")
+            .queryParam("tenantId", tenantId)
+        .`when`()
+            .get("/api/internal/v1/alerts/channels")
+        .then()
+            .statusCode(403)
+            .body("error", equalTo("Forbidden"))
+    }
+
+    @Test
+    fun testCreateChannelRejectsUnauthorizedTenantScope() {
+        val adminToken = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(adminToken)
+        val outsiderToken = createNonMemberToken()
+
+        given()
+            .header("Authorization", "Bearer $outsiderToken")
+            .contentType("application/json")
+            .body(mapOf("name" to "Unauthorized Channel", "channelType" to "WEBHOOK", "config" to mapOf("url" to "https://example.com/hook")))
+        .`when`()
+            .post("/api/internal/v1/alerts/channels?tenantId=$tenantId")
+        .then()
+            .statusCode(403)
+            .body("error", equalTo("Forbidden"))
     }
 
 }
