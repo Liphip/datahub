@@ -95,6 +95,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Bucket drilldown now shows active triage filter pills (status/query/sort) with one-click clear actions.
 - Added keyboard shortcuts for bucket triage (`/` focus query, `f` failed, `r` running, `a` all statuses).
 - Added in-panel shortcut hint chips with hide/show toggle, persisted via localStorage for repeat triage users.
+- Bucket drilldown now supports shareable pipeline pinning (`bucketPipelineId`) with one-click "Only" actions per run row.
 
 ---
 

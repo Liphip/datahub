@@ -53,6 +53,7 @@ export default function Pipelines() {
   const [bucketSortMode, setBucketSortMode] = useState<BucketSortMode>(initialBucketSort);
   const [bucketStatusFilter, setBucketStatusFilter] = useState<BucketRunStatusFilter>(initialBucketStatus);
   const [bucketPipelineQuery, setBucketPipelineQuery] = useState(searchParams.get('bucketQ') || '');
+  const [bucketPipelineIdFilter, setBucketPipelineIdFilter] = useState<string | null>(searchParams.get('bucketPipelineId'));
   const bucketQueryInputRef = useRef<HTMLInputElement | null>(null);
   const [showShortcutHints, setShowShortcutHints] = useState(() => {
     const stored = localStorage.getItem('pipelines.bucket.shortcuts.hidden');
@@ -87,6 +88,7 @@ export default function Pipelines() {
         to: toDate.toISOString(),
         limit: 40,
         runStatus: bucketStatusFilter === 'ALL' ? undefined : bucketStatusFilter,
+        pipelineId: bucketPipelineIdFilter || undefined,
       });
       setBucketRuns(runs);
       setBucketLastRefreshedAt(new Date().toISOString());
@@ -143,7 +145,7 @@ export default function Pipelines() {
       }
     };
     fetchAll();
-  }, [tenantId, healthFilter, sinceHoursFilter, bucketStartParam, bucketSeconds, bucketStatusFilter]);
+  }, [tenantId, healthFilter, sinceHoursFilter, bucketStartParam, bucketSeconds, bucketStatusFilter, bucketPipelineIdFilter]);
 
   useEffect(() => {
     if (!autoRefreshBucket || !tenantId || !bucketStart || !bucketEnd) return;
@@ -158,7 +160,7 @@ export default function Pipelines() {
     }, 10000);
 
     return () => window.clearInterval(intervalId);
-  }, [autoRefreshBucket, tenantId, bucketStartParam, bucketSeconds, bucketStatusFilter]);
+  }, [autoRefreshBucket, tenantId, bucketStartParam, bucketSeconds, bucketStatusFilter, bucketPipelineIdFilter]);
 
   useEffect(() => {
     if (!bucketStart || !bucketEnd || !bucketLastRefreshedAt) return;
@@ -416,6 +418,7 @@ export default function Pipelines() {
     next.delete('bucketSort');
     next.delete('bucketStatus');
     next.delete('bucketQ');
+    next.delete('bucketPipelineId');
     setSearchParams(next, { replace: true });
   };
 
@@ -468,8 +471,20 @@ export default function Pipelines() {
     setSearchParams(next, { replace: true });
   };
 
+  const applyBucketPipelineIdFilter = (pipelineId: string | null) => {
+    setBucketPipelineIdFilter(pipelineId);
+    const next = new URLSearchParams(searchParams);
+    if (!pipelineId) {
+      next.delete('bucketPipelineId');
+    } else {
+      next.set('bucketPipelineId', pipelineId);
+    }
+    setSearchParams(next, { replace: true });
+  };
+
   const clearBucketStatusFilter = () => applyBucketStatusFilter('ALL');
   const clearBucketPipelineQuery = () => applyBucketPipelineQuery('');
+  const clearBucketPipelineIdFilter = () => applyBucketPipelineIdFilter(null);
   const clearBucketSort = () => applyBucketSortMode('NEWEST');
 
   const toggleShortcutHints = () => {
@@ -648,7 +663,7 @@ export default function Pipelines() {
             </div>
           )}
 
-          {(bucketStatusFilter !== 'ALL' || bucketPipelineQuery.trim() || bucketSortMode !== 'NEWEST') && (
+          {(bucketStatusFilter !== 'ALL' || bucketPipelineQuery.trim() || bucketSortMode !== 'NEWEST' || bucketPipelineIdFilter) && (
             <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px]">
               <span className="text-gray-500">Active filters:</span>
               {bucketStatusFilter !== 'ALL' && (
@@ -665,6 +680,14 @@ export default function Pipelines() {
                   className="px-2 py-0.5 rounded-full border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100"
                 >
                   query: {bucketPipelineQuery.trim()} x
+                </button>
+              )}
+              {bucketPipelineIdFilter && (
+                <button
+                  onClick={clearBucketPipelineIdFilter}
+                  className="px-2 py-0.5 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                >
+                  pipeline: pinned x
                 </button>
               )}
               {bucketSortMode !== 'NEWEST' && (
@@ -694,9 +717,17 @@ export default function Pipelines() {
                   {visibleBucketRuns.slice(0, 12).map((run) => (
                     <tr key={run.id} className="border-b border-gray-100">
                       <td className="py-2 pr-3">
-                        <Link to={`/pipelines/${run.pipelineId}`} className="text-primary-600 hover:text-primary-800 hover:underline">
-                          {run.pipelineName}
-                        </Link>
+                        <div className="flex items-center gap-2">
+                          <Link to={`/pipelines/${run.pipelineId}`} className="text-primary-600 hover:text-primary-800 hover:underline">
+                            {run.pipelineName}
+                          </Link>
+                          <button
+                            onClick={() => applyBucketPipelineIdFilter(run.pipelineId)}
+                            className="px-1.5 py-0.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-[10px]"
+                          >
+                            Only
+                          </button>
+                        </div>
                       </td>
                       <td className="py-2 pr-3">
                         <button
