@@ -16,6 +16,7 @@ export default function Dashboard() {
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [tenantTree, setTenantTree] = useState<TenantNode[]>([]);
   const [runSummary, setRunSummary] = useState<PipelineRunSummary | null>(null);
+  const [reliabilityWindow, setReliabilityWindow] = useState<1 | 24 | 168>(24);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -52,7 +53,7 @@ export default function Dashboard() {
         setAllRuns(combined);
 
         try {
-          const summary = await api.getPipelineRunSummary(tenantId, 50);
+          const summary = await api.getPipelineRunSummary(tenantId, 50, reliabilityWindow);
           setRunSummary(summary);
         } catch {
           setRunSummary(null);
@@ -75,7 +76,7 @@ export default function Dashboard() {
       }
     };
     fetchData();
-  }, [tenantId, user?.superadmin]);
+  }, [tenantId, user?.superadmin, reliabilityWindow]);
 
   const activePipelines = pipelines.filter((p) => p.isActive).length;
   const failedRuns = allRuns.filter((r) => r.status === 'FAILED').length;
@@ -233,11 +234,32 @@ export default function Dashboard() {
 
           {/* Quick actions */}
           <div className="card">
-            <h2 className="text-base font-semibold mb-3">Execution Reliability</h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-base font-semibold">Execution Reliability</h2>
+              <div className="flex items-center gap-1">
+                {([
+                  { label: '1h', value: 1 },
+                  { label: '24h', value: 24 },
+                  { label: '7d', value: 168 },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setReliabilityWindow(opt.value)}
+                    className={`px-2 py-1 text-xs rounded border ${
+                      reliabilityWindow === opt.value
+                        ? 'bg-primary-600 text-white border-primary-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
                 <p className="text-gray-500">Window</p>
-                <p className="font-semibold text-gray-900">{runSummary?.windowSize ?? 0}</p>
+                <p className="font-semibold text-gray-900">{runSummary?.sinceHours ? `${runSummary.sinceHours}h` : 'n/a'}</p>
               </div>
               <div>
                 <p className="text-gray-500">Success Rate</p>

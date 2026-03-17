@@ -78,6 +78,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Tenants UI now includes tenant-name search and expand/collapse controls for large hierarchies.
 - Dashboard now includes superadmin tenant topology insights (total/root/leaf/depth + last update) powered by recursive tenant metadata.
 - Added `GET /pipelines/runs/summary` aggregate endpoint and dashboard reliability panel (success rate, failures, in-flight runs, average duration).
+- Added reliability timeframe controls (`1h`/`24h`/`7d`) on dashboard and `sinceHours` support on run-summary API.
 
 ---
 

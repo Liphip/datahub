@@ -106,6 +106,7 @@ export interface PipelineRun {
 
 export interface PipelineRunSummary {
   windowSize: number;
+  sinceHours: number;
   totalRuns: number;
   successRuns: number;
   failedRuns: number;

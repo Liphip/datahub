@@ -255,8 +255,8 @@ class ApiService {
     return response.data;
   }
 
-  async getPipelineRunSummary(tenantId: string, limit = 50): Promise<PipelineRunSummary> {
-    const response = await this.client.get<PipelineRunSummary>(`/pipelines/runs/summary?tenantId=${tenantId}&limit=${limit}`);
+  async getPipelineRunSummary(tenantId: string, limit = 50, sinceHours = 24): Promise<PipelineRunSummary> {
+    const response = await this.client.get<PipelineRunSummary>(`/pipelines/runs/summary?tenantId=${tenantId}&limit=${limit}&sinceHours=${sinceHours}`);
     return response.data;
   }
 

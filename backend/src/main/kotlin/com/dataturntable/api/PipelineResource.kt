@@ -115,7 +115,11 @@ class PipelineResource {
     
     @GET
     @Path("/runs/summary")
-    fun getRunSummary(@QueryParam("tenantId") tenantId: String, @QueryParam("limit") limit: Int?): Response {
+    fun getRunSummary(
+        @QueryParam("tenantId") tenantId: String,
+        @QueryParam("limit") limit: Int?,
+        @QueryParam("sinceHours") sinceHours: Int?
+    ): Response {
         val tenantUuid = try {
             parseUuid(tenantId, "tenantId")
         } catch (e: WebApplicationException) {
@@ -123,11 +127,18 @@ class PipelineResource {
         }
 
         val maxRows = (limit ?: 50).coerceIn(1, 500)
+        val hours = sinceHours ?: 24
+        if (hours !in setOf(1, 24, 168)) {
+            return Response.status(400).entity(mapOf("error" to "Invalid sinceHours")).build()
+        }
+
+        val sinceInstant = java.time.Instant.now().minus(java.time.Duration.ofHours(hours.toLong()))
         val runs = em.createQuery(
-            "SELECT r FROM PipelineRun r WHERE r.pipeline.tenant.id = :tenantId ORDER BY r.startedAt DESC",
+            "SELECT r FROM PipelineRun r WHERE r.pipeline.tenant.id = :tenantId AND r.startedAt >= :since ORDER BY r.startedAt DESC",
             PipelineRun::class.java
         )
             .setParameter("tenantId", tenantUuid)
+            .setParameter("since", sinceInstant)
             .setMaxResults(maxRows)
             .resultList
 
@@ -152,6 +163,7 @@ class PipelineResource {
         return Response.ok(
             mapOf(
                 "windowSize" to maxRows,
+                "sinceHours" to hours,
                 "totalRuns" to total,
                 "successRuns" to success,
                 "failedRuns" to failed,
