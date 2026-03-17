@@ -1173,8 +1173,9 @@ class PipelineResource {
             null, "", "all" -> "all"
             "failures" -> "failures"
             "inflight" -> "inflight"
+            "terminal" -> "terminal"
             else -> return Response.status(400)
-                .entity(mapOf("error" to "Invalid statusPreset. Allowed values: all, failures, inflight"))
+                .entity(mapOf("error" to "Invalid statusPreset. Allowed values: all, failures, inflight, terminal"))
                 .build()
         }
         val statusFilter: Set<PipelineRunStatus>? = if (!statuses.isNullOrBlank()) {
@@ -1201,10 +1202,14 @@ class PipelineResource {
             when (normalizedStatusPreset) {
                 "failures" -> setOf(PipelineRunStatus.FAILED)
                 "inflight" -> setOf(PipelineRunStatus.RUNNING, PipelineRunStatus.PENDING)
+                "terminal" -> setOf(PipelineRunStatus.SUCCESS, PipelineRunStatus.FAILED, PipelineRunStatus.CANCELLED)
                 else -> null
             }
         }
         val resolvedStatusPreset = if (!statuses.isNullOrBlank()) "custom" else normalizedStatusPreset
+        val orderedStatuses = statusFilter
+            ?.let { selected -> PipelineRunStatus.entries.filter { selected.contains(it) } }
+            ?.map { it.name }
 
         fun includeByStatus(status: PipelineRunStatus): Boolean = statusFilter?.contains(status) ?: true
 
@@ -1320,7 +1325,7 @@ class PipelineResource {
                 "latestDescendantRunId" to latestDescendantRunId,
                 "maxDepth" to depthLimit,
                 "direction" to normalizedDirection,
-                "statuses" to statusFilter?.map { it.name },
+                "statuses" to orderedStatuses,
                 "statusPreset" to resolvedStatusPreset,
                 "ancestorsTotal" to ancestorsTotal,
                 "ancestorsStatusCounts" to ancestorsStatusCounts,

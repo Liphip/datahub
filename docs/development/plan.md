@@ -170,6 +170,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added status-focused lineage triage: lineage API now supports optional `statuses` filtering (`PENDING|RUNNING|SUCCESS|FAILED|CANCELLED`) while still returning total ancestor/descendant counts, and Pipelines run-details now adds lineage status chips plus shown/total counters so operators can isolate failure-state retries without losing chain-size context.
 - Expanded lineage triage context: lineage API now returns per-status counts for ancestors/descendants, and the Pipelines run-details lineage panel now renders count-aware status chips (with disabled empty states) plus quick presets (`Failures only`, `In-flight only`, `Clear`) for faster incident navigation.
 - Added shareable run-lineage context URLs: Pipelines now persists selected lineage run/depth/direction/status in query params (`lineageRunId`, `lineageDepth`, `lineageDirection`, `lineageStatus`) and auto-applies them when opened from links; backend lineage API now also supports `statusPreset` (`all|failures|inflight`) with validation and response echo for cleaner preset-driven filtering.
+- Expanded lineage status presets for operational workflows: backend lineage `statusPreset` now also supports `terminal` (success/failed/cancelled), and the run-details lineage UI adds a `Completed only` quick preset to isolate finished retry chains while keeping in-flight and failure-focused presets available.
 
 ---
 

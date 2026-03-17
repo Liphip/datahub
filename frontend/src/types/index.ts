@@ -166,7 +166,7 @@ export interface PipelineRunLineage {
   maxDepth?: number;
   direction?: 'both' | 'ancestors' | 'descendants';
   statuses?: Array<'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED'>;
-  statusPreset?: 'all' | 'failures' | 'inflight' | 'custom';
+  statusPreset?: 'all' | 'failures' | 'inflight' | 'terminal' | 'custom';
   ancestorsTotal?: number;
   ancestorsStatusCounts?: Partial<Record<'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED', number>>;
   descendantsTotal?: number;

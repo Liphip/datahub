@@ -17,7 +17,7 @@ type SinceHoursFilter = 1 | 24 | 168 | null;
 type BucketSortMode = 'NEWEST' | 'FAILED_FIRST';
 type BucketRunStatusFilter = 'ALL' | 'RUNNING' | 'PENDING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
 type LineageDirection = 'both' | 'ancestors' | 'descendants';
-type LineageStatusFilter = 'ALL' | 'INFLIGHT' | 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+type LineageStatusFilter = 'ALL' | 'INFLIGHT' | 'TERMINAL' | 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
 
 type TriagePreset = {
   name: string;
@@ -29,7 +29,7 @@ type TriagePreset = {
 };
 
 const TRIAGE_PRESETS_KEY = 'pipelines.triage.presets.v1';
-const LINEAGE_STATUS_OPTIONS: LineageStatusFilter[] = ['ALL', 'INFLIGHT', 'FAILED', 'RUNNING', 'PENDING', 'SUCCESS', 'CANCELLED'];
+const LINEAGE_STATUS_OPTIONS: LineageStatusFilter[] = ['ALL', 'INFLIGHT', 'TERMINAL', 'FAILED', 'RUNNING', 'PENDING', 'SUCCESS', 'CANCELLED'];
 
 export default function Pipelines() {
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
@@ -123,7 +123,7 @@ export default function Pipelines() {
     ? (lineageDirectionRaw as LineageDirection)
     : null;
   const lineageStatusRaw = (searchParams.get('lineageStatus') || '').toUpperCase();
-  const lineageStatusParam: LineageStatusFilter | null = (['ALL', 'INFLIGHT', 'FAILED', 'RUNNING', 'PENDING', 'SUCCESS', 'CANCELLED'] as const).includes(lineageStatusRaw as LineageStatusFilter)
+  const lineageStatusParam: LineageStatusFilter | null = (['ALL', 'INFLIGHT', 'TERMINAL', 'FAILED', 'RUNNING', 'PENDING', 'SUCCESS', 'CANCELLED'] as const).includes(lineageStatusRaw as LineageStatusFilter)
     ? (lineageStatusRaw as LineageStatusFilter)
     : null;
   const bucketSecondsParam = Number(searchParams.get('bucketSeconds') || '');
@@ -529,12 +529,14 @@ export default function Pipelines() {
       const requestedStatus = statusFilter ?? lineageStatusFilterByRunId[runId] ?? 'ALL';
       const statusPreset = requestedStatus === 'INFLIGHT'
         ? 'inflight'
+        : requestedStatus === 'TERMINAL'
+          ? 'terminal'
         : requestedStatus === 'FAILED'
           ? 'failures'
           : requestedStatus === 'ALL'
             ? 'all'
             : undefined;
-      const statuses = requestedStatus === 'INFLIGHT' || requestedStatus === 'ALL' || requestedStatus === 'FAILED'
+      const statuses = requestedStatus === 'INFLIGHT' || requestedStatus === 'TERMINAL' || requestedStatus === 'ALL' || requestedStatus === 'FAILED'
         ? undefined
         : [requestedStatus];
       const lineage = await api.getPipelineRunLineage(pipelineId, runId, depth, requestedDirection, statuses, statusPreset);
@@ -769,6 +771,30 @@ export default function Pipelines() {
       showToast('Triage link copied to clipboard', 'success');
     } catch {
       showToast('Failed to copy triage link', 'error');
+    }
+  };
+
+  const copyLineageLink = async (pipelineId: string, runId: string) => {
+    try {
+      const depth = lineageDepthByRunId[runId] ?? 20;
+      const direction = lineageDirectionByRunId[runId] ?? 'both';
+      const status = lineageStatusFilterByRunId[runId] ?? 'ALL';
+      const params = new URLSearchParams(searchParams);
+      params.set('focusPipelineId', pipelineId);
+      params.set('focusRunId', runId);
+      params.set('lineageRunId', runId);
+      params.set('lineageDepth', String(depth));
+      params.set('lineageDirection', direction);
+      if (status === 'ALL') {
+        params.delete('lineageStatus');
+      } else {
+        params.set('lineageStatus', status);
+      }
+      const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
+      await navigator.clipboard.writeText(url);
+      showToast('Lineage link copied to clipboard', 'success');
+    } catch {
+      showToast('Failed to copy lineage link', 'error');
     }
   };
 
@@ -2022,6 +2048,13 @@ export default function Pipelines() {
                                             + (lineageByRunId[selectedRun.id].ancestorsStatusCounts?.PENDING ?? 0)
                                             + (lineageByRunId[selectedRun.id].descendantsStatusCounts?.RUNNING ?? 0)
                                             + (lineageByRunId[selectedRun.id].descendantsStatusCounts?.PENDING ?? 0)
+                                        : option === 'TERMINAL'
+                                          ? (lineageByRunId[selectedRun.id].ancestorsStatusCounts?.SUCCESS ?? 0)
+                                            + (lineageByRunId[selectedRun.id].ancestorsStatusCounts?.FAILED ?? 0)
+                                            + (lineageByRunId[selectedRun.id].ancestorsStatusCounts?.CANCELLED ?? 0)
+                                            + (lineageByRunId[selectedRun.id].descendantsStatusCounts?.SUCCESS ?? 0)
+                                            + (lineageByRunId[selectedRun.id].descendantsStatusCounts?.FAILED ?? 0)
+                                            + (lineageByRunId[selectedRun.id].descendantsStatusCounts?.CANCELLED ?? 0)
                                         : (lineageByRunId[selectedRun.id].ancestorsStatusCounts?.[option] ?? 0)
                                           + (lineageByRunId[selectedRun.id].descendantsStatusCounts?.[option] ?? 0);
                                       const disabled = option !== 'ALL' && statusCount === 0;
@@ -2092,11 +2125,36 @@ export default function Pipelines() {
                                           selectedRun.id,
                                           currentDepth,
                                           lineageDirectionByRunId[selectedRun.id] ?? 'both',
+                                          'TERMINAL'
+                                        );
+                                      }}
+                                    >
+                                      Completed only
+                                    </button>
+                                    <button
+                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
+                                        void handleLoadRunLineage(
+                                          pipeline.id,
+                                          selectedRun.id,
+                                          currentDepth,
+                                          lineageDirectionByRunId[selectedRun.id] ?? 'both',
                                           'ALL'
                                         );
                                       }}
                                     >
                                       Clear status filter
+                                    </button>
+                                    <button
+                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        void copyLineageLink(pipeline.id, selectedRun.id);
+                                      }}
+                                    >
+                                      Copy lineage link
                                     </button>
                                   </div>
                                   <div className="mb-2 flex flex-wrap gap-2">
