@@ -11,6 +11,13 @@ type SinceHoursFilter = 1 | 24 | 168 | null;
 type BucketSortMode = 'NEWEST' | 'FAILED_FIRST';
 type BucketRunStatusFilter = 'ALL' | 'RUNNING' | 'PENDING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
 
+type TriagePreset = {
+  name: string;
+  query: string;
+};
+
+const TRIAGE_PRESETS_KEY = 'pipelines.triage.presets.v1';
+
 export default function Pipelines() {
   const { user, selectedTenantId } = useAuthStore();
   const navigate = useNavigate();
@@ -55,6 +62,8 @@ export default function Pipelines() {
   const [bucketPipelineQuery, setBucketPipelineQuery] = useState(searchParams.get('bucketQ') || '');
   const [bucketPipelineIdFilter, setBucketPipelineIdFilter] = useState<string | null>(searchParams.get('bucketPipelineId'));
   const bucketQueryInputRef = useRef<HTMLInputElement | null>(null);
+  const [triagePresets, setTriagePresets] = useState<TriagePreset[]>([]);
+  const [triagePresetName, setTriagePresetName] = useState('');
   const [showShortcutHints, setShowShortcutHints] = useState(() => {
     const stored = localStorage.getItem('pipelines.bucket.shortcuts.hidden');
     return stored !== 'true';
@@ -78,6 +87,11 @@ export default function Pipelines() {
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
+  };
+
+  const persistTriagePresets = (presets: TriagePreset[]) => {
+    localStorage.setItem(TRIAGE_PRESETS_KEY, JSON.stringify(presets));
+    setTriagePresets(presets);
   };
 
   const refreshBucketRuns = async (tid: string, fromDate: Date, toDate: Date, silent = false) => {
@@ -146,6 +160,15 @@ export default function Pipelines() {
     };
     fetchAll();
   }, [tenantId, healthFilter, sinceHoursFilter, bucketStartParam, bucketSeconds, bucketStatusFilter, bucketPipelineIdFilter]);
+
+  useEffect(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(TRIAGE_PRESETS_KEY) || '[]') as TriagePreset[];
+      setTriagePresets(Array.isArray(parsed) ? parsed : []);
+    } catch {
+      setTriagePresets([]);
+    }
+  }, []);
 
   useEffect(() => {
     if (!autoRefreshBucket || !tenantId || !bucketStart || !bucketEnd) return;
@@ -511,6 +534,47 @@ export default function Pipelines() {
   const clearBucketPipelineIdFilter = () => applyBucketPipelineIdFilter(null);
   const clearBucketSort = () => applyBucketSortMode('NEWEST');
 
+  const saveCurrentTriagePreset = () => {
+    const name = triagePresetName.trim();
+    if (!name) {
+      showToast('Enter a preset name first', 'error');
+      return;
+    }
+    const query = searchParams.toString();
+    const deduped = triagePresets.filter((p) => p.name.toLowerCase() !== name.toLowerCase());
+    const next = [{ name, query }, ...deduped].slice(0, 10);
+    persistTriagePresets(next);
+    setTriagePresetName('');
+    showToast('Triage preset saved', 'success');
+  };
+
+  const applyTriagePreset = (preset: TriagePreset) => {
+    const params = new URLSearchParams(preset.query);
+    const health = ((params.get('health') || 'ALL').toUpperCase() as HealthFilter);
+    const sinceRaw = Number(params.get('sinceHours'));
+    const since = sinceRaw === 1 || sinceRaw === 24 || sinceRaw === 168 ? (sinceRaw as 1 | 24 | 168) : null;
+    const bSort = (params.get('bucketSort') || 'NEWEST').toUpperCase() === 'FAILED_FIRST' ? 'FAILED_FIRST' : 'NEWEST';
+    const bStatusRaw = (params.get('bucketStatus') || 'ALL').toUpperCase();
+    const bStatus = (['ALL', 'RUNNING', 'PENDING', 'SUCCESS', 'FAILED', 'CANCELLED'] as const).includes(bStatusRaw as BucketRunStatusFilter)
+      ? (bStatusRaw as BucketRunStatusFilter)
+      : 'ALL';
+
+    setHealthFilter((['ALL', 'PROBLEMATIC', 'RUNNING', 'FAILED', 'HEALTHY'] as const).includes(health) ? health : 'ALL');
+    setSinceHoursFilter(since);
+    setBucketSortMode(bSort);
+    setBucketStatusFilter(bStatus);
+    setBucketPipelineQuery(params.get('bucketQ') || '');
+    setBucketPipelineIdFilter(params.get('bucketPipelineId'));
+    setSearchParams(params, { replace: true });
+    showToast(`Applied preset: ${preset.name}`, 'success');
+  };
+
+  const deleteTriagePreset = (name: string) => {
+    const next = triagePresets.filter((p) => p.name !== name);
+    persistTriagePresets(next);
+    showToast('Preset removed', 'success');
+  };
+
   const toggleShortcutHints = () => {
     setShowShortcutHints((prev) => {
       const next = !prev;
@@ -585,6 +649,33 @@ export default function Pipelines() {
 
       {bucketStart && bucketEnd && (
         <div className="mb-4 card">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <input
+              value={triagePresetName}
+              onChange={(e) => setTriagePresetName(e.target.value)}
+              placeholder="Save triage preset"
+              className="input text-xs max-w-[190px]"
+            />
+            <button
+              onClick={saveCurrentTriagePreset}
+              className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
+            >
+              Save preset
+            </button>
+            {triagePresets.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {triagePresets.slice(0, 5).map((preset) => (
+                  <span key={preset.name} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-gray-200 bg-gray-50 text-[11px]">
+                    <button onClick={() => applyTriagePreset(preset)} className="text-primary-700 hover:text-primary-900">
+                      {preset.name}
+                    </button>
+                    <button onClick={() => deleteTriagePreset(preset.name)} className="text-gray-500 hover:text-red-600">x</button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-gray-900">Runs In Selected Bucket</h2>
             <div className="flex items-center gap-2">
