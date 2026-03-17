@@ -255,6 +255,16 @@ export default function Pipelines() {
       return bTime - aTime;
     });
 
+  const bucketStatusCounts = bucketRuns.reduce(
+    (acc, run) => {
+      if (run.status === 'FAILED') acc.failed += 1;
+      if (run.status === 'RUNNING' || run.status === 'PENDING') acc.running += 1;
+      if (run.status === 'SUCCESS') acc.success += 1;
+      return acc;
+    },
+    { failed: 0, running: 0, success: 0 }
+  );
+
   const applyHealthFilter = (filter: HealthFilter) => {
     setHealthFilter(filter);
     const next = new URLSearchParams(searchParams);
@@ -354,6 +364,28 @@ export default function Pipelines() {
             <h2 className="text-sm font-semibold text-gray-900">Runs In Selected Bucket</h2>
             <span className="text-xs text-gray-500">{bucketRuns.length} runs</span>
           </div>
+          {bucketRuns.length > 0 && (
+            <div className="mb-3 flex flex-wrap gap-2 text-xs">
+              <button
+                onClick={() => applyHealthFilter('FAILED')}
+                className="px-2 py-1 rounded border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+              >
+                Failed: {bucketStatusCounts.failed}
+              </button>
+              <button
+                onClick={() => applyHealthFilter('RUNNING')}
+                className="px-2 py-1 rounded border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
+              >
+                Running/Pending: {bucketStatusCounts.running}
+              </button>
+              <button
+                onClick={() => applyHealthFilter('HEALTHY')}
+                className="px-2 py-1 rounded border border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
+              >
+                Success: {bucketStatusCounts.success}
+              </button>
+            </div>
+          )}
           {loadingBucketRuns ? (
             <p className="text-sm text-gray-500">Loading bucket runs...</p>
           ) : bucketRuns.length > 0 ? (
@@ -371,11 +403,24 @@ export default function Pipelines() {
                   {bucketRuns.slice(0, 12).map((run) => (
                     <tr key={run.id} className="border-b border-gray-100">
                       <td className="py-2 pr-3">
-                        <Link to={`/pipelines/${run.pipelineId}`} className="text-primary-600 hover:text-primary-800">
+                        <Link to={`/pipelines/${run.pipelineId}`} className="text-primary-600 hover:text-primary-800 hover:underline">
                           {run.pipelineName}
                         </Link>
                       </td>
-                      <td className="py-2 pr-3">{run.status}</td>
+                      <td className="py-2 pr-3">
+                        <button
+                          onClick={() => applyHealthFilter(run.status === 'FAILED' ? 'FAILED' : (run.status === 'RUNNING' || run.status === 'PENDING') ? 'RUNNING' : 'HEALTHY')}
+                          className={`px-2 py-0.5 rounded text-[11px] border ${
+                            run.status === 'FAILED'
+                              ? 'border-red-200 bg-red-50 text-red-700'
+                              : run.status === 'RUNNING' || run.status === 'PENDING'
+                                ? 'border-amber-200 bg-amber-50 text-amber-800'
+                                : 'border-green-200 bg-green-50 text-green-700'
+                          }`}
+                        >
+                          {run.status}
+                        </button>
+                      </td>
                       <td className="py-2 pr-3">{run.startedAt ? new Date(run.startedAt).toLocaleTimeString() : '-'}</td>
                       <td className="py-2 pr-3">{run.durationMs != null ? `${run.durationMs} ms` : '-'}</td>
                     </tr>
