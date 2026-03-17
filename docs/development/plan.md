@@ -85,6 +85,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Pipeline list API now supports precise latest-run time window filtering (`latestFrom`/`latestTo`) for bucket-level triage.
 - Pipelines page now understands dashboard sparkline bucket filters and shows active bucket context with clear action.
 - Bucket drilldown table now has clickable status chips and quick status counters to jump to filtered triage states instantly.
+- Bucket drilldown now supports shareable sort presets (`newest`, `failed-first`) persisted in URL query (`bucketSort`).
 
 ---
 

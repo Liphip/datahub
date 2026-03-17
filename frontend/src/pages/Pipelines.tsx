@@ -8,6 +8,7 @@ type RunMap = Record<string, PipelineRun[]>;
 type HealthFilter = 'ALL' | 'PROBLEMATIC' | 'RUNNING' | 'FAILED' | 'HEALTHY';
 type SortMode = 'RECENT_RUN' | 'NAME';
 type SinceHoursFilter = 1 | 24 | 168 | null;
+type BucketSortMode = 'NEWEST' | 'FAILED_FIRST';
 
 export default function Pipelines() {
   const { user, selectedTenantId } = useAuthStore();
@@ -38,6 +39,11 @@ export default function Pipelines() {
   const [healthFilter, setHealthFilter] = useState<HealthFilter>(initialHealth);
   const [sinceHoursFilter, setSinceHoursFilter] = useState<SinceHoursFilter>(initialSinceHours);
   const [sortMode, setSortMode] = useState<SortMode>('RECENT_RUN');
+  const initialBucketSort = (() => {
+    const raw = (searchParams.get('bucketSort') || '').toUpperCase();
+    return raw === 'FAILED_FIRST' ? 'FAILED_FIRST' : 'NEWEST';
+  })();
+  const [bucketSortMode, setBucketSortMode] = useState<BucketSortMode>(initialBucketSort);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [error, setError] = useState('');
   const [bucketRuns, setBucketRuns] = useState<TenantPipelineRun[]>([]);
@@ -265,6 +271,23 @@ export default function Pipelines() {
     { failed: 0, running: 0, success: 0 }
   );
 
+  const statusPriority = (status: TenantPipelineRun['status']) => {
+    if (status === 'FAILED') return 0;
+    if (status === 'RUNNING' || status === 'PENDING') return 1;
+    if (status === 'SUCCESS') return 2;
+    return 3;
+  };
+
+  const sortedBucketRuns = [...bucketRuns].sort((a, b) => {
+    if (bucketSortMode === 'FAILED_FIRST') {
+      const p = statusPriority(a.status) - statusPriority(b.status);
+      if (p !== 0) return p;
+    }
+    const aTime = a.startedAt ? new Date(a.startedAt).getTime() : 0;
+    const bTime = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+    return bTime - aTime;
+  });
+
   const applyHealthFilter = (filter: HealthFilter) => {
     setHealthFilter(filter);
     const next = new URLSearchParams(searchParams);
@@ -291,6 +314,18 @@ export default function Pipelines() {
     const next = new URLSearchParams(searchParams);
     next.delete('bucketStart');
     next.delete('bucketSeconds');
+    next.delete('bucketSort');
+    setSearchParams(next, { replace: true });
+  };
+
+  const applyBucketSortMode = (mode: BucketSortMode) => {
+    setBucketSortMode(mode);
+    const next = new URLSearchParams(searchParams);
+    if (mode === 'NEWEST') {
+      next.delete('bucketSort');
+    } else {
+      next.set('bucketSort', mode);
+    }
     setSearchParams(next, { replace: true });
   };
 
@@ -362,7 +397,17 @@ export default function Pipelines() {
         <div className="mb-4 card">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-gray-900">Runs In Selected Bucket</h2>
-            <span className="text-xs text-gray-500">{bucketRuns.length} runs</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">{bucketRuns.length} runs</span>
+              <select
+                value={bucketSortMode}
+                onChange={(e) => applyBucketSortMode(e.target.value as BucketSortMode)}
+                className="input text-xs max-w-[150px]"
+              >
+                <option value="NEWEST">Newest first</option>
+                <option value="FAILED_FIRST">Failed first</option>
+              </select>
+            </div>
           </div>
           {bucketRuns.length > 0 && (
             <div className="mb-3 flex flex-wrap gap-2 text-xs">
@@ -400,7 +445,7 @@ export default function Pipelines() {
                   </tr>
                 </thead>
                 <tbody>
-                  {bucketRuns.slice(0, 12).map((run) => (
+                  {sortedBucketRuns.slice(0, 12).map((run) => (
                     <tr key={run.id} className="border-b border-gray-100">
                       <td className="py-2 pr-3">
                         <Link to={`/pipelines/${run.pipelineId}`} className="text-primary-600 hover:text-primary-800 hover:underline">
