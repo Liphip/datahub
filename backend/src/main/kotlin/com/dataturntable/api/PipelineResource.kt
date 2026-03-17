@@ -1133,7 +1133,8 @@ class PipelineResource {
         @QueryParam("maxDepth") maxDepth: Int?,
         @QueryParam("direction") direction: String?,
         @QueryParam("statuses") statuses: String?,
-        @QueryParam("statusPreset") statusPreset: String?
+        @QueryParam("statusPreset") statusPreset: String?,
+        @QueryParam("includeDetails") includeDetails: Boolean?
     ): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
@@ -1211,15 +1212,38 @@ class PipelineResource {
             ?.let { selected -> PipelineRunStatus.entries.filter { selected.contains(it) } }
             ?.map { it.name }
         val defaultDepth = 20
+        val withDetails = includeDetails == true
 
         fun includeByStatus(status: PipelineRunStatus): Boolean = statusFilter?.contains(status) ?: true
 
         fun runSummary(item: PipelineRun, lineageDepth: Int? = null): Map<String, Any?> {
+            val metrics = if (withDetails) {
+                try {
+                    if (item.metrics.isNullOrBlank()) emptyMap<String, Any>()
+                    else objectMapper.readValue(item.metrics, Map::class.java) as Map<String, Any>
+                } catch (_: Exception) {
+                    mapOf("raw" to item.metrics)
+                }
+            } else {
+                emptyMap<String, Any>()
+            }
             val durationMs = if (item.completedAt != null) {
                 java.time.Duration.between(item.startedAt, item.completedAt).toMillis()
             } else {
                 null
             }
+            val result = if (withDetails) metrics["result"] as? Map<*, *> else null
+            val alertEvaluation = if (withDetails) result?.get("alertEvaluation") else null
+            val alertsFired = if (withDetails) {
+                when (val value = result?.get("alertsFired")) {
+                    is Number -> value.toInt()
+                    else -> null
+                }
+            } else {
+                null
+            }
+            val moduleLogs = if (withDetails) metrics["moduleLogs"] else null
+            val executionLog = if (withDetails) metrics["executionLog"] else null
             val summary = mapOf(
                 "id" to item.id,
                 "status" to item.status.name,
@@ -1228,7 +1252,12 @@ class PipelineResource {
                 "startedAt" to item.startedAt,
                 "completedAt" to item.completedAt,
                 "durationMs" to durationMs,
-                "errorMessage" to item.errorMessage
+                "errorMessage" to item.errorMessage,
+                "metrics" to metrics,
+                "moduleLogs" to moduleLogs,
+                "executionLog" to executionLog,
+                "alertEvaluation" to alertEvaluation,
+                "alertsFired" to alertsFired
             )
             return if (lineageDepth == null) summary else summary + mapOf("lineageDepth" to lineageDepth)
         }
@@ -1328,6 +1357,7 @@ class PipelineResource {
                 "latestDescendantRunId" to latestDescendantRunId,
                 "maxDepth" to depthLimit,
                 "defaultDepth" to defaultDepth,
+                "includeDetails" to withDetails,
                 "direction" to normalizedDirection,
                 "statuses" to orderedStatuses,
                 "statusPreset" to resolvedStatusPreset,

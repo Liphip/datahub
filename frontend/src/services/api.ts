@@ -301,12 +301,14 @@ class ApiService {
     maxDepth = 20,
     direction: 'both' | 'ancestors' | 'descendants' = 'both',
     statuses?: Array<'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED'>,
-    statusPreset?: 'all' | 'failures' | 'inflight' | 'terminal'
+    statusPreset?: 'all' | 'failures' | 'inflight' | 'terminal',
+    includeDetails = false
   ): Promise<PipelineRunLineage> {
     const statusQuery = statuses && statuses.length > 0 ? `&statuses=${statuses.join(',')}` : '';
     const presetQuery = statusPreset ? `&statusPreset=${statusPreset}` : '';
+    const detailsQuery = includeDetails ? '&includeDetails=true' : '';
     const response = await this.client.get<PipelineRunLineage>(
-      `/pipelines/${pipelineId}/runs/${runId}/lineage?maxDepth=${Math.max(1, maxDepth)}&direction=${direction}${statusQuery}${presetQuery}`
+      `/pipelines/${pipelineId}/runs/${runId}/lineage?maxDepth=${Math.max(1, maxDepth)}&direction=${direction}${statusQuery}${presetQuery}${detailsQuery}`
     );
     return response.data;
   }

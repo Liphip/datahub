@@ -18,6 +18,7 @@ type BucketSortMode = 'NEWEST' | 'FAILED_FIRST';
 type BucketRunStatusFilter = 'ALL' | 'RUNNING' | 'PENDING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
 type LineageDirection = 'both' | 'ancestors' | 'descendants';
 type LineageStatusFilter = 'ALL' | 'INFLIGHT' | 'TERMINAL' | 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+type LineageFetchMode = 'SUMMARY' | 'DETAILS';
 
 type TriagePreset = {
   name: string;
@@ -55,6 +56,7 @@ export default function Pipelines() {
   const [lineageDepthByRunId, setLineageDepthByRunId] = useState<Record<string, number>>({});
   const [lineageDirectionByRunId, setLineageDirectionByRunId] = useState<Record<string, LineageDirection>>({});
   const [lineageStatusFilterByRunId, setLineageStatusFilterByRunId] = useState<Record<string, LineageStatusFilter>>({});
+  const [lineageFetchModeByRunId, setLineageFetchModeByRunId] = useState<Record<string, LineageFetchMode>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [expandedPipelineId, setExpandedPipelineId] = useState<string | null>(null);
@@ -125,6 +127,10 @@ export default function Pipelines() {
   const lineageStatusRaw = (searchParams.get('lineageStatus') || '').toUpperCase();
   const lineageStatusParam: LineageStatusFilter | null = (['ALL', 'INFLIGHT', 'TERMINAL', 'FAILED', 'RUNNING', 'PENDING', 'SUCCESS', 'CANCELLED'] as const).includes(lineageStatusRaw as LineageStatusFilter)
     ? (lineageStatusRaw as LineageStatusFilter)
+    : null;
+  const lineageModeRaw = (searchParams.get('lineageMode') || '').toUpperCase();
+  const lineageModeParam: LineageFetchMode | null = (['SUMMARY', 'DETAILS'] as const).includes(lineageModeRaw as LineageFetchMode)
+    ? (lineageModeRaw as LineageFetchMode)
     : null;
   const bucketSecondsParam = Number(searchParams.get('bucketSeconds') || '');
   const bucketStart = bucketStartParam ? new Date(bucketStartParam) : null;
@@ -516,7 +522,8 @@ export default function Pipelines() {
     runId: string,
     maxDepth?: number,
     direction?: LineageDirection,
-    statusFilter?: LineageStatusFilter
+    statusFilter?: LineageStatusFilter,
+    fetchMode?: LineageFetchMode
   ) => {
     if (!canReadPipelines) {
       showToast('You need pipeline read permission to inspect run lineage', 'error');
@@ -527,6 +534,7 @@ export default function Pipelines() {
       const depth = maxDepth ?? lineageDepthByRunId[runId] ?? 20;
       const requestedDirection = direction ?? lineageDirectionByRunId[runId] ?? 'both';
       const requestedStatus = statusFilter ?? lineageStatusFilterByRunId[runId] ?? 'ALL';
+      const requestedFetchMode = fetchMode ?? lineageFetchModeByRunId[runId] ?? 'SUMMARY';
       const statusPreset = requestedStatus === 'INFLIGHT'
         ? 'inflight'
         : requestedStatus === 'TERMINAL'
@@ -539,10 +547,19 @@ export default function Pipelines() {
       const statuses = requestedStatus === 'INFLIGHT' || requestedStatus === 'TERMINAL' || requestedStatus === 'ALL' || requestedStatus === 'FAILED'
         ? undefined
         : [requestedStatus];
-      const lineage = await api.getPipelineRunLineage(pipelineId, runId, depth, requestedDirection, statuses, statusPreset);
+      const lineage = await api.getPipelineRunLineage(
+        pipelineId,
+        runId,
+        depth,
+        requestedDirection,
+        statuses,
+        statusPreset,
+        requestedFetchMode === 'DETAILS'
+      );
       setLineageDepthByRunId((prev) => ({ ...prev, [runId]: depth }));
       setLineageDirectionByRunId((prev) => ({ ...prev, [runId]: requestedDirection }));
       setLineageStatusFilterByRunId((prev) => ({ ...prev, [runId]: requestedStatus }));
+      setLineageFetchModeByRunId((prev) => ({ ...prev, [runId]: requestedFetchMode }));
       setLineageByRunId((prev) => ({ ...prev, [runId]: lineage }));
 
       const next = new URLSearchParams(searchParams);
@@ -551,6 +568,7 @@ export default function Pipelines() {
       next.set('lineageRunId', runId);
       next.set('lineageDepth', String(depth));
       next.set('lineageDirection', requestedDirection);
+      next.set('lineageMode', requestedFetchMode);
       if (requestedStatus === 'ALL') {
         next.delete('lineageStatus');
       } else {
@@ -571,13 +589,14 @@ export default function Pipelines() {
     const targetRunId = lineageRunIdParam || focusRunIdParam || selectedRunId;
     if (selectedRunId !== targetRunId) return;
 
-    const hasLineageQuery = Boolean(lineageRunIdParam || lineageDepthParam || lineageDirectionParam || lineageStatusParam);
+    const hasLineageQuery = Boolean(lineageRunIdParam || lineageDepthParam || lineageDirectionParam || lineageStatusParam || lineageModeParam);
     if (!hasLineageQuery) return;
 
     const requestedDirection = lineageDirectionParam ?? 'both';
     const requestedStatus = lineageStatusParam ?? 'ALL';
+    const requestedMode = lineageModeParam ?? 'SUMMARY';
     const requestedDepth = lineageDepthParam ?? 20;
-    const signature = `${focusPipelineIdParam}:${targetRunId}:${requestedDirection}:${requestedStatus}:${requestedDepth}`;
+    const signature = `${focusPipelineIdParam}:${targetRunId}:${requestedDirection}:${requestedStatus}:${requestedMode}:${requestedDepth}`;
     if (handledLineageFocusRef.current === signature) return;
     handledLineageFocusRef.current = signature;
 
@@ -586,7 +605,8 @@ export default function Pipelines() {
       targetRunId,
       requestedDepth,
       requestedDirection,
-      requestedStatus
+      requestedStatus,
+      requestedMode
     );
   }, [
     canReadPipelines,
@@ -596,6 +616,7 @@ export default function Pipelines() {
     lineageDepthParam,
     lineageDirectionParam,
     lineageStatusParam,
+    lineageModeParam,
     selectedRunIdByPipeline,
   ]);
 
@@ -779,12 +800,14 @@ export default function Pipelines() {
       const depth = lineageDepthByRunId[runId] ?? 20;
       const direction = lineageDirectionByRunId[runId] ?? 'both';
       const status = lineageStatusFilterByRunId[runId] ?? 'ALL';
+      const mode = lineageFetchModeByRunId[runId] ?? 'SUMMARY';
       const params = new URLSearchParams(searchParams);
       params.set('focusPipelineId', pipelineId);
       params.set('focusRunId', runId);
       params.set('lineageRunId', runId);
       params.set('lineageDepth', String(depth));
       params.set('lineageDirection', direction);
+      params.set('lineageMode', mode);
       if (status === 'ALL') {
         params.delete('lineageStatus');
       } else {
@@ -800,10 +823,15 @@ export default function Pipelines() {
 
   const resetLineageView = async (pipelineId: string, runId: string) => {
     const defaultDepth = lineageByRunId[runId]?.defaultDepth ?? 20;
-    await handleLoadRunLineage(pipelineId, runId, defaultDepth, 'both', 'ALL');
+    await handleLoadRunLineage(pipelineId, runId, defaultDepth, 'both', 'ALL', 'SUMMARY');
   };
 
-  const focusLineageTargetRun = async (pipelineId: string, runId: string, prefetched?: PipelineRun) => {
+  const focusLineageTargetRun = async (
+    pipelineId: string,
+    runId: string,
+    includeDetails: boolean,
+    prefetched?: PipelineRun
+  ) => {
     if (prefetched) {
       setDetailedRunsMap((prev) => {
         const existing = prev[pipelineId] ?? [];
@@ -815,7 +843,7 @@ export default function Pipelines() {
     }
 
     try {
-      const loaded = await api.getPipelineRun(pipelineId, runId, true);
+      const loaded = await api.getPipelineRun(pipelineId, runId, includeDetails);
       setDetailedRunsMap((prev) => {
         const existing = prev[pipelineId] ?? [];
         const without = existing.filter((item) => item.id !== loaded.id);
@@ -2005,7 +2033,7 @@ export default function Pipelines() {
                                 >
                                   {loadingLineageRunId === selectedRun.id
                                     ? 'Loading lineage...'
-                                    : `Load lineage (${lineageDirectionByRunId[selectedRun.id] ?? 'both'} ${lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL'} d${lineageDepthByRunId[selectedRun.id] ?? 20})`}
+                                    : `Load lineage (${lineageFetchModeByRunId[selectedRun.id] ?? 'SUMMARY'} ${lineageDirectionByRunId[selectedRun.id] ?? 'both'} ${lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL'} d${lineageDepthByRunId[selectedRun.id] ?? 20})`}
                                 </button>
                                 {(selectedRun.status === 'RUNNING' || selectedRun.status === 'PENDING') && (
                                   <button
@@ -2038,6 +2066,7 @@ export default function Pipelines() {
                                 <div className="rounded border border-indigo-100 bg-indigo-50 p-2 text-[11px] text-indigo-900">
                                   <div className="font-semibold mb-1">Retry Lineage</div>
                                   <div className="mb-2 flex flex-wrap items-center gap-2">
+                                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">Mode: {lineageFetchModeByRunId[selectedRun.id] ?? (lineageByRunId[selectedRun.id].includeDetails ? 'DETAILS' : 'SUMMARY')}</span>
                                     <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">Direction: {lineageByRunId[selectedRun.id].direction ?? lineageDirectionByRunId[selectedRun.id] ?? 'both'}</span>
                                     <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">Status: {lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL'}</span>
                                     <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">Depth: {lineageByRunId[selectedRun.id].maxDepth ?? lineageDepthByRunId[selectedRun.id] ?? lineageByRunId[selectedRun.id].defaultDepth ?? 20}</span>
@@ -2047,6 +2076,32 @@ export default function Pipelines() {
                                   </div>
                                   <div className="mb-1">
                                     Ancestors: {lineageByRunId[selectedRun.id].ancestors.length}/{lineageByRunId[selectedRun.id].ancestorsTotal ?? lineageByRunId[selectedRun.id].ancestors.length} · Descendants: {lineageByRunId[selectedRun.id].descendants.length}/{lineageByRunId[selectedRun.id].descendantsTotal ?? lineageByRunId[selectedRun.id].descendants.length}
+                                  </div>
+                                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                                    <span className="text-[11px] text-indigo-800">Fetch mode:</span>
+                                    {(['SUMMARY', 'DETAILS'] as const).map((mode) => {
+                                      const active = (lineageFetchModeByRunId[selectedRun.id] ?? (lineageByRunId[selectedRun.id].includeDetails ? 'DETAILS' : 'SUMMARY')) === mode;
+                                      return (
+                                        <button
+                                          key={`${selectedRun.id}-lineage-mode-${mode}`}
+                                          className={`px-2 py-0.5 rounded border ${active ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-indigo-300 bg-white text-indigo-800'}`}
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
+                                            void handleLoadRunLineage(
+                                              pipeline.id,
+                                              selectedRun.id,
+                                              currentDepth,
+                                              lineageDirectionByRunId[selectedRun.id] ?? 'both',
+                                              lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL',
+                                              mode
+                                            );
+                                          }}
+                                        >
+                                          {mode === 'SUMMARY' ? 'Summary only' : 'Include details'}
+                                        </button>
+                                      );
+                                    })}
                                   </div>
                                   <div className="mb-2 flex flex-wrap items-center gap-2">
                                     <span className="text-[11px] text-indigo-800">Direction:</span>
@@ -2217,7 +2272,12 @@ export default function Pipelines() {
                                         const rootId = lineageByRunId[selectedRun.id].rootRunId;
                                         if (!rootId) return;
                                         const rootRun = lineageByRunId[selectedRun.id].ancestors.find((item) => item.id === rootId);
-                                        void focusLineageTargetRun(pipeline.id, rootId, rootRun);
+                                        void focusLineageTargetRun(
+                                          pipeline.id,
+                                          rootId,
+                                          (lineageFetchModeByRunId[selectedRun.id] ?? 'SUMMARY') === 'DETAILS',
+                                          rootRun
+                                        );
                                       }}
                                       disabled={!lineageByRunId[selectedRun.id].rootRunId}
                                       title={!lineageByRunId[selectedRun.id].rootRunId ? 'No root run available for this lineage view' : undefined}
@@ -2231,7 +2291,12 @@ export default function Pipelines() {
                                         const latestId = lineageByRunId[selectedRun.id].latestDescendantRunId;
                                         if (!latestId) return;
                                         const latestRun = lineageByRunId[selectedRun.id].descendants.find((item) => item.id === latestId);
-                                        void focusLineageTargetRun(pipeline.id, latestId, latestRun);
+                                        void focusLineageTargetRun(
+                                          pipeline.id,
+                                          latestId,
+                                          (lineageFetchModeByRunId[selectedRun.id] ?? 'SUMMARY') === 'DETAILS',
+                                          latestRun
+                                        );
                                       }}
                                       disabled={!lineageByRunId[selectedRun.id].latestDescendantRunId}
                                       title={!lineageByRunId[selectedRun.id].latestDescendantRunId ? 'Latest retry is unavailable for current direction/filter' : undefined}
