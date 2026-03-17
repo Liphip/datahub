@@ -47,6 +47,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added authenticated tenant-context APIs (`GET /auth/tenants`, `POST /auth/switch-tenant`) and wired frontend tenant switching in the top navigation.
 - Replaced remaining browser confirm dialogs in Connectors, Alerts, and Data pages with inline/modal confirmations plus toast feedback.
 - Added alert update APIs (`PATCH /alerts/channels/{id}`, `PATCH /alerts/rules/{id}`) and frontend edit flows for channels/rules.
+- Updated frontend 401 interceptor to skip redirects for public setup/register/login auth calls.
 
 ---
 

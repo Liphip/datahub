@@ -36,7 +36,12 @@ class ApiService {
     this.client.interceptors.response.use(
       (response) => response,
       (error) => {
-        if (error.response?.status === 401) {
+        const requestUrl = String(error.config?.url || '');
+        const isPublicAuthCall = requestUrl.includes('/auth/login')
+          || requestUrl.includes('/auth/register')
+          || requestUrl.includes('/auth/setup');
+
+        if (error.response?.status === 401 && !isPublicAuthCall) {
           localStorage.removeItem('token');
           window.location.href = '/login';
         }
