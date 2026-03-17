@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Tenant, TenantLineageDefaults, TenantLineageDefaultsConfig } from '../types';
+import type { Tenant, TenantLineageDefaults, TenantLineageDefaultsConfig, TenantLineageDefaultsDiagnostics } from '../types';
 
 interface TenantWithChildren extends Tenant {
   children?: TenantWithChildren[];
@@ -54,6 +54,8 @@ export default function Tenants() {
   const [savingLineageDefaults, setSavingLineageDefaults] = useState(false);
   const [lineageDefaultsConflict, setLineageDefaultsConflict] = useState<LineageDefaultsConflictState | null>(null);
   const [lineageDefaultsStaleLatest, setLineageDefaultsStaleLatest] = useState<TenantLineageDefaults | null>(null);
+  const [lineageDefaultsDiagnostics, setLineageDefaultsDiagnostics] = useState<TenantLineageDefaultsDiagnostics | null>(null);
+  const [loadingLineageDefaultsDiagnostics, setLoadingLineageDefaultsDiagnostics] = useState(false);
   const [lineagePollStatus, setLineagePollStatus] = useState<LineagePollStatus>('IDLE');
   const [lineagePollCheckedAt, setLineagePollCheckedAt] = useState<string | null>(null);
   const [lineagePollIntervalMs, setLineagePollIntervalMs] = useState(30000);
@@ -178,6 +180,10 @@ export default function Tenants() {
       staleLatestVersion: lineageDefaultsStaleLatest?.version,
       conflictCount: telemetry?.count ?? 0,
       lastConflictAt: telemetry?.lastConflictAt,
+      backendRead200: lineageDefaultsDiagnostics?.get200Count,
+      backendRead304: lineageDefaultsDiagnostics?.get304Count,
+      backendPatchSuccess: lineageDefaultsDiagnostics?.patchSuccessCount,
+      backendPatchConflict: lineageDefaultsDiagnostics?.patchConflictCount,
       isDirty: isLineageDefaultsDirty,
       generatedAt: new Date().toISOString(),
     };
@@ -186,6 +192,18 @@ export default function Tenants() {
       showToast('Lineage defaults diagnostics copied', 'success');
     } catch {
       showToast('Failed to copy diagnostics', 'error');
+    }
+  };
+
+  const refreshLineageDefaultsDiagnostics = async (tid: string) => {
+    setLoadingLineageDefaultsDiagnostics(true);
+    try {
+      const diagnostics = await api.getTenantLineageDefaultsDiagnostics(tid);
+      setLineageDefaultsDiagnostics(diagnostics);
+    } catch {
+      setLineageDefaultsDiagnostics(null);
+    } finally {
+      setLoadingLineageDefaultsDiagnostics(false);
     }
   };
 
@@ -242,6 +260,7 @@ export default function Tenants() {
     const loadLineageDefaults = async () => {
       if (!lineageDefaultsTenantId) {
         setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+        setLineageDefaultsDiagnostics(null);
         setLineagePollStatus('IDLE');
         setLineagePollCheckedAt(null);
         setLineagePollIntervalMs(30000);
@@ -257,6 +276,7 @@ export default function Tenants() {
           setLineageDefaultsBase(toLineageDefaultsConfig(response.data));
           setLineageDefaultsEtag(response.etag);
         }
+        await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
         setLineagePollStatus('FRESH');
         setLineagePollCheckedAt(new Date().toISOString());
         setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
@@ -267,6 +287,7 @@ export default function Tenants() {
         setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
         setLineageDefaultsBase(DEFAULT_TENANT_LINEAGE_DEFAULTS);
         setLineageDefaultsEtag(undefined);
+        setLineageDefaultsDiagnostics(null);
         setLineagePollStatus('OFFLINE');
         setLineagePollCheckedAt(new Date().toISOString());
         setLineagePollIntervalMs(30000);
@@ -288,6 +309,7 @@ export default function Tenants() {
     setLineageDefaultsConflict(null);
     setLineageDefaultsStaleLatest(null);
     setLineageDefaultsEtag(undefined);
+    setLineageDefaultsDiagnostics(null);
     setLineagePollStatus('IDLE');
     setLineagePollCheckedAt(null);
     setLineagePollIntervalMs(30000);
@@ -349,11 +371,13 @@ export default function Tenants() {
       setLineagePollOfflineFailures(0);
       setLineagePollPausedUntil(0);
       setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
+      await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
       showToast('Tenant lineage defaults saved', 'success');
     } catch (err: any) {
       if (err?.response?.status === 409) {
         showToast('Defaults changed by another user. Resolve conflict before saving.', 'error');
         trackDefaultsConflict(lineageDefaultsTenantId);
+        await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
         setLineagePollStatus('STALE');
         setLineagePollCheckedAt(new Date().toISOString());
         setLineagePollIntervalMs(15000);
@@ -404,11 +428,13 @@ export default function Tenants() {
       setLineagePollOfflineFailures(0);
       setLineagePollPausedUntil(0);
       setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
+      await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
       showToast('Lineage defaults restored from history', 'success');
     } catch (err: any) {
       if (err?.response?.status === 409) {
         showToast('Defaults changed by another user. Resolve conflict before restoring.', 'error');
         trackDefaultsConflict(lineageDefaultsTenantId);
+        await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
         setLineagePollStatus('STALE');
         setLineagePollCheckedAt(new Date().toISOString());
         setLineagePollIntervalMs(15000);
@@ -548,6 +574,9 @@ export default function Tenants() {
     setLineagePollOfflineFailures(0);
     setLineagePollPausedUntil(0);
     setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
+    if (lineageDefaultsTenantId) {
+      void refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+    }
     setLineageDefaultsConflict(null);
     showToast('Loaded latest server values', 'success');
   };
@@ -570,6 +599,7 @@ export default function Tenants() {
       setLineagePollOfflineFailures(0);
       setLineagePollPausedUntil(0);
       setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
+      await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
       setLineageDefaultsConflict(null);
       showToast('Reapplied your defaults successfully', 'success');
     } catch {
@@ -603,6 +633,7 @@ export default function Tenants() {
       setLineagePollOfflineFailures(0);
       setLineagePollPausedUntil(0);
       setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
+      await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
       setLineageDefaultsConflict(null);
       showToast('Saved merged defaults', 'success');
     } catch {
@@ -806,6 +837,23 @@ export default function Tenants() {
                     onClick={() => lineageDefaultsTenantId && clearDefaultsConflictTelemetry(lineageDefaultsTenantId)}
                   >
                     Clear
+                  </button>
+                </>
+              )}
+              {lineageDefaultsDiagnostics && (
+                <>
+                  <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
+                    200/304: {lineageDefaultsDiagnostics.get200Count}/{lineageDefaultsDiagnostics.get304Count}
+                  </span>
+                  <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
+                    Conflicts: {lineageDefaultsDiagnostics.patchConflictCount}/{lineageDefaultsDiagnostics.patchSuccessCount + lineageDefaultsDiagnostics.patchConflictCount}
+                  </span>
+                  <button
+                    className="text-indigo-700 hover:text-indigo-900"
+                    disabled={loadingLineageDefaultsDiagnostics || !lineageDefaultsTenantId}
+                    onClick={() => lineageDefaultsTenantId && void refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId)}
+                  >
+                    {loadingLineageDefaultsDiagnostics ? 'Refreshing metrics...' : 'Refresh metrics'}
                   </button>
                 </>
               )}

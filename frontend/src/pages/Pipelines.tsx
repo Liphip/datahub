@@ -2,7 +2,7 @@ import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Pipeline, PipelineRun, PipelineRunLineage, PipelineRunSummary, TenantLineageDefaults, TenantLineageDefaultsConfig, TenantPipelineRun } from '../types';
+import type { Pipeline, PipelineRun, PipelineRunLineage, PipelineRunSummary, TenantLineageDefaults, TenantLineageDefaultsConfig, TenantLineageDefaultsDiagnostics, TenantPipelineRun } from '../types';
 
 type RunMap = Record<string, PipelineRun[]>;
 type PipelineRunDetailFilter = {
@@ -89,6 +89,8 @@ export default function Pipelines() {
   const [savingTenantLineageDefaults, setSavingTenantLineageDefaults] = useState(false);
   const [tenantDefaultsConflict, setTenantDefaultsConflict] = useState<TenantLineageDefaultsConflict | null>(null);
   const [tenantDefaultsStaleLatest, setTenantDefaultsStaleLatest] = useState<TenantLineageDefaults | null>(null);
+  const [tenantDefaultsDiagnostics, setTenantDefaultsDiagnostics] = useState<TenantLineageDefaultsDiagnostics | null>(null);
+  const [loadingTenantDefaultsDiagnostics, setLoadingTenantDefaultsDiagnostics] = useState(false);
   const [tenantDefaultsPollStatus, setTenantDefaultsPollStatus] = useState<TenantDefaultsPollStatus>('IDLE');
   const [tenantDefaultsPollCheckedAt, setTenantDefaultsPollCheckedAt] = useState<string | null>(null);
   const [tenantDefaultsPollIntervalMs, setTenantDefaultsPollIntervalMs] = useState(30000);
@@ -256,6 +258,18 @@ export default function Pipelines() {
     });
   };
 
+  const refreshTenantDefaultsDiagnostics = async (tid: string) => {
+    setLoadingTenantDefaultsDiagnostics(true);
+    try {
+      const diagnostics = await api.getTenantLineageDefaultsDiagnostics(tid);
+      setTenantDefaultsDiagnostics(diagnostics);
+    } catch {
+      setTenantDefaultsDiagnostics(null);
+    } finally {
+      setLoadingTenantDefaultsDiagnostics(false);
+    }
+  };
+
   const copyTenantDefaultsDiagnostics = async (pipelineId: string, runId: string) => {
     if (!tenantId) return;
     const telemetry = tenantDefaultsConflictTelemetry[tenantId];
@@ -274,6 +288,10 @@ export default function Pipelines() {
       staleLatestVersion: tenantDefaultsStaleLatest?.version,
       conflictCount: telemetry?.count ?? 0,
       lastConflictAt: telemetry?.lastConflictAt,
+      backendRead200: tenantDefaultsDiagnostics?.get200Count,
+      backendRead304: tenantDefaultsDiagnostics?.get304Count,
+      backendPatchSuccess: tenantDefaultsDiagnostics?.patchSuccessCount,
+      backendPatchConflict: tenantDefaultsDiagnostics?.patchConflictCount,
       generatedAt: new Date().toISOString(),
     };
     try {
@@ -388,6 +406,7 @@ export default function Pipelines() {
     const loadTenantLineageDefaults = async () => {
       if (!tenantId || !canReadPipelines) {
         setTenantLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+        setTenantDefaultsDiagnostics(null);
         setTenantLineageDefaultsEtag(undefined);
         setTenantDefaultsPollStatus('IDLE');
         setTenantDefaultsPollCheckedAt(null);
@@ -410,6 +429,7 @@ export default function Pipelines() {
           });
           setTenantLineageDefaultsEtag(response.etag);
         }
+        await refreshTenantDefaultsDiagnostics(tenantId);
         setTenantDefaultsPollStatus('FRESH');
         setTenantDefaultsPollCheckedAt(new Date().toISOString());
         setTenantDefaultsPollIntervalMs(45000);
@@ -418,6 +438,7 @@ export default function Pipelines() {
         setTenantDefaultsStaleLatest(null);
       } catch {
         setTenantLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+        setTenantDefaultsDiagnostics(null);
         setTenantLineageDefaultsEtag(undefined);
         setTenantDefaultsPollStatus('OFFLINE');
         setTenantDefaultsPollCheckedAt(new Date().toISOString());
@@ -432,6 +453,7 @@ export default function Pipelines() {
 
   useEffect(() => {
     setTenantDefaultsConflict(null);
+    setTenantDefaultsDiagnostics(null);
     setTenantLineageDefaultsEtag(undefined);
     setTenantDefaultsPollStatus('IDLE');
     setTenantDefaultsPollCheckedAt(null);
@@ -1234,12 +1256,14 @@ export default function Pipelines() {
       setTenantDefaultsPollOfflineFailures(0);
       setTenantDefaultsPollPausedUntil(0);
       setTenantDefaultsPollIntervalMs(45000);
+      await refreshTenantDefaultsDiagnostics(tenantId);
       showToast('Tenant lineage defaults updated', 'success');
       await handleLoadRunLineage(pipelineId, runId, depth, undefined, undefined, mode, policy);
     } catch (err: any) {
       if (err?.response?.status === 409) {
         showToast('Tenant defaults changed elsewhere. Resolve conflict to continue.', 'error');
         trackTenantDefaultsConflict(tenantId);
+        await refreshTenantDefaultsDiagnostics(tenantId);
         setTenantDefaultsPollStatus('STALE');
         setTenantDefaultsPollCheckedAt(new Date().toISOString());
         setTenantDefaultsPollIntervalMs(15000);
@@ -1272,6 +1296,9 @@ export default function Pipelines() {
     setTenantDefaultsPollOfflineFailures(0);
     setTenantDefaultsPollPausedUntil(0);
     setTenantDefaultsPollIntervalMs(45000);
+    if (tenantId) {
+      void refreshTenantDefaultsDiagnostics(tenantId);
+    }
     setTenantDefaultsConflict(null);
     showToast('Loaded latest tenant defaults', 'success');
   };
@@ -1293,6 +1320,7 @@ export default function Pipelines() {
       setTenantDefaultsPollOfflineFailures(0);
       setTenantDefaultsPollPausedUntil(0);
       setTenantDefaultsPollIntervalMs(45000);
+      await refreshTenantDefaultsDiagnostics(tenantId);
       const { pipelineId, runId, pending } = tenantDefaultsConflict;
       setTenantDefaultsConflict(null);
       showToast('Reapplied your tenant defaults', 'success');
@@ -1346,6 +1374,7 @@ export default function Pipelines() {
       setTenantDefaultsPollOfflineFailures(0);
       setTenantDefaultsPollPausedUntil(0);
       setTenantDefaultsPollIntervalMs(45000);
+      await refreshTenantDefaultsDiagnostics(tenantId);
       const { pipelineId, runId } = tenantDefaultsConflict;
       setTenantDefaultsConflict(null);
       showToast('Saved merged tenant defaults', 'success');
@@ -3035,6 +3064,27 @@ export default function Pipelines() {
                                         </button>
                                       </>
                                     )}
+                                    {tenantDefaultsDiagnostics && (
+                                      <>
+                                        <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                          200/304: {tenantDefaultsDiagnostics.get200Count}/{tenantDefaultsDiagnostics.get304Count}
+                                        </span>
+                                        <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                          Conflicts: {tenantDefaultsDiagnostics.patchConflictCount}/{tenantDefaultsDiagnostics.patchSuccessCount + tenantDefaultsDiagnostics.patchConflictCount}
+                                        </span>
+                                      </>
+                                    )}
+                                    <button
+                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      disabled={loadingTenantDefaultsDiagnostics || !tenantId}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        if (!tenantId) return;
+                                        void refreshTenantDefaultsDiagnostics(tenantId);
+                                      }}
+                                    >
+                                      {loadingTenantDefaultsDiagnostics ? 'Refreshing metrics...' : 'Refresh metrics'}
+                                    </button>
                                     {canManageTenantSettings && (
                                       <button
                                         disabled={savingTenantLineageDefaults}

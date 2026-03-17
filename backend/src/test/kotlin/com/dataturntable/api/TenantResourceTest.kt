@@ -519,5 +519,19 @@ class TenantResourceTest {
         .then()
             .statusCode(400)
             .body("error", containsString("defaultDepth"))
+
+        given()
+            .header("Authorization", "Bearer $managerToken")
+        .`when`()
+            .get("/api/internal/v1/tenants/$rootId/lineage-defaults/diagnostics")
+        .then()
+            .statusCode(200)
+            .body("tenantId", equalTo(rootId))
+            .body("get200Count", equalTo(3))
+            .body("get304Count", equalTo(1))
+            .body("patchSuccessCount", equalTo(1))
+            .body("patchConflictCount", equalTo(1))
+            .body("readTotalCount", equalTo(4))
+            .body("lastUpdatedAt", notNullValue())
     }
 }

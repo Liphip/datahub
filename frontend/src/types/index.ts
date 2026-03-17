@@ -79,6 +79,18 @@ export interface TenantLineageDefaults {
   history?: TenantLineageDefaultsHistoryEntry[];
 }
 
+export interface TenantLineageDefaultsDiagnostics {
+  tenantId: string;
+  get200Count: number;
+  get304Count: number;
+  patchSuccessCount: number;
+  patchConflictCount: number;
+  readTotalCount: number;
+  readNotModifiedRate: number;
+  patchConflictRate: number;
+  lastUpdatedAt?: string;
+}
+
 export interface ModuleVersion {
   id: string;
   moduleId?: string;

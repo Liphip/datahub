@@ -13,12 +13,26 @@ import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
 import org.eclipse.microprofile.jwt.JsonWebToken
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 @Path("/tenants")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
 class TenantResource {
+    companion object {
+        private data class LineageDefaultsDiagnostics(
+            val get200Count: AtomicLong = AtomicLong(0),
+            val get304Count: AtomicLong = AtomicLong(0),
+            val patchSuccessCount: AtomicLong = AtomicLong(0),
+            val patchConflictCount: AtomicLong = AtomicLong(0),
+            val lastUpdatedEpochMs: AtomicLong = AtomicLong(0)
+        )
+
+        private val lineageDefaultsDiagnosticsByTenant = ConcurrentHashMap<UUID, LineageDefaultsDiagnostics>()
+    }
+
     
     @Inject
     lateinit var em: EntityManager
@@ -131,6 +145,44 @@ class TenantResource {
     }
 
     private fun lineageDefaultsEtag(version: String): String = "W/\"$version\""
+
+    private fun lineageDefaultsDiagnostics(tenantId: UUID): LineageDefaultsDiagnostics =
+        lineageDefaultsDiagnosticsByTenant.computeIfAbsent(tenantId) { LineageDefaultsDiagnostics() }
+
+    private fun markLineageDefaultsDiagnostics(tenantId: UUID, action: String) {
+        val diagnostics = lineageDefaultsDiagnostics(tenantId)
+        when (action) {
+            "GET_200" -> diagnostics.get200Count.incrementAndGet()
+            "GET_304" -> diagnostics.get304Count.incrementAndGet()
+            "PATCH_200" -> diagnostics.patchSuccessCount.incrementAndGet()
+            "PATCH_409" -> diagnostics.patchConflictCount.incrementAndGet()
+        }
+        diagnostics.lastUpdatedEpochMs.set(System.currentTimeMillis())
+    }
+
+    private fun lineageDefaultsDiagnosticsSnapshot(tenantId: UUID): Map<String, Any?> {
+        val diagnostics = lineageDefaultsDiagnostics(tenantId)
+        val get200 = diagnostics.get200Count.get()
+        val get304 = diagnostics.get304Count.get()
+        val patchSuccess = diagnostics.patchSuccessCount.get()
+        val patchConflict = diagnostics.patchConflictCount.get()
+        val readTotal = get200 + get304
+        val patchTotal = patchSuccess + patchConflict
+        val readNotModifiedRate = if (readTotal > 0) get304.toDouble() / readTotal.toDouble() else 0.0
+        val patchConflictRate = if (patchTotal > 0) patchConflict.toDouble() / patchTotal.toDouble() else 0.0
+        val lastUpdated = diagnostics.lastUpdatedEpochMs.get().takeIf { it > 0 }?.let { java.time.Instant.ofEpochMilli(it).toString() }
+        return mapOf(
+            "tenantId" to tenantId,
+            "get200Count" to get200,
+            "get304Count" to get304,
+            "patchSuccessCount" to patchSuccess,
+            "patchConflictCount" to patchConflict,
+            "readTotalCount" to readTotal,
+            "readNotModifiedRate" to readNotModifiedRate,
+            "patchConflictRate" to patchConflictRate,
+            "lastUpdatedAt" to lastUpdated
+        )
+    }
 
     private fun toTenantMap(tenant: Tenant, children: List<Map<String, Any?>>? = null): Map<String, Any?> {
         val base = mutableMapOf<String, Any?>(
@@ -384,13 +436,36 @@ class TenantResource {
         val etag = lineageDefaultsEtag(currentVersion)
         val matches = ifNoneMatch?.contains(currentVersion) == true || ifNoneMatch?.contains(etag) == true
         if (matches) {
+            markLineageDefaultsDiagnostics(tenantId, "GET_304")
             return Response.notModified()
                 .header("ETag", etag)
                 .build()
         }
+        markLineageDefaultsDiagnostics(tenantId, "GET_200")
         return Response.ok(buildLineageDefaultsResponse(tenant.settings, currentVersion))
             .header("ETag", etag)
             .build()
+    }
+
+    @GET
+    @Path("/{id}/lineage-defaults/diagnostics")
+    fun getLineageDefaultsDiagnostics(@PathParam("id") id: String): Response {
+        val (currentUser, denial) = requireTenantManager()
+        denial?.let { return it }
+        val user = currentUser ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+
+        val tenantId = try {
+            parseUuid(id, "tenant id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        if (!canManageTenant(user, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        val tenant = em.find(Tenant::class.java, tenantId)
+            ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+        return Response.ok(lineageDefaultsDiagnosticsSnapshot(tenant.id ?: tenantId)).build()
     }
 
     @PATCH
@@ -416,6 +491,7 @@ class TenantResource {
         val ifVersion = request["ifVersion"] as? String
         val currentVersion = tenant.updatedAt.toString()
         if (!ifVersion.isNullOrBlank() && ifVersion != currentVersion) {
+            markLineageDefaultsDiagnostics(tenantId, "PATCH_409")
             return Response.status(409)
                 .entity(mapOf(
                     "error" to "Lineage defaults were updated by another user. Refresh and retry.",
@@ -478,6 +554,7 @@ class TenantResource {
         em.merge(tenant)
 
         val updatedVersion = tenant.updatedAt.toString()
+        markLineageDefaultsDiagnostics(tenantId, "PATCH_200")
         return Response.ok(buildLineageDefaultsResponse(tenant.settings, updatedVersion))
             .header("ETag", lineageDefaultsEtag(updatedVersion))
             .build()

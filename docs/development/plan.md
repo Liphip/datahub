@@ -197,6 +197,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added adaptive stale-check polling behavior: Tenants and Pipelines now adjust lineage-default poll intervals dynamically (faster when stale/active, slower when stable), apply offline backoff with temporary pause after repeated failures, and expose offline retry counts in the UI so freshness remains responsive without unnecessary request load.
 - Added poll-debug visibility for tenant managers: Tenants and Pipelines now include optional `Poll details` UI showing current interval, offline retry count, pause window, and manual-check cooldown so admins can understand delayed freshness checks during outages.
 - Added copyable lineage-default diagnostics for support handoff: Tenants and Pipelines now provide `Copy diagnostics` actions that capture tenant/context identifiers, poll/backoff state, version/etag info, and conflict counters in JSON for faster troubleshooting across multi-admin sessions.
+- Added backend lineage-default diagnostics counters and UI surfacing: tenant API now tracks per-tenant lineage-default read/write outcomes (`GET 200`, `GET 304`, patch success/conflict) and exposes them via diagnostics endpoint; Tenants and Pipelines now render compact 200/304 + conflict ratios with refresh controls and include backend counters in copied diagnostics.
 
 ---
 
