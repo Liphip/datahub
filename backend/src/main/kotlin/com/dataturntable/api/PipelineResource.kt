@@ -37,6 +37,14 @@ class PipelineResource {
         }
     }
 
+    private fun parseInstant(value: String, field: String): java.time.Instant {
+        return try {
+            java.time.Instant.parse(value)
+        } catch (_: Exception) {
+            throw WebApplicationException(Response.status(400).entity(mapOf("error" to "Invalid $field")).build())
+        }
+    }
+
     private fun parseGraphDefinition(graphDefinition: String?): Any? {
         if (graphDefinition.isNullOrBlank()) return null
         return try {
@@ -216,7 +224,9 @@ class PipelineResource {
         @QueryParam("tenantId") tenantId: String,
         @QueryParam("includeRunSummary") includeRunSummary: String?,
         @QueryParam("runHealth") runHealth: String?,
-        @QueryParam("latestSinceHours") latestSinceHours: Int?
+        @QueryParam("latestSinceHours") latestSinceHours: Int?,
+        @QueryParam("latestFrom") latestFrom: String?,
+        @QueryParam("latestTo") latestTo: String?
     ): Response {
         val tenantUuid = try {
             parseUuid(tenantId, "tenantId")
@@ -238,6 +248,19 @@ class PipelineResource {
         }
         if (latestSinceHours != null && latestSinceHours !in setOf(1, 24, 168)) {
             return Response.status(400).entity(mapOf("error" to "Invalid latestSinceHours")).build()
+        }
+        val latestFromInstant = try {
+            latestFrom?.let { parseInstant(it, "latestFrom") }
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val latestToInstant = try {
+            latestTo?.let { parseInstant(it, "latestTo") }
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        if (latestFromInstant != null && latestToInstant != null && latestFromInstant.isAfter(latestToInstant)) {
+            return Response.status(400).entity(mapOf("error" to "latestFrom must be before latestTo")).build()
         }
         val latestCutoff = latestSinceHours?.let {
             java.time.Instant.now().minus(java.time.Duration.ofHours(it.toLong()))
@@ -282,6 +305,18 @@ class PipelineResource {
                         return@filter false
                     }
                     !instant.isBefore(latestCutoff)
+                }
+                .filter { entry ->
+                    if (latestFromInstant == null && latestToInstant == null) return@filter true
+                    val startedAt = entry.summary["latestRunStartedAt"]?.toString() ?: return@filter false
+                    val instant = try {
+                        java.time.Instant.parse(startedAt)
+                    } catch (_: Exception) {
+                        return@filter false
+                    }
+                    val afterFrom = latestFromInstant?.let { !instant.isBefore(it) } ?: true
+                    val beforeTo = latestToInstant?.let { !instant.isAfter(it) } ?: true
+                    afterFrom && beforeTo
                 }
                 .map { entry ->
                     if (withRunSummary) entry.base + entry.summary else entry.base

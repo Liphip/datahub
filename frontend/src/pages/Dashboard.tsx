@@ -294,7 +294,7 @@ export default function Dashboard() {
                       className={`flex-1 rounded-t ${bg}`}
                       title={`${new Date(bucket.bucketStart).toLocaleString()} | total:${bucket.totalRuns} success:${bucket.successRuns} failed:${bucket.failedRuns} running:${bucket.inFlightRuns}`}
                       style={{ height: `${Math.max(8, Math.round(ratio * 100))}%` }}
-                      onClick={() => navigate(`/pipelines?health=${targetHealth}&sinceHours=${reliabilityWindow}`)}
+                      onClick={() => navigate(`/pipelines?health=${targetHealth}&sinceHours=${reliabilityWindow}&bucketStart=${encodeURIComponent(bucket.bucketStart)}&bucketSeconds=${runSummary?.bucketSeconds ?? 0}`)}
                     />
                   );
                 })}

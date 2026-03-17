@@ -82,6 +82,8 @@ This section catalogues every known gap between the current codebase and a shipp
 - Run summary API now includes trend buckets (`bucketSeconds`, `trendBuckets`) and dashboard shows a compact reliability trend sparkline.
 - Dashboard trend bars now deep-link into pipelines triage with pre-applied health/time filters.
 - Pipeline list API supports `latestSinceHours` filtering and validates allowed values (`1`, `24`, `168`).
+- Pipeline list API now supports precise latest-run time window filtering (`latestFrom`/`latestTo`) for bucket-level triage.
+- Pipelines page now understands dashboard sparkline bucket filters and shows active bucket context with clear action.
 
 ---
 

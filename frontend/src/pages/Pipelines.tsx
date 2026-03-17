@@ -41,6 +41,12 @@ export default function Pipelines() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [error, setError] = useState('');
 
+  const bucketStartParam = searchParams.get('bucketStart');
+  const bucketSecondsParam = Number(searchParams.get('bucketSeconds') || '');
+  const bucketStart = bucketStartParam ? new Date(bucketStartParam) : null;
+  const bucketSeconds = Number.isFinite(bucketSecondsParam) && bucketSecondsParam > 0 ? bucketSecondsParam : null;
+  const bucketEnd = bucketStart && bucketSeconds ? new Date(bucketStart.getTime() + bucketSeconds * 1000) : null;
+
   const tenantId = selectedTenantId || user?.tenantId;
 
   const showToast = (message: string, type: 'success' | 'error') => {
@@ -53,6 +59,8 @@ export default function Pipelines() {
       includeRunSummary: true,
       runHealth: filter,
       latestSinceHours: sinceHoursFilter ?? undefined,
+      latestFrom: bucketStart ? bucketStart.toISOString() : undefined,
+      latestTo: bucketEnd ? bucketEnd.toISOString() : undefined,
     });
     setPipelines(data);
     return data;
@@ -84,7 +92,7 @@ export default function Pipelines() {
       }
     };
     fetchAll();
-  }, [tenantId, healthFilter, sinceHoursFilter]);
+  }, [tenantId, healthFilter, sinceHoursFilter, bucketStartParam, bucketSeconds]);
 
   useEffect(() => {
     if (!tenantId || pipelines.length === 0) return;
@@ -248,6 +256,13 @@ export default function Pipelines() {
     setSearchParams(next, { replace: true });
   };
 
+  const clearBucketFilter = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('bucketStart');
+    next.delete('bucketSeconds');
+    setSearchParams(next, { replace: true });
+  };
+
   return (
     <div className="px-4 py-6 sm:px-0">
       {/* Toast */}
@@ -302,6 +317,13 @@ export default function Pipelines() {
         <div className="mb-3 text-xs text-gray-600">
           Showing pipelines with latest run in last <span className="font-medium">{sinceHoursFilter}h</span>.
           <button onClick={() => applySinceHoursFilter(null)} className="ml-2 text-primary-600 hover:text-primary-800">Clear</button>
+        </div>
+      )}
+
+      {bucketStart && bucketEnd && (
+        <div className="mb-3 text-xs text-gray-600">
+          Bucket filter active: <span className="font-medium">{bucketStart.toLocaleString()}</span> to <span className="font-medium">{bucketEnd.toLocaleString()}</span>.
+          <button onClick={clearBucketFilter} className="ml-2 text-primary-600 hover:text-primary-800">Clear bucket</button>
         </div>
       )}
 
