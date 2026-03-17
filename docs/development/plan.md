@@ -76,6 +76,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Tenants UI now loads recursive tenant trees in a single request and supports deep parent selection for nested sub-tenant creation.
 - Tenant API recursive listing now supports `query` filtering to return matching branches only.
 - Tenants UI now includes tenant-name search and expand/collapse controls for large hierarchies.
+- Dashboard now includes superadmin tenant topology insights (total/root/leaf/depth + last update) powered by recursive tenant metadata.
 
 ---
 

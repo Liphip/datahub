@@ -89,6 +89,7 @@ class TenantResourceTest {
             .statusCode(200)
             .body("find { it.id == '${rootId}' }.children.size()", equalTo(1))
             .body("find { it.id == '${rootId}' }.children[0].name", equalTo("Child A1"))
+            .body("find { it.id == '${rootId}' }.createdAt", notNullValue())
     }
 
     @Test

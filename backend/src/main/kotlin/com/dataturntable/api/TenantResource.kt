@@ -54,7 +54,9 @@ class TenantResource {
         val base = mutableMapOf<String, Any?>(
             "id" to tenant.id,
             "name" to tenant.name,
-            "parentId" to tenant.parent?.id
+            "parentId" to tenant.parent?.id,
+            "createdAt" to tenant.createdAt,
+            "updatedAt" to tenant.updatedAt
         )
         if (children != null) {
             base["children"] = children

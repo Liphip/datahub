@@ -2,7 +2,11 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Pipeline, PipelineRun, CodeModule, Connector } from '../types';
+import type { Pipeline, PipelineRun, CodeModule, Connector, Tenant } from '../types';
+
+interface TenantNode extends Tenant {
+  children?: TenantNode[];
+}
 
 export default function Dashboard() {
   const { user, selectedTenantId } = useAuthStore();
@@ -10,6 +14,7 @@ export default function Dashboard() {
   const [allRuns, setAllRuns] = useState<(PipelineRun & { pipelineName?: string })[]>([]);
   const [modules, setModules] = useState<CodeModule[]>([]);
   const [connectors, setConnectors] = useState<Connector[]>([]);
+  const [tenantTree, setTenantTree] = useState<TenantNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -44,6 +49,16 @@ export default function Dashboard() {
           .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
           .slice(0, 10);
         setAllRuns(combined);
+
+        if (user?.superadmin) {
+          try {
+            const tenants = await api.getTenantsRecursive();
+            setTenantTree(tenants as TenantNode[]);
+          } catch {
+            setTenantTree([]);
+          }
+        }
+
         setError('');
       } catch {
         setError('Failed to load dashboard data');
@@ -52,7 +67,7 @@ export default function Dashboard() {
       }
     };
     fetchData();
-  }, [tenantId]);
+  }, [tenantId, user?.superadmin]);
 
   const activePipelines = pipelines.filter((p) => p.isActive).length;
   const failedRuns = allRuns.filter((r) => r.status === 'FAILED').length;
@@ -84,6 +99,26 @@ export default function Dashboard() {
     { label: 'Recent Successes', value: successRuns, color: 'text-green-600' },
     { label: 'Recent Failures', value: failedRuns, color: failedRuns > 0 ? 'text-red-600' : 'text-gray-500' },
   ];
+
+  const flattenTenants = (nodes: TenantNode[]): TenantNode[] =>
+    nodes.flatMap((node) => [node, ...flattenTenants((node.children || []) as TenantNode[])]);
+
+  const maxTenantDepth = (nodes: TenantNode[], depth = 1): number => {
+    if (nodes.length === 0) return depth - 1;
+    return Math.max(
+      ...nodes.map((node) => {
+        const children = (node.children || []) as TenantNode[];
+        return children.length > 0 ? maxTenantDepth(children, depth + 1) : depth;
+      })
+    );
+  };
+
+  const allTenants = flattenTenants(tenantTree);
+  const leafTenants = allTenants.filter((t) => !t.children || t.children.length === 0).length;
+  const latestTenantUpdate = allTenants
+    .map((t) => t.updatedAt)
+    .filter((d): d is string => Boolean(d))
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
 
   return (
     <div className="px-4 py-6 sm:px-0">
@@ -197,6 +232,34 @@ export default function Dashboard() {
               <Link to="/connectors" className="btn-secondary block text-center text-sm">Add Connector</Link>
             </div>
           </div>
+
+          {user?.superadmin && (
+            <div className="card">
+              <h2 className="text-base font-semibold mb-3">Tenant Topology</h2>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p className="text-gray-500">Total</p>
+                  <p className="font-semibold text-gray-900">{loading ? '–' : allTenants.length}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Roots</p>
+                  <p className="font-semibold text-gray-900">{loading ? '–' : tenantTree.length}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Leaf Tenants</p>
+                  <p className="font-semibold text-gray-900">{loading ? '–' : leafTenants}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Max Depth</p>
+                  <p className="font-semibold text-gray-900">{loading ? '–' : maxTenantDepth(tenantTree)}</p>
+                </div>
+              </div>
+              <p className="mt-3 text-xs text-gray-500">
+                Last tenant update: {latestTenantUpdate ? new Date(latestTenantUpdate).toLocaleString() : 'n/a'}
+              </p>
+              <Link to="/tenants" className="btn-secondary block text-center text-sm mt-3">Open Tenant Tree</Link>
+            </div>
+          )}
 
           {/* Active pipelines quick-list */}
           {!loading && pipelines.length > 0 && (
