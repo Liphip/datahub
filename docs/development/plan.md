@@ -93,6 +93,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Bucket drilldown freshness age now updates live every second (while visible) for real-time staleness feedback.
 - Tenant runs API now supports `runStatus` filtering (with validation), and bucket drilldown adds status + pipeline-name filters.
 - Bucket drilldown now shows active triage filter pills (status/query/sort) with one-click clear actions.
+- Added keyboard shortcuts for bucket triage (`/` focus query, `f` failed, `r` running, `a` all statuses).
 
 ---
 

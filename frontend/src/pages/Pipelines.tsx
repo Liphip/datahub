@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
@@ -53,6 +53,7 @@ export default function Pipelines() {
   const [bucketSortMode, setBucketSortMode] = useState<BucketSortMode>(initialBucketSort);
   const [bucketStatusFilter, setBucketStatusFilter] = useState<BucketRunStatusFilter>(initialBucketStatus);
   const [bucketPipelineQuery, setBucketPipelineQuery] = useState(searchParams.get('bucketQ') || '');
+  const bucketQueryInputRef = useRef<HTMLInputElement | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [error, setError] = useState('');
   const [bucketRuns, setBucketRuns] = useState<TenantPipelineRun[]>([]);
@@ -165,6 +166,38 @@ export default function Pipelines() {
 
     return () => window.clearInterval(intervalId);
   }, [bucketStartParam, bucketSeconds, bucketLastRefreshedAt]);
+
+  useEffect(() => {
+    if (!bucketStart || !bucketEnd) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName?.toLowerCase();
+      const isTypingTarget = tagName === 'input' || tagName === 'textarea' || (target?.isContentEditable ?? false);
+
+      if (event.key === '/' && !isTypingTarget) {
+        event.preventDefault();
+        bucketQueryInputRef.current?.focus();
+        return;
+      }
+
+      if (isTypingTarget) return;
+
+      if (event.key.toLowerCase() === 'f') {
+        event.preventDefault();
+        applyBucketStatusFilter('FAILED');
+      } else if (event.key.toLowerCase() === 'r') {
+        event.preventDefault();
+        applyBucketStatusFilter('RUNNING');
+      } else if (event.key.toLowerCase() === 'a') {
+        event.preventDefault();
+        applyBucketStatusFilter('ALL');
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [bucketStartParam, bucketSeconds, searchParams.toString()]);
 
   useEffect(() => {
     if (!tenantId || pipelines.length === 0) return;
@@ -580,6 +613,7 @@ export default function Pipelines() {
                 All statuses
               </button>
               <input
+                ref={bucketQueryInputRef}
                 value={bucketPipelineQuery}
                 onChange={(e) => applyBucketPipelineQuery(e.target.value)}
                 placeholder="Filter pipeline name"
