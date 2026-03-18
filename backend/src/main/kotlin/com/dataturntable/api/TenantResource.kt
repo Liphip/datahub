@@ -32,7 +32,9 @@ class TenantResource {
             val get304Events: ConcurrentLinkedQueue<Long> = ConcurrentLinkedQueue(),
             val patchSuccessEvents: ConcurrentLinkedQueue<Long> = ConcurrentLinkedQueue(),
             val patchConflictEvents: ConcurrentLinkedQueue<Long> = ConcurrentLinkedQueue(),
-            val lastUpdatedEpochMs: AtomicLong = AtomicLong(0)
+            val lastUpdatedEpochMs: AtomicLong = AtomicLong(0),
+            val resetCount: AtomicLong = AtomicLong(0),
+            val lastResetEpochMs: AtomicLong = AtomicLong(0)
         )
 
         private val lineageDefaultsDiagnosticsByTenant = ConcurrentHashMap<UUID, LineageDefaultsDiagnostics>()
@@ -315,6 +317,22 @@ class TenantResource {
         diagnostics.lastUpdatedEpochMs.set(now)
     }
 
+    private fun resetLineageDefaultsDiagnostics(tenantId: UUID) {
+        val diagnostics = lineageDefaultsDiagnostics(tenantId)
+        val now = System.currentTimeMillis()
+        diagnostics.get200Count.set(0)
+        diagnostics.get304Count.set(0)
+        diagnostics.patchSuccessCount.set(0)
+        diagnostics.patchConflictCount.set(0)
+        diagnostics.get200Events.clear()
+        diagnostics.get304Events.clear()
+        diagnostics.patchSuccessEvents.clear()
+        diagnostics.patchConflictEvents.clear()
+        diagnostics.resetCount.incrementAndGet()
+        diagnostics.lastResetEpochMs.set(now)
+        diagnostics.lastUpdatedEpochMs.set(now)
+    }
+
     private fun lineageDefaultsDiagnosticsSnapshot(tenant: Tenant): Map<String, Any?> {
         val tenantId = tenant.id ?: return mapOf("error" to "Tenant not found")
         val diagnostics = lineageDefaultsDiagnostics(tenantId)
@@ -329,6 +347,8 @@ class TenantResource {
         val readNotModifiedRate = if (readTotal > 0) get304.toDouble() / readTotal.toDouble() else 0.0
         val patchConflictRate = if (patchTotal > 0) patchConflict.toDouble() / patchTotal.toDouble() else 0.0
         val lastUpdated = diagnostics.lastUpdatedEpochMs.get().takeIf { it > 0 }?.let { java.time.Instant.ofEpochMilli(it).toString() }
+        val resetCount = diagnostics.resetCount.get()
+        val lastResetAt = diagnostics.lastResetEpochMs.get().takeIf { it > 0 }?.let { java.time.Instant.ofEpochMilli(it).toString() }
 
         fun countSince(queue: ConcurrentLinkedQueue<Long>, sinceEpochMs: Long): Long {
             return queue.count { it >= sinceEpochMs }.toLong()
@@ -441,6 +461,8 @@ class TenantResource {
             "readTotalCount" to readTotal,
             "readNotModifiedRate" to readNotModifiedRate,
             "patchConflictRate" to patchConflictRate,
+            "resetCount" to resetCount,
+            "lastResetAt" to lastResetAt,
             "lastUpdatedAt" to lastUpdated,
             "windows" to mapOf(
                 "h1" to toWindowMap(h1Snapshot),
@@ -731,6 +753,28 @@ class TenantResource {
 
         val tenant = em.find(Tenant::class.java, tenantId)
             ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+        return Response.ok(lineageDefaultsDiagnosticsSnapshot(tenant)).build()
+    }
+
+    @POST
+    @Path("/{id}/lineage-defaults/diagnostics/reset")
+    fun resetTenantLineageDefaultsDiagnostics(@PathParam("id") id: String): Response {
+        val (currentUser, denial) = requireTenantManager()
+        denial?.let { return it }
+        val user = currentUser ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+
+        val tenantId = try {
+            parseUuid(id, "tenant id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        if (!canManageTenant(user, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        val tenant = em.find(Tenant::class.java, tenantId)
+            ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+        resetLineageDefaultsDiagnostics(tenantId)
         return Response.ok(lineageDefaultsDiagnosticsSnapshot(tenant)).build()
     }
 

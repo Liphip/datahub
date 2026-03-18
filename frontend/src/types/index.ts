@@ -88,6 +88,8 @@ export interface TenantLineageDefaultsDiagnostics {
   readTotalCount: number;
   readNotModifiedRate: number;
   patchConflictRate: number;
+  resetCount?: number;
+  lastResetAt?: string;
   lastUpdatedAt?: string;
   windows?: {
     h1: {

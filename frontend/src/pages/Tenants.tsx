@@ -64,6 +64,7 @@ export default function Tenants() {
   const [lineageDefaultsStaleLatest, setLineageDefaultsStaleLatest] = useState<TenantLineageDefaults | null>(null);
   const [lineageDefaultsDiagnostics, setLineageDefaultsDiagnostics] = useState<TenantLineageDefaultsDiagnostics | null>(null);
   const [loadingLineageDefaultsDiagnostics, setLoadingLineageDefaultsDiagnostics] = useState(false);
+  const [resettingLineageDefaultsDiagnostics, setResettingLineageDefaultsDiagnostics] = useState(false);
   const [lineageDiagnosticsPolicy, setLineageDiagnosticsPolicy] = useState<TenantLineageDiagnosticsPolicy>(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
   const [lineageDiagnosticsPolicyBase, setLineageDiagnosticsPolicyBase] = useState<TenantLineageDiagnosticsPolicy>(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
   const [loadingLineageDiagnosticsPolicy, setLoadingLineageDiagnosticsPolicy] = useState(false);
@@ -216,6 +217,8 @@ export default function Tenants() {
       backendRead304: lineageDefaultsDiagnostics?.get304Count,
       backendPatchSuccess: lineageDefaultsDiagnostics?.patchSuccessCount,
       backendPatchConflict: lineageDefaultsDiagnostics?.patchConflictCount,
+      backendResetCount: lineageDefaultsDiagnostics?.resetCount,
+      backendLastResetAt: lineageDefaultsDiagnostics?.lastResetAt,
       backendWindow1h: lineageDefaultsDiagnostics?.windows?.h1,
       backendWindow24h: lineageDefaultsDiagnostics?.windows?.h24,
       backendAdvisory: lineageDefaultsDiagnostics?.advisory,
@@ -240,6 +243,20 @@ export default function Tenants() {
       setLineageDefaultsDiagnostics(null);
     } finally {
       setLoadingLineageDefaultsDiagnostics(false);
+    }
+  };
+
+  const resetLineageDefaultsDiagnosticsNow = async () => {
+    if (!lineageDefaultsTenantId || resettingLineageDefaultsDiagnostics) return;
+    setResettingLineageDefaultsDiagnostics(true);
+    try {
+      const diagnostics = await api.resetTenantLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+      setLineageDefaultsDiagnostics(diagnostics);
+      showToast('Lineage diagnostics reset for tenant', 'success');
+    } catch {
+      showToast('Failed to reset lineage diagnostics', 'error');
+    } finally {
+      setResettingLineageDefaultsDiagnostics(false);
     }
   };
 
@@ -972,6 +989,14 @@ export default function Tenants() {
                   <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
                     Conflicts: {lineageDefaultsDiagnostics.patchConflictCount}/{lineageDefaultsDiagnostics.patchSuccessCount + lineageDefaultsDiagnostics.patchConflictCount}
                   </span>
+                  <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
+                    Resets: {lineageDefaultsDiagnostics.resetCount ?? 0}
+                  </span>
+                  {lineageDefaultsDiagnostics.lastResetAt && (
+                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
+                      Last reset: {new Date(lineageDefaultsDiagnostics.lastResetAt).toLocaleString()}
+                    </span>
+                  )}
                   {lineageDefaultsDiagnostics.windows?.h1 && (
                     <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
                       1h: 200/304 {lineageDefaultsDiagnostics.windows.h1.get200Count}/{lineageDefaultsDiagnostics.windows.h1.get304Count} · conf {(lineageDefaultsDiagnostics.windows.h1.patchConflictRate * 100).toFixed(0)}%
@@ -998,6 +1023,13 @@ export default function Tenants() {
                     onClick={() => lineageDefaultsTenantId && void refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId)}
                   >
                     {loadingLineageDefaultsDiagnostics ? 'Refreshing metrics...' : 'Refresh metrics'}
+                  </button>
+                  <button
+                    className="text-indigo-700 hover:text-indigo-900"
+                    disabled={resettingLineageDefaultsDiagnostics || !lineageDefaultsTenantId}
+                    onClick={() => { void resetLineageDefaultsDiagnosticsNow(); }}
+                  >
+                    {resettingLineageDefaultsDiagnostics ? 'Resetting metrics...' : 'Reset metrics'}
                   </button>
                 </>
               )}

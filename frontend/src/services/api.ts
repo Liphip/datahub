@@ -177,6 +177,11 @@ class ApiService {
     return response.data;
   }
 
+  async resetTenantLineageDefaultsDiagnostics(tenantId: string): Promise<TenantLineageDefaultsDiagnostics> {
+    const response = await this.client.post<TenantLineageDefaultsDiagnostics>(`/tenants/${tenantId}/lineage-defaults/diagnostics/reset`);
+    return response.data;
+  }
+
   async getTenantLineageDefaultsDiagnosticsPolicy(tenantId: string): Promise<TenantLineageDiagnosticsPolicy> {
     const response = await this.client.get<TenantLineageDiagnosticsPolicy>(`/tenants/${tenantId}/lineage-defaults/diagnostics-policy`);
     return response.data;

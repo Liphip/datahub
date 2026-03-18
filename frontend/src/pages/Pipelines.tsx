@@ -91,6 +91,7 @@ export default function Pipelines() {
   const [tenantDefaultsStaleLatest, setTenantDefaultsStaleLatest] = useState<TenantLineageDefaults | null>(null);
   const [tenantDefaultsDiagnostics, setTenantDefaultsDiagnostics] = useState<TenantLineageDefaultsDiagnostics | null>(null);
   const [loadingTenantDefaultsDiagnostics, setLoadingTenantDefaultsDiagnostics] = useState(false);
+  const [resettingTenantDefaultsDiagnostics, setResettingTenantDefaultsDiagnostics] = useState(false);
   const [tenantDefaultsPollStatus, setTenantDefaultsPollStatus] = useState<TenantDefaultsPollStatus>('IDLE');
   const [tenantDefaultsPollCheckedAt, setTenantDefaultsPollCheckedAt] = useState<string | null>(null);
   const [tenantDefaultsPollIntervalMs, setTenantDefaultsPollIntervalMs] = useState(30000);
@@ -270,6 +271,20 @@ export default function Pipelines() {
     }
   };
 
+  const resetTenantDefaultsDiagnostics = async (tid: string) => {
+    if (resettingTenantDefaultsDiagnostics) return;
+    setResettingTenantDefaultsDiagnostics(true);
+    try {
+      const diagnostics = await api.resetTenantLineageDefaultsDiagnostics(tid);
+      setTenantDefaultsDiagnostics(diagnostics);
+      showToast('Tenant diagnostics reset', 'success');
+    } catch {
+      showToast('Failed to reset tenant diagnostics', 'error');
+    } finally {
+      setResettingTenantDefaultsDiagnostics(false);
+    }
+  };
+
   const copyTenantDefaultsDiagnostics = async (pipelineId: string, runId: string) => {
     if (!tenantId) return;
     const telemetry = tenantDefaultsConflictTelemetry[tenantId];
@@ -292,6 +307,8 @@ export default function Pipelines() {
       backendRead304: tenantDefaultsDiagnostics?.get304Count,
       backendPatchSuccess: tenantDefaultsDiagnostics?.patchSuccessCount,
       backendPatchConflict: tenantDefaultsDiagnostics?.patchConflictCount,
+      backendResetCount: tenantDefaultsDiagnostics?.resetCount,
+      backendLastResetAt: tenantDefaultsDiagnostics?.lastResetAt,
       backendWindow1h: tenantDefaultsDiagnostics?.windows?.h1,
       backendWindow24h: tenantDefaultsDiagnostics?.windows?.h24,
       backendAdvisory: tenantDefaultsDiagnostics?.advisory,
@@ -3075,6 +3092,14 @@ export default function Pipelines() {
                                         <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
                                           Conflicts: {tenantDefaultsDiagnostics.patchConflictCount}/{tenantDefaultsDiagnostics.patchSuccessCount + tenantDefaultsDiagnostics.patchConflictCount}
                                         </span>
+                                        <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                          Resets: {tenantDefaultsDiagnostics.resetCount ?? 0}
+                                        </span>
+                                        {tenantDefaultsDiagnostics.lastResetAt && (
+                                          <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                            Last reset: {new Date(tenantDefaultsDiagnostics.lastResetAt).toLocaleString()}
+                                          </span>
+                                        )}
                                         {tenantDefaultsDiagnostics.windows?.h1 && (
                                           <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
                                             1h: 200/304 {tenantDefaultsDiagnostics.windows.h1.get200Count}/{tenantDefaultsDiagnostics.windows.h1.get304Count} · conf {(tenantDefaultsDiagnostics.windows.h1.patchConflictRate * 100).toFixed(0)}%
@@ -3112,6 +3137,17 @@ export default function Pipelines() {
                                       }}
                                     >
                                       {loadingTenantDefaultsDiagnostics ? 'Refreshing metrics...' : 'Refresh metrics'}
+                                    </button>
+                                    <button
+                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      disabled={resettingTenantDefaultsDiagnostics || !tenantId}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        if (!tenantId) return;
+                                        void resetTenantDefaultsDiagnostics(tenantId);
+                                      }}
+                                    >
+                                      {resettingTenantDefaultsDiagnostics ? 'Resetting metrics...' : 'Reset metrics'}
                                     </button>
                                     {canManageTenantSettings && (
                                       <button
