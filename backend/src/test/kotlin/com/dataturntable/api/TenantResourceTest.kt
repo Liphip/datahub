@@ -452,6 +452,8 @@ class TenantResourceTest {
             .get("/api/internal/v1/tenants/$rootId/lineage-defaults/diagnostics-policy")
         .then()
             .statusCode(200)
+            .body("version", notNullValue())
+            .body("history.size()", equalTo(0))
             .body("conflictWatchRate", equalTo(0.35f))
             .body("conflictHotRate", equalTo(0.5f))
             .body("conflictTrendDelta", equalTo(0.15f))
@@ -543,10 +545,22 @@ class TenantResourceTest {
             .statusCode(400)
             .body("error", containsString("conflictHotRate"))
 
+        val policyVersion = given()
+            .header("Authorization", "Bearer $managerToken")
+        .`when`()
+            .get("/api/internal/v1/tenants/$rootId/lineage-defaults/diagnostics-policy")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("version")
+
         given()
             .header("Authorization", "Bearer $managerToken")
             .contentType(ContentType.JSON)
             .body(mapOf(
+                "ifVersion" to policyVersion,
                 "conflictHotRate" to 0.4,
                 "minPatchSamplesForHot" to 1,
                 "pollOverfetchMinReads" to 10
@@ -555,10 +569,25 @@ class TenantResourceTest {
             .patch("/api/internal/v1/tenants/$rootId/lineage-defaults/diagnostics-policy")
         .then()
             .statusCode(200)
+            .body("version", notNullValue())
+            .body("history.size()", equalTo(1))
+            .body("history[0].changedByEmail", equalTo("tenant-admin@example.com"))
+            .body("history[0].changedFields", hasItems("conflictHotRate", "minPatchSamplesForHot", "pollOverfetchMinReads"))
             .body("conflictWatchRate", equalTo(0.35f))
             .body("conflictHotRate", equalTo(0.4f))
             .body("minPatchSamplesForHot", equalTo(1))
             .body("pollOverfetchMinReads", equalTo(10))
+
+        given()
+            .header("Authorization", "Bearer $managerToken")
+            .contentType(ContentType.JSON)
+            .body(mapOf("ifVersion" to policyVersion, "conflictTrendDelta" to 0.4))
+        .`when`()
+            .patch("/api/internal/v1/tenants/$rootId/lineage-defaults/diagnostics-policy")
+        .then()
+            .statusCode(409)
+            .body("error", containsString("updated by another user"))
+            .body("currentVersion", notNullValue())
 
         given()
             .header("Authorization", "Bearer $managerToken")

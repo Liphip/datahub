@@ -119,12 +119,22 @@ export interface TenantLineageDefaultsDiagnostics {
 }
 
 export interface TenantLineageDiagnosticsPolicy {
+  version?: string;
   conflictWatchRate: number;
   conflictHotRate: number;
   conflictTrendDelta: number;
   minPatchSamplesForHot: number;
   pollOverfetchMinReads: number;
   pollOverfetchRate: number;
+  history?: TenantLineageDiagnosticsPolicyHistoryEntry[];
+}
+
+export interface TenantLineageDiagnosticsPolicyHistoryEntry {
+  changedAt: string;
+  changedByUserId?: string;
+  changedByEmail?: string;
+  changedFields?: string[];
+  policy: Omit<TenantLineageDiagnosticsPolicy, 'version' | 'history'>;
 }
 
 export interface ModuleVersion {

@@ -141,6 +141,46 @@ class TenantResource {
         return normalizeLineageDiagnosticsPolicy(policyRaw)
     }
 
+    private fun extractLineageDiagnosticsPolicyHistory(settingsRaw: String?): List<Map<String, Any?>> {
+        val settings = parseSettings(settingsRaw)
+        @Suppress("UNCHECKED_CAST")
+        val historyRaw = settings["lineageDiagnosticsPolicyHistory"] as? List<Map<String, Any?>> ?: return emptyList()
+        return historyRaw.mapNotNull { entry ->
+            @Suppress("UNCHECKED_CAST")
+            val policyRaw = entry["policy"] as? Map<String, Any?>
+            val changedAt = entry["changedAt"] as? String
+            if (changedAt.isNullOrBlank() || policyRaw == null) return@mapNotNull null
+            mapOf(
+                "changedAt" to changedAt,
+                "changedByUserId" to (entry["changedByUserId"] as? String),
+                "changedByEmail" to (entry["changedByEmail"] as? String),
+                "changedFields" to ((entry["changedFields"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList<String>()),
+                "policy" to normalizeLineageDiagnosticsPolicy(policyRaw)
+            )
+        }
+    }
+
+    private fun lineageDiagnosticsPolicyChangedFields(previous: Map<String, Any>, next: Map<String, Any>): List<String> {
+        val fields = listOf(
+            "conflictWatchRate",
+            "conflictHotRate",
+            "conflictTrendDelta",
+            "minPatchSamplesForHot",
+            "pollOverfetchMinReads",
+            "pollOverfetchRate"
+        )
+        return fields.filter { key -> previous[key] != next[key] }
+    }
+
+    private fun buildLineageDiagnosticsPolicyResponse(settingsRaw: String?, version: String?): Map<String, Any?> {
+        val policy = extractLineageDiagnosticsPolicy(settingsRaw)
+        val history = extractLineageDiagnosticsPolicyHistory(settingsRaw)
+        return policy + mapOf(
+            "version" to version,
+            "history" to history
+        )
+    }
+
     private fun parseDiagnosticsPolicyPatch(request: Map<String, Any>): Map<String, Any> {
         val patch = mutableMapOf<String, Any>()
 
@@ -712,7 +752,7 @@ class TenantResource {
 
         val tenant = em.find(Tenant::class.java, tenantId)
             ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
-        return Response.ok(extractLineageDiagnosticsPolicy(tenant.settings)).build()
+        return Response.ok(buildLineageDiagnosticsPolicyResponse(tenant.settings, tenant.updatedAt.toString())).build()
     }
 
     @PATCH
@@ -735,6 +775,17 @@ class TenantResource {
         val tenant = em.find(Tenant::class.java, tenantId)
             ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
 
+        val ifVersion = request["ifVersion"] as? String
+        val currentVersion = tenant.updatedAt.toString()
+        if (!ifVersion.isNullOrBlank() && ifVersion != currentVersion) {
+            return Response.status(409)
+                .entity(mapOf(
+                    "error" to "Lineage diagnostics policy was updated by another user. Refresh and retry.",
+                    "currentVersion" to currentVersion
+                ))
+                .build()
+        }
+
         val policyPatch = try {
             parseDiagnosticsPolicyPatch(request)
         } catch (e: WebApplicationException) {
@@ -742,14 +793,31 @@ class TenantResource {
         }
 
         val settings = parseSettings(tenant.settings)
-        val existingPolicy = extractLineageDiagnosticsPolicy(tenant.settings).toMutableMap()
-        policyPatch.forEach { (key, value) -> existingPolicy[key] = value }
-        settings["lineageDiagnosticsPolicy"] = normalizeLineageDiagnosticsPolicy(existingPolicy)
+        val existingPolicy = extractLineageDiagnosticsPolicy(tenant.settings)
+        val mergedPolicy = existingPolicy.toMutableMap()
+        policyPatch.forEach { (key, value) -> mergedPolicy[key] = value }
+        val normalizedPolicy = normalizeLineageDiagnosticsPolicy(mergedPolicy)
+        val changedFields = lineageDiagnosticsPolicyChangedFields(existingPolicy, normalizedPolicy)
+        val currentHistory = extractLineageDiagnosticsPolicyHistory(tenant.settings).toMutableList()
+        if (changedFields.isNotEmpty()) {
+            currentHistory.add(
+                mapOf(
+                    "changedAt" to java.time.Instant.now().toString(),
+                    "changedByUserId" to user.id?.toString(),
+                    "changedByEmail" to user.email,
+                    "changedFields" to changedFields,
+                    "policy" to normalizedPolicy
+                )
+            )
+        }
+        settings["lineageDiagnosticsPolicy"] = normalizedPolicy
+        settings["lineageDiagnosticsPolicyHistory"] = currentHistory.takeLast(20)
         tenant.settings = objectMapper.writeValueAsString(settings)
         tenant.updatedAt = java.time.Instant.now()
         em.merge(tenant)
 
-        return Response.ok(extractLineageDiagnosticsPolicy(tenant.settings)).build()
+        val updatedVersion = tenant.updatedAt.toString()
+        return Response.ok(buildLineageDiagnosticsPolicyResponse(tenant.settings, updatedVersion)).build()
     }
 
     @PATCH

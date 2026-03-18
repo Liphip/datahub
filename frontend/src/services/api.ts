@@ -184,9 +184,11 @@ class ApiService {
 
   async updateTenantLineageDefaultsDiagnosticsPolicy(
     tenantId: string,
-    data: Partial<TenantLineageDiagnosticsPolicy>
+    data: Partial<TenantLineageDiagnosticsPolicy>,
+    ifVersion?: string
   ): Promise<TenantLineageDiagnosticsPolicy> {
-    const response = await this.client.patch<TenantLineageDiagnosticsPolicy>(`/tenants/${tenantId}/lineage-defaults/diagnostics-policy`, data);
+    const payload = ifVersion ? { ...data, ifVersion } : data;
+    const response = await this.client.patch<TenantLineageDiagnosticsPolicy>(`/tenants/${tenantId}/lineage-defaults/diagnostics-policy`, payload);
     return response.data;
   }
 

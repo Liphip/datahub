@@ -65,6 +65,7 @@ export default function Tenants() {
   const [lineageDefaultsDiagnostics, setLineageDefaultsDiagnostics] = useState<TenantLineageDefaultsDiagnostics | null>(null);
   const [loadingLineageDefaultsDiagnostics, setLoadingLineageDefaultsDiagnostics] = useState(false);
   const [lineageDiagnosticsPolicy, setLineageDiagnosticsPolicy] = useState<TenantLineageDiagnosticsPolicy>(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+  const [lineageDiagnosticsPolicyBase, setLineageDiagnosticsPolicyBase] = useState<TenantLineageDiagnosticsPolicy>(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
   const [loadingLineageDiagnosticsPolicy, setLoadingLineageDiagnosticsPolicy] = useState(false);
   const [savingLineageDiagnosticsPolicy, setSavingLineageDiagnosticsPolicy] = useState(false);
   const [lineagePollStatus, setLineagePollStatus] = useState<LineagePollStatus>('IDLE');
@@ -103,6 +104,26 @@ export default function Tenants() {
     && a.defaultFetchMode === b.defaultFetchMode
     && a.defaultDepth === b.defaultDepth
     && a.maxDepthCap === b.maxDepthCap;
+
+  const toLineageDiagnosticsPolicyConfig = (policy: TenantLineageDiagnosticsPolicy) => ({
+    conflictWatchRate: policy.conflictWatchRate,
+    conflictHotRate: policy.conflictHotRate,
+    conflictTrendDelta: policy.conflictTrendDelta,
+    minPatchSamplesForHot: policy.minPatchSamplesForHot,
+    pollOverfetchMinReads: policy.pollOverfetchMinReads,
+    pollOverfetchRate: policy.pollOverfetchRate,
+  });
+
+  const isSameLineageDiagnosticsPolicy = (a: TenantLineageDiagnosticsPolicy, b: TenantLineageDiagnosticsPolicy) => {
+    const left = toLineageDiagnosticsPolicyConfig(a);
+    const right = toLineageDiagnosticsPolicyConfig(b);
+    return left.conflictWatchRate === right.conflictWatchRate
+      && left.conflictHotRate === right.conflictHotRate
+      && left.conflictTrendDelta === right.conflictTrendDelta
+      && left.minPatchSamplesForHot === right.minPatchSamplesForHot
+      && left.pollOverfetchMinReads === right.pollOverfetchMinReads
+      && left.pollOverfetchRate === right.pollOverfetchRate;
+  };
 
   const buildConflictState = (pending: TenantLineageDefaultsConfig, latest: TenantLineageDefaults): LineageDefaultsConflictState => {
     const mergeChoice = LINEAGE_DEFAULT_FIELDS.reduce((acc, field) => {
@@ -227,8 +248,10 @@ export default function Tenants() {
     try {
       const policy = await api.getTenantLineageDefaultsDiagnosticsPolicy(tid);
       setLineageDiagnosticsPolicy(policy);
+      setLineageDiagnosticsPolicyBase(policy);
     } catch {
       setLineageDiagnosticsPolicy(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+      setLineageDiagnosticsPolicyBase(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
     } finally {
       setLoadingLineageDiagnosticsPolicy(false);
     }
@@ -285,11 +308,12 @@ export default function Tenants() {
 
   useEffect(() => {
     const loadLineageDefaults = async () => {
-        if (!lineageDefaultsTenantId) {
-          setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
-          setLineageDefaultsDiagnostics(null);
-          setLineageDiagnosticsPolicy(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
-          setLineagePollStatus('IDLE');
+      if (!lineageDefaultsTenantId) {
+        setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+        setLineageDefaultsDiagnostics(null);
+        setLineageDiagnosticsPolicy(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+        setLineageDiagnosticsPolicyBase(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+        setLineagePollStatus('IDLE');
         setLineagePollCheckedAt(null);
         setLineagePollIntervalMs(30000);
         setLineagePollOfflineFailures(0);
@@ -297,16 +321,16 @@ export default function Tenants() {
         return;
       }
       setLoadingLineageDefaults(true);
-        try {
-          const response = await api.getTenantLineageDefaultsIfChanged(lineageDefaultsTenantId);
+      try {
+        const response = await api.getTenantLineageDefaultsIfChanged(lineageDefaultsTenantId);
         if (!response.notModified && response.data) {
           setLineageDefaults(response.data);
           setLineageDefaultsBase(toLineageDefaultsConfig(response.data));
           setLineageDefaultsEtag(response.etag);
         }
-          await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
-          await refreshLineageDiagnosticsPolicy(lineageDefaultsTenantId);
-          setLineagePollStatus('FRESH');
+        await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+        await refreshLineageDiagnosticsPolicy(lineageDefaultsTenantId);
+        setLineagePollStatus('FRESH');
         setLineagePollCheckedAt(new Date().toISOString());
         setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
         setLineagePollOfflineFailures(0);
@@ -315,10 +339,11 @@ export default function Tenants() {
       } catch {
         setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
         setLineageDefaultsBase(DEFAULT_TENANT_LINEAGE_DEFAULTS);
-          setLineageDefaultsEtag(undefined);
-          setLineageDefaultsDiagnostics(null);
-          setLineageDiagnosticsPolicy(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
-          setLineagePollStatus('OFFLINE');
+        setLineageDefaultsEtag(undefined);
+        setLineageDefaultsDiagnostics(null);
+        setLineageDiagnosticsPolicy(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+        setLineageDiagnosticsPolicyBase(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+        setLineagePollStatus('OFFLINE');
         setLineagePollCheckedAt(new Date().toISOString());
         setLineagePollIntervalMs(30000);
         setLineagePollOfflineFailures(1);
@@ -341,6 +366,7 @@ export default function Tenants() {
     setLineageDefaultsEtag(undefined);
     setLineageDefaultsDiagnostics(null);
     setLineageDiagnosticsPolicy(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+    setLineageDiagnosticsPolicyBase(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
     setLineagePollStatus('IDLE');
     setLineagePollCheckedAt(null);
     setLineagePollIntervalMs(30000);
@@ -349,6 +375,7 @@ export default function Tenants() {
   }, [lineageDefaultsTenantId]);
 
   const isLineageDefaultsDirty = !isSameLineageConfig(toLineageDefaultsConfig(lineageDefaults), lineageDefaultsBase);
+  const isLineageDiagnosticsPolicyDirty = !isSameLineageDiagnosticsPolicy(lineageDiagnosticsPolicy, lineageDiagnosticsPolicyBase);
 
   useEffect(() => {
     if (!lineageDefaultsTenantId || !isLineageDefaultsDirty || savingLineageDefaults) return;
@@ -498,7 +525,7 @@ export default function Tenants() {
     if (!lineageDefaultsTenantId) return;
     setSavingLineageDiagnosticsPolicy(true);
     try {
-      const normalized: TenantLineageDiagnosticsPolicy = {
+      const normalized: Omit<TenantLineageDiagnosticsPolicy, 'version' | 'history'> = {
         conflictWatchRate: Math.min(1, Math.max(0, Number(lineageDiagnosticsPolicy.conflictWatchRate) || 0)),
         conflictHotRate: Math.min(1, Math.max(0, Number(lineageDiagnosticsPolicy.conflictHotRate) || 0)),
         conflictTrendDelta: Math.min(1, Math.max(0, Number(lineageDiagnosticsPolicy.conflictTrendDelta) || 0)),
@@ -509,19 +536,55 @@ export default function Tenants() {
       if (normalized.conflictHotRate < normalized.conflictWatchRate) {
         normalized.conflictHotRate = normalized.conflictWatchRate;
       }
-      const updated = await api.updateTenantLineageDefaultsDiagnosticsPolicy(lineageDefaultsTenantId, normalized);
+      const updated = await api.updateTenantLineageDefaultsDiagnosticsPolicy(lineageDefaultsTenantId, normalized, lineageDiagnosticsPolicy.version);
       setLineageDiagnosticsPolicy(updated);
+      setLineageDiagnosticsPolicyBase(updated);
       await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
       showToast('Diagnostics advisory policy saved', 'success');
-    } catch {
-      showToast('Failed to save diagnostics advisory policy', 'error');
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        showToast('Diagnostics policy changed by another user. Refreshed latest values.', 'error');
+        try {
+          const latest = await api.getTenantLineageDefaultsDiagnosticsPolicy(lineageDefaultsTenantId);
+          setLineageDiagnosticsPolicy(latest);
+          setLineageDiagnosticsPolicyBase(latest);
+          await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+        } catch {
+          // ignore secondary refresh errors
+        }
+      } else {
+        showToast('Failed to save diagnostics advisory policy', 'error');
+      }
     } finally {
       setSavingLineageDiagnosticsPolicy(false);
     }
   };
 
   const resetLineageDiagnosticsPolicyToDefaults = () => {
-    setLineageDiagnosticsPolicy(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+    setLineageDiagnosticsPolicy((prev) => ({
+      ...prev,
+      ...DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY,
+    }));
+  };
+
+  const restoreAndSaveLineageDiagnosticsPolicy = async (policy: Omit<TenantLineageDiagnosticsPolicy, 'version' | 'history'>) => {
+    if (!lineageDefaultsTenantId) return;
+    setSavingLineageDiagnosticsPolicy(true);
+    try {
+      const updated = await api.updateTenantLineageDefaultsDiagnosticsPolicy(
+        lineageDefaultsTenantId,
+        policy,
+        lineageDiagnosticsPolicy.version
+      );
+      setLineageDiagnosticsPolicy(updated);
+      setLineageDiagnosticsPolicyBase(updated);
+      await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+      showToast('Diagnostics policy restored from history', 'success');
+    } catch {
+      showToast('Failed to restore diagnostics policy from history', 'error');
+    } finally {
+      setSavingLineageDiagnosticsPolicy(false);
+    }
   };
 
   const handleCreateTenant = async (e: React.FormEvent) => {
@@ -1051,6 +1114,11 @@ export default function Tenants() {
               </label>
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
+              {isLineageDiagnosticsPolicyDirty && (
+                <span className="px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900 text-xs">
+                  Unsaved policy changes
+                </span>
+              )}
               <button
                 className="btn-secondary"
                 disabled={savingLineageDiagnosticsPolicy || loadingLineageDiagnosticsPolicy || !lineageDefaultsTenantId}
@@ -1065,6 +1133,51 @@ export default function Tenants() {
               >
                 {savingLineageDiagnosticsPolicy ? 'Saving policy...' : 'Save policy'}
               </button>
+            </div>
+            <div className="mt-3 rounded border border-indigo-200 bg-indigo-50/40 p-2">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-semibold text-indigo-900">Policy History</h4>
+                <span className="text-[11px] text-indigo-700">{lineageDiagnosticsPolicy.history?.length ?? 0} entries</span>
+              </div>
+              {(lineageDiagnosticsPolicy.history && lineageDiagnosticsPolicy.history.length > 0) ? (
+                <div className="space-y-2 max-h-40 overflow-auto pr-1">
+                  {lineageDiagnosticsPolicy.history.slice().reverse().map((entry, idx) => (
+                    <div key={`${entry.changedAt}-${idx}`} className="flex flex-wrap items-center justify-between gap-2 border border-indigo-200 rounded px-2 py-1 text-xs bg-white">
+                      <div className="text-indigo-900">
+                        <span className="font-medium">{new Date(entry.changedAt).toLocaleString()}</span>
+                        {' · '}
+                        <span>{entry.changedByEmail || entry.changedByUserId || 'unknown user'}</span>
+                        {entry.changedFields && entry.changedFields.length > 0 && (
+                          <span className="ml-2 inline-flex flex-wrap gap-1">
+                            {entry.changedFields.map((field) => (
+                              <span key={`${entry.changedAt}-${field}`} className="px-1.5 py-0.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-800">
+                                {field}
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          className="text-indigo-700 hover:text-indigo-900"
+                          onClick={() => setLineageDiagnosticsPolicy((prev) => ({ ...prev, ...entry.policy }))}
+                        >
+                          Apply to form
+                        </button>
+                        <button
+                          className="text-indigo-700 hover:text-indigo-900"
+                          disabled={savingLineageDiagnosticsPolicy}
+                          onClick={() => { void restoreAndSaveLineageDiagnosticsPolicy(entry.policy); }}
+                        >
+                          Restore + Save
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[11px] text-indigo-700">No diagnostics policy changes recorded yet.</p>
+              )}
             </div>
           </div>
           {lineageDefaultsStaleLatest && isLineageDefaultsDirty && (
