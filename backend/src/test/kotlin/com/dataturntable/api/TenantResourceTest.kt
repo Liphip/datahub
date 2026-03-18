@@ -446,6 +446,19 @@ class TenantResourceTest {
             .body("maxDepthCap", equalTo(200))
             .body("history.size()", equalTo(0))
 
+        given()
+            .header("Authorization", "Bearer $managerToken")
+        .`when`()
+            .get("/api/internal/v1/tenants/$rootId/lineage-defaults/diagnostics-policy")
+        .then()
+            .statusCode(200)
+            .body("conflictWatchRate", equalTo(0.35f))
+            .body("conflictHotRate", equalTo(0.5f))
+            .body("conflictTrendDelta", equalTo(0.15f))
+            .body("minPatchSamplesForHot", equalTo(3))
+            .body("pollOverfetchMinReads", equalTo(20))
+            .body("pollOverfetchRate", equalTo(0.9f))
+
         val baselineVersion = given()
             .header("Authorization", "Bearer $managerToken")
         .`when`()
@@ -522,6 +535,33 @@ class TenantResourceTest {
 
         given()
             .header("Authorization", "Bearer $managerToken")
+            .contentType(ContentType.JSON)
+            .body(mapOf("conflictHotRate" to 2.0))
+        .`when`()
+            .patch("/api/internal/v1/tenants/$rootId/lineage-defaults/diagnostics-policy")
+        .then()
+            .statusCode(400)
+            .body("error", containsString("conflictHotRate"))
+
+        given()
+            .header("Authorization", "Bearer $managerToken")
+            .contentType(ContentType.JSON)
+            .body(mapOf(
+                "conflictHotRate" to 0.4,
+                "minPatchSamplesForHot" to 1,
+                "pollOverfetchMinReads" to 10
+            ))
+        .`when`()
+            .patch("/api/internal/v1/tenants/$rootId/lineage-defaults/diagnostics-policy")
+        .then()
+            .statusCode(200)
+            .body("conflictWatchRate", equalTo(0.35f))
+            .body("conflictHotRate", equalTo(0.4f))
+            .body("minPatchSamplesForHot", equalTo(1))
+            .body("pollOverfetchMinReads", equalTo(10))
+
+        given()
+            .header("Authorization", "Bearer $managerToken")
         .`when`()
             .get("/api/internal/v1/tenants/$rootId/lineage-defaults/diagnostics")
         .then()
@@ -538,9 +578,11 @@ class TenantResourceTest {
             .body("windows.h1.patchConflictCount", equalTo(1))
             .body("windows.h24.get200Count", equalTo(3))
             .body("windows.h24.get304Count", equalTo(1))
-            .body("advisory.health", equalTo("WATCH"))
-            .body("advisory.reasons", hasItems("ELEVATED_CONFLICT_RATE"))
-            .body("advisory.recommendedActions", hasItems("REFRESH_BEFORE_SAVE"))
+            .body("advisory.health", equalTo("HOT"))
+            .body("advisory.reasons", hasItems("CONFLICT_SPIKE"))
+            .body("advisory.recommendedActions", hasItems("REFRESH_BEFORE_SAVE", "COORDINATE_EDITOR_WINDOWS"))
+            .body("advisory.policy.conflictHotRate", equalTo(0.4f))
+            .body("advisory.policy.minPatchSamplesForHot", equalTo(1))
             .body("advisory.conflictRateDelta", notNullValue())
             .body("lastUpdatedAt", notNullValue())
     }

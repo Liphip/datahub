@@ -114,7 +114,17 @@ export interface TenantLineageDefaultsDiagnostics {
     reasons: Array<'CONFLICT_SPIKE' | 'ELEVATED_CONFLICT_RATE' | 'CONFLICT_TREND_UP' | 'POLL_OVERFETCH' | string>;
     recommendedActions: Array<'NONE' | 'REFRESH_BEFORE_SAVE' | 'COORDINATE_EDITOR_WINDOWS' | 'CHECK_STALE_POLL_HEALTH' | 'INCREASE_POLL_INTERVAL' | string>;
     conflictRateDelta: number;
+    policy?: TenantLineageDiagnosticsPolicy;
   };
+}
+
+export interface TenantLineageDiagnosticsPolicy {
+  conflictWatchRate: number;
+  conflictHotRate: number;
+  conflictTrendDelta: number;
+  minPatchSamplesForHot: number;
+  pollOverfetchMinReads: number;
+  pollOverfetchRate: number;
 }
 
 export interface ModuleVersion {

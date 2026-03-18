@@ -116,6 +116,91 @@ class TenantResource {
         return normalizeLineageDefaults(lineageDefaultsRaw)
     }
 
+    private fun normalizeLineageDiagnosticsPolicy(raw: Map<String, Any?>?): Map<String, Any> {
+        val conflictWatchRate = ((raw?.get("conflictWatchRate") as? Number)?.toDouble() ?: 0.35).coerceIn(0.0, 1.0)
+        val requestedHotRate = ((raw?.get("conflictHotRate") as? Number)?.toDouble() ?: 0.50).coerceIn(0.0, 1.0)
+        val conflictHotRate = requestedHotRate.coerceAtLeast(conflictWatchRate)
+        val conflictTrendDelta = ((raw?.get("conflictTrendDelta") as? Number)?.toDouble() ?: 0.15).coerceIn(0.0, 1.0)
+        val minPatchSamplesForHot = ((raw?.get("minPatchSamplesForHot") as? Number)?.toInt() ?: 3).coerceIn(1, 100)
+        val pollOverfetchMinReads = ((raw?.get("pollOverfetchMinReads") as? Number)?.toInt() ?: 20).coerceIn(1, 1000)
+        val pollOverfetchRate = ((raw?.get("pollOverfetchRate") as? Number)?.toDouble() ?: 0.90).coerceIn(0.0, 1.0)
+        return mapOf(
+            "conflictWatchRate" to conflictWatchRate,
+            "conflictHotRate" to conflictHotRate,
+            "conflictTrendDelta" to conflictTrendDelta,
+            "minPatchSamplesForHot" to minPatchSamplesForHot,
+            "pollOverfetchMinReads" to pollOverfetchMinReads,
+            "pollOverfetchRate" to pollOverfetchRate
+        )
+    }
+
+    private fun extractLineageDiagnosticsPolicy(settingsRaw: String?): Map<String, Any> {
+        val settings = parseSettings(settingsRaw)
+        @Suppress("UNCHECKED_CAST")
+        val policyRaw = settings["lineageDiagnosticsPolicy"] as? Map<String, Any?>
+        return normalizeLineageDiagnosticsPolicy(policyRaw)
+    }
+
+    private fun parseDiagnosticsPolicyPatch(request: Map<String, Any>): Map<String, Any> {
+        val patch = mutableMapOf<String, Any>()
+
+        request["conflictWatchRate"]?.let {
+            val value = (it as? Number)?.toDouble()
+                ?: throw WebApplicationException(Response.status(400).entity(mapOf("error" to "conflictWatchRate must be a number between 0 and 1")).build())
+            if (value !in 0.0..1.0) {
+                throw WebApplicationException(Response.status(400).entity(mapOf("error" to "conflictWatchRate must be between 0 and 1")).build())
+            }
+            patch["conflictWatchRate"] = value
+        }
+
+        request["conflictHotRate"]?.let {
+            val value = (it as? Number)?.toDouble()
+                ?: throw WebApplicationException(Response.status(400).entity(mapOf("error" to "conflictHotRate must be a number between 0 and 1")).build())
+            if (value !in 0.0..1.0) {
+                throw WebApplicationException(Response.status(400).entity(mapOf("error" to "conflictHotRate must be between 0 and 1")).build())
+            }
+            patch["conflictHotRate"] = value
+        }
+
+        request["conflictTrendDelta"]?.let {
+            val value = (it as? Number)?.toDouble()
+                ?: throw WebApplicationException(Response.status(400).entity(mapOf("error" to "conflictTrendDelta must be a number between 0 and 1")).build())
+            if (value !in 0.0..1.0) {
+                throw WebApplicationException(Response.status(400).entity(mapOf("error" to "conflictTrendDelta must be between 0 and 1")).build())
+            }
+            patch["conflictTrendDelta"] = value
+        }
+
+        request["minPatchSamplesForHot"]?.let {
+            val value = (it as? Number)?.toInt()
+                ?: throw WebApplicationException(Response.status(400).entity(mapOf("error" to "minPatchSamplesForHot must be an integer between 1 and 100")).build())
+            if (value !in 1..100) {
+                throw WebApplicationException(Response.status(400).entity(mapOf("error" to "minPatchSamplesForHot must be between 1 and 100")).build())
+            }
+            patch["minPatchSamplesForHot"] = value
+        }
+
+        request["pollOverfetchMinReads"]?.let {
+            val value = (it as? Number)?.toInt()
+                ?: throw WebApplicationException(Response.status(400).entity(mapOf("error" to "pollOverfetchMinReads must be an integer between 1 and 1000")).build())
+            if (value !in 1..1000) {
+                throw WebApplicationException(Response.status(400).entity(mapOf("error" to "pollOverfetchMinReads must be between 1 and 1000")).build())
+            }
+            patch["pollOverfetchMinReads"] = value
+        }
+
+        request["pollOverfetchRate"]?.let {
+            val value = (it as? Number)?.toDouble()
+                ?: throw WebApplicationException(Response.status(400).entity(mapOf("error" to "pollOverfetchRate must be a number between 0 and 1")).build())
+            if (value !in 0.0..1.0) {
+                throw WebApplicationException(Response.status(400).entity(mapOf("error" to "pollOverfetchRate must be between 0 and 1")).build())
+            }
+            patch["pollOverfetchRate"] = value
+        }
+
+        return patch
+    }
+
     private fun extractLineageDefaultsHistory(settingsRaw: String?): List<Map<String, Any?>> {
         val settings = parseSettings(settingsRaw)
         @Suppress("UNCHECKED_CAST")
@@ -190,9 +275,11 @@ class TenantResource {
         diagnostics.lastUpdatedEpochMs.set(now)
     }
 
-    private fun lineageDefaultsDiagnosticsSnapshot(tenantId: UUID): Map<String, Any?> {
+    private fun lineageDefaultsDiagnosticsSnapshot(tenant: Tenant): Map<String, Any?> {
+        val tenantId = tenant.id ?: return mapOf("error" to "Tenant not found")
         val diagnostics = lineageDefaultsDiagnostics(tenantId)
         val now = System.currentTimeMillis()
+        val advisoryPolicy = extractLineageDiagnosticsPolicy(tenant.settings)
         val get200 = diagnostics.get200Count.get()
         val get304 = diagnostics.get304Count.get()
         val patchSuccess = diagnostics.patchSuccessCount.get()
@@ -250,11 +337,19 @@ class TenantResource {
             val reasons = mutableListOf<String>()
             val recommendedActions = linkedSetOf<String>()
 
+            val conflictWatchRate = (advisoryPolicy["conflictWatchRate"] as? Number)?.toDouble() ?: 0.35
+            val conflictHotRate = (advisoryPolicy["conflictHotRate"] as? Number)?.toDouble() ?: 0.50
+            val conflictTrendDelta = (advisoryPolicy["conflictTrendDelta"] as? Number)?.toDouble() ?: 0.15
+            val minPatchSamplesForHot = (advisoryPolicy["minPatchSamplesForHot"] as? Number)?.toLong() ?: 3L
+            val pollOverfetchMinReads = (advisoryPolicy["pollOverfetchMinReads"] as? Number)?.toLong() ?: 20L
+            val pollOverfetchRate = (advisoryPolicy["pollOverfetchRate"] as? Number)?.toDouble() ?: 0.90
+
             val conflictDelta = h1.patchConflictRate - h24.patchConflictRate
-            val elevatedConflict = h1.patchConflictCount >= 1 && h1.patchConflictRate >= 0.35
-            val conflictSpike = h1.patchConflictCount >= 2 || (h1.patchSuccessCount + h1.patchConflictCount >= 3 && h1.patchConflictRate >= 0.5)
-            val conflictTrendingUp = h1.patchConflictCount >= 1 && conflictDelta >= 0.15
-            val pollOverfetch = h1.readTotalCount >= 20 && h1.readNotModifiedRate >= 0.9
+            val elevatedConflict = h1.patchConflictCount >= 1 && h1.patchConflictRate >= conflictWatchRate
+            val conflictSampleSize = h1.patchSuccessCount + h1.patchConflictCount
+            val conflictSpike = h1.patchConflictCount >= 2 || (conflictSampleSize >= minPatchSamplesForHot && h1.patchConflictRate >= conflictHotRate)
+            val conflictTrendingUp = h1.patchConflictCount >= 1 && conflictDelta >= conflictTrendDelta
+            val pollOverfetch = h1.readTotalCount >= pollOverfetchMinReads && h1.readNotModifiedRate >= pollOverfetchRate
 
             if (conflictSpike) {
                 reasons.add("CONFLICT_SPIKE")
@@ -289,7 +384,8 @@ class TenantResource {
                 "health" to health,
                 "reasons" to reasons,
                 "recommendedActions" to recommendedActions.toList(),
-                "conflictRateDelta" to conflictDelta
+                "conflictRateDelta" to conflictDelta,
+                "policy" to advisoryPolicy
             )
         }
 
@@ -595,7 +691,65 @@ class TenantResource {
 
         val tenant = em.find(Tenant::class.java, tenantId)
             ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
-        return Response.ok(lineageDefaultsDiagnosticsSnapshot(tenant.id ?: tenantId)).build()
+        return Response.ok(lineageDefaultsDiagnosticsSnapshot(tenant)).build()
+    }
+
+    @GET
+    @Path("/{id}/lineage-defaults/diagnostics-policy")
+    fun getLineageDefaultsDiagnosticsPolicy(@PathParam("id") id: String): Response {
+        val (currentUser, denial) = requireTenantManager()
+        denial?.let { return it }
+        val user = currentUser ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+
+        val tenantId = try {
+            parseUuid(id, "tenant id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        if (!canManageTenant(user, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        val tenant = em.find(Tenant::class.java, tenantId)
+            ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+        return Response.ok(extractLineageDiagnosticsPolicy(tenant.settings)).build()
+    }
+
+    @PATCH
+    @Path("/{id}/lineage-defaults/diagnostics-policy")
+    @Transactional
+    fun updateLineageDefaultsDiagnosticsPolicy(@PathParam("id") id: String, request: Map<String, Any>): Response {
+        val (currentUser, denial) = requireTenantManager()
+        denial?.let { return it }
+        val user = currentUser ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+
+        val tenantId = try {
+            parseUuid(id, "tenant id")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        if (!canManageTenant(user, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+
+        val tenant = em.find(Tenant::class.java, tenantId)
+            ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+
+        val policyPatch = try {
+            parseDiagnosticsPolicyPatch(request)
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+
+        val settings = parseSettings(tenant.settings)
+        val existingPolicy = extractLineageDiagnosticsPolicy(tenant.settings).toMutableMap()
+        policyPatch.forEach { (key, value) -> existingPolicy[key] = value }
+        settings["lineageDiagnosticsPolicy"] = normalizeLineageDiagnosticsPolicy(existingPolicy)
+        tenant.settings = objectMapper.writeValueAsString(settings)
+        tenant.updatedAt = java.time.Instant.now()
+        em.merge(tenant)
+
+        return Response.ok(extractLineageDiagnosticsPolicy(tenant.settings)).build()
     }
 
     @PATCH

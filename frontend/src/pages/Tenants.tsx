@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Tenant, TenantLineageDefaults, TenantLineageDefaultsConfig, TenantLineageDefaultsDiagnostics } from '../types';
+import type { Tenant, TenantLineageDefaults, TenantLineageDefaultsConfig, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy } from '../types';
 
 interface TenantWithChildren extends Tenant {
   children?: TenantWithChildren[];
@@ -24,6 +24,14 @@ const DEFAULT_TENANT_LINEAGE_DEFAULTS: TenantLineageDefaults = {
   defaultFetchMode: 'SUMMARY',
   defaultDepth: 20,
   maxDepthCap: 200,
+};
+const DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY: TenantLineageDiagnosticsPolicy = {
+  conflictWatchRate: 0.35,
+  conflictHotRate: 0.5,
+  conflictTrendDelta: 0.15,
+  minPatchSamplesForHot: 3,
+  pollOverfetchMinReads: 20,
+  pollOverfetchRate: 0.9,
 };
 const TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY = 'tenant.lineageDefaults.conflicts.v1';
 
@@ -56,6 +64,9 @@ export default function Tenants() {
   const [lineageDefaultsStaleLatest, setLineageDefaultsStaleLatest] = useState<TenantLineageDefaults | null>(null);
   const [lineageDefaultsDiagnostics, setLineageDefaultsDiagnostics] = useState<TenantLineageDefaultsDiagnostics | null>(null);
   const [loadingLineageDefaultsDiagnostics, setLoadingLineageDefaultsDiagnostics] = useState(false);
+  const [lineageDiagnosticsPolicy, setLineageDiagnosticsPolicy] = useState<TenantLineageDiagnosticsPolicy>(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+  const [loadingLineageDiagnosticsPolicy, setLoadingLineageDiagnosticsPolicy] = useState(false);
+  const [savingLineageDiagnosticsPolicy, setSavingLineageDiagnosticsPolicy] = useState(false);
   const [lineagePollStatus, setLineagePollStatus] = useState<LineagePollStatus>('IDLE');
   const [lineagePollCheckedAt, setLineagePollCheckedAt] = useState<string | null>(null);
   const [lineagePollIntervalMs, setLineagePollIntervalMs] = useState(30000);
@@ -187,6 +198,7 @@ export default function Tenants() {
       backendWindow1h: lineageDefaultsDiagnostics?.windows?.h1,
       backendWindow24h: lineageDefaultsDiagnostics?.windows?.h24,
       backendAdvisory: lineageDefaultsDiagnostics?.advisory,
+      advisoryPolicy: lineageDiagnosticsPolicy,
       isDirty: isLineageDefaultsDirty,
       generatedAt: new Date().toISOString(),
     };
@@ -207,6 +219,18 @@ export default function Tenants() {
       setLineageDefaultsDiagnostics(null);
     } finally {
       setLoadingLineageDefaultsDiagnostics(false);
+    }
+  };
+
+  const refreshLineageDiagnosticsPolicy = async (tid: string) => {
+    setLoadingLineageDiagnosticsPolicy(true);
+    try {
+      const policy = await api.getTenantLineageDefaultsDiagnosticsPolicy(tid);
+      setLineageDiagnosticsPolicy(policy);
+    } catch {
+      setLineageDiagnosticsPolicy(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+    } finally {
+      setLoadingLineageDiagnosticsPolicy(false);
     }
   };
 
@@ -261,10 +285,11 @@ export default function Tenants() {
 
   useEffect(() => {
     const loadLineageDefaults = async () => {
-      if (!lineageDefaultsTenantId) {
-        setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
-        setLineageDefaultsDiagnostics(null);
-        setLineagePollStatus('IDLE');
+        if (!lineageDefaultsTenantId) {
+          setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+          setLineageDefaultsDiagnostics(null);
+          setLineageDiagnosticsPolicy(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+          setLineagePollStatus('IDLE');
         setLineagePollCheckedAt(null);
         setLineagePollIntervalMs(30000);
         setLineagePollOfflineFailures(0);
@@ -272,15 +297,16 @@ export default function Tenants() {
         return;
       }
       setLoadingLineageDefaults(true);
-      try {
-        const response = await api.getTenantLineageDefaultsIfChanged(lineageDefaultsTenantId);
+        try {
+          const response = await api.getTenantLineageDefaultsIfChanged(lineageDefaultsTenantId);
         if (!response.notModified && response.data) {
           setLineageDefaults(response.data);
           setLineageDefaultsBase(toLineageDefaultsConfig(response.data));
           setLineageDefaultsEtag(response.etag);
         }
-        await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
-        setLineagePollStatus('FRESH');
+          await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+          await refreshLineageDiagnosticsPolicy(lineageDefaultsTenantId);
+          setLineagePollStatus('FRESH');
         setLineagePollCheckedAt(new Date().toISOString());
         setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
         setLineagePollOfflineFailures(0);
@@ -289,9 +315,10 @@ export default function Tenants() {
       } catch {
         setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
         setLineageDefaultsBase(DEFAULT_TENANT_LINEAGE_DEFAULTS);
-        setLineageDefaultsEtag(undefined);
-        setLineageDefaultsDiagnostics(null);
-        setLineagePollStatus('OFFLINE');
+          setLineageDefaultsEtag(undefined);
+          setLineageDefaultsDiagnostics(null);
+          setLineageDiagnosticsPolicy(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+          setLineagePollStatus('OFFLINE');
         setLineagePollCheckedAt(new Date().toISOString());
         setLineagePollIntervalMs(30000);
         setLineagePollOfflineFailures(1);
@@ -313,6 +340,7 @@ export default function Tenants() {
     setLineageDefaultsStaleLatest(null);
     setLineageDefaultsEtag(undefined);
     setLineageDefaultsDiagnostics(null);
+    setLineageDiagnosticsPolicy(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
     setLineagePollStatus('IDLE');
     setLineagePollCheckedAt(null);
     setLineagePollIntervalMs(30000);
@@ -464,6 +492,36 @@ export default function Tenants() {
     } finally {
       setSavingLineageDefaults(false);
     }
+  };
+
+  const saveLineageDiagnosticsPolicy = async () => {
+    if (!lineageDefaultsTenantId) return;
+    setSavingLineageDiagnosticsPolicy(true);
+    try {
+      const normalized: TenantLineageDiagnosticsPolicy = {
+        conflictWatchRate: Math.min(1, Math.max(0, Number(lineageDiagnosticsPolicy.conflictWatchRate) || 0)),
+        conflictHotRate: Math.min(1, Math.max(0, Number(lineageDiagnosticsPolicy.conflictHotRate) || 0)),
+        conflictTrendDelta: Math.min(1, Math.max(0, Number(lineageDiagnosticsPolicy.conflictTrendDelta) || 0)),
+        minPatchSamplesForHot: Math.min(100, Math.max(1, Math.round(Number(lineageDiagnosticsPolicy.minPatchSamplesForHot) || 1))),
+        pollOverfetchMinReads: Math.min(1000, Math.max(1, Math.round(Number(lineageDiagnosticsPolicy.pollOverfetchMinReads) || 1))),
+        pollOverfetchRate: Math.min(1, Math.max(0, Number(lineageDiagnosticsPolicy.pollOverfetchRate) || 0)),
+      };
+      if (normalized.conflictHotRate < normalized.conflictWatchRate) {
+        normalized.conflictHotRate = normalized.conflictWatchRate;
+      }
+      const updated = await api.updateTenantLineageDefaultsDiagnosticsPolicy(lineageDefaultsTenantId, normalized);
+      setLineageDiagnosticsPolicy(updated);
+      await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+      showToast('Diagnostics advisory policy saved', 'success');
+    } catch {
+      showToast('Failed to save diagnostics advisory policy', 'error');
+    } finally {
+      setSavingLineageDiagnosticsPolicy(false);
+    }
+  };
+
+  const resetLineageDiagnosticsPolicyToDefaults = () => {
+    setLineageDiagnosticsPolicy(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
   };
 
   const handleCreateTenant = async (e: React.FormEvent) => {
@@ -897,6 +955,118 @@ export default function Tenants() {
               </span>
             </div>
           )}
+          <div className="rounded border border-indigo-200 bg-white px-3 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <h3 className="text-sm font-semibold text-indigo-900">Diagnostics Advisory Policy</h3>
+              <div className="flex items-center gap-2 text-xs text-indigo-700">
+                {lineageDefaultsDiagnostics?.advisory?.health && (
+                  <span className={`px-2 py-0.5 rounded border ${lineageDefaultsDiagnostics.advisory.health === 'HOT' ? 'border-red-300 bg-red-50 text-red-900' : lineageDefaultsDiagnostics.advisory.health === 'WATCH' ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-300 bg-emerald-50 text-emerald-900'}`}>
+                    Current health: {lineageDefaultsDiagnostics.advisory.health}
+                  </span>
+                )}
+                <button
+                  className="text-indigo-700 hover:text-indigo-900"
+                  disabled={loadingLineageDiagnosticsPolicy || !lineageDefaultsTenantId}
+                  onClick={() => lineageDefaultsTenantId && void refreshLineageDiagnosticsPolicy(lineageDefaultsTenantId)}
+                >
+                  {loadingLineageDiagnosticsPolicy ? 'Refreshing policy...' : 'Refresh policy'}
+                </button>
+              </div>
+            </div>
+            <p className="text-xs text-indigo-800 mb-3">
+              Tune advisory thresholds for this tenant. Changes apply immediately to diagnostics in both Tenants and Pipelines.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              <label className="text-xs text-indigo-900">
+                Watch conflict rate (0-1)
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  className="input mt-1"
+                  value={lineageDiagnosticsPolicy.conflictWatchRate}
+                  onChange={(e) => setLineageDiagnosticsPolicy((prev) => ({ ...prev, conflictWatchRate: Number(e.target.value) }))}
+                />
+              </label>
+              <label className="text-xs text-indigo-900">
+                Hot conflict rate (0-1)
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  className="input mt-1"
+                  value={lineageDiagnosticsPolicy.conflictHotRate}
+                  onChange={(e) => setLineageDiagnosticsPolicy((prev) => ({ ...prev, conflictHotRate: Number(e.target.value) }))}
+                />
+              </label>
+              <label className="text-xs text-indigo-900">
+                Conflict trend delta (0-1)
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  className="input mt-1"
+                  value={lineageDiagnosticsPolicy.conflictTrendDelta}
+                  onChange={(e) => setLineageDiagnosticsPolicy((prev) => ({ ...prev, conflictTrendDelta: Number(e.target.value) }))}
+                />
+              </label>
+              <label className="text-xs text-indigo-900">
+                Min patch samples for hot
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  step={1}
+                  className="input mt-1"
+                  value={lineageDiagnosticsPolicy.minPatchSamplesForHot}
+                  onChange={(e) => setLineageDiagnosticsPolicy((prev) => ({ ...prev, minPatchSamplesForHot: Number(e.target.value) }))}
+                />
+              </label>
+              <label className="text-xs text-indigo-900">
+                Poll overfetch min reads
+                <input
+                  type="number"
+                  min={1}
+                  max={1000}
+                  step={1}
+                  className="input mt-1"
+                  value={lineageDiagnosticsPolicy.pollOverfetchMinReads}
+                  onChange={(e) => setLineageDiagnosticsPolicy((prev) => ({ ...prev, pollOverfetchMinReads: Number(e.target.value) }))}
+                />
+              </label>
+              <label className="text-xs text-indigo-900">
+                Poll overfetch ratio (0-1)
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  className="input mt-1"
+                  value={lineageDiagnosticsPolicy.pollOverfetchRate}
+                  onChange={(e) => setLineageDiagnosticsPolicy((prev) => ({ ...prev, pollOverfetchRate: Number(e.target.value) }))}
+                />
+              </label>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                className="btn-secondary"
+                disabled={savingLineageDiagnosticsPolicy || loadingLineageDiagnosticsPolicy || !lineageDefaultsTenantId}
+                onClick={() => resetLineageDiagnosticsPolicyToDefaults()}
+              >
+                Reset to defaults
+              </button>
+              <button
+                className="btn-primary"
+                disabled={savingLineageDiagnosticsPolicy || loadingLineageDiagnosticsPolicy || !lineageDefaultsTenantId}
+                onClick={() => { void saveLineageDiagnosticsPolicy(); }}
+              >
+                {savingLineageDiagnosticsPolicy ? 'Saving policy...' : 'Save policy'}
+              </button>
+            </div>
+          </div>
           {lineageDefaultsStaleLatest && isLineageDefaultsDirty && (
             <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 flex flex-wrap items-center gap-2">
               <span>Defaults may be stale. Another user updated this tenant while you were editing.</span>

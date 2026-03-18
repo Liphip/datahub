@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, Role, Membership, TenantContext, BrokerCredential } from '../types';
+import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, Role, Membership, TenantContext, BrokerCredential } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 export const API_STATUS_EVENT = 'dataturntable:api-status';
@@ -174,6 +174,19 @@ class ApiService {
 
   async getTenantLineageDefaultsDiagnostics(tenantId: string): Promise<TenantLineageDefaultsDiagnostics> {
     const response = await this.client.get<TenantLineageDefaultsDiagnostics>(`/tenants/${tenantId}/lineage-defaults/diagnostics`);
+    return response.data;
+  }
+
+  async getTenantLineageDefaultsDiagnosticsPolicy(tenantId: string): Promise<TenantLineageDiagnosticsPolicy> {
+    const response = await this.client.get<TenantLineageDiagnosticsPolicy>(`/tenants/${tenantId}/lineage-defaults/diagnostics-policy`);
+    return response.data;
+  }
+
+  async updateTenantLineageDefaultsDiagnosticsPolicy(
+    tenantId: string,
+    data: Partial<TenantLineageDiagnosticsPolicy>
+  ): Promise<TenantLineageDiagnosticsPolicy> {
+    const response = await this.client.patch<TenantLineageDiagnosticsPolicy>(`/tenants/${tenantId}/lineage-defaults/diagnostics-policy`, data);
     return response.data;
   }
 

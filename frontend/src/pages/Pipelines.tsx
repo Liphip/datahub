@@ -3095,6 +3095,11 @@ export default function Pipelines() {
                                             Suggested: {tenantDefaultsDiagnostics.advisory.recommendedActions.join(', ')}
                                           </span>
                                         )}
+                                        {tenantDefaultsDiagnostics.advisory?.policy && (
+                                          <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                            Policy: watch {(tenantDefaultsDiagnostics.advisory.policy.conflictWatchRate * 100).toFixed(0)}% · hot {(tenantDefaultsDiagnostics.advisory.policy.conflictHotRate * 100).toFixed(0)}%
+                                          </span>
+                                        )}
                                       </>
                                     )}
                                     <button
