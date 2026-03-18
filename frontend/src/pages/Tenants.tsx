@@ -65,6 +65,8 @@ export default function Tenants() {
   const [lineageDefaultsDiagnostics, setLineageDefaultsDiagnostics] = useState<TenantLineageDefaultsDiagnostics | null>(null);
   const [loadingLineageDefaultsDiagnostics, setLoadingLineageDefaultsDiagnostics] = useState(false);
   const [resettingLineageDefaultsDiagnostics, setResettingLineageDefaultsDiagnostics] = useState(false);
+  const [showResetDiagnosticsConfirm, setShowResetDiagnosticsConfirm] = useState(false);
+  const [resetDiagnosticsReason, setResetDiagnosticsReason] = useState('');
   const [lineageDiagnosticsPolicy, setLineageDiagnosticsPolicy] = useState<TenantLineageDiagnosticsPolicy>(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
   const [lineageDiagnosticsPolicyBase, setLineageDiagnosticsPolicyBase] = useState<TenantLineageDiagnosticsPolicy>(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
   const [loadingLineageDiagnosticsPolicy, setLoadingLineageDiagnosticsPolicy] = useState(false);
@@ -249,9 +251,12 @@ export default function Tenants() {
   const resetLineageDefaultsDiagnosticsNow = async () => {
     if (!lineageDefaultsTenantId || resettingLineageDefaultsDiagnostics) return;
     setResettingLineageDefaultsDiagnostics(true);
+    setShowResetDiagnosticsConfirm(false);
     try {
-      const diagnostics = await api.resetTenantLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+      const reason = resetDiagnosticsReason.trim() || undefined;
+      const diagnostics = await api.resetTenantLineageDefaultsDiagnostics(lineageDefaultsTenantId, reason);
       setLineageDefaultsDiagnostics(diagnostics);
+      setResetDiagnosticsReason('');
       showToast('Lineage diagnostics reset for tenant', 'success');
     } catch {
       showToast('Failed to reset lineage diagnostics', 'error');
@@ -1027,13 +1032,46 @@ export default function Tenants() {
                   <button
                     className="text-indigo-700 hover:text-indigo-900"
                     disabled={resettingLineageDefaultsDiagnostics || !lineageDefaultsTenantId}
-                    onClick={() => { void resetLineageDefaultsDiagnosticsNow(); }}
+                    onClick={() => { setShowResetDiagnosticsConfirm(true); }}
                   >
-                    {resettingLineageDefaultsDiagnostics ? 'Resetting metrics...' : 'Reset metrics'}
+                    Reset metrics
                   </button>
                 </>
               )}
             </div>
+            {showResetDiagnosticsConfirm && (
+              <div className="mt-2 p-3 rounded border border-amber-300 bg-amber-50">
+                <p className="text-sm text-amber-900 mb-2">
+                  Reset all lineage diagnostics counters for this tenant? This clears read/conflict counts, windows, and advisory state.
+                </p>
+                <label className="text-xs text-amber-800 block mb-2">
+                  Reason (optional):
+                  <input
+                    type="text"
+                    className="input mt-1 w-full"
+                    placeholder="Why are you resetting?"
+                    value={resetDiagnosticsReason}
+                    onChange={(e) => setResetDiagnosticsReason(e.target.value)}
+                  />
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    className="btn-secondary text-xs"
+                    disabled={resettingLineageDefaultsDiagnostics}
+                    onClick={() => { setShowResetDiagnosticsConfirm(false); setResetDiagnosticsReason(''); }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn-primary text-xs"
+                    disabled={resettingLineageDefaultsDiagnostics}
+                    onClick={() => { void resetLineageDefaultsDiagnosticsNow(); }}
+                  >
+                    {resettingLineageDefaultsDiagnostics ? 'Resetting...' : 'Confirm Reset'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           <p className="text-sm text-indigo-800">
             Configure tenant-wide defaults for pipeline lineage triage. These act as baseline behavior across pipelines.

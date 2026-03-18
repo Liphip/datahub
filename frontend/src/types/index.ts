@@ -90,6 +90,7 @@ export interface TenantLineageDefaultsDiagnostics {
   patchConflictRate: number;
   resetCount?: number;
   lastResetAt?: string;
+  resetHistory?: TenantLineageDiagnosticsResetHistoryEntry[];
   lastUpdatedAt?: string;
   windows?: {
     h1: {
@@ -137,6 +138,13 @@ export interface TenantLineageDiagnosticsPolicyHistoryEntry {
   changedByEmail?: string;
   changedFields?: string[];
   policy: Omit<TenantLineageDiagnosticsPolicy, 'version' | 'history'>;
+}
+
+export interface TenantLineageDiagnosticsResetHistoryEntry {
+  resetAt: string;
+  resetByUserId?: string;
+  resetByEmail?: string;
+  reason?: string;
 }
 
 export interface ModuleVersion {

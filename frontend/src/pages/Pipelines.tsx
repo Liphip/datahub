@@ -92,6 +92,8 @@ export default function Pipelines() {
   const [tenantDefaultsDiagnostics, setTenantDefaultsDiagnostics] = useState<TenantLineageDefaultsDiagnostics | null>(null);
   const [loadingTenantDefaultsDiagnostics, setLoadingTenantDefaultsDiagnostics] = useState(false);
   const [resettingTenantDefaultsDiagnostics, setResettingTenantDefaultsDiagnostics] = useState(false);
+  const [showTenantDefaultsResetConfirm, setShowTenantDefaultsResetConfirm] = useState(false);
+  const [tenantDefaultsResetReason, setTenantDefaultsResetReason] = useState('');
   const [tenantDefaultsPollStatus, setTenantDefaultsPollStatus] = useState<TenantDefaultsPollStatus>('IDLE');
   const [tenantDefaultsPollCheckedAt, setTenantDefaultsPollCheckedAt] = useState<string | null>(null);
   const [tenantDefaultsPollIntervalMs, setTenantDefaultsPollIntervalMs] = useState(30000);
@@ -274,9 +276,12 @@ export default function Pipelines() {
   const resetTenantDefaultsDiagnostics = async (tid: string) => {
     if (resettingTenantDefaultsDiagnostics) return;
     setResettingTenantDefaultsDiagnostics(true);
+    setShowTenantDefaultsResetConfirm(false);
     try {
-      const diagnostics = await api.resetTenantLineageDefaultsDiagnostics(tid);
+      const reason = tenantDefaultsResetReason.trim() || undefined;
+      const diagnostics = await api.resetTenantLineageDefaultsDiagnostics(tid, reason);
       setTenantDefaultsDiagnostics(diagnostics);
+      setTenantDefaultsResetReason('');
       showToast('Tenant diagnostics reset', 'success');
     } catch {
       showToast('Failed to reset tenant diagnostics', 'error');
@@ -3143,12 +3148,48 @@ export default function Pipelines() {
                                       disabled={resettingTenantDefaultsDiagnostics || !tenantId}
                                       onClick={(e) => {
                                         e.preventDefault();
-                                        if (!tenantId) return;
-                                        void resetTenantDefaultsDiagnostics(tenantId);
+                                        setShowTenantDefaultsResetConfirm(true);
                                       }}
                                     >
-                                      {resettingTenantDefaultsDiagnostics ? 'Resetting metrics...' : 'Reset metrics'}
+                                      Reset metrics
                                     </button>
+                                    {showTenantDefaultsResetConfirm && (
+                                      <div className="w-full mt-2 p-3 rounded border border-amber-300 bg-amber-50">
+                                        <p className="text-xs text-amber-900 mb-2">
+                                          Reset all lineage diagnostics counters for this tenant? This clears read/conflict counts, windows, and advisory state.
+                                        </p>
+                                        <label className="text-xs text-amber-800 block mb-2">
+                                          Reason (optional):
+                                          <input
+                                            type="text"
+                                            className="input mt-1 w-full"
+                                            placeholder="Why are you resetting?"
+                                            value={tenantDefaultsResetReason}
+                                            onChange={(e) => setTenantDefaultsResetReason(e.target.value)}
+                                          />
+                                        </label>
+                                        <div className="flex gap-2">
+                                          <button
+                                            className="px-2 py-1 rounded border border-amber-400 bg-white text-amber-800 text-xs"
+                                            disabled={resettingTenantDefaultsDiagnostics}
+                                            onClick={() => { setShowTenantDefaultsResetConfirm(false); setTenantDefaultsResetReason(''); }}
+                                          >
+                                            Cancel
+                                          </button>
+                                          <button
+                                            className="px-2 py-1 rounded border border-amber-500 bg-amber-100 text-amber-900 text-xs"
+                                            disabled={resettingTenantDefaultsDiagnostics || !tenantId}
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              if (!tenantId) return;
+                                              void resetTenantDefaultsDiagnostics(tenantId);
+                                            }}
+                                          >
+                                            {resettingTenantDefaultsDiagnostics ? 'Resetting...' : 'Confirm Reset'}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
                                     {canManageTenantSettings && (
                                       <button
                                         disabled={savingTenantLineageDefaults}

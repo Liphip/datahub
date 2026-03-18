@@ -633,6 +633,8 @@ class TenantResourceTest {
             .body("readTotalCount", equalTo(0))
             .body("resetCount", equalTo(1))
             .body("lastResetAt", notNullValue())
+            .body("resetHistory.size()", equalTo(1))
+            .body("resetHistory[0].resetByEmail", equalTo("tenant-admin@example.com"))
             .body("windows.h1.get200Count", equalTo(0))
             .body("windows.h1.get304Count", equalTo(0))
             .body("windows.h1.patchSuccessCount", equalTo(0))
@@ -641,5 +643,18 @@ class TenantResourceTest {
             .body("advisory.reasons.size()", equalTo(0))
             .body("advisory.recommendedActions", hasItems("NONE"))
             .body("lastUpdatedAt", notNullValue())
+
+        given()
+            .header("Authorization", "Bearer $managerToken")
+            .contentType(ContentType.JSON)
+            .body(mapOf("reason" to "Testing reset with reason"))
+        .`when`()
+            .post("/api/internal/v1/tenants/$rootId/lineage-defaults/diagnostics/reset")
+        .then()
+            .statusCode(200)
+            .body("resetCount", equalTo(2))
+            .body("resetHistory.size()", equalTo(2))
+            .body("resetHistory[1].resetByEmail", equalTo("tenant-admin@example.com"))
+            .body("resetHistory[1].reason", equalTo("Testing reset with reason"))
     }
 }

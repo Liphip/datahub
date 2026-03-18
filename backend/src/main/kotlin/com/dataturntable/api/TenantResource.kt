@@ -183,6 +183,27 @@ class TenantResource {
         )
     }
 
+    private fun extractLineageDiagnosticsResetHistory(settingsRaw: String?): List<Map<String, Any?>> {
+        val settings = parseSettings(settingsRaw)
+        @Suppress("UNCHECKED_CAST")
+        val historyRaw = settings["lineageDiagnosticsResetHistory"] as? List<Map<String, Any?>> ?: return emptyList()
+        return historyRaw.mapNotNull { entry ->
+            val resetAt = entry["resetAt"] as? String
+            if (resetAt.isNullOrBlank()) return@mapNotNull null
+            mapOf(
+                "resetAt" to resetAt,
+                "resetByUserId" to (entry["resetByUserId"] as? String),
+                "resetByEmail" to (entry["resetByEmail"] as? String),
+                "reason" to (entry["reason"] as? String)
+            )
+        }
+    }
+
+    private fun parseDiagnosticsReset(request: Map<String, Any>): String? {
+        val reason = request["reason"] as? String
+        return reason?.trim()?.takeIf { it.isNotBlank() }
+    }
+
     private fun parseDiagnosticsPolicyPatch(request: Map<String, Any>): Map<String, Any> {
         val patch = mutableMapOf<String, Any>()
 
@@ -349,6 +370,7 @@ class TenantResource {
         val lastUpdated = diagnostics.lastUpdatedEpochMs.get().takeIf { it > 0 }?.let { java.time.Instant.ofEpochMilli(it).toString() }
         val resetCount = diagnostics.resetCount.get()
         val lastResetAt = diagnostics.lastResetEpochMs.get().takeIf { it > 0 }?.let { java.time.Instant.ofEpochMilli(it).toString() }
+        val resetHistory = extractLineageDiagnosticsResetHistory(tenant.settings)
 
         fun countSince(queue: ConcurrentLinkedQueue<Long>, sinceEpochMs: Long): Long {
             return queue.count { it >= sinceEpochMs }.toLong()
@@ -463,6 +485,7 @@ class TenantResource {
             "patchConflictRate" to patchConflictRate,
             "resetCount" to resetCount,
             "lastResetAt" to lastResetAt,
+            "resetHistory" to resetHistory,
             "lastUpdatedAt" to lastUpdated,
             "windows" to mapOf(
                 "h1" to toWindowMap(h1Snapshot),
@@ -758,7 +781,8 @@ class TenantResource {
 
     @POST
     @Path("/{id}/lineage-defaults/diagnostics/reset")
-    fun resetTenantLineageDefaultsDiagnostics(@PathParam("id") id: String): Response {
+    @Transactional
+    fun resetTenantLineageDefaultsDiagnostics(@PathParam("id") id: String, request: Map<String, Any>?): Response {
         val (currentUser, denial) = requireTenantManager()
         denial?.let { return it }
         val user = currentUser ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
@@ -774,6 +798,23 @@ class TenantResource {
 
         val tenant = em.find(Tenant::class.java, tenantId)
             ?: return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+
+        val reason = request?.let { parseDiagnosticsReset(it) }
+        val settings = parseSettings(tenant.settings)
+        val currentResetHistory = extractLineageDiagnosticsResetHistory(tenant.settings).toMutableList()
+        currentResetHistory.add(
+            mapOf(
+                "resetAt" to java.time.Instant.now().toString(),
+                "resetByUserId" to user.id?.toString(),
+                "resetByEmail" to user.email,
+                "reason" to reason
+            )
+        )
+        settings["lineageDiagnosticsResetHistory"] = currentResetHistory.takeLast(20)
+        tenant.settings = objectMapper.writeValueAsString(settings)
+        tenant.updatedAt = java.time.Instant.now()
+        em.merge(tenant)
+
         resetLineageDefaultsDiagnostics(tenantId)
         return Response.ok(lineageDefaultsDiagnosticsSnapshot(tenant)).build()
     }
