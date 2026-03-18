@@ -294,6 +294,7 @@ export default function Pipelines() {
       backendPatchConflict: tenantDefaultsDiagnostics?.patchConflictCount,
       backendWindow1h: tenantDefaultsDiagnostics?.windows?.h1,
       backendWindow24h: tenantDefaultsDiagnostics?.windows?.h24,
+      backendAdvisory: tenantDefaultsDiagnostics?.advisory,
       generatedAt: new Date().toISOString(),
     };
     try {
@@ -3082,6 +3083,16 @@ export default function Pipelines() {
                                         {tenantDefaultsDiagnostics.windows?.h24 && (
                                           <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
                                             24h: 200/304 {tenantDefaultsDiagnostics.windows.h24.get200Count}/{tenantDefaultsDiagnostics.windows.h24.get304Count} · conf {(tenantDefaultsDiagnostics.windows.h24.patchConflictRate * 100).toFixed(0)}%
+                                          </span>
+                                        )}
+                                        {tenantDefaultsDiagnostics.advisory && (
+                                          <span className={`px-2 py-0.5 rounded border ${tenantDefaultsDiagnostics.advisory.health === 'HOT' ? 'border-red-300 bg-red-50 text-red-900' : tenantDefaultsDiagnostics.advisory.health === 'WATCH' ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-300 bg-emerald-50 text-emerald-900'}`}>
+                                            Advisory: {tenantDefaultsDiagnostics.advisory.health} ({tenantDefaultsDiagnostics.advisory.reasons.length === 0 ? 'No signals' : tenantDefaultsDiagnostics.advisory.reasons.join(', ')})
+                                          </span>
+                                        )}
+                                        {tenantDefaultsDiagnostics.advisory && tenantDefaultsDiagnostics.advisory.recommendedActions[0] !== 'NONE' && (
+                                          <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                            Suggested: {tenantDefaultsDiagnostics.advisory.recommendedActions.join(', ')}
                                           </span>
                                         )}
                                       </>

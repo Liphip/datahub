@@ -109,6 +109,12 @@ export interface TenantLineageDefaultsDiagnostics {
       patchConflictRate: number;
     };
   };
+  advisory?: {
+    health: 'STABLE' | 'WATCH' | 'HOT';
+    reasons: Array<'CONFLICT_SPIKE' | 'ELEVATED_CONFLICT_RATE' | 'CONFLICT_TREND_UP' | 'POLL_OVERFETCH' | string>;
+    recommendedActions: Array<'NONE' | 'REFRESH_BEFORE_SAVE' | 'COORDINATE_EDITOR_WINDOWS' | 'CHECK_STALE_POLL_HEALTH' | 'INCREASE_POLL_INTERVAL' | string>;
+    conflictRateDelta: number;
+  };
 }
 
 export interface ModuleVersion {

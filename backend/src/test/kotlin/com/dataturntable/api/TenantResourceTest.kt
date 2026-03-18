@@ -538,6 +538,10 @@ class TenantResourceTest {
             .body("windows.h1.patchConflictCount", equalTo(1))
             .body("windows.h24.get200Count", equalTo(3))
             .body("windows.h24.get304Count", equalTo(1))
+            .body("advisory.health", equalTo("WATCH"))
+            .body("advisory.reasons", hasItems("ELEVATED_CONFLICT_RATE"))
+            .body("advisory.recommendedActions", hasItems("REFRESH_BEFORE_SAVE"))
+            .body("advisory.conflictRateDelta", notNullValue())
             .body("lastUpdatedAt", notNullValue())
     }
 }

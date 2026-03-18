@@ -186,6 +186,7 @@ export default function Tenants() {
       backendPatchConflict: lineageDefaultsDiagnostics?.patchConflictCount,
       backendWindow1h: lineageDefaultsDiagnostics?.windows?.h1,
       backendWindow24h: lineageDefaultsDiagnostics?.windows?.h24,
+      backendAdvisory: lineageDefaultsDiagnostics?.advisory,
       isDirty: isLineageDefaultsDirty,
       generatedAt: new Date().toISOString(),
     };
@@ -858,6 +859,16 @@ export default function Tenants() {
                   {lineageDefaultsDiagnostics.windows?.h24 && (
                     <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
                       24h: 200/304 {lineageDefaultsDiagnostics.windows.h24.get200Count}/{lineageDefaultsDiagnostics.windows.h24.get304Count} · conf {(lineageDefaultsDiagnostics.windows.h24.patchConflictRate * 100).toFixed(0)}%
+                    </span>
+                  )}
+                  {lineageDefaultsDiagnostics.advisory && (
+                    <span className={`px-2 py-0.5 rounded border ${lineageDefaultsDiagnostics.advisory.health === 'HOT' ? 'border-red-300 bg-red-50 text-red-900' : lineageDefaultsDiagnostics.advisory.health === 'WATCH' ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-300 bg-emerald-50 text-emerald-900'}`}>
+                      Advisory: {lineageDefaultsDiagnostics.advisory.health} ({lineageDefaultsDiagnostics.advisory.reasons.length === 0 ? 'No signals' : lineageDefaultsDiagnostics.advisory.reasons.join(', ')})
+                    </span>
+                  )}
+                  {lineageDefaultsDiagnostics.advisory && lineageDefaultsDiagnostics.advisory.recommendedActions[0] !== 'NONE' && (
+                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
+                      Suggested: {lineageDefaultsDiagnostics.advisory.recommendedActions.join(', ')}
                     </span>
                   )}
                   <button

@@ -207,7 +207,17 @@ class TenantResource {
             return queue.count { it >= sinceEpochMs }.toLong()
         }
 
-        fun windowSnapshot(hours: Long): Map<String, Any> {
+        data class WindowSnapshot(
+            val get200Count: Long,
+            val get304Count: Long,
+            val patchSuccessCount: Long,
+            val patchConflictCount: Long,
+            val readTotalCount: Long,
+            val readNotModifiedRate: Double,
+            val patchConflictRate: Double
+        )
+
+        fun windowSnapshot(hours: Long): WindowSnapshot {
             val since = now - (hours * 60L * 60L * 1000L)
             val wGet200 = countSince(diagnostics.get200Events, since)
             val wGet304 = countSince(diagnostics.get304Events, since)
@@ -215,16 +225,76 @@ class TenantResource {
             val wPatchConflict = countSince(diagnostics.patchConflictEvents, since)
             val wReadTotal = wGet200 + wGet304
             val wPatchTotal = wPatchSuccess + wPatchConflict
-            return mapOf(
-                "get200Count" to wGet200,
-                "get304Count" to wGet304,
-                "patchSuccessCount" to wPatchSuccess,
-                "patchConflictCount" to wPatchConflict,
-                "readTotalCount" to wReadTotal,
-                "readNotModifiedRate" to if (wReadTotal > 0) wGet304.toDouble() / wReadTotal.toDouble() else 0.0,
-                "patchConflictRate" to if (wPatchTotal > 0) wPatchConflict.toDouble() / wPatchTotal.toDouble() else 0.0
+            return WindowSnapshot(
+                get200Count = wGet200,
+                get304Count = wGet304,
+                patchSuccessCount = wPatchSuccess,
+                patchConflictCount = wPatchConflict,
+                readTotalCount = wReadTotal,
+                readNotModifiedRate = if (wReadTotal > 0) wGet304.toDouble() / wReadTotal.toDouble() else 0.0,
+                patchConflictRate = if (wPatchTotal > 0) wPatchConflict.toDouble() / wPatchTotal.toDouble() else 0.0
             )
         }
+
+        fun toWindowMap(snapshot: WindowSnapshot): Map<String, Any> = mapOf(
+            "get200Count" to snapshot.get200Count,
+            "get304Count" to snapshot.get304Count,
+            "patchSuccessCount" to snapshot.patchSuccessCount,
+            "patchConflictCount" to snapshot.patchConflictCount,
+            "readTotalCount" to snapshot.readTotalCount,
+            "readNotModifiedRate" to snapshot.readNotModifiedRate,
+            "patchConflictRate" to snapshot.patchConflictRate
+        )
+
+        fun advisorySnapshot(h1: WindowSnapshot, h24: WindowSnapshot): Map<String, Any> {
+            val reasons = mutableListOf<String>()
+            val recommendedActions = linkedSetOf<String>()
+
+            val conflictDelta = h1.patchConflictRate - h24.patchConflictRate
+            val elevatedConflict = h1.patchConflictCount >= 1 && h1.patchConflictRate >= 0.35
+            val conflictSpike = h1.patchConflictCount >= 2 || (h1.patchSuccessCount + h1.patchConflictCount >= 3 && h1.patchConflictRate >= 0.5)
+            val conflictTrendingUp = h1.patchConflictCount >= 1 && conflictDelta >= 0.15
+            val pollOverfetch = h1.readTotalCount >= 20 && h1.readNotModifiedRate >= 0.9
+
+            if (conflictSpike) {
+                reasons.add("CONFLICT_SPIKE")
+                recommendedActions.add("COORDINATE_EDITOR_WINDOWS")
+                recommendedActions.add("REFRESH_BEFORE_SAVE")
+            } else if (elevatedConflict) {
+                reasons.add("ELEVATED_CONFLICT_RATE")
+                recommendedActions.add("REFRESH_BEFORE_SAVE")
+            }
+
+            if (conflictTrendingUp) {
+                reasons.add("CONFLICT_TREND_UP")
+                recommendedActions.add("CHECK_STALE_POLL_HEALTH")
+            }
+
+            if (pollOverfetch) {
+                reasons.add("POLL_OVERFETCH")
+                recommendedActions.add("INCREASE_POLL_INTERVAL")
+            }
+
+            val health = when {
+                reasons.contains("CONFLICT_SPIKE") -> "HOT"
+                reasons.any { it == "ELEVATED_CONFLICT_RATE" || it == "CONFLICT_TREND_UP" || it == "POLL_OVERFETCH" } -> "WATCH"
+                else -> "STABLE"
+            }
+
+            if (recommendedActions.isEmpty()) {
+                recommendedActions.add("NONE")
+            }
+
+            return mapOf(
+                "health" to health,
+                "reasons" to reasons,
+                "recommendedActions" to recommendedActions.toList(),
+                "conflictRateDelta" to conflictDelta
+            )
+        }
+
+        val h1Snapshot = windowSnapshot(1)
+        val h24Snapshot = windowSnapshot(24)
 
         return mapOf(
             "tenantId" to tenantId,
@@ -237,9 +307,10 @@ class TenantResource {
             "patchConflictRate" to patchConflictRate,
             "lastUpdatedAt" to lastUpdated,
             "windows" to mapOf(
-                "h1" to windowSnapshot(1),
-                "h24" to windowSnapshot(24)
-            )
+                "h1" to toWindowMap(h1Snapshot),
+                "h24" to toWindowMap(h24Snapshot)
+            ),
+            "advisory" to advisorySnapshot(h1Snapshot, h24Snapshot)
         )
     }
 
