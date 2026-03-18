@@ -533,12 +533,18 @@ class TenantResource {
     }
 
     private fun toTenantMap(tenant: Tenant, children: List<Map<String, Any?>>? = null): Map<String, Any?> {
+        val quota = try {
+            if (tenant.quota.isNullOrBlank()) emptyMap()
+            else objectMapper.readValue(tenant.quota, Map::class.java) as? Map<String, Any> ?: emptyMap()
+        } catch (_: Exception) { emptyMap() }
+        
         val base = mutableMapOf<String, Any?>(
             "id" to tenant.id,
             "name" to tenant.name,
             "parentId" to tenant.parent?.id,
             "createdAt" to tenant.createdAt,
-            "updatedAt" to tenant.updatedAt
+            "updatedAt" to tenant.updatedAt,
+            "quota" to quota
         )
         if (children != null) {
             base["children"] = children
