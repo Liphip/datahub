@@ -184,6 +184,8 @@ export default function Tenants() {
       backendRead304: lineageDefaultsDiagnostics?.get304Count,
       backendPatchSuccess: lineageDefaultsDiagnostics?.patchSuccessCount,
       backendPatchConflict: lineageDefaultsDiagnostics?.patchConflictCount,
+      backendWindow1h: lineageDefaultsDiagnostics?.windows?.h1,
+      backendWindow24h: lineageDefaultsDiagnostics?.windows?.h24,
       isDirty: isLineageDefaultsDirty,
       generatedAt: new Date().toISOString(),
     };
@@ -848,6 +850,16 @@ export default function Tenants() {
                   <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
                     Conflicts: {lineageDefaultsDiagnostics.patchConflictCount}/{lineageDefaultsDiagnostics.patchSuccessCount + lineageDefaultsDiagnostics.patchConflictCount}
                   </span>
+                  {lineageDefaultsDiagnostics.windows?.h1 && (
+                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
+                      1h: 200/304 {lineageDefaultsDiagnostics.windows.h1.get200Count}/{lineageDefaultsDiagnostics.windows.h1.get304Count} · conf {(lineageDefaultsDiagnostics.windows.h1.patchConflictRate * 100).toFixed(0)}%
+                    </span>
+                  )}
+                  {lineageDefaultsDiagnostics.windows?.h24 && (
+                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
+                      24h: 200/304 {lineageDefaultsDiagnostics.windows.h24.get200Count}/{lineageDefaultsDiagnostics.windows.h24.get304Count} · conf {(lineageDefaultsDiagnostics.windows.h24.patchConflictRate * 100).toFixed(0)}%
+                    </span>
+                  )}
                   <button
                     className="text-indigo-700 hover:text-indigo-900"
                     disabled={loadingLineageDefaultsDiagnostics || !lineageDefaultsTenantId}

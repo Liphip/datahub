@@ -89,6 +89,26 @@ export interface TenantLineageDefaultsDiagnostics {
   readNotModifiedRate: number;
   patchConflictRate: number;
   lastUpdatedAt?: string;
+  windows?: {
+    h1: {
+      get200Count: number;
+      get304Count: number;
+      patchSuccessCount: number;
+      patchConflictCount: number;
+      readTotalCount: number;
+      readNotModifiedRate: number;
+      patchConflictRate: number;
+    };
+    h24: {
+      get200Count: number;
+      get304Count: number;
+      patchSuccessCount: number;
+      patchConflictCount: number;
+      readTotalCount: number;
+      readNotModifiedRate: number;
+      patchConflictRate: number;
+    };
+  };
 }
 
 export interface ModuleVersion {

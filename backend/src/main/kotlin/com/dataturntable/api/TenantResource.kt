@@ -14,6 +14,7 @@ import jakarta.ws.rs.core.Response
 import org.eclipse.microprofile.jwt.JsonWebToken
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicLong
 
 @Path("/tenants")
@@ -27,6 +28,10 @@ class TenantResource {
             val get304Count: AtomicLong = AtomicLong(0),
             val patchSuccessCount: AtomicLong = AtomicLong(0),
             val patchConflictCount: AtomicLong = AtomicLong(0),
+            val get200Events: ConcurrentLinkedQueue<Long> = ConcurrentLinkedQueue(),
+            val get304Events: ConcurrentLinkedQueue<Long> = ConcurrentLinkedQueue(),
+            val patchSuccessEvents: ConcurrentLinkedQueue<Long> = ConcurrentLinkedQueue(),
+            val patchConflictEvents: ConcurrentLinkedQueue<Long> = ConcurrentLinkedQueue(),
             val lastUpdatedEpochMs: AtomicLong = AtomicLong(0)
         )
 
@@ -151,17 +156,43 @@ class TenantResource {
 
     private fun markLineageDefaultsDiagnostics(tenantId: UUID, action: String) {
         val diagnostics = lineageDefaultsDiagnostics(tenantId)
+        val now = System.currentTimeMillis()
         when (action) {
-            "GET_200" -> diagnostics.get200Count.incrementAndGet()
-            "GET_304" -> diagnostics.get304Count.incrementAndGet()
-            "PATCH_200" -> diagnostics.patchSuccessCount.incrementAndGet()
-            "PATCH_409" -> diagnostics.patchConflictCount.incrementAndGet()
+            "GET_200" -> {
+                diagnostics.get200Count.incrementAndGet()
+                diagnostics.get200Events.add(now)
+            }
+            "GET_304" -> {
+                diagnostics.get304Count.incrementAndGet()
+                diagnostics.get304Events.add(now)
+            }
+            "PATCH_200" -> {
+                diagnostics.patchSuccessCount.incrementAndGet()
+                diagnostics.patchSuccessEvents.add(now)
+            }
+            "PATCH_409" -> {
+                diagnostics.patchConflictCount.incrementAndGet()
+                diagnostics.patchConflictEvents.add(now)
+            }
         }
-        diagnostics.lastUpdatedEpochMs.set(System.currentTimeMillis())
+        val cutoff24h = now - (24L * 60L * 60L * 1000L)
+        fun prune(queue: ConcurrentLinkedQueue<Long>) {
+            while (true) {
+                val head = queue.peek() ?: break
+                if (head >= cutoff24h) break
+                queue.poll()
+            }
+        }
+        prune(diagnostics.get200Events)
+        prune(diagnostics.get304Events)
+        prune(diagnostics.patchSuccessEvents)
+        prune(diagnostics.patchConflictEvents)
+        diagnostics.lastUpdatedEpochMs.set(now)
     }
 
     private fun lineageDefaultsDiagnosticsSnapshot(tenantId: UUID): Map<String, Any?> {
         val diagnostics = lineageDefaultsDiagnostics(tenantId)
+        val now = System.currentTimeMillis()
         val get200 = diagnostics.get200Count.get()
         val get304 = diagnostics.get304Count.get()
         val patchSuccess = diagnostics.patchSuccessCount.get()
@@ -171,6 +202,30 @@ class TenantResource {
         val readNotModifiedRate = if (readTotal > 0) get304.toDouble() / readTotal.toDouble() else 0.0
         val patchConflictRate = if (patchTotal > 0) patchConflict.toDouble() / patchTotal.toDouble() else 0.0
         val lastUpdated = diagnostics.lastUpdatedEpochMs.get().takeIf { it > 0 }?.let { java.time.Instant.ofEpochMilli(it).toString() }
+
+        fun countSince(queue: ConcurrentLinkedQueue<Long>, sinceEpochMs: Long): Long {
+            return queue.count { it >= sinceEpochMs }.toLong()
+        }
+
+        fun windowSnapshot(hours: Long): Map<String, Any> {
+            val since = now - (hours * 60L * 60L * 1000L)
+            val wGet200 = countSince(diagnostics.get200Events, since)
+            val wGet304 = countSince(diagnostics.get304Events, since)
+            val wPatchSuccess = countSince(diagnostics.patchSuccessEvents, since)
+            val wPatchConflict = countSince(diagnostics.patchConflictEvents, since)
+            val wReadTotal = wGet200 + wGet304
+            val wPatchTotal = wPatchSuccess + wPatchConflict
+            return mapOf(
+                "get200Count" to wGet200,
+                "get304Count" to wGet304,
+                "patchSuccessCount" to wPatchSuccess,
+                "patchConflictCount" to wPatchConflict,
+                "readTotalCount" to wReadTotal,
+                "readNotModifiedRate" to if (wReadTotal > 0) wGet304.toDouble() / wReadTotal.toDouble() else 0.0,
+                "patchConflictRate" to if (wPatchTotal > 0) wPatchConflict.toDouble() / wPatchTotal.toDouble() else 0.0
+            )
+        }
+
         return mapOf(
             "tenantId" to tenantId,
             "get200Count" to get200,
@@ -180,7 +235,11 @@ class TenantResource {
             "readTotalCount" to readTotal,
             "readNotModifiedRate" to readNotModifiedRate,
             "patchConflictRate" to patchConflictRate,
-            "lastUpdatedAt" to lastUpdated
+            "lastUpdatedAt" to lastUpdated,
+            "windows" to mapOf(
+                "h1" to windowSnapshot(1),
+                "h24" to windowSnapshot(24)
+            )
         )
     }
 

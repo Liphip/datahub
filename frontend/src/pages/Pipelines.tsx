@@ -292,6 +292,8 @@ export default function Pipelines() {
       backendRead304: tenantDefaultsDiagnostics?.get304Count,
       backendPatchSuccess: tenantDefaultsDiagnostics?.patchSuccessCount,
       backendPatchConflict: tenantDefaultsDiagnostics?.patchConflictCount,
+      backendWindow1h: tenantDefaultsDiagnostics?.windows?.h1,
+      backendWindow24h: tenantDefaultsDiagnostics?.windows?.h24,
       generatedAt: new Date().toISOString(),
     };
     try {
@@ -3072,6 +3074,16 @@ export default function Pipelines() {
                                         <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
                                           Conflicts: {tenantDefaultsDiagnostics.patchConflictCount}/{tenantDefaultsDiagnostics.patchSuccessCount + tenantDefaultsDiagnostics.patchConflictCount}
                                         </span>
+                                        {tenantDefaultsDiagnostics.windows?.h1 && (
+                                          <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                            1h: 200/304 {tenantDefaultsDiagnostics.windows.h1.get200Count}/{tenantDefaultsDiagnostics.windows.h1.get304Count} · conf {(tenantDefaultsDiagnostics.windows.h1.patchConflictRate * 100).toFixed(0)}%
+                                          </span>
+                                        )}
+                                        {tenantDefaultsDiagnostics.windows?.h24 && (
+                                          <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                            24h: 200/304 {tenantDefaultsDiagnostics.windows.h24.get200Count}/{tenantDefaultsDiagnostics.windows.h24.get304Count} · conf {(tenantDefaultsDiagnostics.windows.h24.patchConflictRate * 100).toFixed(0)}%
+                                          </span>
+                                        )}
                                       </>
                                     )}
                                     <button

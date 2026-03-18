@@ -532,6 +532,12 @@ class TenantResourceTest {
             .body("patchSuccessCount", equalTo(1))
             .body("patchConflictCount", equalTo(1))
             .body("readTotalCount", equalTo(4))
+            .body("windows.h1.get200Count", equalTo(3))
+            .body("windows.h1.get304Count", equalTo(1))
+            .body("windows.h1.patchSuccessCount", equalTo(1))
+            .body("windows.h1.patchConflictCount", equalTo(1))
+            .body("windows.h24.get200Count", equalTo(3))
+            .body("windows.h24.get304Count", equalTo(1))
             .body("lastUpdatedAt", notNullValue())
     }
 }
