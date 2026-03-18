@@ -199,6 +199,41 @@ class TenantResource {
         }
     }
 
+    private fun extractLineageDiagnosticsCounters(settingsRaw: String?): Map<String, Any?>? {
+        val settings = parseSettings(settingsRaw)
+        @Suppress("UNCHECKED_CAST")
+        val countersRaw = settings["lineageDiagnosticsCounters"] as? Map<String, Any?> ?: return null
+        return countersRaw
+    }
+
+    private fun storeLineageDiagnosticsCounters(tenant: Tenant, diagnostics: LineageDefaultsDiagnostics) {
+        val settings = parseSettings(tenant.settings)
+        val counters = mapOf(
+            "get200Count" to diagnostics.get200Count.get(),
+            "get304Count" to diagnostics.get304Count.get(),
+            "patchSuccessCount" to diagnostics.patchSuccessCount.get(),
+            "patchConflictCount" to diagnostics.patchConflictCount.get(),
+            "resetCount" to diagnostics.resetCount.get(),
+            "lastResetEpochMs" to diagnostics.lastResetEpochMs.get(),
+            "lastUpdatedEpochMs" to diagnostics.lastUpdatedEpochMs.get()
+        )
+        settings["lineageDiagnosticsCounters"] = counters
+        tenant.settings = objectMapper.writeValueAsString(settings)
+    }
+
+    private fun loadLineageDiagnosticsCountersFromSettings(tenant: Tenant) {
+        val tenantId = tenant.id ?: return
+        val countersRaw = extractLineageDiagnosticsCounters(tenant.settings) ?: return
+        val diagnostics = lineageDefaultsDiagnosticsByTenant.computeIfAbsent(tenantId) { LineageDefaultsDiagnostics() }
+        (countersRaw["get200Count"] as? Number)?.let { diagnostics.get200Count.set(it.toLong()) }
+        (countersRaw["get304Count"] as? Number)?.let { diagnostics.get304Count.set(it.toLong()) }
+        (countersRaw["patchSuccessCount"] as? Number)?.let { diagnostics.patchSuccessCount.set(it.toLong()) }
+        (countersRaw["patchConflictCount"] as? Number)?.let { diagnostics.patchConflictCount.set(it.toLong()) }
+        (countersRaw["resetCount"] as? Number)?.let { diagnostics.resetCount.set(it.toLong()) }
+        (countersRaw["lastResetEpochMs"] as? Number)?.let { diagnostics.lastResetEpochMs.set(it.toLong()) }
+        (countersRaw["lastUpdatedEpochMs"] as? Number)?.let { diagnostics.lastUpdatedEpochMs.set(it.toLong()) }
+    }
+
     private fun parseDiagnosticsReset(request: Map<String, Any>): String? {
         val reason = request["reason"] as? String
         return reason?.trim()?.takeIf { it.isNotBlank() }
@@ -338,7 +373,7 @@ class TenantResource {
         diagnostics.lastUpdatedEpochMs.set(now)
     }
 
-    private fun resetLineageDefaultsDiagnostics(tenantId: UUID) {
+    private fun resetLineageDefaultsDiagnostics(tenantId: UUID, tenant: Tenant? = null) {
         val diagnostics = lineageDefaultsDiagnostics(tenantId)
         val now = System.currentTimeMillis()
         diagnostics.get200Count.set(0)
@@ -352,10 +387,12 @@ class TenantResource {
         diagnostics.resetCount.incrementAndGet()
         diagnostics.lastResetEpochMs.set(now)
         diagnostics.lastUpdatedEpochMs.set(now)
+        tenant?.let { storeLineageDiagnosticsCounters(it, diagnostics) }
     }
 
     private fun lineageDefaultsDiagnosticsSnapshot(tenant: Tenant): Map<String, Any?> {
         val tenantId = tenant.id ?: return mapOf("error" to "Tenant not found")
+        loadLineageDiagnosticsCountersFromSettings(tenant)
         val diagnostics = lineageDefaultsDiagnostics(tenantId)
         val now = System.currentTimeMillis()
         val advisoryPolicy = extractLineageDiagnosticsPolicy(tenant.settings)
@@ -815,7 +852,7 @@ class TenantResource {
         tenant.updatedAt = java.time.Instant.now()
         em.merge(tenant)
 
-        resetLineageDefaultsDiagnostics(tenantId)
+        resetLineageDefaultsDiagnostics(tenantId, tenant)
         return Response.ok(lineageDefaultsDiagnosticsSnapshot(tenant)).build()
     }
 
@@ -929,6 +966,7 @@ class TenantResource {
         val currentVersion = tenant.updatedAt.toString()
         if (!ifVersion.isNullOrBlank() && ifVersion != currentVersion) {
             markLineageDefaultsDiagnostics(tenantId, "PATCH_409")
+            storeLineageDiagnosticsCounters(tenant, lineageDefaultsDiagnostics(tenantId))
             return Response.status(409)
                 .entity(mapOf(
                     "error" to "Lineage defaults were updated by another user. Refresh and retry.",
@@ -992,6 +1030,7 @@ class TenantResource {
 
         val updatedVersion = tenant.updatedAt.toString()
         markLineageDefaultsDiagnostics(tenantId, "PATCH_200")
+        storeLineageDiagnosticsCounters(tenant, lineageDefaultsDiagnostics(tenantId))
         return Response.ok(buildLineageDefaultsResponse(tenant.settings, updatedVersion))
             .header("ETag", lineageDefaultsEtag(updatedVersion))
             .build()
