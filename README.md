@@ -85,7 +85,9 @@ Push to WebSocket     ──────────► │   UDP endpoints;    
     - MQTT Broker: localhost:1883
     - Backend Prometheus Metrics: http://localhost:8080/q/metrics
     - Prometheus: http://localhost:9090
-    - Grafana: http://localhost:3001 (admin/admin)
+    - Grafana (direct): http://localhost:3001 (admin/admin)
+    - Grafana (via gateway): http://monitoring.localhost
+    - Monitoring fallback route: http://localhost/monitoring
 
 ### Building from Source
 

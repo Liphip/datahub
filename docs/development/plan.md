@@ -204,6 +204,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added backend Prometheus metrics support via Quarkus Micrometer Prometheus registry and explicit metrics-export configuration in `application.yaml`.
 - Added internal Nginx status endpoints (`:8081/nginx_status`) for both frontend and gateway Nginx to support secure in-network exporter scraping.
 - Added shipped observability stack in Docker Compose: Prometheus, Grafana, Postgres/Redis/Kafka exporters, Nginx exporters, and Blackbox exporter with preconfigured dashboards/datasources.
+- Added monitoring access routing through gateway Nginx: dedicated `monitoring.localhost` subdomain proxy to Grafana plus `/monitoring` fallback redirect for environments without subdomain usage.
 
 ---
 
