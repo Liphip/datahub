@@ -37,6 +37,14 @@ quarkus:
   redis:
     hosts: ${REDIS_HOSTS:redis://localhost:6379}
 
+  micrometer:
+    export:
+      prometheus:
+        enabled: true
+    binder:
+      http-server:
+        enabled: true
+
 mp:
   messaging:
     outgoing:
