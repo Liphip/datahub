@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { Pipeline, PipelineRun, CodeModule, Connector, Tenant, PipelineRunSummary } from '../types';
@@ -9,6 +10,7 @@ interface TenantNode extends Tenant {
 }
 
 export default function Dashboard() {
+  const { t } = useTranslation();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const navigate = useNavigate();
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
@@ -36,7 +38,6 @@ export default function Dashboard() {
         setModules(modulesData);
         setConnectors(connectorsData);
 
-        // Gather recent runs from all pipelines (max 3 each, keep newest 10 total)
         const runLists = await Promise.all(
           pipelinesData.map(async (p) => {
             try {
@@ -71,13 +72,13 @@ export default function Dashboard() {
 
         setError('');
       } catch {
-        setError('Failed to load dashboard data');
+        setError(t('dashboard.failedToLoadDashboard'));
       } finally {
         setLoading(false);
       }
     };
     fetchData();
-  }, [tenantId, user?.superadmin, reliabilityWindow]);
+  }, [tenantId, user?.superadmin, reliabilityWindow, t]);
 
   const activePipelines = pipelines.filter((p) => p.isActive).length;
   const failedRuns = allRuns.filter((r) => r.status === 'FAILED').length;
@@ -102,12 +103,12 @@ export default function Dashboard() {
   };
 
   const stats = [
-    { label: 'Total Pipelines', value: pipelines.length, color: 'text-primary-600' },
-    { label: 'Active Pipelines', value: activePipelines, color: 'text-green-600' },
-    { label: 'Modules', value: modules.length, color: 'text-purple-600' },
-    { label: 'Connectors', value: connectors.length, color: 'text-blue-600' },
-    { label: 'Recent Successes', value: successRuns, color: 'text-green-600' },
-    { label: 'Recent Failures', value: failedRuns, color: failedRuns > 0 ? 'text-red-600' : 'text-gray-500' },
+    { label: t('dashboard.totalPipelines'), value: pipelines.length, color: 'text-primary-600' },
+    { label: t('dashboard.activePipelines'), value: activePipelines, color: 'text-green-600' },
+    { label: t('dashboard.modules'), value: modules.length, color: 'text-purple-600' },
+    { label: t('dashboard.connectors'), value: connectors.length, color: 'text-blue-600' },
+    { label: t('dashboard.recentSuccesses'), value: successRuns, color: 'text-green-600' },
+    { label: t('dashboard.recentFailures'), value: failedRuns, color: failedRuns > 0 ? 'text-red-600' : 'text-gray-500' },
   ];
 
   const flattenTenants = (nodes: TenantNode[]): TenantNode[] =>
@@ -135,9 +136,9 @@ export default function Dashboard() {
   return (
     <div className="px-4 py-6 sm:px-0">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+        <h1 className="text-2xl font-bold text-gray-900">{t('dashboard.title')}</h1>
         <p className="mt-1 text-sm text-gray-600">
-          Welcome back, {user?.firstName || user?.email}
+          {t('dashboard.welcomeBack', { name: user?.firstName || user?.email })}
         </p>
       </div>
 
@@ -145,7 +146,6 @@ export default function Dashboard() {
         <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">{error}</div>
       )}
 
-      {/* Stats grid */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
         {stats.map((s) => (
           <div key={s.label} className="card text-center">
@@ -158,11 +158,10 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Recent runs — 2/3 width */}
         <div className="lg:col-span-2 card">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold">Recent Pipeline Runs</h2>
-            <Link to="/pipelines" className="text-sm text-primary-600 hover:text-primary-700">View all</Link>
+            <h2 className="text-lg font-semibold">{t('dashboard.recentPipelineRuns')}</h2>
+            <Link to="/pipelines" className="text-sm text-primary-600 hover:text-primary-700">{t('dashboard.viewAll')}</Link>
           </div>
 
           {loading ? (
@@ -176,7 +175,7 @@ export default function Dashboard() {
                   <div className="flex items-center space-x-3 min-w-0">
                     <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${runStatusColor[run.status] ?? 'bg-gray-400'}`} />
                     <div className="min-w-0">
-                      <p className="text-sm font-medium truncate">{run.pipelineName ?? 'Pipeline'}</p>
+                      <p className="text-sm font-medium truncate">{run.pipelineName ?? t('dashboard.pipeline')}</p>
                       <p className="text-xs text-gray-400">{run.triggerType}</p>
                     </div>
                   </div>
@@ -195,16 +194,15 @@ export default function Dashboard() {
               ))}
             </div>
           ) : (
-            <p className="text-gray-500 text-center py-8">No pipeline runs yet</p>
+            <p className="text-gray-500 text-center py-8">{t('dashboard.noPipelineRunsYet')}</p>
           )}
         </div>
 
-        {/* Sidebar — 1/3 width */}
         <div className="space-y-6">
           {!loading && (
             <div className="card border-l-4 border-l-amber-500">
               <div className="flex items-center justify-between mb-2">
-                <h2 className="text-base font-semibold">Problem Pipelines</h2>
+                <h2 className="text-base font-semibold">{t('dashboard.problemPipelines')}</h2>
                 <span className={`text-xs px-2 py-0.5 rounded ${problematicPipelines.length > 0 ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
                   {problematicPipelines.length}
                 </span>
@@ -227,23 +225,22 @@ export default function Dashboard() {
                       </li>
                     ))}
                   </ul>
-                  <Link to="/pipelines?health=PROBLEMATIC" className="btn-secondary block text-center text-sm">Open Problem View</Link>
+                  <Link to="/pipelines?health=PROBLEMATIC" className="btn-secondary block text-center text-sm">{t('dashboard.openProblemView')}</Link>
                 </>
               ) : (
-                <p className="text-sm text-gray-500">No failing or running pipelines right now.</p>
+                <p className="text-sm text-gray-500">{t('dashboard.noProblemPipelines')}</p>
               )}
             </div>
           )}
 
-          {/* Quick actions */}
           <div className="card">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-base font-semibold">Execution Reliability</h2>
+              <h2 className="text-base font-semibold">{t('dashboard.executionReliability')}</h2>
               <div className="flex items-center gap-1">
                 {([
-                  { label: '1h', value: 1 },
-                  { label: '24h', value: 24 },
-                  { label: '7d', value: 168 },
+                  { label: t('dashboard.last1h'), value: 1 },
+                  { label: t('dashboard.last24h'), value: 24 },
+                  { label: t('dashboard.last7d'), value: 168 },
                 ] as const).map((opt) => (
                   <button
                     key={opt.value}
@@ -261,25 +258,25 @@ export default function Dashboard() {
             </div>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
-                <p className="text-gray-500">Window</p>
+                <p className="text-gray-500">{t('dashboard.window')}</p>
                 <p className="font-semibold text-gray-900">{runSummary?.sinceHours ? `${runSummary.sinceHours}h` : 'n/a'}</p>
               </div>
               <div>
-                <p className="text-gray-500">Success Rate</p>
+                <p className="text-gray-500">{t('dashboard.successRate')}</p>
                 <p className={`font-semibold ${(runSummary?.successRate ?? 0) >= 0.9 ? 'text-green-700' : (runSummary?.successRate ?? 0) >= 0.75 ? 'text-amber-700' : 'text-red-700'}`}>
                   {runSummary ? `${Math.round(runSummary.successRate * 100)}%` : 'n/a'}
                 </p>
               </div>
               <div>
-                <p className="text-gray-500">Failures</p>
+                <p className="text-gray-500">{t('dashboard.failures')}</p>
                 <p className="font-semibold text-gray-900">{runSummary?.failedRuns ?? 0}</p>
               </div>
               <div>
-                <p className="text-gray-500">In Flight</p>
+                <p className="text-gray-500">{t('dashboard.inFlight')}</p>
                 <p className="font-semibold text-gray-900">{runSummary?.inFlightRuns ?? 0}</p>
               </div>
             </div>
-            <p className="mt-3 text-xs text-gray-500">Average duration: {runSummary?.avgDurationMs != null ? `${runSummary.avgDurationMs} ms` : 'n/a'}</p>
+            <p className="mt-3 text-xs text-gray-500">{t('dashboard.averageDuration')}: {runSummary?.avgDurationMs != null ? `${runSummary.avgDurationMs} ms` : 'n/a'}</p>
             <div className="mt-3">
               <div className="flex items-end gap-1 h-16 rounded border border-gray-200 bg-gray-50 px-2 py-1">
                 {(runSummary?.trendBuckets ?? []).map((bucket) => {
@@ -300,54 +297,52 @@ export default function Dashboard() {
                 })}
               </div>
               <div className="mt-1 flex justify-between text-[10px] text-gray-500">
-                <span>{reliabilityWindow === 1 ? 'Last hour' : reliabilityWindow === 24 ? 'Last day' : 'Last 7 days'}</span>
-                <span>Trend: green=healthy, red=failures</span>
+                <span>{reliabilityWindow === 1 ? t('dashboard.lastHour') : reliabilityWindow === 24 ? t('dashboard.lastDay') : t('dashboard.last7Days')}</span>
+                <span>{t('dashboard.trendLegend')}</span>
               </div>
             </div>
           </div>
 
-          {/* Quick actions */}
           <div className="card">
-            <h2 className="text-base font-semibold mb-3">Quick Actions</h2>
+            <h2 className="text-base font-semibold mb-3">{t('dashboard.quickActions')}</h2>
             <div className="space-y-2">
-              <Link to="/modules" className="btn-primary block text-center text-sm">Create Module</Link>
-              <Link to="/pipelines" className="btn-secondary block text-center text-sm">Create Pipeline</Link>
-              <Link to="/connectors" className="btn-secondary block text-center text-sm">Add Connector</Link>
+              <Link to="/modules" className="btn-primary block text-center text-sm">{t('dashboard.createModule')}</Link>
+              <Link to="/pipelines" className="btn-secondary block text-center text-sm">{t('dashboard.createPipeline')}</Link>
+              <Link to="/connectors" className="btn-secondary block text-center text-sm">{t('dashboard.addConnector')}</Link>
             </div>
           </div>
 
           {user?.superadmin && (
             <div className="card">
-              <h2 className="text-base font-semibold mb-3">Tenant Topology</h2>
+              <h2 className="text-base font-semibold mb-3">{t('dashboard.tenantTopology')}</h2>
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div>
-                  <p className="text-gray-500">Total</p>
+                  <p className="text-gray-500">{t('dashboard.total')}</p>
                   <p className="font-semibold text-gray-900">{loading ? '–' : allTenants.length}</p>
                 </div>
                 <div>
-                  <p className="text-gray-500">Roots</p>
+                  <p className="text-gray-500">{t('dashboard.roots')}</p>
                   <p className="font-semibold text-gray-900">{loading ? '–' : tenantTree.length}</p>
                 </div>
                 <div>
-                  <p className="text-gray-500">Leaf Tenants</p>
+                  <p className="text-gray-500">{t('dashboard.leafTenants')}</p>
                   <p className="font-semibold text-gray-900">{loading ? '–' : leafTenants}</p>
                 </div>
                 <div>
-                  <p className="text-gray-500">Max Depth</p>
+                  <p className="text-gray-500">{t('dashboard.maxDepth')}</p>
                   <p className="font-semibold text-gray-900">{loading ? '–' : maxTenantDepth(tenantTree)}</p>
                 </div>
               </div>
               <p className="mt-3 text-xs text-gray-500">
                 Last tenant update: {latestTenantUpdate ? new Date(latestTenantUpdate).toLocaleString() : 'n/a'}
               </p>
-              <Link to="/tenants" className="btn-secondary block text-center text-sm mt-3">Open Tenant Tree</Link>
+              <Link to="/tenants" className="btn-secondary block text-center text-sm mt-3">{t('dashboard.openTenantTree')}</Link>
             </div>
           )}
 
-          {/* Active pipelines quick-list */}
           {!loading && pipelines.length > 0 && (
             <div className="card">
-              <h2 className="text-base font-semibold mb-3">Pipelines</h2>
+              <h2 className="text-base font-semibold mb-3">{t('nav.pipelines')}</h2>
               <ul className="space-y-2">
                 {pipelines.slice(0, 5).map((p) => (
                   <li key={p.id} className="flex items-center justify-between text-sm">
@@ -358,7 +353,7 @@ export default function Dashboard() {
                   </li>
                 ))}
                 {pipelines.length > 5 && (
-                  <li className="text-xs text-gray-400">+{pipelines.length - 5} more</li>
+                  <li className="text-xs text-gray-400">{t('dashboard.more', { count: pipelines.length - 5 })}</li>
                 )}
               </ul>
             </div>

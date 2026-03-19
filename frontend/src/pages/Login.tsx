@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 
 export default function Login() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { login } = useAuthStore();
   const [email, setEmail] = useState('');
@@ -19,7 +21,7 @@ export default function Login() {
       await login(email, password);
       navigate('/');
     } catch (err) {
-      setError('Invalid email or password');
+      setError(t('auth.invalidCredentials'));
     } finally {
       setLoading(false);
     }
@@ -30,7 +32,7 @@ export default function Login() {
       <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-lg shadow">
         <div>
           <h2 className="text-center text-3xl font-extrabold text-gray-900">
-            Sign in to DataTurntable
+            {t('auth.signIn')} {t('common.appName')}
           </h2>
         </div>
         
@@ -44,7 +46,7 @@ export default function Login() {
           <div className="rounded-md shadow-sm -space-y-px">
             <div>
               <label htmlFor="email" className="sr-only">
-                Email address
+                {t('auth.emailAddress')}
               </label>
               <input
                 id="email"
@@ -55,12 +57,12 @@ export default function Login() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="input rounded-t-md"
-                placeholder="Email address"
+                placeholder={t('auth.emailAddress')}
               />
             </div>
             <div>
               <label htmlFor="password" className="sr-only">
-                Password
+                {t('auth.password')}
               </label>
               <input
                 id="password"
@@ -71,7 +73,7 @@ export default function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="input rounded-b-md"
-                placeholder="Password"
+                placeholder={t('auth.password')}
               />
             </div>
           </div>
@@ -82,14 +84,14 @@ export default function Login() {
               disabled={loading}
               className="btn-primary w-full flex justify-center"
             >
-              {loading ? 'Signing in...' : 'Sign in'}
+              {loading ? t('common.loading') : t('auth.login')}
             </button>
           </div>
 
           <div className="text-center text-sm text-gray-500">
-            First deployment?{' '}
+            {t('auth.firstDeployment')}{' '}
             <Link to="/setup" className="text-primary-600 hover:text-primary-700">
-              Run initial setup
+              {t('auth.runInitialSetup')}
             </Link>
           </div>
         </form>

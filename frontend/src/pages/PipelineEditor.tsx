@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { Pipeline, CodeModule, Connector, ModuleVersion } from '../types';
@@ -10,6 +11,7 @@ type ModuleVersionOption = ModuleVersion & {
 };
 
 export default function PipelineEditor() {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
@@ -417,7 +419,7 @@ export default function PipelineEditor() {
 
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">
-          {id === 'new' ? 'Create Pipeline' : 'Edit Pipeline'}
+          {id === 'new' ? t('pipelineEditor.createPipeline') : t('pipelineEditor.editPipeline')}
         </h1>
         <div className="flex space-x-2">
           <button
@@ -450,7 +452,7 @@ export default function PipelineEditor() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
           <div className="card">
-            <h2 className="text-lg font-semibold mb-4">Basic Information</h2>
+            <h2 className="text-lg font-semibold mb-4">{t('pipelineEditor.basicInformation')}</h2>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
@@ -673,7 +675,7 @@ export default function PipelineEditor() {
 
         <div className="space-y-6">
           <div className="card">
-            <h2 className="text-lg font-semibold mb-4">Pipeline Info</h2>
+            <h2 className="text-lg font-semibold mb-4">{t('pipelineEditor.pipelineInfo')}</h2>
             {pipeline ? (
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
@@ -693,7 +695,7 @@ export default function PipelineEditor() {
           </div>
 
           <div className="card">
-            <h2 className="text-lg font-semibold mb-4">Configuration Health</h2>
+            <h2 className="text-lg font-semibold mb-4">{t('pipelineEditor.configurationHealth')}</h2>
             <div className="space-y-2 text-sm">
               {pipelineHealthChecks.map((check) => (
                 <div key={check.label} className="flex items-start justify-between gap-3">

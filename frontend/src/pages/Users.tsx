@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { Membership, Role, User } from '../types';
@@ -9,6 +10,7 @@ interface EditState {
 }
 
 export default function Users() {
+  const { t } = useTranslation();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const [users, setUsers] = useState<User[]>([]);
   const [memberships, setMemberships] = useState<Membership[]>([]);
@@ -68,7 +70,7 @@ export default function Users() {
     setRoles(rolesData);
 
     if (usersResult.status === 'rejected' || membershipsResult.status === 'rejected' || rolesResult.status === 'rejected') {
-      setError('Some user-management data could not be loaded due to permission limits.');
+      setError(t('users.someDataNotLoaded'));
     } else {
       setError('');
     }
@@ -84,13 +86,13 @@ export default function Users() {
         const defaultRole = loadedRoles.find((r) => r.isDefault) ?? loadedRoles[0];
         if (defaultRole) setNewUserRoleId(defaultRole.id);
       } catch {
-        setError('Failed to load users and memberships');
+        setError(t('users.failedLoadUsers'));
       } finally {
         setLoading(false);
       }
     };
     init();
-  }, [tenantId, canReadUsers, canManageTenant]);
+  }, [tenantId, canReadUsers, canManageTenant, t]);
 
   const getMembershipForUser = (userId: string) => memberships.find((m) => m.authUserId === userId);
   const getRoleForMembership = (m?: Membership) => roles.find((r) => r.id === m?.roleId);
@@ -103,7 +105,7 @@ export default function Users() {
   const handleInviteUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canInviteUsers) {
-      showToast('You do not have permission to invite users', 'error');
+      showToast(t('users.permissionInviteUsers'), 'error');
       return;
     }
     if (!tenantId || !newUserEmail || !newUserPassword) return;
@@ -114,15 +116,15 @@ export default function Users() {
         lastName: newUserLastName || undefined,
       });
       const roleId = newUserRoleId || roles.find((r) => r.isDefault)?.id || roles[0]?.id;
-      if (!roleId) { setError('No roles found — create a role first.'); return; }
+      if (!roleId) { setError(t('users.noRolesFoundFirst')); return; }
       await api.createTenantMembership(tenantId, createdUser.id, roleId);
       setShowInviteModal(false);
       setNewUserEmail(''); setNewUserPassword('');
       setNewUserFirstName(''); setNewUserLastName('');
       await loadData(tenantId);
-      showToast('User invited successfully', 'success');
+      showToast(t('users.userInvited'), 'success');
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? 'Failed to create user or membership';
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? t('users.failedInviteUser');
       setError(msg);
     } finally {
       setInviting(false);
@@ -131,7 +133,7 @@ export default function Users() {
 
   const handleSaveRoleEdit = async () => {
     if (!canManageTenant) {
-      showToast('You do not have permission to update memberships', 'error');
+      showToast(t('users.permissionUpdateMemberships'), 'error');
       return;
     }
     if (!tenantId || !editState) return;
@@ -140,9 +142,9 @@ export default function Users() {
       await api.updateTenantMembership(tenantId, editState.membershipId, editState.roleId);
       await loadData(tenantId);
       setEditState(null);
-      showToast('Role updated', 'success');
+      showToast(t('users.roleUpdated'), 'success');
     } catch {
-      showToast('Failed to update role', 'error');
+      showToast(t('users.failedUpdateRole'), 'error');
     } finally {
       setSavingEdit(false);
     }
@@ -150,7 +152,7 @@ export default function Users() {
 
   const handleDeleteMembership = async (membershipId: string) => {
     if (!canManageTenant) {
-      showToast('You do not have permission to remove memberships', 'error');
+      showToast(t('users.permissionRemoveMemberships'), 'error');
       return;
     }
     if (!tenantId) return;
@@ -159,9 +161,9 @@ export default function Users() {
       await api.deleteTenantMembership(tenantId, membershipId);
       await loadData(tenantId);
       setConfirmDeleteId(null);
-      showToast('Membership removed', 'success');
+      showToast(t('users.membershipRemoved'), 'success');
     } catch {
-      showToast('Failed to remove membership', 'error');
+      showToast(t('users.failedRemoveMembership'), 'error');
     } finally {
       setDeletingId(null);
     }
@@ -169,7 +171,7 @@ export default function Users() {
 
   const handleToggleUserActive = async (target: User) => {
     if (!canWriteUsers) {
-      showToast('You do not have permission to update users', 'error');
+      showToast(t('users.permissionUpdateUsers'), 'error');
       return;
     }
     setTogglingUserId(target.id);
@@ -177,9 +179,9 @@ export default function Users() {
       const nextActive = !(target.isActive ?? true);
       await api.updateUser(target.id, { isActive: nextActive });
       setUsers((prev) => prev.map((u) => (u.id === target.id ? { ...u, isActive: nextActive } : u)));
-      showToast(nextActive ? 'User activated' : 'User deactivated', 'success');
+      showToast(nextActive ? t('users.userActivated') : t('users.userDeactivated'), 'success');
     } catch {
-      showToast('Failed to update user status', 'error');
+      showToast(t('users.failedUpdateStatus'), 'error');
     } finally {
       setTogglingUserId(null);
     }
@@ -191,7 +193,7 @@ export default function Users() {
     try {
       await loadData(tenantId);
     } catch {
-      setError('Failed to load users and memberships');
+      setError(t('users.failedLoadUsers'));
     } finally {
       setLoading(false);
     }
@@ -219,7 +221,6 @@ export default function Users() {
 
   return (
     <div className="px-4 py-6 sm:px-0">
-      {/* Toast */}
       {toast && (
         <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded shadow-lg text-white text-sm ${
           toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
@@ -229,15 +230,15 @@ export default function Users() {
       )}
 
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Users</h1>
+        <h1 className="text-2xl font-bold text-gray-900">{t('users.title')}</h1>
         {canInviteUsers && (
-          <button onClick={() => setShowInviteModal(true)} className="btn-primary">Invite User</button>
+          <button onClick={() => setShowInviteModal(true)} className="btn-primary">{t('users.inviteUser')}</button>
         )}
       </div>
 
       {!canReadUsers && !canManageTenant && (
         <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
-          You do not have permission to view users in this tenant.
+          {t('users.permissionViewUsers')}
         </div>
       )}
 
@@ -245,7 +246,7 @@ export default function Users() {
         <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700 flex justify-between items-center">
           <span>{error}</span>
           <div className="flex items-center gap-3 ml-4">
-            <button onClick={handleReload} className="text-red-700 hover:text-red-900 text-sm underline">Retry</button>
+            <button onClick={handleReload} className="text-red-700 hover:text-red-900 text-sm underline">{t('common.retry')}</button>
             <button onClick={() => setError('')} className="text-red-400 hover:text-red-600">✕</button>
           </div>
         </div>
@@ -258,21 +259,21 @@ export default function Users() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="input"
-              placeholder="Search by email, name, or role"
+              placeholder={t('users.searchPlaceholder')}
             />
             <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as 'ALL' | 'ACTIVE' | 'INACTIVE')} className="input">
-              <option value="ALL">All statuses</option>
-              <option value="ACTIVE">Active</option>
-              <option value="INACTIVE">Inactive</option>
+              <option value="ALL">{t('users.allStatuses')}</option>
+              <option value="ACTIVE">{t('users.active')}</option>
+              <option value="INACTIVE">{t('users.inactive')}</option>
             </select>
             <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="input">
-              <option value="ALL">All roles</option>
+              <option value="ALL">{t('users.allRoles')}</option>
               {roles.map((role) => (
                 <option key={role.id} value={role.id}>{role.name}</option>
               ))}
             </select>
           </div>
-          <p className="mt-2 text-xs text-gray-500">Showing {tableUsers.length} user(s)</p>
+          <p className="mt-2 text-xs text-gray-500">{t('users.showingUsers', { count: tableUsers.length })}</p>
         </div>
       )}
 
@@ -284,24 +285,24 @@ export default function Users() {
         </div>
       ) : !tenantId ? (
         <div className="card text-center py-12">
-          <p className="text-gray-500">No tenant ID found.</p>
+          <p className="text-gray-500">{t('common.noTenantId')}</p>
         </div>
       ) : users.length === 0 && memberships.length === 0 ? (
         <div className="card text-center py-12">
-          <p className="text-gray-500 mb-4">No users yet</p>
-          {canInviteUsers && <button onClick={() => setShowInviteModal(true)} className="btn-primary">Invite First User</button>}
+          <p className="text-gray-500 mb-4">{t('users.noUsersYet')}</p>
+          {canInviteUsers && <button onClick={() => setShowInviteModal(true)} className="btn-primary">{t('users.inviteFirstUser')}</button>}
         </div>
       ) : (
         <div className="card overflow-hidden">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Abilities</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('users.user')}</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('users.role')}</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('users.status')}</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('users.abilities')}</th>
                 {canManageTenant && (
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">{t('common.actions')}</th>
                 )}
               </tr>
             </thead>
@@ -309,7 +310,7 @@ export default function Users() {
               {tableUsers.length === 0 && (
                 <tr>
                   <td colSpan={canManageTenant ? 5 : 4} className="px-6 py-8 text-center text-sm text-gray-500">
-                    No users match the current filters.
+                    {t('users.noUsersMatchFilters')}
                   </td>
                 </tr>
               )}
@@ -353,7 +354,7 @@ export default function Users() {
                             disabled={savingEdit}
                             className="text-xs text-green-600 hover:text-green-800 font-medium"
                           >
-                            {savingEdit ? '…' : 'Save'}
+                            {savingEdit ? '…' : t('common.save')}
                           </button>
                           <button
                             onClick={() => setEditState(null)}
@@ -364,13 +365,13 @@ export default function Users() {
                         </div>
                       ) : (
                         <span className="px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-800">
-                          {role?.name ?? membership?.roleName ?? 'No Role'}
+                          {role?.name ?? membership?.roleName ?? t('users.noRole')}
                         </span>
                       )}
                     </td>
                     <td className="px-6 py-4">
                       <span className={`px-2 py-1 text-xs font-medium rounded ${(u.isActive ?? true) ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-700'}`}>
-                        {(u.isActive ?? true) ? 'Active' : 'Inactive'}
+                        {(u.isActive ?? true) ? t('users.active') : t('users.inactive')}
                       </span>
                     </td>
                     <td className="px-6 py-4">
@@ -389,15 +390,15 @@ export default function Users() {
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         {isConfirmingDelete ? (
                           <span className="space-x-2">
-                            <span className="text-gray-600 text-xs">Remove?</span>
+                            <span className="text-gray-600 text-xs">{t('common.deleteConfirm')}</span>
                             <button
                               onClick={() => handleDeleteMembership(membership!.id)}
                               disabled={isDeleting}
                               className="text-red-600 hover:text-red-900"
                             >
-                              {isDeleting ? '…' : 'Yes'}
+                              {isDeleting ? '…' : t('common.yes')}
                             </button>
-                            <button onClick={() => setConfirmDeleteId(null)} className="text-gray-500 hover:text-gray-700">No</button>
+                            <button onClick={() => setConfirmDeleteId(null)} className="text-gray-500 hover:text-gray-700">{t('common.no')}</button>
                           </span>
                         ) : (
                           <span className="space-x-3">
@@ -406,7 +407,7 @@ export default function Users() {
                                 onClick={() => setEditState({ membershipId: membership.id, roleId: membership.roleId ?? roles[0]?.id ?? '' })}
                                 className="text-primary-600 hover:text-primary-900"
                               >
-                                Edit Role
+                                {t('common.edit')}
                               </button>
                             )}
                             {canWriteUsers && (
@@ -415,7 +416,7 @@ export default function Users() {
                                 disabled={togglingUserId === u.id}
                                 className="text-amber-700 hover:text-amber-900 disabled:opacity-40"
                               >
-                                {togglingUserId === u.id ? 'Saving...' : ((u.isActive ?? true) ? 'Deactivate' : 'Activate')}
+                                {togglingUserId === u.id ? t('common.saving') : ((u.isActive ?? true) ? t('common.disable') : t('common.enable'))}
                               </button>
                             )}
                             <button
@@ -423,7 +424,7 @@ export default function Users() {
                               disabled={!membership?.id}
                               className="text-red-600 hover:text-red-900 disabled:opacity-40"
                             >
-                              Remove
+                              {t('common.remove')}
                             </button>
                           </span>
                         )}
@@ -440,44 +441,44 @@ export default function Users() {
       {showInviteModal && canInviteUsers && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h2 className="text-xl font-bold mb-4">Invite User</h2>
+            <h2 className="text-xl font-bold mb-4">{t('users.inviteUser')}</h2>
             <form onSubmit={handleInviteUser}>
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('users.email')}</label>
                 <input type="email" value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)}
                   className="input w-full" required autoFocus />
               </div>
               <div className="mb-4 grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">First Name</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('users.firstName')}</label>
                   <input type="text" value={newUserFirstName} onChange={(e) => setNewUserFirstName(e.target.value)}
                     className="input w-full" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Last Name</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('users.lastName')}</label>
                   <input type="text" value={newUserLastName} onChange={(e) => setNewUserLastName(e.target.value)}
                     className="input w-full" />
                 </div>
               </div>
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Temporary Password</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('users.temporaryPassword')}</label>
                 <input type="password" value={newUserPassword} onChange={(e) => setNewUserPassword(e.target.value)}
                   className="input w-full" required />
               </div>
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('users.role')}</label>
                 <select value={newUserRoleId} onChange={(e) => setNewUserRoleId(e.target.value)} className="input w-full">
                   {roles.map((r) => (
-                    <option key={r.id} value={r.id}>{r.name}{r.isDefault ? ' (default)' : ''}</option>
+                    <option key={r.id} value={r.id}>{r.name}{r.isDefault ? t('users.defaultRole') : ''}</option>
                   ))}
-                  {roles.length === 0 && <option value="">No roles available</option>}
+                  {roles.length === 0 && <option value="">{t('users.noRolesAvailable')}</option>}
                 </select>
               </div>
               <div className="flex justify-end space-x-2">
                 <button type="button" onClick={() => setShowInviteModal(false)}
-                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">Cancel</button>
+                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">{t('common.cancel')}</button>
                 <button type="submit" disabled={inviting || roles.length === 0} className="btn-primary">
-                  {inviting ? 'Inviting…' : 'Invite'}
+                  {inviting ? t('common.loading') : t('common.create')}
                 </button>
               </div>
             </form>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { Connector, BrokerCredential, ConnectorImpactSummary, ConnectorReferenceSummary } from '../types';
@@ -60,6 +61,7 @@ const initialConfigByType = (type: ConnectorType, existing?: Record<string, unkn
 };
 
 export default function Connectors() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const abilities = user?.abilities || [];
@@ -672,7 +674,7 @@ export default function Connectors() {
 
       <div className="mb-6 flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Connectors</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{t('connectors.title')}</h1>
           <p className="mt-1 text-sm text-gray-600">
             Manage protocol interface definitions (MQTT, REST, WebSocket, UDP, etc.)
           </p>

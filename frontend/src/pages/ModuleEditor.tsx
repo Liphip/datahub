@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { CodeModule } from '../types';
@@ -90,6 +91,7 @@ const TEMPLATES = {
 };
 
 export default function ModuleEditor() {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
@@ -118,7 +120,6 @@ export default function ModuleEditor() {
         const data = await api.getModule(id);
         setModule(data);
         
-        // Load latest version code if available
         if (data.versions && data.versions.length > 0) {
           const latestCode = data.versions[0].code || TEMPLATES[data.moduleType as keyof typeof TEMPLATES] || TEMPLATES.PROCESSING;
           const latestRequirements = data.versions[0].requirements || 'pandas\nnumpy';
@@ -128,7 +129,6 @@ export default function ModuleEditor() {
           setLoadedCodeSnapshot(latestCode);
           setLoadedRequirementsSnapshot(latestRequirements);
         } else {
-          // Set template based on module type
           const templateCode = TEMPLATES[data.moduleType as keyof typeof TEMPLATES] || TEMPLATES.PROCESSING;
           const defaultRequirements = 'pandas\nnumpy';
           setCode(templateCode);
@@ -168,10 +168,10 @@ export default function ModuleEditor() {
       setLoadedRequirementsSnapshot(requirements);
       setPendingLoadVersionId(null);
       setVersionTag('');
-      showToast('Version saved successfully', 'success');
+      showToast(t('modules.versionSaved'), 'success');
     } catch (error) {
       console.error('Error saving version:', error);
-      showToast('Failed to save version', 'error');
+      showToast(t('modules.versionLoadFailed'), 'error');
     } finally {
       setSaving(false);
     }
@@ -188,9 +188,9 @@ export default function ModuleEditor() {
   if (!module) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-500">Module not found</p>
+        <p className="text-gray-500">{t('modules.moduleNotFound')}</p>
         <button onClick={() => navigate('/modules')} className="btn-primary mt-4">
-          Back to Modules
+          {t('modules.backToModules')}
         </button>
       </div>
     );
@@ -212,7 +212,7 @@ export default function ModuleEditor() {
     setLoadedCodeSnapshot(nextCode);
     setLoadedRequirementsSnapshot(nextRequirements);
     setPendingLoadVersionId(null);
-    showToast(`Loaded v${selectedVersion.version}`, 'success');
+    showToast(t('modules.versionLoaded', { version: selectedVersion.version }), 'success');
   };
 
   return (
@@ -228,12 +228,12 @@ export default function ModuleEditor() {
       <div className="flex justify-between items-center p-4 bg-white border-b">
         <div>
           <h1 className="text-xl font-bold">{module.name}</h1>
-          <p className="text-sm text-gray-500">{module.moduleType} Module</p>
+          <p className="text-sm text-gray-500">{t(`modules.${module.moduleType.toLowerCase()}`)} {t('modules.title')}</p>
           {!canWriteModules && (
-            <p className="text-xs text-amber-700 mt-1">Read-only mode: no permission to save module versions.</p>
+            <p className="text-xs text-amber-700 mt-1">{t('modules.readOnlyNotice')}</p>
           )}
           {hasUnsavedChanges && (
-            <p className="text-xs text-amber-700 mt-1">Unsaved changes</p>
+            <p className="text-xs text-amber-700 mt-1">{t('common.unsavedChanges')}</p>
           )}
         </div>
         <div className="flex space-x-3">
@@ -241,15 +241,15 @@ export default function ModuleEditor() {
             onClick={() => navigate('/modules')}
             className="btn-secondary"
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             onClick={handleSave}
             disabled={saving || !canWriteModules}
             className="btn-primary"
-            title={!canWriteModules ? 'You need module write permission to save versions' : undefined}
+            title={!canWriteModules ? t('modules.readOnlyNotice') : undefined}
           >
-            {saving ? 'Saving...' : 'Save Version'}
+            {saving ? t('common.saving') : t('common.save')}
           </button>
         </div>
       </div>
@@ -273,11 +273,11 @@ export default function ModuleEditor() {
         </div>
         
         <div className="w-1/4 p-4 bg-gray-50 overflow-y-auto">
-          <h3 className="font-semibold mb-4">Module Configuration</h3>
+          <h3 className="font-semibold mb-4">{t('modules.configuration')}</h3>
           
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Requirements (pip)
+              {t('modules.requirements')}
             </label>
             <textarea
               value={requirements}
@@ -289,34 +289,34 @@ export default function ModuleEditor() {
           
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Version Tag (optional)
+              {t('modules.versionTag')}
             </label>
             <input
               type="text"
               value={versionTag}
               onChange={(e) => setVersionTag(e.target.value)}
               className="input"
-              placeholder="e.g., v1.0, production, stable"
+              placeholder={t('modules.versionTagPlaceholder')}
             />
           </div>
 
           <div className="border-t pt-4 mt-4">
-            <h4 className="font-medium text-sm mb-2">Version History</h4>
+            <h4 className="font-medium text-sm mb-2">{t('modules.versionHistory')}</h4>
             {pendingLoadVersionId && (
               <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                <p className="mb-2">You have unsaved changes. Load selected version anyway?</p>
+                <p className="mb-2">{t('modules.unsavedChangesPrompt')}</p>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => loadVersionIntoEditor(pendingLoadVersionId, true)}
                     className="px-2 py-0.5 rounded border border-amber-300 bg-white hover:bg-amber-100"
                   >
-                    Load anyway
+                    {t('modules.loadAnyway')}
                   </button>
                   <button
                     onClick={() => setPendingLoadVersionId(null)}
                     className="px-2 py-0.5 rounded border border-amber-300 bg-white hover:bg-amber-100"
                   >
-                    Keep editing
+                    {t('modules.keepEditing')}
                   </button>
                 </div>
               </div>
@@ -341,27 +341,24 @@ export default function ModuleEditor() {
                         onClick={() => loadVersionIntoEditor(v.id)}
                         className="px-2 py-0.5 text-xs rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
                       >
-                        Load
+                        {t('common.load')}
                       </button>
                       {loadedVersionId === v.id && (
-                        <span className="text-[11px] text-green-700">Loaded</span>
+                        <span className="text-[11px] text-green-700">{t('modules.loaded')}</span>
                       )}
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-gray-500">No versions yet</p>
+              <p className="text-sm text-gray-500">{t('modules.noVersionsYet')}</p>
             )}
           </div>
 
           <div className="border-t pt-4 mt-4">
-            <h4 className="font-medium text-sm mb-2">Module Template</h4>
+            <h4 className="font-medium text-sm mb-2">{t('modules.moduleTemplate')}</h4>
             <p className="text-xs text-gray-600 mb-2">
-              {module.moduleType === 'IMPORT' && 'IMPORT modules receive or fetch data from external sources.'}
-              {module.moduleType === 'PROCESSING' && 'PROCESSING modules transform, filter, or enrich data.'}
-              {module.moduleType === 'ALERT' && 'ALERT modules evaluate conditions and dispatch alerts.'}
-              {module.moduleType === 'EXPORT' && 'EXPORT modules send data to external systems.'}
+              {t(`modules.${module.moduleType.toLowerCase()}Description`)}
             </p>
             <div className="flex space-x-2 mb-2">
               {Object.keys(TEMPLATES).map((type) => (

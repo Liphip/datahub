@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 
@@ -9,6 +10,7 @@ type DataTable = {
 };
 
 export default function Data() {
+  const { t } = useTranslation();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const abilities = user?.abilities || [];
   const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
@@ -82,18 +84,18 @@ export default function Data() {
         setError('');
       } catch (error) {
         console.error('Error fetching tables:', error);
-        setError('Failed to load tables');
+        setError(t('data.failedLoadTables'));
       } finally {
         setLoading(false);
       }
     };
     
     load();
-  }, [tenantId, canReadData]);
+  }, [tenantId, canReadData, t]);
 
   const handleQuery = async () => {
     if (!canReadData) {
-      showToast('You do not have permission to query data', 'error');
+      showToast(t('data.permissionQuery'), 'error');
       return;
     }
     if (!tenantId || !selectedTable) return;
@@ -109,7 +111,7 @@ export default function Data() {
       setError('');
     } catch (error) {
       console.error('Error querying data:', error);
-      setError('Failed to query table data');
+      setError(t('data.failedQueryData'));
     } finally {
       setQuerying(false);
     }
@@ -117,7 +119,7 @@ export default function Data() {
 
   const handleCreateTable = async () => {
     if (!canWriteData) {
-      showToast('You do not have permission to create tables', 'error');
+      showToast(t('data.permissionCreateTable'), 'error');
       return;
     }
     if (!tenantId || !newTableName) return;
@@ -138,10 +140,10 @@ export default function Data() {
       setShowCreateModal(false);
       setNewTableName('');
       setError('');
-      showToast('Table created and initialized', 'success');
+      showToast(t('data.tableCreated'), 'success');
     } catch (error) {
       console.error('Error creating table:', error);
-      setError('Failed to create table');
+      setError(t('data.failedCreateTable'));
     } finally {
       setInsertingData(false);
     }
@@ -149,7 +151,7 @@ export default function Data() {
 
   const handleDeleteTable = async () => {
     if (!canWriteData) {
-      showToast('You do not have permission to delete tables', 'error');
+      showToast(t('data.permissionDeleteTable'), 'error');
       return;
     }
     if (!tenantId || !selectedTable) return;
@@ -160,10 +162,10 @@ export default function Data() {
       await fetchTables(tenantId);
       setConfirmDelete(false);
       setError('');
-      showToast('Table deleted', 'success');
+      showToast(t('data.tableDeleted'), 'success');
     } catch (error) {
       console.error('Error deleting table:', error);
-      setError('Failed to delete table');
+      setError(t('data.failedDeleteTable'));
     } finally {
       setDeletingTable(false);
     }
@@ -171,7 +173,7 @@ export default function Data() {
 
   const handleRefreshTables = async () => {
     if (!canReadData) {
-      showToast('You do not have permission to refresh tables', 'error');
+      showToast(t('data.permissionRefreshTables'), 'error');
       return;
     }
     if (!tenantId) return;
@@ -181,7 +183,7 @@ export default function Data() {
       setError('');
     } catch (error) {
       console.error('Error refreshing tables:', error);
-      setError('Failed to refresh tables');
+      setError(t('data.failedRefreshTables'));
     } finally {
       setLoading(false);
     }
@@ -202,7 +204,7 @@ export default function Data() {
     return (
       <div className="px-4 py-6">
         <div className="card text-center py-12">
-          <p className="text-gray-500">No tenant ID found. Please contact support.</p>
+          <p className="text-gray-500">{t('common.noTenantId')}</p>
         </div>
       </div>
     );
@@ -212,7 +214,7 @@ export default function Data() {
     return (
       <div className="px-4 py-6">
         <div className="card text-center py-12">
-          <p className="text-gray-500">You do not have permission to view data for this tenant.</p>
+          <p className="text-gray-500">{t('data.permissionViewData')}</p>
         </div>
       </div>
     );
@@ -229,14 +231,14 @@ export default function Data() {
       )}
 
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Data Explorer</h1>
+        <h1 className="text-2xl font-bold text-gray-900">{t('data.title')}</h1>
         <div className="flex gap-2">
           <button onClick={handleRefreshTables} className="btn-secondary">
-            Refresh
+            {t('common.refresh')}
           </button>
           {canWriteData && (
             <button onClick={() => setShowCreateModal(true)} className="btn-primary">
-              Create Table
+              {t('data.createTable')}
             </button>
           )}
         </div>
@@ -252,14 +254,14 @@ export default function Data() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
           <div className="flex-1">
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Table
+              {t('data.table')}
             </label>
             <select
               value={selectedTable}
               onChange={(e) => setSelectedTable(e.target.value)}
               className="input"
             >
-              {tables.length === 0 && <option value="">No tables</option>}
+              {tables.length === 0 && <option value="">{t('data.noTables')}</option>}
               {tables.map((table) => (
                 <option key={table.rawName} value={table.name}>
                   {table.name} ({table.type})
@@ -268,7 +270,7 @@ export default function Data() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Start</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('data.start')}</label>
             <input
               type="datetime-local"
               value={startTime}
@@ -277,7 +279,7 @@ export default function Data() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">End</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('data.end')}</label>
             <input
               type="datetime-local"
               value={endTime}
@@ -286,7 +288,7 @@ export default function Data() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Rows</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.rows')}</label>
             <input
               type="number"
               min={1}
@@ -301,26 +303,26 @@ export default function Data() {
             disabled={querying || !selectedTable}
             className="btn-primary"
           >
-            {querying ? 'Querying...' : 'Query'}
+            {querying ? t('common.refreshing') : t('common.search')}
           </button>
           <button
             onClick={() => setConfirmDelete(true)}
             disabled={!canWriteData || !selectedTable || deletingTable}
             className="btn-secondary border-red-300 text-red-700 hover:bg-red-50"
-            title={!canWriteData ? 'You need data write permission to delete tables' : undefined}
+            title={!canWriteData ? t('data.needDataWritePermission') : undefined}
           >
-            {deletingTable ? 'Deleting...' : 'Delete Table'}
+            {deletingTable ? t('common.deleting') : t('data.deleteTable')}
           </button>
         </div>
       </div>
 
       {tables.length === 0 ? (
         <div className="card text-center py-12">
-          <p className="text-gray-500 mb-4">No tables found</p>
+          <p className="text-gray-500 mb-4">{t('data.noTablesYet')}</p>
           {canWriteData ? (
-            <button onClick={() => setShowCreateModal(true)} className="btn-primary">Create Your First Table</button>
+            <button onClick={() => setShowCreateModal(true)} className="btn-primary">{t('data.createFirstTable')}</button>
           ) : (
-            <p className="text-sm text-gray-500">You need data write access to create tables.</p>
+            <p className="text-sm text-gray-500">{t('data.needDataWriteAccess')}</p>
           )}
         </div>
       ) : (
@@ -328,7 +330,7 @@ export default function Data() {
           {data.length > 0 ? (
             <div className="overflow-x-auto">
               <div className="px-6 py-3 text-sm text-gray-600 border-b border-gray-200">
-                Showing {Math.min(data.length, rowLimit)} row(s)
+                {t('data.showingRows', { count: Math.min(data.length, rowLimit) })}
               </div>
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
@@ -364,7 +366,7 @@ export default function Data() {
           ) : (
             <div className="text-center py-12">
               <p className="text-gray-500">
-                No data in this table. Run a pipeline to populate data.
+                {t('data.noDataInTable')}
               </p>
             </div>
           )}
@@ -374,33 +376,33 @@ export default function Data() {
       {showCreateModal && canWriteData && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h2 className="text-xl font-bold mb-4">Create Table</h2>
+            <h2 className="text-xl font-bold mb-4">{t('data.createTable')}</h2>
             <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Table Name</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('data.tableName')}</label>
               <input
                 type="text"
                 value={newTableName}
                 onChange={(e) => setNewTableName(e.target.value)}
                 className="input w-full"
-                placeholder="e.g., measurements"
+                placeholder={t('data.tableNamePlaceholder')}
               />
             </div>
             <p className="text-sm text-gray-500 mb-4">
-              Creating a table will insert a sample row to initialize the table schema.
+              {t('data.createTableDescription')}
             </p>
             <div className="flex justify-end space-x-2">
               <button
                 onClick={() => setShowCreateModal(false)}
                 className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleCreateTable}
                 disabled={insertingData || !newTableName}
                 className="btn-primary"
               >
-                {insertingData ? 'Creating...' : 'Create'}
+                {insertingData ? t('common.creating') : t('common.create')}
               </button>
             </div>
           </div>
@@ -410,23 +412,23 @@ export default function Data() {
       {confirmDelete && canWriteData && selectedTable && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h2 className="text-xl font-bold mb-2">Delete Table</h2>
+            <h2 className="text-xl font-bold mb-2">{t('data.deleteTable')}</h2>
             <p className="text-sm text-gray-600 mb-4">
-              Delete table <span className="font-mono">{selectedTable}</span>? This action cannot be undone.
+              {t('data.deleteTableConfirm', { name: selectedTable })}
             </p>
             <div className="flex justify-end space-x-2">
               <button
                 onClick={() => setConfirmDelete(false)}
                 className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleDeleteTable}
                 disabled={deletingTable}
                 className="px-4 py-2 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
               >
-                {deletingTable ? 'Deleting...' : 'Delete'}
+                {deletingTable ? t('common.deleting') : t('common.delete')}
               </button>
             </div>
           </div>

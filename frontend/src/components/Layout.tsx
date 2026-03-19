@@ -1,23 +1,26 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
+import { languages } from '../i18n';
 
 interface LayoutProps {
   children: React.ReactNode;
 }
 
 const navigation = [
-  { name: 'Dashboard', href: '/' },
-  { name: 'Modules', href: '/modules' },
-  { name: 'Pipelines', href: '/pipelines' },
-  { name: 'Connectors', href: '/connectors' },
-  { name: 'Data', href: '/data' },
-  { name: 'Alerts', href: '/alerts' },
-  { name: 'Users', href: '/users' },
-  { name: 'Tenants', href: '/tenants' },
+  { name: 'nav.dashboard', href: '/' },
+  { name: 'nav.modules', href: '/modules' },
+  { name: 'nav.pipelines', href: '/pipelines' },
+  { name: 'nav.connectors', href: '/connectors' },
+  { name: 'nav.data', href: '/data' },
+  { name: 'nav.alerts', href: '/alerts' },
+  { name: 'nav.users', href: '/users' },
+  { name: 'nav.tenants', href: '/tenants' },
 ];
 
 export default function Layout({ children }: LayoutProps) {
+  const { t, i18n } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout, tenantContexts, selectedTenantId, switchTenant } = useAuthStore();
@@ -51,7 +54,7 @@ export default function Layout({ children }: LayoutProps) {
       await switchTenant(tenantId);
       navigate('/');
     } catch {
-      setSwitchError('Failed to switch tenant context');
+      setSwitchError(t('errors.generic'));
     } finally {
       setSwitchingTenant(false);
     }
@@ -65,7 +68,7 @@ export default function Layout({ children }: LayoutProps) {
             <div className="flex">
               <div className="flex-shrink-0 flex items-center">
                   <Link to="/" className="text-xl font-bold text-primary-700 dark:text-primary-300">
-                    DataTurntable
+                    {t('common.appName')}
                   </Link>
                 </div>
               <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
@@ -79,7 +82,7 @@ export default function Layout({ children }: LayoutProps) {
                         : 'border-transparent text-slate-600 hover:border-slate-300 hover:text-slate-900 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:text-slate-100'
                     }`}
                   >
-                    {item.name}
+                    {t(item.name)}
                   </Link>
                 ))}
               </div>
@@ -88,7 +91,7 @@ export default function Layout({ children }: LayoutProps) {
               <div className="flex items-center space-x-4">
                 {tenantContexts.length > 1 && (
                   <div className="flex items-center space-x-2">
-                    <label htmlFor="tenant-switch" className="text-xs text-slate-500 dark:text-slate-400">Tenant</label>
+                    <label htmlFor="tenant-switch" className="text-xs text-slate-500 dark:text-slate-400">{t('auth.tenant')}</label>
                     <select
                       id="tenant-switch"
                       value={selectedTenantId || ''}
@@ -104,12 +107,24 @@ export default function Layout({ children }: LayoutProps) {
                     </select>
                   </div>
                 )}
+                <select
+                  value={i18n.language}
+                  onChange={(e) => i18n.changeLanguage(e.target.value)}
+                  className="text-xs rounded border border-slate-300 dark:border-slate-600 px-2 py-1 text-slate-600 dark:text-slate-200 bg-white dark:bg-slate-900"
+                  title={t('language.select')}
+                >
+                  {languages.map((lang) => (
+                    <option key={lang.code} value={lang.code}>
+                      {lang.nativeName}
+                    </option>
+                  ))}
+                </select>
                 <button
                   onClick={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
                   className="text-xs rounded border border-slate-300 dark:border-slate-600 px-2 py-1 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
-                  title="Toggle color theme"
+                  title={t('theme.toggle')}
                 >
-                  {theme === 'dark' ? 'Light' : 'Dark'}
+                  {theme === 'dark' ? t('theme.light') : t('theme.dark')}
                 </button>
                 <span className="text-sm text-slate-700 dark:text-slate-200">
                   {user?.email}
@@ -118,7 +133,7 @@ export default function Layout({ children }: LayoutProps) {
                   onClick={handleLogout}
                   className="text-sm text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                 >
-                  Logout
+                  {t('auth.logout')}
                 </button>
               </div>
             </div>
@@ -135,7 +150,7 @@ export default function Layout({ children }: LayoutProps) {
                       : 'border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-300'
                   }`}
                 >
-                  {item.name}
+                  {t(item.name)}
                 </Link>
               ))}
             </div>

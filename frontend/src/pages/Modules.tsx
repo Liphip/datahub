@@ -1,14 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { CodeModule } from '../types';
 
 const MODULE_TYPES = ['IMPORT', 'PROCESSING', 'EXPORT', 'ALERT'] as const;
 
-const moduleTypeLabels: Record<string, string> = {
-  IMPORT: 'Import', PROCESSING: 'Processing', EXPORT: 'Export', ALERT: 'Alert',
-};
 const moduleTypeColors: Record<string, string> = {
   IMPORT: 'bg-blue-100 text-blue-800',
   PROCESSING: 'bg-purple-100 text-purple-800',
@@ -17,6 +15,7 @@ const moduleTypeColors: Record<string, string> = {
 };
 
 export default function Modules() {
+  const { t } = useTranslation();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const navigate = useNavigate();
   const canReadModules = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('module:read'));
@@ -56,16 +55,16 @@ export default function Modules() {
       } catch (err: any) {
         const status = err?.response?.status;
         if (status === 403) {
-          setError('You do not have permission to view modules in this tenant.');
+          setError(t('modules.permissionViewModules'));
         } else {
-          setError('Failed to load modules');
+          setError(t('common.loadingFailed'));
         }
       } finally {
         setLoading(false);
       }
     };
     fetch();
-  }, [tenantId, filter]);
+  }, [tenantId, filter, t]);
 
   const handleCreateModule = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,7 +76,7 @@ export default function Modules() {
       setNewModuleName(''); setNewModuleType('PROCESSING'); setNewModuleDescription('');
       navigate(`/modules/${newModule.id}`);
     } catch {
-      showToast('Failed to create module', 'error');
+      showToast(t('modules.failedToCreateModule'), 'error');
     } finally {
       setCreating(false);
     }
@@ -90,9 +89,9 @@ export default function Modules() {
       await api.deleteModule(id);
       if (tenantId) await loadModules(tenantId, filter);
       setConfirmDeleteId(null);
-      showToast('Module deleted', 'success');
+      showToast(t('modules.moduleDeleted'), 'success');
     } catch {
-      showToast('Failed to delete module', 'error');
+      showToast(t('modules.failedToDeleteModule'), 'error');
     } finally {
       setDeletingId(null);
     }
@@ -100,7 +99,6 @@ export default function Modules() {
 
   return (
     <div className="px-4 py-6 sm:px-0">
-      {/* Toast */}
       {toast && (
         <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded shadow-lg text-white text-sm ${
           toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
@@ -110,15 +108,15 @@ export default function Modules() {
       )}
 
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Modules</h1>
+        <h1 className="text-2xl font-bold text-gray-900">{t('modules.title')}</h1>
         {canWriteModules && (
-          <button onClick={() => setShowCreateModal(true)} className="btn-primary">Create Module</button>
+          <button onClick={() => setShowCreateModal(true)} className="btn-primary">{t('modules.createModule')}</button>
         )}
       </div>
 
       {!canReadModules && (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          You can not view modules with your current role. Ask a tenant admin to grant module read access.
+          {t('modules.permissionReadModule')}
         </div>
       )}
 
@@ -129,7 +127,6 @@ export default function Modules() {
         </div>
       )}
 
-      {/* Type filter tabs */}
       <div className="mb-4 flex flex-wrap gap-2">
         {['all', ...MODULE_TYPES].map((type) => (
           <button
@@ -139,7 +136,7 @@ export default function Modules() {
               filter === type ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
-            {type === 'all' ? 'All' : moduleTypeLabels[type]}
+            {type === 'all' ? t('common.all') : t(`modules.${type.toLowerCase()}`)}
           </button>
         ))}
       </div>
@@ -154,9 +151,9 @@ export default function Modules() {
           ))}
         </div>
       ) : !tenantId ? (
-        <div className="card text-center py-12"><p className="text-gray-500">No tenant ID found.</p></div>
+        <div className="card text-center py-12"><p className="text-gray-500">{t('common.noTenantId')}</p></div>
       ) : !canReadModules ? (
-        <div className="card text-center py-12"><p className="text-gray-500">Access denied for module listing.</p></div>
+        <div className="card text-center py-12"><p className="text-gray-500">{t('modules.permissionDenied')}</p></div>
       ) : modules.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {modules.map((module) => {
@@ -171,39 +168,38 @@ export default function Modules() {
                       {module.name}
                     </h3>
                     <span className={`shrink-0 ml-2 px-2 py-1 text-xs font-medium rounded ${moduleTypeColors[module.moduleType]}`}>
-                      {moduleTypeLabels[module.moduleType]}
+                      {t(`modules.${module.moduleType.toLowerCase()}`)}
                     </span>
                   </div>
                   <p className="text-sm text-gray-500 mb-4 line-clamp-2">
-                    {module.description || 'No description'}
+                    {module.description || t('common.noDescription')}
                   </p>
                   <div className="flex justify-between items-center text-sm text-gray-500">
-                    <span>{module.versionCount ?? module.versions?.length ?? 0} version(s)</span>
+                    <span>{module.versionCount ?? module.versions?.length ?? 0} {t('common.versions')}</span>
                     <span className={`w-2 h-2 rounded-full ${module.isActive ? 'bg-green-400' : 'bg-gray-300'}`} />
                   </div>
                 </Link>
 
-                {/* Actions */}
                 <div className="mt-4 pt-3 border-t border-gray-100 flex justify-end items-center space-x-3 text-sm">
-                  <Link to={`/modules/${module.id}`} className="text-primary-600 hover:text-primary-800">Open</Link>
+                  <Link to={`/modules/${module.id}`} className="text-primary-600 hover:text-primary-800">{t('common.open')}</Link>
                   {canDeleteModules && isConfirming ? (
                     <>
-                      <span className="text-gray-500 text-xs">Delete?</span>
+                      <span className="text-gray-500 text-xs">{t('common.deleteConfirm')}</span>
                       <button
                         onClick={(e) => handleDeleteModule(module.id, e)}
                         disabled={isDeleting}
                         className="text-red-600 hover:text-red-800 font-medium"
                       >
-                        {isDeleting ? '…' : 'Yes'}
+                        {isDeleting ? '…' : t('common.yes')}
                       </button>
-                      <button onClick={() => setConfirmDeleteId(null)} className="text-gray-500 hover:text-gray-700">No</button>
+                      <button onClick={() => setConfirmDeleteId(null)} className="text-gray-500 hover:text-gray-700">{t('common.no')}</button>
                     </>
                   ) : canDeleteModules ? (
                     <button
                       onClick={(e) => { e.preventDefault(); setConfirmDeleteId(module.id); }}
                       className="text-red-600 hover:text-red-800"
                     >
-                      Delete
+                      {t('common.delete')}
                     </button>
                   ) : null}
                 </div>
@@ -213,11 +209,11 @@ export default function Modules() {
         </div>
       ) : (
         <div className="card text-center py-12">
-          <p className="text-gray-500 mb-4">No modules yet</p>
+          <p className="text-gray-500 mb-4">{t('modules.noModulesYet')}</p>
           {canWriteModules ? (
-            <button onClick={() => setShowCreateModal(true)} className="btn-primary">Create Your First Module</button>
+            <button onClick={() => setShowCreateModal(true)} className="btn-primary">{t('modules.createYourFirstModule')}</button>
           ) : (
-            <p className="text-sm text-gray-500">You need module write access to create one.</p>
+            <p className="text-sm text-gray-500">{t('modules.permissionCreateModule')}</p>
           )}
         </div>
       )}
@@ -225,31 +221,31 @@ export default function Modules() {
       {showCreateModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h2 className="text-xl font-bold mb-4">Create Module</h2>
+            <h2 className="text-xl font-bold mb-4">{t('modules.createModule')}</h2>
             <form onSubmit={handleCreateModule}>
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.name')}</label>
                 <input type="text" value={newModuleName} onChange={(e) => setNewModuleName(e.target.value)}
                   className="input w-full" required autoFocus />
               </div>
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.type')}</label>
                 <select value={newModuleType} onChange={(e) => setNewModuleType(e.target.value)} className="input w-full">
-                  {MODULE_TYPES.map((t) => (
-                    <option key={t} value={t}>{moduleTypeLabels[t]}</option>
+                  {MODULE_TYPES.map((type) => (
+                    <option key={type} value={type}>{t(`modules.${type.toLowerCase()}`)}</option>
                   ))}
                 </select>
               </div>
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.description')}</label>
                 <textarea value={newModuleDescription} onChange={(e) => setNewModuleDescription(e.target.value)}
                   className="input w-full" rows={3} />
               </div>
               <div className="flex justify-end space-x-2">
                 <button type="button" onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">Cancel</button>
+                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50">{t('common.cancel')}</button>
                 <button type="submit" disabled={creating} className="btn-primary">
-                  {creating ? 'Creating…' : 'Create'}
+                  {creating ? t('common.creating') : t('common.create')}
                 </button>
               </div>
             </form>

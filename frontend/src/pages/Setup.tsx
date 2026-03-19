@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 
 export default function Setup() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { register } = useAuthStore();
 
@@ -21,7 +23,7 @@ export default function Setup() {
       navigate('/');
     } catch (err: unknown) {
       const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
-      setError(message || 'Setup failed. If setup already ran, use the login page.');
+      setError(message || t('errors.setupFailed'));
     } finally {
       setLoading(false);
     }
@@ -30,9 +32,9 @@ export default function Setup() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
       <div className="max-w-md w-full p-8 bg-white rounded-lg shadow">
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">Initial Setup</h2>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">{t('auth.runInitialSetup')}</h2>
         <p className="text-sm text-gray-600 mb-6">
-          Create the first tenant and admin account.
+          {t('tenants.createFirstRoot')}
         </p>
 
         {error && (
@@ -43,7 +45,7 @@ export default function Setup() {
 
         <form className="space-y-4" onSubmit={handleSubmit}>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="tenantName">Tenant Name</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="tenantName">{t('tenants.tenantName')}</label>
             <input
               id="tenantName"
               value={tenantName}
@@ -53,7 +55,7 @@ export default function Setup() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="email">Admin Email</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="email">{t('auth.email')}</label>
             <input
               id="email"
               type="email"
@@ -64,7 +66,7 @@ export default function Setup() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="password">Admin Password</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="password">{t('auth.password')}</label>
             <input
               id="password"
               type="password"
@@ -77,7 +79,7 @@ export default function Setup() {
           </div>
 
           <button type="submit" disabled={loading} className="btn-primary w-full">
-            {loading ? 'Setting up...' : 'Run Setup'}
+            {loading ? t('common.loading') : t('auth.runInitialSetup')}
           </button>
         </form>
       </div>

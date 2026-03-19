@@ -1,5 +1,6 @@
 import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { Pipeline, PipelineRun, PipelineRunLineage, PipelineRunSummary, TenantLineageDefaults, TenantLineageDefaultsConfig, TenantLineageDefaultsDiagnostics, TenantPipelineRun } from '../types';
@@ -58,6 +59,7 @@ const LINEAGE_STATUS_OPTIONS: LineageStatusFilter[] = ['ALL', 'INFLIGHT', 'TERMI
 const TENANT_LINEAGE_FIELDS: TenantLineageDefaultsField[] = ['safeScopePolicy', 'defaultFetchMode', 'defaultDepth', 'maxDepthCap'];
 
 export default function Pipelines() {
+  const { t } = useTranslation();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1895,20 +1897,20 @@ export default function Pipelines() {
       )}
 
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Pipelines</h1>
+        <h1 className="text-2xl font-bold text-gray-900">{t('pipelines.title')}</h1>
         <button
           onClick={() => setShowCreateModal(true)}
           className="btn-primary"
           disabled={!canWritePipelines}
           title={!canWritePipelines ? 'You need pipeline write permission to create pipelines' : undefined}
         >
-          Create Pipeline
+          {t('common.create')}
         </button>
       </div>
 
       {!canReadPipelines && (
         <div className="card mb-4 border-amber-200 bg-amber-50 text-amber-900">
-          You do not have permission to view pipelines in this tenant.
+          {t('common.noPermission')}
         </div>
       )}
 

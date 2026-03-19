@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { Tenant, TenantLineageDefaults, TenantLineageDefaultsConfig, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy } from '../types';
@@ -38,6 +39,7 @@ const TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY = 'tenant.lineageDefaults.conflicts
 const LINEAGE_DEFAULT_FIELDS: LineageDefaultsField[] = ['safeScopePolicy', 'defaultFetchMode', 'defaultDepth', 'maxDepthCap'];
 
 export default function Tenants() {
+  const { t } = useTranslation();
   const { user } = useAuthStore();
   const canManageTenants = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('manage:tenant'));
   const [tenants, setTenants] = useState<TenantWithChildren[]>([]);
@@ -880,7 +882,7 @@ export default function Tenants() {
       )}
 
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Tenants</h1>
+        <h1 className="text-2xl font-bold text-gray-900">{t('tenants.title')}</h1>
         <div className="flex items-center space-x-2">
           <button
             onClick={() => {
@@ -891,7 +893,7 @@ export default function Tenants() {
             }}
             className="btn-secondary text-sm"
           >
-            Expand All
+            {t('common.expandAll')}
           </button>
           <button
             onClick={() => {
@@ -902,15 +904,15 @@ export default function Tenants() {
             }}
             className="btn-secondary text-sm"
           >
-            Collapse All
+            {t('common.collapseAll')}
           </button>
           <button 
             onClick={() => openCreateModal()} 
             className="btn-primary"
             disabled={!user?.superadmin || tenants.length > 0}
-            title={!user?.superadmin ? 'Only superadmin can create root tenants' : tenants.length > 0 ? 'Root tenant already exists. Add sub-tenants instead.' : 'Create root tenant'}
+            title={!user?.superadmin ? t('tenants.onlySuperadminCanCreateRoot') : tenants.length > 0 ? t('tenants.rootTenantExists') : t('tenants.createFirstRoot')}
           >
-            Create Root Tenant
+            {t('tenants.createRootTenant')}
           </button>
         </div>
       </div>
@@ -921,14 +923,14 @@ export default function Tenants() {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           className="input w-full md:max-w-md"
-          placeholder="Search tenants by name"
+          placeholder={t('tenants.searchPlaceholder')}
         />
       </div>
 
       <div className="card mb-6 border border-indigo-100 bg-indigo-50">
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold text-indigo-900">Lineage Defaults</h2>
+            <h2 className="text-lg font-semibold text-indigo-900">{t('tenants.lineageDefaults')}</h2>
             <div className="flex flex-wrap items-center gap-2 text-xs text-indigo-700">
               {selectedLineageDefaultsTenant?.updatedAt && (
                 <span>
@@ -936,16 +938,16 @@ export default function Tenants() {
                 </span>
               )}
               <span className={`px-2 py-0.5 rounded border ${pollStatusClass}`}>
-                Poll: {lineagePollStatus.toLowerCase()}
+                {t('tenants.poll:')} {lineagePollStatus.toLowerCase()}
               </span>
               {lineagePollCheckedAt && (
                 <span>
-                  Checked: {new Date(lineagePollCheckedAt).toLocaleTimeString()}
+                  {t('tenants.checked:')} {new Date(lineagePollCheckedAt).toLocaleTimeString()}
                 </span>
               )}
               {lineagePollOfflineFailures > 0 && (
                 <span>
-                  Offline retries: {lineagePollOfflineFailures}
+{t('tenants.offlineRetries:')} {lineagePollOfflineFailures}
                 </span>
               )}
               <button
@@ -953,36 +955,36 @@ export default function Tenants() {
                 disabled={checkingLineagePollNow || Date.now() < lineagePollCooldownUntil || !lineageDefaultsTenantId}
                 onClick={() => { void checkLineageDefaultsNow(); }}
               >
-                {checkingLineagePollNow ? 'Checking...' : 'Check now'}
+                {checkingLineagePollNow ? t('common.checking') : t('tenants.checkNow')}
               </button>
               <button
                 className="text-indigo-700 hover:text-indigo-900"
                 onClick={() => setShowLineagePollDebug((prev) => !prev)}
               >
-                {showLineagePollDebug ? 'Hide poll details' : 'Poll details'}
+                {showLineagePollDebug ? t('tenants.hidePollDetails') : t('tenants.pollDetails')}
               </button>
               <button
                 className="text-indigo-700 hover:text-indigo-900"
                 disabled={!lineageDefaultsTenantId}
                 onClick={() => { void copyLineageDefaultsDiagnostics(); }}
               >
-                Copy diagnostics
+                {t('tenants.copyDiagnostics')}
               </button>
               {selectedTenantConflictTelemetry && (
                 <>
                   <span className="px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900">
-                    Conflicts: {selectedTenantConflictTelemetry.count}
+                    {t('tenants.conflicts:')} {selectedTenantConflictTelemetry.count}
                   </span>
                   {selectedTenantConflictTelemetry.lastConflictAt && (
                     <span>
-                      Last: {new Date(selectedTenantConflictTelemetry.lastConflictAt).toLocaleString()}
+                      {t('tenants.lastReset:')} {new Date(selectedTenantConflictTelemetry.lastConflictAt).toLocaleString()}
                     </span>
                   )}
                   <button
                     className="text-indigo-700 hover:text-indigo-900"
                     onClick={() => lineageDefaultsTenantId && clearDefaultsConflictTelemetry(lineageDefaultsTenantId)}
                   >
-                    Clear
+                    {t('common.clear')}
                   </button>
                 </>
               )}
