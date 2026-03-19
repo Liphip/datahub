@@ -131,4 +131,21 @@ class DataResourceTest {
             .statusCode(403)
             .body("error", equalTo("Forbidden"))
     }
+
+    @Test
+    fun testSummaryRejectsInvalidNumericField() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("table", "measurements")
+            .queryParam("numericField", "value;drop")
+        .`when`()
+            .get("/api/internal/v1/data/$tenantId/summary")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid numericField"))
+    }
+
 }

@@ -3,6 +3,7 @@ package com.dataturntable.api
 import com.dataturntable.auth.User
 import com.dataturntable.security.SecurityUtils
 import com.dataturntable.tenant.Tenant
+import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.security.Authenticated
 import jakarta.inject.Inject
@@ -12,8 +13,13 @@ import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
 import org.eclipse.microprofile.jwt.JsonWebToken
+import java.sql.Timestamp
 import java.time.Instant
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 import java.util.UUID
+import kotlin.math.ceil
 
 @Path("/data")
 @Produces(MediaType.APPLICATION_JSON)
@@ -28,6 +34,9 @@ class DataResource {
     lateinit var em: EntityManager
     
     private val objectMapper = ObjectMapper()
+    private val tableNameRegex = Regex("^[A-Za-z0-9_]+$")
+    private val columnNameRegex = Regex("^[A-Za-z_][A-Za-z0-9_]*$")
+    private val tagFieldRegex = Regex("^[A-Za-z0-9_.-]+$")
 
     private fun currentUser(): User? {
         val subject = jwt.subject ?: return null
@@ -62,6 +71,30 @@ class DataResource {
         }
         if ((table ?: "measurements") != resolved) {
             throw WebApplicationException(Response.status(400).entity(mapOf("error" to "Invalid table name")).build())
+        }
+        return resolved
+    }
+
+    private fun requireValidColumnName(name: String?, field: String, defaultValue: String): String {
+        val resolved = (name ?: defaultValue).trim()
+        if (!columnNameRegex.matches(resolved)) {
+            throw WebApplicationException(Response.status(400).entity(mapOf("error" to "Invalid $field")).build())
+        }
+        return resolved
+    }
+
+    private fun requireValidTagField(tagField: String?): String {
+        val resolved = (tagField ?: "location").trim()
+        if (!tagFieldRegex.matches(resolved)) {
+            throw WebApplicationException(Response.status(400).entity(mapOf("error" to "Invalid tagField")).build())
+        }
+        return resolved
+    }
+
+    private fun normalizeTopTags(topTags: Int?): Int {
+        val resolved = topTags ?: 8
+        if (resolved !in 1..25) {
+            throw WebApplicationException(Response.status(400).entity(mapOf("error" to "Invalid topTags")).build())
         }
         return resolved
     }
@@ -129,6 +162,129 @@ class DataResource {
             e.response
         } catch (e: Exception) {
             Response.status(500).entity(mapOf("error" to "Query failed: ${e.message}")).build()
+        }
+    }
+
+    @GET
+    @Path("/{tenantId}/summary")
+    fun summarizeData(
+        @PathParam("tenantId") tenantId: String,
+        @QueryParam("table") table: String?,
+        @QueryParam("start") start: String?,
+        @QueryParam("end") end: String?,
+        @QueryParam("limit") limit: Int?,
+        @QueryParam("numericField") numericField: String?,
+        @QueryParam("tagField") tagField: String?,
+        @QueryParam("topTags") topTags: Int?
+    ): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val tenantUuid = parseTenantUuid(tenantId)
+        requireTenantAccess(currentUser, tenantUuid.toString(), "data:read")?.let { return it }
+        if (em.find(Tenant::class.java, tenantUuid) == null) {
+            return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
+        }
+
+        return try {
+            val tableName = requireValidTableName(table)
+            val limitValue = normalizeLimit(limit)
+            val startInstant = parseIsoInstant(start, "start")
+            val endInstant = parseIsoInstant(end, "end")
+            val numericColumn = requireValidColumnName(numericField, "numericField", "value")
+            val tagFieldName = requireValidTagField(tagField)
+            val topTagCount = normalizeTopTags(topTags)
+
+            val safeTenant = tenantId.replace("-", "_")
+            if (!tableNameRegex.matches(tableName) || !tableNameRegex.matches(safeTenant)) {
+                return Response.status(400).entity(mapOf("error" to "Invalid table name")).build()
+            }
+
+            val tableFullName = "tenant_${safeTenant}_${tableName}"
+            val sb = StringBuilder("SELECT time, $numericColumn, tags FROM $tableFullName")
+            val conditions = mutableListOf<String>()
+            if (startInstant != null) conditions.add("time >= :start")
+            if (endInstant != null) conditions.add("time <= :end")
+            if (conditions.isNotEmpty()) sb.append(" WHERE ").append(conditions.joinToString(" AND "))
+            sb.append(" ORDER BY time DESC LIMIT :limit")
+
+            val nativeQuery = em.createNativeQuery(sb.toString())
+            if (startInstant != null) nativeQuery.setParameter("start", startInstant)
+            if (endInstant != null) nativeQuery.setParameter("end", endInstant)
+            nativeQuery.setParameter("limit", limitValue)
+
+            val rows = nativeQuery.resultList
+            val linePoints = mutableListOf<Pair<Instant, Double>>()
+            val tagStats = linkedMapOf<String, MutableMap<String, Double>>()
+
+            for (row in rows) {
+                val tuple = row as? Array<*> ?: continue
+                if (tuple.size < 2) continue
+
+                val time = toInstant(tuple[0]) ?: continue
+                val numericValue = formatValue(tuple[1])
+                if (numericValue != null) {
+                    linePoints.add(time to numericValue)
+                }
+
+                val tags = parseTags(tuple.getOrNull(2))
+                val tagValue = tags[tagFieldName]?.toString()?.ifBlank { null }
+                if (tagValue != null && numericValue != null) {
+                    val bucket = tagStats.getOrPut(tagValue) {
+                        mutableMapOf("count" to 0.0, "sum" to 0.0)
+                    }
+                    bucket["count"] = (bucket["count"] ?: 0.0) + 1
+                    bucket["sum"] = (bucket["sum"] ?: 0.0) + numericValue
+                }
+            }
+
+            val sortedPoints = linePoints.sortedBy { it.first }
+            val series = downsampleSeries(sortedPoints, 80)
+            val numericCount = sortedPoints.size
+            val minValue = sortedPoints.minOfOrNull { it.second }
+            val maxValue = sortedPoints.maxOfOrNull { it.second }
+            val avgValue = if (numericCount > 0) sortedPoints.sumOf { it.second } / numericCount else null
+            val latestPoint = sortedPoints.lastOrNull()
+
+            val bars = tagStats.entries
+                .sortedByDescending { it.value["count"] ?: 0.0 }
+                .take(topTagCount)
+                .map { (label, stats) ->
+                    val count = (stats["count"] ?: 0.0).toInt()
+                    val sum = stats["sum"] ?: 0.0
+                    mapOf(
+                        "label" to label,
+                        "count" to count,
+                        "avgValue" to if (count > 0) sum / count else 0.0
+                    )
+                }
+
+            Response.ok(
+                mapOf(
+                    "summary" to mapOf(
+                        "rowCount" to rows.size,
+                        "numericCount" to numericCount,
+                        "min" to minValue,
+                        "max" to maxValue,
+                        "avg" to avgValue,
+                        "latestTime" to latestPoint?.first?.toString(),
+                        "latestValue" to latestPoint?.second
+                    ),
+                    "series" to series,
+                    "bars" to bars,
+                    "applied" to mapOf(
+                        "table" to tableName,
+                        "numericField" to numericColumn,
+                        "tagField" to tagFieldName,
+                        "limit" to limitValue,
+                        "start" to startInstant?.toString(),
+                        "end" to endInstant?.toString(),
+                        "topTags" to topTagCount
+                    )
+                )
+            ).build()
+        } catch (e: WebApplicationException) {
+            e.response
+        } catch (e: Exception) {
+            Response.status(500).entity(mapOf("error" to "Summary query failed: ${e.message}")).build()
         }
     }
     
@@ -293,6 +449,56 @@ class DataResource {
             insertQuery.setParameter("tags", tags)
             insertQuery.setParameter("tenantId", tenantId)
             insertQuery.executeUpdate()
+        }
+    }
+
+    private fun toInstant(value: Any?): Instant? {
+        return when (value) {
+            null -> null
+            is Instant -> value
+            is OffsetDateTime -> value.toInstant()
+            is LocalDateTime -> value.toInstant(ZoneOffset.UTC)
+            is Timestamp -> value.toInstant()
+            else -> {
+                try {
+                    Instant.parse(value.toString())
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        }
+    }
+
+    private fun parseTags(rawTags: Any?): Map<String, Any?> {
+        if (rawTags == null) return emptyMap()
+        return try {
+            when (rawTags) {
+                is Map<*, *> -> rawTags.entries.associate { it.key.toString() to it.value }
+                else -> {
+                    val json = rawTags.toString()
+                    if (json.isBlank()) emptyMap()
+                    else objectMapper.readValue(json, object : TypeReference<Map<String, Any?>>() {})
+                }
+            }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    private fun downsampleSeries(points: List<Pair<Instant, Double>>, targetPoints: Int): List<Map<String, Any>> {
+        if (points.isEmpty()) return emptyList()
+        if (points.size <= targetPoints) {
+            return points.map { mapOf("time" to it.first.toString(), "value" to it.second) }
+        }
+
+        val bucketSize = ceil(points.size.toDouble() / targetPoints.toDouble()).toInt().coerceAtLeast(1)
+        return points.chunked(bucketSize).map { chunk ->
+            val avg = chunk.sumOf { it.second } / chunk.size
+            val timestamp = chunk.last().first
+            mapOf(
+                "time" to timestamp.toString(),
+                "value" to avg
+            )
         }
     }
 
