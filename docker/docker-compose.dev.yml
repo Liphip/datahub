@@ -152,6 +152,26 @@ services:
       nginx:
         condition: service_started
 
+  loki:
+    image: grafana/loki:3.1.1
+    container_name: dataturntable-loki
+    command: -config.file=/etc/loki/loki.yml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
+
+  promtail:
+    image: grafana/promtail:3.1.1
+    container_name: dataturntable-promtail
+    command: -config.file=/etc/promtail/promtail.yml
+    volumes:
+      - ./monitoring/promtail/promtail-docker.yml:/etc/promtail/promtail.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+
   grafana:
     image: grafana/grafana:11.1.4
     container_name: dataturntable-grafana
@@ -228,3 +248,4 @@ volumes:
   mosquitto-logs:
   prometheus-data:
   grafana-data:
+  loki-data:

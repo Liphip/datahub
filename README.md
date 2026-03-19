@@ -88,6 +88,7 @@ Push to WebSocket     ──────────► │   UDP endpoints;    
     - Grafana (direct): http://localhost:3001 (admin/admin)
     - Grafana (via gateway): http://monitoring.localhost
     - Monitoring fallback route: http://localhost/monitoring
+    - Loki API: http://localhost:3100
 
 ### Building from Source
 
@@ -216,12 +217,26 @@ Environment variables for the backend:
 cd docker
 docker-compose -f docker-compose.dev.yml up -d
 ```
+
+### Docker Swarm Monitoring
+
+```bash
+docker network create --driver overlay --attachable dataturntable
+docker stack deploy -c docker/docker-stack.monitoring.yml dataturntable-monitoring
+```
+
+- Prometheus uses Swarm task discovery for multi-replica services
+- Promtail runs globally and ships service logs to Loki
+- Grafana includes both Prometheus and Loki datasources by default
 ### Kubernetes
 
 Using Kustomize:
 ```bash
 kubectl apply -k docker/k8s/
 ```
+
+Monitoring endpoint host for Kubernetes ingress:
+- `monitoring.dataturntable.example.com` → Grafana
 Using Helm (coming soon):
 ```bash
 helm install dataturntable ./docker/helm/dataturntable

@@ -56,6 +56,34 @@ npm run build
 | Grafana (subdomain via gateway) | http://monitoring.localhost |
 | Monitoring fallback route | http://localhost/monitoring |
 
+## Monitoring Deployment Modes
+
+### Docker Compose (single host)
+
+- Includes Prometheus + Grafana + Loki + Promtail + service exporters in `docker/docker-compose.dev.yml`
+- Prometheus scrapes backend metrics (`/q/metrics`) plus infra exporters and blackbox probes
+- Loki receives Docker logs through Promtail and is pre-wired as a Grafana datasource
+
+### Docker Swarm (multi-node)
+
+Deploy monitoring stack with Swarm service discovery and global log/host collectors:
+
+```bash
+docker network create --driver overlay --attachable dataturntable
+docker stack deploy -c docker/docker-stack.monitoring.yml dataturntable-monitoring
+```
+
+- Uses `dockerswarm_sd_configs` for dynamic multi-replica scraping
+- Uses global Promtail for logs across all nodes/tasks
+- Includes global Node Exporter and cAdvisor for host/container monitoring
+
+### Kubernetes (multi-replica)
+
+- `docker/k8s/monitoring/*` deploys Prometheus, Loki, Promtail, Grafana, Node Exporter, and kube-state-metrics
+- Pod annotations on backend/frontend enable per-pod metrics scraping
+- Promtail DaemonSet collects logs from all pods in `dataturntable` namespace
+- Grafana ingress host: `monitoring.dataturntable.example.com`
+
 ## API Routing
 
 The backend uses two base paths:

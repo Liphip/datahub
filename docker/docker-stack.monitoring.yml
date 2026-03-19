@@ -1,0 +1,122 @@
+configs:
+  prometheus_swrm_cfg:
+    file: ./monitoring/prometheus/prometheus-swarm.yml
+  loki_cfg:
+    file: ./monitoring/loki/loki.yml
+  promtail_cfg:
+    file: ./monitoring/promtail/promtail-docker.yml
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+
+networks:
+  dataturntable:
+    external: true
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    ports:
+      - target: 9090
+        published: 9090
+        protocol: tcp
+        mode: ingress
+    configs:
+      - source: prometheus_swrm_cfg
+        target: /etc/prometheus/prometheus.yml
+    volumes:
+      - prometheus-data:/prometheus
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - dataturntable
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  loki:
+    image: grafana/loki:3.1.1
+    command: -config.file=/etc/loki/loki.yml
+    ports:
+      - target: 3100
+        published: 3100
+        protocol: tcp
+        mode: ingress
+    configs:
+      - source: loki_cfg
+        target: /etc/loki/loki.yml
+    volumes:
+      - loki-data:/loki
+    networks:
+      - dataturntable
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  promtail:
+    image: grafana/promtail:3.1.1
+    command: -config.file=/etc/promtail/promtail.yml
+    configs:
+      - source: promtail_cfg
+        target: /etc/promtail/promtail.yml
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - dataturntable
+    deploy:
+      mode: global
+
+  grafana:
+    image: grafana/grafana:11.1.4
+    ports:
+      - target: 3000
+        published: 3001
+        protocol: tcp
+        mode: ingress
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+    networks:
+      - dataturntable
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    command:
+      - --path.rootfs=/host
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - dataturntable
+    deploy:
+      mode: global
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      - dataturntable
+    deploy:
+      mode: global
