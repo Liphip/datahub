@@ -201,6 +201,9 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added analytics-focused Data API summary endpoint (`GET /data/{tenantId}/summary`) with strict identifier validation plus downsampled trend series and top-tag distribution aggregation for chart-ready payloads.
 - Upgraded Data Explorer UX with query-backed summary cards, inline trend + tag distribution charts, configurable metric/tag analysis fields, and one-click CSV/JSON exports for quick investigations.
 - Added Data API summary input-validation coverage (`numericField` guard) to prevent malformed identifier requests from reaching SQL execution paths.
+- Added backend Prometheus metrics support via Quarkus Micrometer Prometheus registry and explicit metrics-export configuration in `application.yaml`.
+- Added internal Nginx status endpoints (`:8081/nginx_status`) for both frontend and gateway Nginx to support secure in-network exporter scraping.
+- Added shipped observability stack in Docker Compose: Prometheus, Grafana, Postgres/Redis/Kafka exporters, Nginx exporters, and Blackbox exporter with preconfigured dashboards/datasources.
 
 ---
 

@@ -50,6 +50,9 @@ npm run build
 | Frontend | http://localhost:80 |
 | Backend API | http://localhost:8080/api/internal/v1 |
 | Health | http://localhost:8080/q/health |
+| Backend Metrics | http://localhost:8080/q/metrics |
+| Prometheus | http://localhost:9090 |
+| Grafana | http://localhost:3001 (admin/admin) |
 
 ## API Routing
 

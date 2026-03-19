@@ -83,6 +83,9 @@ Push to WebSocket     ──────────► │   UDP endpoints;    
     - PostgreSQL/TimescaleDB: localhost:5432
     - Kafka: localhost:9092
     - MQTT Broker: localhost:1883
+    - Backend Prometheus Metrics: http://localhost:8080/q/metrics
+    - Prometheus: http://localhost:9090
+    - Grafana: http://localhost:3001 (admin/admin)
 
 ### Building from Source
 
