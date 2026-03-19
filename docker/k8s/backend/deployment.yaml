@@ -50,7 +50,7 @@ spec:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka:9092"
             - name: REDIS_HOSTS
-              value: "redis:6379"
+              value: "redis://redis:6379"
           resources:
             requests:
               cpu: 500m

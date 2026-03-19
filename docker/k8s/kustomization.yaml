@@ -6,6 +6,7 @@ namespace: dataturntable
 resources:
   - storage/secrets.yaml
   - storage/postgres.yaml
+  - infra/messaging.yaml
   - backend/deployment.yaml
   - frontend/deployment.yaml
   - ingress/ingress.yaml
