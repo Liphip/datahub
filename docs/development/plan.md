@@ -208,6 +208,9 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added full logs pipeline into Grafana with Loki + Promtail for Docker environments and pre-provisioned Loki datasource + logs dashboard.
 - Added Swarm-ready monitoring stack (`docker-stack.monitoring.yml`) using Swarm task discovery, global Promtail, and host/container telemetry collectors for horizontally scaled services.
 - Added Kubernetes monitoring manifests (Prometheus/Loki/Promtail/Grafana/node-exporter/kube-state-metrics), including pod-level scrape annotations and dedicated monitoring ingress host.
+- Added dedicated Swarm application stack (`docker-stack.app.yml`) for full platform deployment (PostgreSQL, Kafka, Redis, Mosquitto, Backend, Frontend, Nginx) with replica defaults for stateless services.
+- Added Kubernetes app infra manifests for Kafka/Redis/Mosquitto and wired them into kustomization so k8s now covers full runtime stack plus monitoring.
+- Added infrastructure visibility dashboards/targets for host hardware and Docker containers (Node Exporter + cAdvisor) so Grafana includes system-level operational telemetry.
 
 ---
 

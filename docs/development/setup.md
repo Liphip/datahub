@@ -77,12 +77,29 @@ docker stack deploy -c docker/docker-stack.monitoring.yml dataturntable-monitori
 - Uses global Promtail for logs across all nodes/tasks
 - Includes global Node Exporter and cAdvisor for host/container monitoring
 
+Deploy the application stack in Swarm as well:
+
+```bash
+docker network create --driver overlay --attachable dataturntable
+docker stack deploy -c docker/docker-stack.app.yml dataturntable
+```
+
+- `docker-stack.app.yml` includes full platform runtime services (postgres, kafka, redis, mosquitto, backend, frontend, nginx)
+- stateless services are pre-scaled and can be increased with `docker service scale`
+
 ### Kubernetes (multi-replica)
 
 - `docker/k8s/monitoring/*` deploys Prometheus, Loki, Promtail, Grafana, Node Exporter, and kube-state-metrics
+- `docker/k8s/infra/messaging.yaml` deploys Redis, Kafka, and Mosquitto alongside existing app services
 - Pod annotations on backend/frontend enable per-pod metrics scraping
 - Promtail DaemonSet collects logs from all pods in `dataturntable` namespace
 - Grafana ingress host: `monitoring.dataturntable.example.com`
+
+### System and Docker/Container Insights
+
+- Host hardware metrics: Node Exporter (CPU, memory, disk, network)
+- Container runtime metrics: cAdvisor (Docker/containers)
+- Application and infrastructure logs: Loki + Promtail in Grafana Logs
 
 ## API Routing
 

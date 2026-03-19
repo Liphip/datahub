@@ -34,6 +34,14 @@ scrape_configs:
     static_configs:
       - targets: ["kafka-exporter:9308"]
 
+  - job_name: dataturntable-node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  - job_name: dataturntable-containers
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
   - job_name: dataturntable-http-health
     metrics_path: /probe
     params:

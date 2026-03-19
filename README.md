@@ -228,6 +228,17 @@ docker stack deploy -c docker/docker-stack.monitoring.yml dataturntable-monitori
 - Prometheus uses Swarm task discovery for multi-replica services
 - Promtail runs globally and ships service logs to Loki
 - Grafana includes both Prometheus and Loki datasources by default
+
+### Docker Swarm Application Stack (multi-instance)
+
+```bash
+docker network create --driver overlay --attachable dataturntable
+docker stack deploy -c docker/docker-stack.app.yml dataturntable
+```
+
+- Deploys full platform services in Swarm: PostgreSQL, Kafka, Redis, Mosquitto, Backend, Frontend, Nginx
+- Scales stateless services by default (`backend=3`, `frontend=3`, `nginx=2`)
+- Works with the monitoring stack on the shared `dataturntable` overlay network
 ### Kubernetes
 
 Using Kustomize:
@@ -237,6 +248,15 @@ kubectl apply -k docker/k8s/
 
 Monitoring endpoint host for Kubernetes ingress:
 - `monitoring.dataturntable.example.com` → Grafana
+
+Kubernetes bundle now includes full application + monitoring resources:
+- App services: PostgreSQL, Kafka, Redis, Mosquitto, Backend, Frontend
+- Monitoring services: Prometheus, Loki, Promtail, Grafana, node-exporter, kube-state-metrics, DB/broker exporters
+
+System/hardware visibility in Grafana:
+- Host metrics via Node Exporter (CPU, memory, filesystem, network)
+- Docker/container metrics via cAdvisor (container CPU/memory/restarts)
+- Service logs via Loki + Promtail
 Using Helm (coming soon):
 ```bash
 helm install dataturntable ./docker/helm/dataturntable
