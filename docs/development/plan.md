@@ -198,6 +198,9 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added poll-debug visibility for tenant managers: Tenants and Pipelines now include optional `Poll details` UI showing current interval, offline retry count, pause window, and manual-check cooldown so admins can understand delayed freshness checks during outages.
 - Added copyable lineage-default diagnostics for support handoff: Tenants and Pipelines now provide `Copy diagnostics` actions that capture tenant/context identifiers, poll/backoff state, version/etag info, and conflict counters in JSON for faster troubleshooting across multi-admin sessions.
 - Added backend lineage-default diagnostics counters and UI surfacing: tenant API now tracks per-tenant lineage-default read/write outcomes (`GET 200`, `GET 304`, patch success/conflict) and exposes them via diagnostics endpoint; Tenants and Pipelines now render compact 200/304 + conflict ratios with refresh controls and include backend counters in copied diagnostics.
+- Added analytics-focused Data API summary endpoint (`GET /data/{tenantId}/summary`) with strict identifier validation plus downsampled trend series and top-tag distribution aggregation for chart-ready payloads.
+- Upgraded Data Explorer UX with query-backed summary cards, inline trend + tag distribution charts, configurable metric/tag analysis fields, and one-click CSV/JSON exports for quick investigations.
+- Added Data API summary input-validation coverage (`numericField` guard) to prevent malformed identifier requests from reaching SQL execution paths.
 
 ---
 

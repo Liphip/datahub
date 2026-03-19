@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, Role, Membership, TenantContext, BrokerCredential } from '../types';
+import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, DataSummaryResponse, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, Role, Membership, TenantContext, BrokerCredential } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 export const API_STATUS_EVENT = 'dataturntable:api-status';
@@ -493,6 +493,27 @@ class ApiService {
 
   async deleteTable(tenantId: string, table: string): Promise<void> {
     await this.client.delete(`/data/${tenantId}/tables/${encodeURIComponent(table)}`);
+  }
+
+  async getDataSummary(
+    tenantId: string,
+    table: string,
+    params?: {
+      start?: string;
+      end?: string;
+      limit?: number;
+      numericField?: string;
+      tagField?: string;
+      topTags?: number;
+    }
+  ): Promise<DataSummaryResponse> {
+    const response = await this.client.get<DataSummaryResponse>(`/data/${tenantId}/summary`, {
+      params: {
+        table,
+        ...params,
+      },
+    });
+    return response.data;
   }
 
   // Connectors

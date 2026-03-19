@@ -326,6 +326,29 @@ export interface AlertHistory {
   status: 'PENDING' | 'SENT' | 'FAILED' | 'RETRY';
 }
 
+export interface DataSummaryResponse {
+  summary: {
+    rowCount: number;
+    numericCount: number;
+    min?: number;
+    max?: number;
+    avg?: number;
+    latestTime?: string;
+    latestValue?: number;
+  };
+  series: Array<{ time: string; value: number }>;
+  bars: Array<{ label: string; count: number; avgValue: number }>;
+  applied: {
+    table: string;
+    numericField: string;
+    tagField: string;
+    limit: number;
+    start?: string;
+    end?: string;
+    topTags: number;
+  };
+}
+
 export interface Connector {
   id: string;
   tenantId?: string;
