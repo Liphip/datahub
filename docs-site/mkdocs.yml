@@ -31,6 +31,8 @@ nav:
   - English:
       - Getting Started: en/getting-started.md
       - Beginner Guide: en/beginner-guide.md
+      - UI Controls Reference: en/ui-controls.md
+      - Step-by-Step Tasks: en/guided-tasks.md
       - Administrator Guide: en/admin-guide.md
       - Tenants and Roles: en/tenants-and-roles.md
       - Modules: en/modules.md
@@ -47,6 +49,8 @@ nav:
   - Deutsch:
       - Erste Schritte: de/getting-started.md
       - Einsteiger-Guide: de/beginner-guide.md
+      - UI-Bedienreferenz: de/ui-controls.md
+      - Schritt-fuer-Schritt Aufgaben: de/guided-tasks.md
       - Administratoren-Guide: de/admin-guide.md
       - Mandanten und Rollen: de/tenants-and-roles.md
       - Module: de/modules.md

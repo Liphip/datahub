@@ -8,6 +8,7 @@ This documentation portal is designed for both:
 ## Start Here
 
 - New users: open **English > Beginner Guide** or **Deutsch > Einsteiger-Guide**.
+- New users wanting click-by-click help: open **UI Controls Reference** and **Step-by-Step Tasks**.
 - Administrators: open **Administrator Guide** and **Operations Runbook**.
 
 ## What this portal covers
