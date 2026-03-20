@@ -13,7 +13,7 @@ resources:
   - ingress/ingress.yaml
   - monitoring/prometheus.yaml
   - monitoring/loki.yaml
-  - monitoring/promtail.yaml
+  - monitoring/alloy.yaml
   - monitoring/grafana.yaml
   - monitoring/infra-metrics.yaml
 

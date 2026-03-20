@@ -3,8 +3,8 @@ configs:
     file: ./monitoring/prometheus/prometheus-swarm.yml
   loki_cfg:
     file: ./monitoring/loki/loki.yml
-  promtail_cfg:
-    file: ./monitoring/promtail/promtail-docker.yml
+  alloy_cfg:
+    file: ./monitoring/alloy/alloy-docker.hcl
 
 volumes:
   prometheus-data:
@@ -62,12 +62,12 @@ services:
         constraints:
           - node.role == manager
 
-  promtail:
-    image: grafana/promtail:3.1.1
-    command: -config.file=/etc/promtail/promtail.yml
+  alloy:
+    image: grafana/alloy:latest
+    command: run /etc/alloy/config.alloy --storage.path=/var/lib/alloy/data
     configs:
-      - source: promtail_cfg
-        target: /etc/promtail/promtail.yml
+      - source: alloy_cfg
+        target: /etc/alloy/config.alloy
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:

@@ -5,7 +5,7 @@
 - Prometheus
 - Grafana
 - Loki
-- Promtail/Exporter
+- Grafana Alloy/Exporter
 
 ## Mindestsignale
 

@@ -63,9 +63,9 @@ npm run build
 
 ### Docker Compose (single host)
 
-- Includes Prometheus + Grafana + Loki + Promtail + service exporters in `docker/docker-compose.dev.yml`
+- Includes Prometheus + Grafana + Loki + Grafana Alloy + service exporters in `docker/docker-compose.dev.yml`
 - Prometheus scrapes backend metrics (`/q/metrics`) plus infra exporters and blackbox probes
-- Loki receives Docker logs through Promtail and is pre-wired as a Grafana datasource
+- Loki receives Docker logs through Grafana Alloy and is pre-wired as a Grafana datasource
 
 ### Docker Swarm (multi-node)
 
@@ -77,7 +77,7 @@ docker stack deploy -c docker/docker-stack.monitoring.yml dataturntable-monitori
 ```
 
 - Uses `dockerswarm_sd_configs` for dynamic multi-replica scraping
-- Uses global Promtail for logs across all nodes/tasks
+- Uses global Grafana Alloy for logs across all nodes/tasks
 - Includes global Node Exporter and cAdvisor for host/container monitoring
 
 Deploy the application stack in Swarm as well:
@@ -92,10 +92,10 @@ docker stack deploy -c docker/docker-stack.app.yml dataturntable
 
 ### Kubernetes (multi-replica)
 
-- `docker/k8s/monitoring/*` deploys Prometheus, Loki, Promtail, Grafana, Node Exporter, and kube-state-metrics
+- `docker/k8s/monitoring/*` deploys Prometheus, Loki, Grafana Alloy, Grafana, Node Exporter, and kube-state-metrics
 - `docker/k8s/infra/messaging.yaml` deploys Redis, Kafka, and Mosquitto alongside existing app services
 - Pod annotations on backend/frontend enable per-pod metrics scraping
-- Promtail DaemonSet collects logs from all pods in `dataturntable` namespace
+- Grafana Alloy DaemonSet collects logs from all pods in `dataturntable` namespace
 - Grafana ingress host: `monitoring.dataturntable.example.com`
 - Docs ingress host: `docs.dataturntable.example.com`
 
@@ -103,7 +103,7 @@ docker stack deploy -c docker/docker-stack.app.yml dataturntable
 
 - Host hardware metrics: Node Exporter (CPU, memory, disk, network)
 - Container runtime metrics: cAdvisor (Docker/containers)
-- Application and infrastructure logs: Loki + Promtail in Grafana Logs
+- Application and infrastructure logs: Loki + Grafana Alloy in Grafana Logs
 
 ## API Routing
 

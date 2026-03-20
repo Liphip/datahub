@@ -5,7 +5,7 @@
 - Prometheus (metrics)
 - Grafana (dashboards)
 - Loki (logs)
-- Promtail/exporters (collection)
+- Grafana Alloy/exporters (collection)
 
 ## What to monitor minimum
 

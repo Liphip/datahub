@@ -172,12 +172,12 @@ services:
       - ./monitoring/loki/loki.yml:/etc/loki/loki.yml:ro
       - loki-data:/loki
 
-  promtail:
-    image: grafana/promtail:3.1.1
-    container_name: dataturntable-promtail
-    command: -config.file=/etc/promtail/promtail.yml
+  alloy:
+    image: grafana/alloy:latest
+    container_name: dataturntable-alloy
+    command: run /etc/alloy/config.alloy --storage.path=/var/lib/alloy/data
     volumes:
-      - ./monitoring/promtail/promtail-docker.yml:/etc/promtail/promtail.yml:ro
+      - ./monitoring/alloy/alloy-docker.hcl:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       - loki

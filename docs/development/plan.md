@@ -205,9 +205,9 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added internal Nginx status endpoints (`:8081/nginx_status`) for both frontend and gateway Nginx to support secure in-network exporter scraping.
 - Added shipped observability stack in Docker Compose: Prometheus, Grafana, Postgres/Redis/Kafka exporters, Nginx exporters, and Blackbox exporter with preconfigured dashboards/datasources.
 - Added monitoring access routing through gateway Nginx: dedicated `monitoring.localhost` subdomain proxy to Grafana plus `/monitoring` fallback redirect for environments without subdomain usage.
-- Added full logs pipeline into Grafana with Loki + Promtail for Docker environments and pre-provisioned Loki datasource + logs dashboard.
-- Added Swarm-ready monitoring stack (`docker-stack.monitoring.yml`) using Swarm task discovery, global Promtail, and host/container telemetry collectors for horizontally scaled services.
-- Added Kubernetes monitoring manifests (Prometheus/Loki/Promtail/Grafana/node-exporter/kube-state-metrics), including pod-level scrape annotations and dedicated monitoring ingress host.
+- Added full logs pipeline into Grafana with Loki + Grafana Alloy for Docker environments and pre-provisioned Loki datasource + logs dashboard.
+- Added Swarm-ready monitoring stack (`docker-stack.monitoring.yml`) using Swarm task discovery, global Grafana Alloy, and host/container telemetry collectors for horizontally scaled services.
+- Added Kubernetes monitoring manifests (Prometheus/Loki/Alloy/Grafana/node-exporter/kube-state-metrics), including pod-level scrape annotations and dedicated monitoring ingress host.
 - Added dedicated Swarm application stack (`docker-stack.app.yml`) for full platform deployment (PostgreSQL, Kafka, Redis, Mosquitto, Backend, Frontend, Nginx) with replica defaults for stateless services.
 - Added Kubernetes app infra manifests for Kafka/Redis/Mosquitto and wired them into kustomization so k8s now covers full runtime stack plus monitoring.
 - Added infrastructure visibility dashboards/targets for host hardware and Docker containers (Node Exporter + cAdvisor) so Grafana includes system-level operational telemetry.
