@@ -66,6 +66,7 @@ npm run build
 - Includes Prometheus + Grafana + Loki + Grafana Alloy + service exporters in `docker/docker-compose.dev.yml`
 - Prometheus scrapes backend metrics (`/q/metrics`) plus infra exporters and blackbox probes
 - Loki receives Docker logs through Grafana Alloy and is pre-wired as a Grafana datasource
+- Grafana ships with pre-provisioned dashboards: Status, Backend, PostgreSQL, Redis, Kafka, Edge Services, Infrastructure, Overview, and Logs
 
 ### Docker Swarm (multi-node)
 
