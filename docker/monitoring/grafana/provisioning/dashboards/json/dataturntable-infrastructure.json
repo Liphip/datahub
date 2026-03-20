@@ -102,7 +102,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "count(container_last_seen{container!~\"^$|POD\"})",
+          "expr": "count(container_last_seen)",
           "refId": "A"
         }
       ],
@@ -129,12 +129,12 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by(name) (rate(container_cpu_usage_seconds_total{name!~\"^$\"}[5m]))",
-          "legendFormat": "{{name}}",
+          "expr": "topk(15, sum by(id) (rate(container_cpu_usage_seconds_total{id!~\"^/$|^/docker$|^/docker/buildkit$|^/01-docker$|^/restricted$\"}[5m])))",
+          "legendFormat": "{{id}}",
           "refId": "A"
         }
       ],
-      "title": "Container CPU by Service",
+      "title": "Container CPU by cgroup ID",
       "type": "timeseries"
     }
   ],
