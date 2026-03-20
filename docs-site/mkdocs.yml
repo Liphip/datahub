@@ -32,15 +32,31 @@ nav:
       - Getting Started: en/getting-started.md
       - Beginner Guide: en/beginner-guide.md
       - Administrator Guide: en/admin-guide.md
+      - Tenants and Roles: en/tenants-and-roles.md
+      - Modules: en/modules.md
+      - Pipelines: en/pipelines.md
+      - Data Explorer: en/data-explorer.md
+      - Connectors and Alerts: en/connectors-alerts.md
+      - Security Basics: en/security.md
+      - Backup and Recovery: en/backup-recovery.md
       - Monitoring and Logging: en/monitoring-logging.md
       - Operations Runbook: en/operations-runbook.md
       - Troubleshooting: en/troubleshooting.md
+      - Glossary: en/glossary.md
       - FAQ: en/faq.md
   - Deutsch:
       - Erste Schritte: de/getting-started.md
       - Einsteiger-Guide: de/beginner-guide.md
       - Administratoren-Guide: de/admin-guide.md
+      - Mandanten und Rollen: de/tenants-and-roles.md
+      - Module: de/modules.md
+      - Pipelines: de/pipelines.md
+      - Daten-Explorer: de/data-explorer.md
+      - Konnektoren und Alarme: de/connectors-alerts.md
+      - Sicherheitsgrundlagen: de/security.md
+      - Backup und Wiederherstellung: de/backup-recovery.md
       - Monitoring und Logging: de/monitoring-logging.md
       - Betriebs-Runbook: de/operations-runbook.md
       - Troubleshooting: de/troubleshooting.md
+      - Glossar: de/glossary.md
       - FAQ: de/faq.md
