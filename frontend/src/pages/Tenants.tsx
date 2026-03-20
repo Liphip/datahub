@@ -1,0 +1,1589 @@
+import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useAuthStore } from '../stores/auth';
+import api from '../services/api';
+import type { Tenant, TenantLineageDefaults, TenantLineageDefaultsConfig, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy } from '../types';
+
+interface TenantWithChildren extends Tenant {
+  children?: TenantWithChildren[];
+}
+
+type LineageDefaultsField = 'safeScopePolicy' | 'defaultFetchMode' | 'defaultDepth' | 'maxDepthCap';
+type LineageMergeChoice = Record<LineageDefaultsField, 'MINE' | 'LATEST'>;
+
+interface LineageDefaultsConflictState {
+  pending: TenantLineageDefaultsConfig;
+  latest: TenantLineageDefaults;
+  mergeChoice: LineageMergeChoice;
+}
+
+type TenantDefaultsConflictTelemetry = Record<string, { count: number; lastConflictAt?: string }>;
+type LineagePollStatus = 'IDLE' | 'FRESH' | 'STALE' | 'OFFLINE';
+
+const DEFAULT_TENANT_LINEAGE_DEFAULTS: TenantLineageDefaults = {
+  safeScopePolicy: 'AUTO',
+  defaultFetchMode: 'SUMMARY',
+  defaultDepth: 20,
+  maxDepthCap: 200,
+};
+const DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY: TenantLineageDiagnosticsPolicy = {
+  conflictWatchRate: 0.35,
+  conflictHotRate: 0.5,
+  conflictTrendDelta: 0.15,
+  minPatchSamplesForHot: 3,
+  pollOverfetchMinReads: 20,
+  pollOverfetchRate: 0.9,
+};
+const TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY = 'tenant.lineageDefaults.conflicts.v1';
+
+const LINEAGE_DEFAULT_FIELDS: LineageDefaultsField[] = ['safeScopePolicy', 'defaultFetchMode', 'defaultDepth', 'maxDepthCap'];
+
+export default function Tenants() {
+  const { t } = useTranslation();
+  const { user } = useAuthStore();
+  const canManageTenants = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('manage:tenant'));
+  const [tenants, setTenants] = useState<TenantWithChildren[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingTenant, setEditingTenant] = useState<TenantWithChildren | null>(null);
+  const [newTenantName, setNewTenantName] = useState('');
+  const [newTenantParentId, setNewTenantParentId] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [expandedTenantIds, setExpandedTenantIds] = useState<Record<string, boolean>>({});
+  const [lineageDefaultsTenantId, setLineageDefaultsTenantId] = useState('');
+  const [lineageDefaults, setLineageDefaults] = useState<TenantLineageDefaults>(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+  const [lineageDefaultsEtag, setLineageDefaultsEtag] = useState<string | undefined>(undefined);
+  const [lineageDefaultsBase, setLineageDefaultsBase] = useState<TenantLineageDefaultsConfig>(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+  const [loadingLineageDefaults, setLoadingLineageDefaults] = useState(false);
+  const [savingLineageDefaults, setSavingLineageDefaults] = useState(false);
+  const [lineageDefaultsConflict, setLineageDefaultsConflict] = useState<LineageDefaultsConflictState | null>(null);
+  const [lineageDefaultsStaleLatest, setLineageDefaultsStaleLatest] = useState<TenantLineageDefaults | null>(null);
+  const [lineageDefaultsDiagnostics, setLineageDefaultsDiagnostics] = useState<TenantLineageDefaultsDiagnostics | null>(null);
+  const [loadingLineageDefaultsDiagnostics, setLoadingLineageDefaultsDiagnostics] = useState(false);
+  const [resettingLineageDefaultsDiagnostics, setResettingLineageDefaultsDiagnostics] = useState(false);
+  const [showResetDiagnosticsConfirm, setShowResetDiagnosticsConfirm] = useState(false);
+  const [resetDiagnosticsReason, setResetDiagnosticsReason] = useState('');
+  const [lineageDiagnosticsPolicy, setLineageDiagnosticsPolicy] = useState<TenantLineageDiagnosticsPolicy>(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+  const [lineageDiagnosticsPolicyBase, setLineageDiagnosticsPolicyBase] = useState<TenantLineageDiagnosticsPolicy>(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+  const [loadingLineageDiagnosticsPolicy, setLoadingLineageDiagnosticsPolicy] = useState(false);
+  const [savingLineageDiagnosticsPolicy, setSavingLineageDiagnosticsPolicy] = useState(false);
+  const [lineagePollStatus, setLineagePollStatus] = useState<LineagePollStatus>('IDLE');
+  const [lineagePollCheckedAt, setLineagePollCheckedAt] = useState<string | null>(null);
+  const [lineagePollIntervalMs, setLineagePollIntervalMs] = useState(30000);
+  const [lineagePollOfflineFailures, setLineagePollOfflineFailures] = useState(0);
+  const [lineagePollPausedUntil, setLineagePollPausedUntil] = useState<number>(0);
+  const [checkingLineagePollNow, setCheckingLineagePollNow] = useState(false);
+  const [lineagePollCooldownUntil, setLineagePollCooldownUntil] = useState<number>(0);
+  const [showLineagePollDebug, setShowLineagePollDebug] = useState(false);
+  const [conflictTelemetryByTenant, setConflictTelemetryByTenant] = useState<TenantDefaultsConflictTelemetry>(() => {
+    try {
+      const raw = localStorage.getItem(TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as TenantDefaultsConflictTelemetry;
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
+  };
+
+  const toLineageDefaultsConfig = (defaults: TenantLineageDefaults): TenantLineageDefaultsConfig => ({
+    safeScopePolicy: defaults.safeScopePolicy,
+    defaultFetchMode: defaults.defaultFetchMode,
+    defaultDepth: defaults.defaultDepth,
+    maxDepthCap: defaults.maxDepthCap,
+  });
+
+  const isSameLineageConfig = (a: TenantLineageDefaultsConfig, b: TenantLineageDefaultsConfig) =>
+    a.safeScopePolicy === b.safeScopePolicy
+    && a.defaultFetchMode === b.defaultFetchMode
+    && a.defaultDepth === b.defaultDepth
+    && a.maxDepthCap === b.maxDepthCap;
+
+  const toLineageDiagnosticsPolicyConfig = (policy: TenantLineageDiagnosticsPolicy) => ({
+    conflictWatchRate: policy.conflictWatchRate,
+    conflictHotRate: policy.conflictHotRate,
+    conflictTrendDelta: policy.conflictTrendDelta,
+    minPatchSamplesForHot: policy.minPatchSamplesForHot,
+    pollOverfetchMinReads: policy.pollOverfetchMinReads,
+    pollOverfetchRate: policy.pollOverfetchRate,
+  });
+
+  const isSameLineageDiagnosticsPolicy = (a: TenantLineageDiagnosticsPolicy, b: TenantLineageDiagnosticsPolicy) => {
+    const left = toLineageDiagnosticsPolicyConfig(a);
+    const right = toLineageDiagnosticsPolicyConfig(b);
+    return left.conflictWatchRate === right.conflictWatchRate
+      && left.conflictHotRate === right.conflictHotRate
+      && left.conflictTrendDelta === right.conflictTrendDelta
+      && left.minPatchSamplesForHot === right.minPatchSamplesForHot
+      && left.pollOverfetchMinReads === right.pollOverfetchMinReads
+      && left.pollOverfetchRate === right.pollOverfetchRate;
+  };
+
+  const buildConflictState = (pending: TenantLineageDefaultsConfig, latest: TenantLineageDefaults): LineageDefaultsConflictState => {
+    const mergeChoice = LINEAGE_DEFAULT_FIELDS.reduce((acc, field) => {
+      acc[field] = pending[field] === latest[field] ? 'LATEST' : 'MINE';
+      return acc;
+    }, {} as LineageMergeChoice);
+    return { pending, latest, mergeChoice };
+  };
+
+  const runLineageDefaultsPollCheck = async (tid: string) => {
+    try {
+      const latestResponse = await api.getTenantLineageDefaultsIfChanged(tid, lineageDefaultsEtag);
+      if (!latestResponse.notModified && latestResponse.data) {
+        setLineageDefaultsEtag(latestResponse.etag);
+        const latest = latestResponse.data;
+        if (latest.version && lineageDefaults.version && latest.version !== lineageDefaults.version) {
+          if (isLineageDefaultsDirty) {
+            setLineageDefaultsStaleLatest(latest);
+            setLineagePollStatus('STALE');
+          } else {
+            setLineageDefaults(latest);
+            setLineageDefaultsBase(toLineageDefaultsConfig(latest));
+            setLineageDefaultsStaleLatest(null);
+            setLineagePollStatus('FRESH');
+          }
+        } else {
+          setLineageDefaultsStaleLatest(null);
+          setLineagePollStatus('FRESH');
+        }
+      } else if (latestResponse.notModified) {
+        setLineagePollStatus((prev) => (prev === 'STALE' ? 'STALE' : 'FRESH'));
+      }
+      setLineagePollOfflineFailures(0);
+      setLineagePollPausedUntil(0);
+      setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
+      setLineagePollCheckedAt(new Date().toISOString());
+    } catch {
+      setLineagePollStatus('OFFLINE');
+      setLineagePollOfflineFailures((prev) => {
+        const next = prev + 1;
+        const nextInterval = Math.min(120000, 15000 * Math.pow(2, Math.max(0, next - 1)));
+        setLineagePollIntervalMs(nextInterval);
+        if (next >= 3) {
+          setLineagePollPausedUntil(Date.now() + 60000);
+        }
+        return next;
+      });
+      setLineagePollCheckedAt(new Date().toISOString());
+    }
+  };
+
+  const trackDefaultsConflict = (tenantId: string) => {
+    setConflictTelemetryByTenant((prev) => {
+      const current = prev[tenantId] ?? { count: 0 };
+      return {
+        ...prev,
+        [tenantId]: {
+          count: current.count + 1,
+          lastConflictAt: new Date().toISOString(),
+        },
+      };
+    });
+  };
+
+  const clearDefaultsConflictTelemetry = (tenantId: string) => {
+    setConflictTelemetryByTenant((prev) => {
+      const next = { ...prev };
+      delete next[tenantId];
+      return next;
+    });
+  };
+
+  const copyLineageDefaultsDiagnostics = async () => {
+    if (!lineageDefaultsTenantId) return;
+    const telemetry = conflictTelemetryByTenant[lineageDefaultsTenantId];
+    const payload = {
+      tenantId: lineageDefaultsTenantId,
+      pollStatus: lineagePollStatus,
+      pollCheckedAt: lineagePollCheckedAt,
+      pollIntervalMs: lineagePollIntervalMs,
+      pollOfflineFailures: lineagePollOfflineFailures,
+      pollPausedUntil: lineagePollPausedUntil > Date.now() ? new Date(lineagePollPausedUntil).toISOString() : null,
+      checkCooldownSeconds: lineagePollCooldownUntil > Date.now() ? Math.ceil((lineagePollCooldownUntil - Date.now()) / 1000) : 0,
+      defaultsVersion: lineageDefaults.version,
+      defaultsEtag: lineageDefaultsEtag,
+      staleLatestVersion: lineageDefaultsStaleLatest?.version,
+      conflictCount: telemetry?.count ?? 0,
+      lastConflictAt: telemetry?.lastConflictAt,
+      backendRead200: lineageDefaultsDiagnostics?.get200Count,
+      backendRead304: lineageDefaultsDiagnostics?.get304Count,
+      backendPatchSuccess: lineageDefaultsDiagnostics?.patchSuccessCount,
+      backendPatchConflict: lineageDefaultsDiagnostics?.patchConflictCount,
+      backendResetCount: lineageDefaultsDiagnostics?.resetCount,
+      backendLastResetAt: lineageDefaultsDiagnostics?.lastResetAt,
+      backendWindow1h: lineageDefaultsDiagnostics?.windows?.h1,
+      backendWindow24h: lineageDefaultsDiagnostics?.windows?.h24,
+      backendAdvisory: lineageDefaultsDiagnostics?.advisory,
+      advisoryPolicy: lineageDiagnosticsPolicy,
+      isDirty: isLineageDefaultsDirty,
+      generatedAt: new Date().toISOString(),
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      showToast('Lineage defaults diagnostics copied', 'success');
+    } catch {
+      showToast('Failed to copy diagnostics', 'error');
+    }
+  };
+
+  const refreshLineageDefaultsDiagnostics = async (tid: string) => {
+    setLoadingLineageDefaultsDiagnostics(true);
+    try {
+      const diagnostics = await api.getTenantLineageDefaultsDiagnostics(tid);
+      setLineageDefaultsDiagnostics(diagnostics);
+    } catch {
+      setLineageDefaultsDiagnostics(null);
+    } finally {
+      setLoadingLineageDefaultsDiagnostics(false);
+    }
+  };
+
+  const resetLineageDefaultsDiagnosticsNow = async () => {
+    if (!lineageDefaultsTenantId || resettingLineageDefaultsDiagnostics) return;
+    setResettingLineageDefaultsDiagnostics(true);
+    setShowResetDiagnosticsConfirm(false);
+    try {
+      const reason = resetDiagnosticsReason.trim() || undefined;
+      const diagnostics = await api.resetTenantLineageDefaultsDiagnostics(lineageDefaultsTenantId, reason);
+      setLineageDefaultsDiagnostics(diagnostics);
+      setResetDiagnosticsReason('');
+      showToast('Lineage diagnostics reset for tenant', 'success');
+    } catch {
+      showToast('Failed to reset lineage diagnostics', 'error');
+    } finally {
+      setResettingLineageDefaultsDiagnostics(false);
+    }
+  };
+
+  const refreshLineageDiagnosticsPolicy = async (tid: string) => {
+    setLoadingLineageDiagnosticsPolicy(true);
+    try {
+      const policy = await api.getTenantLineageDefaultsDiagnosticsPolicy(tid);
+      setLineageDiagnosticsPolicy(policy);
+      setLineageDiagnosticsPolicyBase(policy);
+    } catch {
+      setLineageDiagnosticsPolicy(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+      setLineageDiagnosticsPolicyBase(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+    } finally {
+      setLoadingLineageDiagnosticsPolicy(false);
+    }
+  };
+
+  const collectTenantIds = (nodes: TenantWithChildren[]): string[] =>
+    nodes.flatMap((node) => [node.id, ...collectTenantIds((node.children || []) as TenantWithChildren[])]);
+
+  const flattenTenants = (nodes: TenantWithChildren[]): TenantWithChildren[] =>
+    nodes.flatMap((node) => [node, ...flattenTenants((node.children || []) as TenantWithChildren[])]);
+
+  const fetchTenants = async (query?: string) => {
+    try {
+      const tree = await api.getTenantsRecursive(query);
+      const tenantTree = tree as TenantWithChildren[];
+      setTenants(tenantTree);
+      const allIds = collectTenantIds(tenantTree);
+      setExpandedTenantIds((prev) => {
+        const next = { ...prev };
+        allIds.forEach((id) => {
+          if (next[id] === undefined) next[id] = true;
+        });
+        return next;
+      });
+    } catch (err) {
+      console.error('Error fetching tenants:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTenants();
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      fetchTenants(searchQuery.trim() || undefined);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    const all = flattenTenants(tenants);
+    if (all.length === 0) {
+      setLineageDefaultsTenantId('');
+      return;
+    }
+    const exists = all.some((t) => t.id === lineageDefaultsTenantId);
+    if (!exists) {
+      setLineageDefaultsTenantId(all[0].id);
+    }
+  }, [tenants, lineageDefaultsTenantId]);
+
+  useEffect(() => {
+    const loadLineageDefaults = async () => {
+      if (!lineageDefaultsTenantId) {
+        setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+        setLineageDefaultsDiagnostics(null);
+        setLineageDiagnosticsPolicy(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+        setLineageDiagnosticsPolicyBase(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+        setLineagePollStatus('IDLE');
+        setLineagePollCheckedAt(null);
+        setLineagePollIntervalMs(30000);
+        setLineagePollOfflineFailures(0);
+        setLineagePollPausedUntil(0);
+        return;
+      }
+      setLoadingLineageDefaults(true);
+      try {
+        const response = await api.getTenantLineageDefaultsIfChanged(lineageDefaultsTenantId);
+        if (!response.notModified && response.data) {
+          setLineageDefaults(response.data);
+          setLineageDefaultsBase(toLineageDefaultsConfig(response.data));
+          setLineageDefaultsEtag(response.etag);
+        }
+        await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+        await refreshLineageDiagnosticsPolicy(lineageDefaultsTenantId);
+        setLineagePollStatus('FRESH');
+        setLineagePollCheckedAt(new Date().toISOString());
+        setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
+        setLineagePollOfflineFailures(0);
+        setLineagePollPausedUntil(0);
+        setLineageDefaultsStaleLatest(null);
+      } catch {
+        setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+        setLineageDefaultsBase(DEFAULT_TENANT_LINEAGE_DEFAULTS);
+        setLineageDefaultsEtag(undefined);
+        setLineageDefaultsDiagnostics(null);
+        setLineageDiagnosticsPolicy(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+        setLineageDiagnosticsPolicyBase(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+        setLineagePollStatus('OFFLINE');
+        setLineagePollCheckedAt(new Date().toISOString());
+        setLineagePollIntervalMs(30000);
+        setLineagePollOfflineFailures(1);
+        setLineagePollPausedUntil(0);
+        setLineageDefaultsStaleLatest(null);
+      } finally {
+        setLoadingLineageDefaults(false);
+      }
+    };
+    void loadLineageDefaults();
+  }, [lineageDefaultsTenantId]);
+
+  useEffect(() => {
+    localStorage.setItem(TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY, JSON.stringify(conflictTelemetryByTenant));
+  }, [conflictTelemetryByTenant]);
+
+  useEffect(() => {
+    setLineageDefaultsConflict(null);
+    setLineageDefaultsStaleLatest(null);
+    setLineageDefaultsEtag(undefined);
+    setLineageDefaultsDiagnostics(null);
+    setLineageDiagnosticsPolicy(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+    setLineageDiagnosticsPolicyBase(DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY);
+    setLineagePollStatus('IDLE');
+    setLineagePollCheckedAt(null);
+    setLineagePollIntervalMs(30000);
+    setLineagePollOfflineFailures(0);
+    setLineagePollPausedUntil(0);
+  }, [lineageDefaultsTenantId]);
+
+  const isLineageDefaultsDirty = !isSameLineageConfig(toLineageDefaultsConfig(lineageDefaults), lineageDefaultsBase);
+  const isLineageDiagnosticsPolicyDirty = !isSameLineageDiagnosticsPolicy(lineageDiagnosticsPolicy, lineageDiagnosticsPolicyBase);
+
+  useEffect(() => {
+    if (!lineageDefaultsTenantId || !isLineageDefaultsDirty || savingLineageDefaults) return;
+    const now = Date.now();
+    const delay = lineagePollPausedUntil > now
+      ? Math.max(1000, lineagePollPausedUntil - now)
+      : lineagePollIntervalMs;
+    const timer = window.setTimeout(() => {
+      void runLineageDefaultsPollCheck(lineageDefaultsTenantId);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [
+    lineageDefaultsTenantId,
+    isLineageDefaultsDirty,
+    savingLineageDefaults,
+    lineageDefaults.version,
+    lineageDefaultsEtag,
+    lineagePollIntervalMs,
+    lineagePollPausedUntil,
+    lineagePollCheckedAt,
+  ]);
+
+  const checkLineageDefaultsNow = async () => {
+    if (!lineageDefaultsTenantId || checkingLineagePollNow) return;
+    if (Date.now() < lineagePollCooldownUntil) return;
+    setCheckingLineagePollNow(true);
+    setLineagePollCooldownUntil(Date.now() + 5000);
+    await runLineageDefaultsPollCheck(lineageDefaultsTenantId);
+    setCheckingLineagePollNow(false);
+  };
+
+  const saveLineageDefaults = async () => {
+    if (!lineageDefaultsTenantId) return;
+    setSavingLineageDefaults(true);
+    try {
+      const defaultDepth = Math.min(200, Math.max(1, lineageDefaults.defaultDepth));
+      const maxDepthCap = Math.min(200, Math.max(20, Math.max(defaultDepth, lineageDefaults.maxDepthCap)));
+      const pending: TenantLineageDefaultsConfig = {
+        safeScopePolicy: lineageDefaults.safeScopePolicy,
+        defaultFetchMode: lineageDefaults.defaultFetchMode,
+        defaultDepth,
+        maxDepthCap,
+      };
+      const updated = await api.updateTenantLineageDefaults(lineageDefaultsTenantId, pending, lineageDefaults.version);
+      setLineageDefaults(updated);
+      setLineageDefaultsBase(toLineageDefaultsConfig(updated));
+      setLineageDefaultsEtag(undefined);
+      setLineageDefaultsStaleLatest(null);
+      setLineagePollStatus('FRESH');
+      setLineagePollCheckedAt(new Date().toISOString());
+      setLineagePollOfflineFailures(0);
+      setLineagePollPausedUntil(0);
+      setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
+      await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+      showToast('Tenant lineage defaults saved', 'success');
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        showToast('Defaults changed by another user. Resolve conflict before saving.', 'error');
+        trackDefaultsConflict(lineageDefaultsTenantId);
+        await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+        setLineagePollStatus('STALE');
+        setLineagePollCheckedAt(new Date().toISOString());
+        setLineagePollIntervalMs(15000);
+        try {
+          const latest = await api.getTenantLineageDefaults(lineageDefaultsTenantId);
+          const defaultDepth = Math.min(200, Math.max(1, lineageDefaults.defaultDepth));
+          const maxDepthCap = Math.min(200, Math.max(20, Math.max(defaultDepth, lineageDefaults.maxDepthCap)));
+          const pending: TenantLineageDefaultsConfig = {
+            safeScopePolicy: lineageDefaults.safeScopePolicy,
+            defaultFetchMode: lineageDefaults.defaultFetchMode,
+            defaultDepth,
+            maxDepthCap,
+          };
+          setLineageDefaultsEtag(undefined);
+          setLineageDefaultsStaleLatest(latest);
+          setLineageDefaultsConflict(buildConflictState(pending, latest));
+        } catch {
+          // ignore secondary reload errors
+        }
+      } else {
+        setLineagePollStatus('OFFLINE');
+        setLineagePollCheckedAt(new Date().toISOString());
+        setLineagePollOfflineFailures((prev) => prev + 1);
+        showToast('Failed to save tenant lineage defaults', 'error');
+      }
+    } finally {
+      setSavingLineageDefaults(false);
+    }
+  };
+
+  const restoreAndSaveLineageDefaults = async (defaults: TenantLineageDefaultsConfig) => {
+    if (!lineageDefaultsTenantId) return;
+    setSavingLineageDefaults(true);
+    try {
+      const pending: TenantLineageDefaultsConfig = {
+        safeScopePolicy: defaults.safeScopePolicy,
+        defaultFetchMode: defaults.defaultFetchMode,
+        defaultDepth: defaults.defaultDepth,
+        maxDepthCap: defaults.maxDepthCap,
+      };
+      const updated = await api.updateTenantLineageDefaults(lineageDefaultsTenantId, pending, lineageDefaults.version);
+      setLineageDefaults(updated);
+      setLineageDefaultsBase(toLineageDefaultsConfig(updated));
+      setLineageDefaultsEtag(undefined);
+      setLineageDefaultsStaleLatest(null);
+      setLineagePollStatus('FRESH');
+      setLineagePollCheckedAt(new Date().toISOString());
+      setLineagePollOfflineFailures(0);
+      setLineagePollPausedUntil(0);
+      setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
+      await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+      showToast('Lineage defaults restored from history', 'success');
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        showToast('Defaults changed by another user. Resolve conflict before restoring.', 'error');
+        trackDefaultsConflict(lineageDefaultsTenantId);
+        await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+        setLineagePollStatus('STALE');
+        setLineagePollCheckedAt(new Date().toISOString());
+        setLineagePollIntervalMs(15000);
+        try {
+          const latest = await api.getTenantLineageDefaults(lineageDefaultsTenantId);
+          const pending: TenantLineageDefaultsConfig = {
+            safeScopePolicy: defaults.safeScopePolicy,
+            defaultFetchMode: defaults.defaultFetchMode,
+            defaultDepth: defaults.defaultDepth,
+            maxDepthCap: defaults.maxDepthCap,
+          };
+          setLineageDefaultsEtag(undefined);
+          setLineageDefaultsStaleLatest(latest);
+          setLineageDefaultsConflict(buildConflictState(pending, latest));
+        } catch {
+          // ignore secondary reload errors
+        }
+      } else {
+        setLineagePollStatus('OFFLINE');
+        setLineagePollCheckedAt(new Date().toISOString());
+        setLineagePollOfflineFailures((prev) => prev + 1);
+        showToast('Failed to restore lineage defaults from history', 'error');
+      }
+    } finally {
+      setSavingLineageDefaults(false);
+    }
+  };
+
+  const saveLineageDiagnosticsPolicy = async () => {
+    if (!lineageDefaultsTenantId) return;
+    setSavingLineageDiagnosticsPolicy(true);
+    try {
+      const normalized: Omit<TenantLineageDiagnosticsPolicy, 'version' | 'history'> = {
+        conflictWatchRate: Math.min(1, Math.max(0, Number(lineageDiagnosticsPolicy.conflictWatchRate) || 0)),
+        conflictHotRate: Math.min(1, Math.max(0, Number(lineageDiagnosticsPolicy.conflictHotRate) || 0)),
+        conflictTrendDelta: Math.min(1, Math.max(0, Number(lineageDiagnosticsPolicy.conflictTrendDelta) || 0)),
+        minPatchSamplesForHot: Math.min(100, Math.max(1, Math.round(Number(lineageDiagnosticsPolicy.minPatchSamplesForHot) || 1))),
+        pollOverfetchMinReads: Math.min(1000, Math.max(1, Math.round(Number(lineageDiagnosticsPolicy.pollOverfetchMinReads) || 1))),
+        pollOverfetchRate: Math.min(1, Math.max(0, Number(lineageDiagnosticsPolicy.pollOverfetchRate) || 0)),
+      };
+      if (normalized.conflictHotRate < normalized.conflictWatchRate) {
+        normalized.conflictHotRate = normalized.conflictWatchRate;
+      }
+      const updated = await api.updateTenantLineageDefaultsDiagnosticsPolicy(lineageDefaultsTenantId, normalized, lineageDiagnosticsPolicy.version);
+      setLineageDiagnosticsPolicy(updated);
+      setLineageDiagnosticsPolicyBase(updated);
+      await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+      showToast('Diagnostics advisory policy saved', 'success');
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        showToast('Diagnostics policy changed by another user. Refreshed latest values.', 'error');
+        try {
+          const latest = await api.getTenantLineageDefaultsDiagnosticsPolicy(lineageDefaultsTenantId);
+          setLineageDiagnosticsPolicy(latest);
+          setLineageDiagnosticsPolicyBase(latest);
+          await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+        } catch {
+          // ignore secondary refresh errors
+        }
+      } else {
+        showToast('Failed to save diagnostics advisory policy', 'error');
+      }
+    } finally {
+      setSavingLineageDiagnosticsPolicy(false);
+    }
+  };
+
+  const resetLineageDiagnosticsPolicyToDefaults = () => {
+    setLineageDiagnosticsPolicy((prev) => ({
+      ...prev,
+      ...DEFAULT_TENANT_LINEAGE_DIAGNOSTICS_POLICY,
+    }));
+  };
+
+  const restoreAndSaveLineageDiagnosticsPolicy = async (policy: Omit<TenantLineageDiagnosticsPolicy, 'version' | 'history'>) => {
+    if (!lineageDefaultsTenantId) return;
+    setSavingLineageDiagnosticsPolicy(true);
+    try {
+      const updated = await api.updateTenantLineageDefaultsDiagnosticsPolicy(
+        lineageDefaultsTenantId,
+        policy,
+        lineageDiagnosticsPolicy.version
+      );
+      setLineageDiagnosticsPolicy(updated);
+      setLineageDiagnosticsPolicyBase(updated);
+      await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+      showToast('Diagnostics policy restored from history', 'success');
+    } catch {
+      showToast('Failed to restore diagnostics policy from history', 'error');
+    } finally {
+      setSavingLineageDiagnosticsPolicy(false);
+    }
+  };
+
+  const handleCreateTenant = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTenantName) return;
+    
+    setCreating(true);
+    setError(null);
+    try {
+      await api.createTenant(newTenantName, newTenantParentId || undefined);
+      setShowCreateModal(false);
+      setNewTenantName('');
+      setNewTenantParentId('');
+      await fetchTenants(searchQuery.trim() || undefined);
+      showToast('Tenant created successfully', 'success');
+    } catch (err: any) {
+      const errorMsg = err.response?.data?.error || 'Failed to create tenant';
+      setError(errorMsg);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleEditTenant = (tenant: TenantWithChildren) => {
+    setEditingTenant(tenant);
+    setNewTenantName(tenant.name);
+    setShowEditModal(true);
+  };
+
+  const handleUpdateTenant = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTenant || !newTenantName) return;
+    
+    setCreating(true);
+    try {
+      await api.updateTenant(editingTenant.id, { name: newTenantName });
+      await fetchTenants(searchQuery.trim() || undefined);
+      setShowEditModal(false);
+      setEditingTenant(null);
+      setNewTenantName('');
+      showToast('Tenant updated', 'success');
+    } catch (err) {
+      console.error('Error updating tenant:', err);
+      showToast('Failed to update tenant', 'error');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleDeleteTenant = async (tenantId: string) => {
+    const flatten = (nodes: TenantWithChildren[]): TenantWithChildren[] =>
+      nodes.flatMap((n) => [n, ...(n.children ? flatten(n.children) : [])]);
+
+    const allTenants = flatten(tenants);
+    const tenant = allTenants.find(t => t.id === tenantId);
+    const isRoot = !tenant?.parentId;
+    const rootCount = tenants.length;
+    
+    if (isRoot && rootCount <= 1) {
+      showToast('Cannot delete the last root tenant', 'error');
+      return;
+    }
+
+    setDeletingId(tenantId);
+    try {
+      await api.deleteTenant(tenantId);
+      await fetchTenants(searchQuery.trim() || undefined);
+      setConfirmDeleteId(null);
+      showToast('Tenant deleted', 'success');
+    } catch (err) {
+      console.error('Error deleting tenant:', err);
+      showToast('Failed to delete tenant', 'error');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const openCreateModal = (parentId?: string) => {
+    setNewTenantParentId(parentId || '');
+    setNewTenantName('');
+    setError(null);
+    setShowCreateModal(true);
+  };
+
+  const flattenTenantOptions = (nodes: TenantWithChildren[], depth = 0): { id: string; name: string }[] => {
+    return nodes.flatMap((node) => [
+      { id: node.id, name: `${'  '.repeat(depth)}${depth > 0 ? '- ' : ''}${node.name}` },
+      ...(node.children ? flattenTenantOptions(node.children, depth + 1) : []),
+    ]);
+  };
+
+  const allTenants = flattenTenants(tenants);
+  const selectedLineageDefaultsTenant = allTenants.find((t) => t.id === lineageDefaultsTenantId);
+  const selectedTenantConflictTelemetry = lineageDefaultsTenantId ? conflictTelemetryByTenant[lineageDefaultsTenantId] : undefined;
+  const pollStatusClass = lineagePollStatus === 'OFFLINE'
+    ? 'border-red-300 bg-red-50 text-red-800'
+    : lineagePollStatus === 'STALE'
+      ? 'border-amber-300 bg-amber-50 text-amber-900'
+      : lineagePollStatus === 'FRESH'
+        ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
+        : 'border-slate-300 bg-slate-50 text-slate-700';
+
+  const resolveConflictUseLatest = () => {
+    if (!lineageDefaultsConflict) return;
+    setLineageDefaults(lineageDefaultsConflict.latest);
+    setLineageDefaultsBase(toLineageDefaultsConfig(lineageDefaultsConflict.latest));
+    setLineageDefaultsEtag(undefined);
+    setLineageDefaultsStaleLatest(null);
+    setLineagePollStatus('FRESH');
+    setLineagePollCheckedAt(new Date().toISOString());
+    setLineagePollOfflineFailures(0);
+    setLineagePollPausedUntil(0);
+    setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
+    if (lineageDefaultsTenantId) {
+      void refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+    }
+    setLineageDefaultsConflict(null);
+    showToast('Loaded latest server values', 'success');
+  };
+
+  const resolveConflictReapplyMine = async () => {
+    if (!lineageDefaultsTenantId || !lineageDefaultsConflict) return;
+    setSavingLineageDefaults(true);
+    try {
+      const updated = await api.updateTenantLineageDefaults(
+        lineageDefaultsTenantId,
+        lineageDefaultsConflict.pending,
+        lineageDefaultsConflict.latest.version
+      );
+      setLineageDefaults(updated);
+      setLineageDefaultsBase(toLineageDefaultsConfig(updated));
+      setLineageDefaultsEtag(undefined);
+      setLineageDefaultsStaleLatest(null);
+      setLineagePollStatus('FRESH');
+      setLineagePollCheckedAt(new Date().toISOString());
+      setLineagePollOfflineFailures(0);
+      setLineagePollPausedUntil(0);
+      setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
+      await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+      setLineageDefaultsConflict(null);
+      showToast('Reapplied your defaults successfully', 'success');
+    } catch {
+      showToast('Failed to reapply your defaults', 'error');
+    } finally {
+      setSavingLineageDefaults(false);
+    }
+  };
+
+  const resolveConflictSaveMerged = async () => {
+    if (!lineageDefaultsTenantId || !lineageDefaultsConflict) return;
+    const merged: TenantLineageDefaultsConfig = {
+      safeScopePolicy: lineageDefaultsConflict.mergeChoice.safeScopePolicy === 'MINE' ? lineageDefaultsConflict.pending.safeScopePolicy : lineageDefaultsConflict.latest.safeScopePolicy,
+      defaultFetchMode: lineageDefaultsConflict.mergeChoice.defaultFetchMode === 'MINE' ? lineageDefaultsConflict.pending.defaultFetchMode : lineageDefaultsConflict.latest.defaultFetchMode,
+      defaultDepth: lineageDefaultsConflict.mergeChoice.defaultDepth === 'MINE' ? lineageDefaultsConflict.pending.defaultDepth : lineageDefaultsConflict.latest.defaultDepth,
+      maxDepthCap: lineageDefaultsConflict.mergeChoice.maxDepthCap === 'MINE' ? lineageDefaultsConflict.pending.maxDepthCap : lineageDefaultsConflict.latest.maxDepthCap,
+    };
+    setSavingLineageDefaults(true);
+    try {
+      const updated = await api.updateTenantLineageDefaults(
+        lineageDefaultsTenantId,
+        merged,
+        lineageDefaultsConflict.latest.version
+      );
+      setLineageDefaults(updated);
+      setLineageDefaultsBase(toLineageDefaultsConfig(updated));
+      setLineageDefaultsEtag(undefined);
+      setLineageDefaultsStaleLatest(null);
+      setLineagePollStatus('FRESH');
+      setLineagePollCheckedAt(new Date().toISOString());
+      setLineagePollOfflineFailures(0);
+      setLineagePollPausedUntil(0);
+      setLineagePollIntervalMs(isLineageDefaultsDirty ? 15000 : 45000);
+      await refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId);
+      setLineageDefaultsConflict(null);
+      showToast('Saved merged defaults', 'success');
+    } catch {
+      showToast('Failed to save merged defaults', 'error');
+    } finally {
+      setSavingLineageDefaults(false);
+    }
+  };
+
+  const renderTenantTree = (tenant: TenantWithChildren, depth: number = 0) => {
+    const hasChildren = tenant.children && tenant.children.length > 0;
+    const isRoot = !tenant.parentId;
+    const isExpanded = expandedTenantIds[tenant.id] ?? true;
+
+    return (
+      <div key={tenant.id} style={{ marginLeft: depth * 24 }}>
+        <div className="card mb-2">
+          <div className="flex justify-between items-start">
+            <div>
+              <div className="flex items-center space-x-2">
+                {hasChildren && (
+                  <button
+                    onClick={() => setExpandedTenantIds((prev) => ({ ...prev, [tenant.id]: !isExpanded }))}
+                    className="text-xs px-1.5 py-0.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
+                    title={isExpanded ? 'Collapse subtree' : 'Expand subtree'}
+                  >
+                    {isExpanded ? '−' : '+'}
+                  </button>
+                )}
+                <h3 className="text-lg font-semibold">{tenant.name}</h3>
+              </div>
+              <p className="text-sm text-gray-500">ID: {tenant.id}</p>
+            </div>
+            <div className="flex space-x-2">
+              {!isRoot && (
+                <button 
+                  onClick={() => openCreateModal(tenant.id)}
+                  className="text-green-600 hover:text-green-700 text-sm"
+                  title="Add sub-tenant"
+                >
+                  + Add
+                </button>
+              )}
+              <button onClick={() => handleEditTenant(tenant)} className="btn-secondary text-sm">Edit</button>
+              {confirmDeleteId === tenant.id ? (
+                <div className="flex items-center space-x-2">
+                  <span className="text-xs text-gray-500">Delete?</span>
+                  <button
+                    onClick={() => handleDeleteTenant(tenant.id)}
+                    disabled={deletingId === tenant.id}
+                    className="text-red-600 hover:text-red-700 text-sm"
+                  >
+                    {deletingId === tenant.id ? 'Deleting...' : 'Yes'}
+                  </button>
+                  <button
+                    onClick={() => setConfirmDeleteId(null)}
+                    className="text-gray-500 hover:text-gray-700 text-sm"
+                  >
+                    No
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmDeleteId(tenant.id)}
+                  className="text-red-600 hover:text-red-700 text-sm"
+                >
+                  Delete
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+        {hasChildren && isExpanded && (
+          <div className="border-l-2 border-gray-200 ml-4 pl-4">
+            {tenant.children!.map(child => renderTenantTree(child, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  if (!canManageTenants) {
+    return (
+      <div className="px-4 py-6">
+        <p className="text-gray-500">Access denied. Tenant management permissions are required.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-4 py-6 sm:px-0">
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded shadow-lg text-white text-sm ${
+          toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+        }`}>
+          {toast.message}
+        </div>
+      )}
+
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">{t('tenants.title')}</h1>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => {
+              const ids = collectTenantIds(tenants);
+              const next: Record<string, boolean> = {};
+              ids.forEach((id) => { next[id] = true; });
+              setExpandedTenantIds(next);
+            }}
+            className="btn-secondary text-sm"
+          >
+            {t('common.expandAll')}
+          </button>
+          <button
+            onClick={() => {
+              const ids = collectTenantIds(tenants);
+              const next: Record<string, boolean> = {};
+              ids.forEach((id) => { next[id] = false; });
+              setExpandedTenantIds(next);
+            }}
+            className="btn-secondary text-sm"
+          >
+            {t('common.collapseAll')}
+          </button>
+          <button 
+            onClick={() => openCreateModal()} 
+            className="btn-primary"
+            disabled={!user?.superadmin || tenants.length > 0}
+            title={!user?.superadmin ? t('tenants.onlySuperadminCanCreateRoot') : tenants.length > 0 ? t('tenants.rootTenantExists') : t('tenants.createFirstRoot')}
+          >
+            {t('tenants.createRootTenant')}
+          </button>
+        </div>
+      </div>
+
+      <div className="mb-4">
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="input w-full md:max-w-md"
+          placeholder={t('tenants.searchPlaceholder')}
+        />
+      </div>
+
+      <div className="card mb-6 border border-indigo-100 bg-indigo-50">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold text-indigo-900">{t('tenants.lineageDefaults')}</h2>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-indigo-700">
+              {selectedLineageDefaultsTenant?.updatedAt && (
+                <span>
+                  Tenant updated: {new Date(selectedLineageDefaultsTenant.updatedAt).toLocaleString()}
+                </span>
+              )}
+              <span className={`px-2 py-0.5 rounded border ${pollStatusClass}`}>
+                {t('tenants.poll:')} {lineagePollStatus.toLowerCase()}
+              </span>
+              {lineagePollCheckedAt && (
+                <span>
+                  {t('tenants.checked:')} {new Date(lineagePollCheckedAt).toLocaleTimeString()}
+                </span>
+              )}
+              {lineagePollOfflineFailures > 0 && (
+                <span>
+{t('tenants.offlineRetries:')} {lineagePollOfflineFailures}
+                </span>
+              )}
+              <button
+                className="text-indigo-700 hover:text-indigo-900"
+                disabled={checkingLineagePollNow || Date.now() < lineagePollCooldownUntil || !lineageDefaultsTenantId}
+                onClick={() => { void checkLineageDefaultsNow(); }}
+              >
+                {checkingLineagePollNow ? t('common.checking') : t('tenants.checkNow')}
+              </button>
+              <button
+                className="text-indigo-700 hover:text-indigo-900"
+                onClick={() => setShowLineagePollDebug((prev) => !prev)}
+              >
+                {showLineagePollDebug ? t('tenants.hidePollDetails') : t('tenants.pollDetails')}
+              </button>
+              <button
+                className="text-indigo-700 hover:text-indigo-900"
+                disabled={!lineageDefaultsTenantId}
+                onClick={() => { void copyLineageDefaultsDiagnostics(); }}
+              >
+                {t('tenants.copyDiagnostics')}
+              </button>
+              {selectedTenantConflictTelemetry && (
+                <>
+                  <span className="px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900">
+                    {t('tenants.conflicts:')} {selectedTenantConflictTelemetry.count}
+                  </span>
+                  {selectedTenantConflictTelemetry.lastConflictAt && (
+                    <span>
+                      {t('tenants.lastReset:')} {new Date(selectedTenantConflictTelemetry.lastConflictAt).toLocaleString()}
+                    </span>
+                  )}
+                  <button
+                    className="text-indigo-700 hover:text-indigo-900"
+                    onClick={() => lineageDefaultsTenantId && clearDefaultsConflictTelemetry(lineageDefaultsTenantId)}
+                  >
+                    {t('common.clear')}
+                  </button>
+                </>
+              )}
+              {lineageDefaultsDiagnostics && (
+                <>
+                  <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
+                    200/304: {lineageDefaultsDiagnostics.get200Count}/{lineageDefaultsDiagnostics.get304Count}
+                  </span>
+                  <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
+                    Conflicts: {lineageDefaultsDiagnostics.patchConflictCount}/{lineageDefaultsDiagnostics.patchSuccessCount + lineageDefaultsDiagnostics.patchConflictCount}
+                  </span>
+                  <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
+                    Resets: {lineageDefaultsDiagnostics.resetCount ?? 0}
+                  </span>
+                  {lineageDefaultsDiagnostics.lastResetAt && (
+                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
+                      Last reset: {new Date(lineageDefaultsDiagnostics.lastResetAt).toLocaleString()}
+                    </span>
+                  )}
+                  {lineageDefaultsDiagnostics.windows?.h1 && (
+                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
+                      1h: 200/304 {lineageDefaultsDiagnostics.windows.h1.get200Count}/{lineageDefaultsDiagnostics.windows.h1.get304Count} · conf {(lineageDefaultsDiagnostics.windows.h1.patchConflictRate * 100).toFixed(0)}%
+                    </span>
+                  )}
+                  {lineageDefaultsDiagnostics.windows?.h24 && (
+                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
+                      24h: 200/304 {lineageDefaultsDiagnostics.windows.h24.get200Count}/{lineageDefaultsDiagnostics.windows.h24.get304Count} · conf {(lineageDefaultsDiagnostics.windows.h24.patchConflictRate * 100).toFixed(0)}%
+                    </span>
+                  )}
+                  {lineageDefaultsDiagnostics.advisory && (
+                    <span className={`px-2 py-0.5 rounded border ${lineageDefaultsDiagnostics.advisory.health === 'HOT' ? 'border-red-300 bg-red-50 text-red-900' : lineageDefaultsDiagnostics.advisory.health === 'WATCH' ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-300 bg-emerald-50 text-emerald-900'}`}>
+                      Advisory: {lineageDefaultsDiagnostics.advisory.health} ({lineageDefaultsDiagnostics.advisory.reasons.length === 0 ? 'No signals' : lineageDefaultsDiagnostics.advisory.reasons.join(', ')})
+                    </span>
+                  )}
+                  {lineageDefaultsDiagnostics.advisory && lineageDefaultsDiagnostics.advisory.recommendedActions[0] !== 'NONE' && (
+                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">
+                      Suggested: {lineageDefaultsDiagnostics.advisory.recommendedActions.join(', ')}
+                    </span>
+                  )}
+                  <button
+                    className="text-indigo-700 hover:text-indigo-900"
+                    disabled={loadingLineageDefaultsDiagnostics || !lineageDefaultsTenantId}
+                    onClick={() => lineageDefaultsTenantId && void refreshLineageDefaultsDiagnostics(lineageDefaultsTenantId)}
+                  >
+                    {loadingLineageDefaultsDiagnostics ? 'Refreshing metrics...' : 'Refresh metrics'}
+                  </button>
+                  <button
+                    className="text-indigo-700 hover:text-indigo-900"
+                    disabled={resettingLineageDefaultsDiagnostics || !lineageDefaultsTenantId}
+                    onClick={() => { setShowResetDiagnosticsConfirm(true); }}
+                  >
+                    Reset metrics
+                  </button>
+                </>
+              )}
+            </div>
+            {showResetDiagnosticsConfirm && (
+              <div className="mt-2 p-3 rounded border border-amber-300 bg-amber-50">
+                <p className="text-sm text-amber-900 mb-2">
+                  Reset all lineage diagnostics counters for this tenant? This clears read/conflict counts, windows, and advisory state.
+                </p>
+                <label className="text-xs text-amber-800 block mb-2">
+                  Reason (optional):
+                  <input
+                    type="text"
+                    className="input mt-1 w-full"
+                    placeholder="Why are you resetting?"
+                    value={resetDiagnosticsReason}
+                    onChange={(e) => setResetDiagnosticsReason(e.target.value)}
+                  />
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    className="btn-secondary text-xs"
+                    disabled={resettingLineageDefaultsDiagnostics}
+                    onClick={() => { setShowResetDiagnosticsConfirm(false); setResetDiagnosticsReason(''); }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn-primary text-xs"
+                    disabled={resettingLineageDefaultsDiagnostics}
+                    onClick={() => { void resetLineageDefaultsDiagnosticsNow(); }}
+                  >
+                    {resettingLineageDefaultsDiagnostics ? 'Resetting...' : 'Confirm Reset'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+          <p className="text-sm text-indigo-800">
+            Configure tenant-wide defaults for pipeline lineage triage. These act as baseline behavior across pipelines.
+          </p>
+          {showLineagePollDebug && (
+            <div className="rounded border border-indigo-200 bg-white px-3 py-2 text-xs text-indigo-900 flex flex-wrap items-center gap-3">
+              <span>Interval: {Math.round(lineagePollIntervalMs / 1000)}s</span>
+              <span>Offline retries: {lineagePollOfflineFailures}</span>
+              <span>
+                Pause: {lineagePollPausedUntil > Date.now() ? `until ${new Date(lineagePollPausedUntil).toLocaleTimeString()}` : 'active'}
+              </span>
+              <span>
+                Check cooldown: {lineagePollCooldownUntil > Date.now() ? `${Math.ceil((lineagePollCooldownUntil - Date.now()) / 1000)}s` : 'ready'}
+              </span>
+            </div>
+          )}
+          <div className="rounded border border-indigo-200 bg-white px-3 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <h3 className="text-sm font-semibold text-indigo-900">Diagnostics Advisory Policy</h3>
+              <div className="flex items-center gap-2 text-xs text-indigo-700">
+                {lineageDefaultsDiagnostics?.advisory?.health && (
+                  <span className={`px-2 py-0.5 rounded border ${lineageDefaultsDiagnostics.advisory.health === 'HOT' ? 'border-red-300 bg-red-50 text-red-900' : lineageDefaultsDiagnostics.advisory.health === 'WATCH' ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-300 bg-emerald-50 text-emerald-900'}`}>
+                    Current health: {lineageDefaultsDiagnostics.advisory.health}
+                  </span>
+                )}
+                <button
+                  className="text-indigo-700 hover:text-indigo-900"
+                  disabled={loadingLineageDiagnosticsPolicy || !lineageDefaultsTenantId}
+                  onClick={() => lineageDefaultsTenantId && void refreshLineageDiagnosticsPolicy(lineageDefaultsTenantId)}
+                >
+                  {loadingLineageDiagnosticsPolicy ? 'Refreshing policy...' : 'Refresh policy'}
+                </button>
+              </div>
+            </div>
+            <p className="text-xs text-indigo-800 mb-3">
+              Tune advisory thresholds for this tenant. Changes apply immediately to diagnostics in both Tenants and Pipelines.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              <label className="text-xs text-indigo-900">
+                Watch conflict rate (0-1)
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  className="input mt-1"
+                  value={lineageDiagnosticsPolicy.conflictWatchRate}
+                  onChange={(e) => setLineageDiagnosticsPolicy((prev) => ({ ...prev, conflictWatchRate: Number(e.target.value) }))}
+                />
+              </label>
+              <label className="text-xs text-indigo-900">
+                Hot conflict rate (0-1)
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  className="input mt-1"
+                  value={lineageDiagnosticsPolicy.conflictHotRate}
+                  onChange={(e) => setLineageDiagnosticsPolicy((prev) => ({ ...prev, conflictHotRate: Number(e.target.value) }))}
+                />
+              </label>
+              <label className="text-xs text-indigo-900">
+                Conflict trend delta (0-1)
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  className="input mt-1"
+                  value={lineageDiagnosticsPolicy.conflictTrendDelta}
+                  onChange={(e) => setLineageDiagnosticsPolicy((prev) => ({ ...prev, conflictTrendDelta: Number(e.target.value) }))}
+                />
+              </label>
+              <label className="text-xs text-indigo-900">
+                Min patch samples for hot
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  step={1}
+                  className="input mt-1"
+                  value={lineageDiagnosticsPolicy.minPatchSamplesForHot}
+                  onChange={(e) => setLineageDiagnosticsPolicy((prev) => ({ ...prev, minPatchSamplesForHot: Number(e.target.value) }))}
+                />
+              </label>
+              <label className="text-xs text-indigo-900">
+                Poll overfetch min reads
+                <input
+                  type="number"
+                  min={1}
+                  max={1000}
+                  step={1}
+                  className="input mt-1"
+                  value={lineageDiagnosticsPolicy.pollOverfetchMinReads}
+                  onChange={(e) => setLineageDiagnosticsPolicy((prev) => ({ ...prev, pollOverfetchMinReads: Number(e.target.value) }))}
+                />
+              </label>
+              <label className="text-xs text-indigo-900">
+                Poll overfetch ratio (0-1)
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  className="input mt-1"
+                  value={lineageDiagnosticsPolicy.pollOverfetchRate}
+                  onChange={(e) => setLineageDiagnosticsPolicy((prev) => ({ ...prev, pollOverfetchRate: Number(e.target.value) }))}
+                />
+              </label>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {isLineageDiagnosticsPolicyDirty && (
+                <span className="px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900 text-xs">
+                  Unsaved policy changes
+                </span>
+              )}
+              <button
+                className="btn-secondary"
+                disabled={savingLineageDiagnosticsPolicy || loadingLineageDiagnosticsPolicy || !lineageDefaultsTenantId}
+                onClick={() => resetLineageDiagnosticsPolicyToDefaults()}
+              >
+                Reset to defaults
+              </button>
+              <button
+                className="btn-primary"
+                disabled={savingLineageDiagnosticsPolicy || loadingLineageDiagnosticsPolicy || !lineageDefaultsTenantId}
+                onClick={() => { void saveLineageDiagnosticsPolicy(); }}
+              >
+                {savingLineageDiagnosticsPolicy ? 'Saving policy...' : 'Save policy'}
+              </button>
+            </div>
+            <div className="mt-3 rounded border border-indigo-200 bg-indigo-50/40 p-2">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-semibold text-indigo-900">Policy History</h4>
+                <span className="text-[11px] text-indigo-700">{lineageDiagnosticsPolicy.history?.length ?? 0} entries</span>
+              </div>
+              {(lineageDiagnosticsPolicy.history && lineageDiagnosticsPolicy.history.length > 0) ? (
+                <div className="space-y-2 max-h-40 overflow-auto pr-1">
+                  {lineageDiagnosticsPolicy.history.slice().reverse().map((entry, idx) => (
+                    <div key={`${entry.changedAt}-${idx}`} className="flex flex-wrap items-center justify-between gap-2 border border-indigo-200 rounded px-2 py-1 text-xs bg-white">
+                      <div className="text-indigo-900">
+                        <span className="font-medium">{new Date(entry.changedAt).toLocaleString()}</span>
+                        {' · '}
+                        <span>{entry.changedByEmail || entry.changedByUserId || 'unknown user'}</span>
+                        {entry.changedFields && entry.changedFields.length > 0 && (
+                          <span className="ml-2 inline-flex flex-wrap gap-1">
+                            {entry.changedFields.map((field) => (
+                              <span key={`${entry.changedAt}-${field}`} className="px-1.5 py-0.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-800">
+                                {field}
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          className="text-indigo-700 hover:text-indigo-900"
+                          onClick={() => setLineageDiagnosticsPolicy((prev) => ({ ...prev, ...entry.policy }))}
+                        >
+                          Apply to form
+                        </button>
+                        <button
+                          className="text-indigo-700 hover:text-indigo-900"
+                          disabled={savingLineageDiagnosticsPolicy}
+                          onClick={() => { void restoreAndSaveLineageDiagnosticsPolicy(entry.policy); }}
+                        >
+                          Restore + Save
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[11px] text-indigo-700">No diagnostics policy changes recorded yet.</p>
+              )}
+            </div>
+          </div>
+          {lineageDefaultsStaleLatest && isLineageDefaultsDirty && (
+            <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 flex flex-wrap items-center gap-2">
+              <span>Defaults may be stale. Another user updated this tenant while you were editing.</span>
+              <button
+                className="px-2 py-0.5 rounded border border-amber-400 bg-white"
+                onClick={() => {
+                  setLineageDefaults(lineageDefaultsStaleLatest);
+                  setLineageDefaultsBase(toLineageDefaultsConfig(lineageDefaultsStaleLatest));
+                  setLineageDefaultsStaleLatest(null);
+                  setLineagePollStatus('FRESH');
+                  setLineagePollCheckedAt(new Date().toISOString());
+                  showToast('Loaded latest tenant defaults', 'success');
+                }}
+              >
+                Refresh latest
+              </button>
+              <button
+                className="px-2 py-0.5 rounded border border-amber-400 bg-white"
+                onClick={() => {
+                  const pending = toLineageDefaultsConfig(lineageDefaults);
+                  setLineageDefaultsConflict(buildConflictState(pending, lineageDefaultsStaleLatest));
+                }}
+              >
+                Resolve now
+              </button>
+            </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-sm text-indigo-900">
+              Tenant
+              <select
+                className="input mt-1"
+                value={lineageDefaultsTenantId}
+                onChange={(e) => setLineageDefaultsTenantId(e.target.value)}
+              >
+                {flattenTenantOptions(tenants).map((option) => (
+                  <option key={option.id} value={option.id}>{option.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm text-indigo-900">
+              Safe Scope Policy
+              <select
+                className="input mt-1"
+                value={lineageDefaults.safeScopePolicy}
+                onChange={(e) => setLineageDefaults((prev) => ({ ...prev, safeScopePolicy: e.target.value as TenantLineageDefaults['safeScopePolicy'] }))}
+                disabled={loadingLineageDefaults}
+              >
+                <option value="AUTO">AUTO</option>
+                <option value="RUN">RUN</option>
+                <option value="PIPELINE">PIPELINE</option>
+              </select>
+            </label>
+            <label className="text-sm text-indigo-900">
+              Default Fetch Mode
+              <select
+                className="input mt-1"
+                value={lineageDefaults.defaultFetchMode}
+                onChange={(e) => setLineageDefaults((prev) => ({ ...prev, defaultFetchMode: e.target.value as TenantLineageDefaults['defaultFetchMode'] }))}
+                disabled={loadingLineageDefaults}
+              >
+                <option value="SUMMARY">SUMMARY</option>
+                <option value="DETAILS">DETAILS</option>
+              </select>
+            </label>
+            <label className="text-sm text-indigo-900">
+              Default Depth
+              <input
+                type="number"
+                min={1}
+                max={200}
+                className="input mt-1"
+                value={lineageDefaults.defaultDepth}
+                onChange={(e) => setLineageDefaults((prev) => ({ ...prev, defaultDepth: Number(e.target.value || 20) }))}
+                disabled={loadingLineageDefaults}
+              />
+            </label>
+            <label className="text-sm text-indigo-900">
+              Max Depth Cap
+              <input
+                type="number"
+                min={20}
+                max={200}
+                className="input mt-1"
+                value={lineageDefaults.maxDepthCap}
+                onChange={(e) => setLineageDefaults((prev) => ({ ...prev, maxDepthCap: Number(e.target.value || 200) }))}
+                disabled={loadingLineageDefaults}
+              />
+            </label>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="btn-primary"
+              disabled={savingLineageDefaults || loadingLineageDefaults || !lineageDefaultsTenantId}
+              onClick={() => { void saveLineageDefaults(); }}
+            >
+              {savingLineageDefaults ? 'Saving...' : 'Save Defaults'}
+            </button>
+            <button
+              className="btn-secondary"
+              disabled={loadingLineageDefaults}
+              onClick={() => setLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS)}
+            >
+              Reset Form
+            </button>
+          </div>
+          <div className="rounded border border-indigo-200 bg-white p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-indigo-900">Recent Changes</h3>
+              <span className="text-xs text-indigo-700">{lineageDefaults.history?.length ?? 0} entries</span>
+            </div>
+            {(lineageDefaults.history && lineageDefaults.history.length > 0) ? (
+              <div className="space-y-2 max-h-48 overflow-auto pr-1">
+                {lineageDefaults.history.slice().reverse().map((entry, idx) => (
+                  <div key={`${entry.changedAt}-${idx}`} className="flex flex-wrap items-center justify-between gap-2 border border-gray-200 rounded px-2 py-1 text-xs">
+                    <div className="text-gray-700">
+                      <span className="font-medium">{new Date(entry.changedAt).toLocaleString()}</span>
+                      {' · '}
+                      <span>{entry.changedByEmail || entry.changedByUserId || 'unknown user'}</span>
+                      {' · '}
+                      <span>{entry.defaults.defaultFetchMode} d{entry.defaults.defaultDepth} cap d{entry.defaults.maxDepthCap} {entry.defaults.safeScopePolicy.toLowerCase()}</span>
+                      {entry.changedFields && entry.changedFields.length > 0 && (
+                        <span className="ml-2 inline-flex flex-wrap gap-1">
+                          {entry.changedFields.map((field) => (
+                            <span key={`${entry.changedAt}-${field}`} className="px-1.5 py-0.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-800">
+                              {field}
+                            </span>
+                          ))}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="text-indigo-700 hover:text-indigo-900"
+                        onClick={() => setLineageDefaults((prev) => ({ ...prev, ...entry.defaults }))}
+                      >
+                        Apply to form
+                      </button>
+                      <button
+                        className="text-indigo-700 hover:text-indigo-900"
+                        disabled={savingLineageDefaults}
+                        onClick={() => { void restoreAndSaveLineageDefaults(entry.defaults); }}
+                      >
+                        Restore + Save
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500">No lineage defaults changes recorded yet.</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {tenants.length === 0 && !loading && (
+        <div className="text-center py-12 text-gray-500">
+          <p className="text-lg mb-2">No tenants yet</p>
+          <p>Create your first (root) tenant to get started</p>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="space-y-4">
+          {[1, 2, 3].map(i => (
+            <div key={i} className="card animate-pulse">
+              <div className="h-4 bg-gray-200 rounded w-1/3"></div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div>
+          {tenants.map(tenant => renderTenantTree(tenant))}
+        </div>
+      )}
+
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h2 className="text-xl font-bold mb-4">
+              {newTenantParentId ? 'Create Sub-Tenant' : 'Create Root Tenant'}
+            </h2>
+            {error && (
+              <div className="mb-4 p-3 bg-red-100 text-red-700 rounded text-sm">
+                {error}
+              </div>
+            )}
+            <form onSubmit={handleCreateTenant}>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <input
+                  type="text"
+                  value={newTenantName}
+                  onChange={(e) => setNewTenantName(e.target.value)}
+                  className="input w-full"
+                  required
+                />
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Parent Tenant</label>
+                <select
+                  value={newTenantParentId}
+                  onChange={(e) => setNewTenantParentId(e.target.value)}
+                  className="input w-full"
+                >
+                  <option value="">Root Tenant</option>
+                  {flattenTenantOptions(tenants).map((option) => (
+                    <option key={option.id} value={option.id}>{option.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creating}
+                  className="btn-primary"
+                >
+                  {creating ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {lineageDefaultsConflict && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full">
+            <h2 className="text-xl font-bold mb-2">Lineage Defaults Conflict</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Another user updated these defaults while you were editing. Choose how to resolve the conflict.
+            </p>
+            <div className="space-y-2 mb-4">
+              {LINEAGE_DEFAULT_FIELDS.map((field) => (
+                <div key={`conflict-${field}`} className="border border-gray-200 rounded p-2">
+                  <div className="text-xs font-semibold text-gray-700 mb-1">{field}</div>
+                  <div className="text-xs text-gray-600 mb-2">
+                    <span className="mr-3">Latest: {String(lineageDefaultsConflict.latest[field])}</span>
+                    <span>Mine: {String(lineageDefaultsConflict.pending[field])}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      className={`px-2 py-0.5 rounded border ${lineageDefaultsConflict.mergeChoice[field] === 'LATEST' ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-gray-300 bg-white text-gray-700'}`}
+                      onClick={() => setLineageDefaultsConflict((prev) => prev ? ({ ...prev, mergeChoice: { ...prev.mergeChoice, [field]: 'LATEST' } }) : prev)}
+                    >
+                      Use latest
+                    </button>
+                    <button
+                      className={`px-2 py-0.5 rounded border ${lineageDefaultsConflict.mergeChoice[field] === 'MINE' ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-gray-300 bg-white text-gray-700'}`}
+                      onClick={() => setLineageDefaultsConflict((prev) => prev ? ({ ...prev, mergeChoice: { ...prev.mergeChoice, [field]: 'MINE' } }) : prev)}
+                    >
+                      Use mine
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                onClick={() => setLineageDefaultsConflict(null)}
+              >
+                Close
+              </button>
+              <button
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                onClick={resolveConflictUseLatest}
+              >
+                Use Latest
+              </button>
+              <button
+                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                disabled={savingLineageDefaults}
+                onClick={() => { void resolveConflictReapplyMine(); }}
+              >
+                Reapply Mine
+              </button>
+              <button
+                className="btn-primary"
+                disabled={savingLineageDefaults}
+                onClick={() => { void resolveConflictSaveMerged(); }}
+              >
+                Merge And Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showEditModal && editingTenant && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <h2 className="text-xl font-bold mb-4">Edit Tenant</h2>
+            <form onSubmit={handleUpdateTenant}>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <input
+                  type="text"
+                  value={newTenantName}
+                  onChange={(e) => setNewTenantName(e.target.value)}
+                  className="input w-full"
+                  required
+                />
+              </div>
+              <div className="flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => { setShowEditModal(false); setEditingTenant(null); }}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creating}
+                  className="btn-primary"
+                >
+                  {creating ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,151 @@
+package com.dataturntable.api
+
+import com.dataturntable.auth.User
+import com.dataturntable.test.TestAuthHelpers
+import io.quarkus.narayana.jta.QuarkusTransaction
+import io.quarkus.test.junit.QuarkusTest
+import io.restassured.RestAssured.given
+import io.restassured.http.ContentType
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
+import org.hamcrest.CoreMatchers.equalTo
+import org.junit.jupiter.api.Test
+import org.mindrot.jbcrypt.BCrypt
+
+@QuarkusTest
+class DataResourceTest {
+
+    @PersistenceContext
+    lateinit var em: EntityManager
+
+    private fun createNonMemberToken(): String {
+        val email = "data-outsider-${java.util.UUID.randomUUID()}@example.com"
+        val passwordHash = java.util.Base64.getEncoder().encodeToString(
+            java.security.MessageDigest.getInstance("SHA-256").digest("ViewerPass!123".toByteArray())
+        )
+
+        QuarkusTransaction.requiringNew().run {
+            val user = User().apply {
+                this.email = email
+                this.passwordHash = BCrypt.hashpw(passwordHash, BCrypt.gensalt())
+                this.isActive = true
+                this.createdAt = java.time.Instant.now()
+                this.updatedAt = java.time.Instant.now()
+            }
+            em.persist(user)
+            em.flush()
+        }
+
+        return given()
+            .contentType(ContentType.JSON)
+            .body(mapOf("email" to email, "passwordHash" to passwordHash))
+        .`when`()
+            .post("/api/internal/v1/auth/login")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("token")
+    }
+
+    private fun resolveTenantId(token: String): String {
+        return given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getList<Map<String, Any>>("")
+            .first()["id"]
+            .toString()
+    }
+
+    @Test
+    fun testListTablesRequiresAuth() {
+        given()
+        .`when`()
+            .get("/api/internal/v1/data/00000000-0000-0000-0000-000000000000/tables")
+        .then()
+            .statusCode(401)
+    }
+
+    @Test
+    fun testListTablesRejectsInvalidTenantId() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/data/not-a-uuid/tables")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid tenantId"))
+    }
+
+    @Test
+    fun testQueryRejectsInvalidTableName() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("table", "bad-table;drop")
+        .`when`()
+            .get("/api/internal/v1/data/$tenantId/query")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid table name"))
+    }
+
+    @Test
+    fun testQueryRejectsInvalidStartTimestamp() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("table", "measurements")
+            .queryParam("start", "not-a-timestamp")
+        .`when`()
+            .get("/api/internal/v1/data/$tenantId/query")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid start timestamp"))
+    }
+
+    @Test
+    fun testListTablesRejectsUnauthorizedTenantScope() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+        val outsiderToken = createNonMemberToken()
+
+        given()
+            .header("Authorization", "Bearer $outsiderToken")
+        .`when`()
+            .get("/api/internal/v1/data/$tenantId/tables")
+        .then()
+            .statusCode(403)
+            .body("error", equalTo("Forbidden"))
+    }
+
+    @Test
+    fun testSummaryRejectsInvalidNumericField() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("table", "measurements")
+            .queryParam("numericField", "value;drop")
+        .`when`()
+            .get("/api/internal/v1/data/$tenantId/summary")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Invalid numericField"))
+    }
+
+}

@@ -1,0 +1,159 @@
+quarkus:
+  application:
+    name: dataturntable
+  http:
+    port: 8080
+    host: 0.0.0.0
+  
+  datasource:
+    db-kind: postgresql
+    jdbc:
+      url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dataturntable}
+    username: ${DB_USER:dataturntable}
+    password: ${DB_PASSWORD:dataturntable}
+  
+  hibernate-orm:
+    database:
+      generation: none
+    log:
+      sql: false
+    persistence-units:
+      default:
+        packages:
+          - com.dataturntable.tenant
+          - com.dataturntable.auth
+          - com.dataturntable.pipeline
+          - com.dataturntable.module
+          - com.dataturntable.alert
+  
+  flyway:
+    migrate-at-start: true
+    baseline-on-migrate: true
+  
+  kafka:
+    bootstrap:
+      servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+  
+  redis:
+    hosts: ${REDIS_HOSTS:redis://localhost:6379}
+
+  micrometer:
+    export:
+      prometheus:
+        enabled: true
+    binder:
+      http-server:
+        enabled: true
+
+mp:
+  messaging:
+    outgoing:
+      pipeline-commands:
+        connector: smallrye-kafka
+        topic: dataturntable.pipelines.input
+        bootstrap:
+          servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+        value:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+      pipeline-output:
+        connector: smallrye-kafka
+        topic: dataturntable.pipelines.output
+        bootstrap:
+          servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+        value:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
+    incoming:
+      pipeline-input:
+        connector: smallrye-kafka
+        topic: dataturntable.pipelines.input
+        bootstrap:
+          servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+        value:
+          deserializer: org.apache.kafka.common.serialization.StringDeserializer
+        auto:
+          offset:
+            reset: earliest
+  jwt:
+    verify:
+      publickey:
+        location: publicKey.pem
+      issuer: https://dataturntable.io
+    token:
+      header: Authorization
+      verification:
+        key:
+          location: publicKey.pem
+      generation:
+        key:
+          location: privateKey.pem
+
+smallrye:
+  jwt:
+    sign:
+      key:
+        location: privateKey.pem
+
+jwt:
+  issuer: https://dataturntable.io
+  duration: 3600
+
+dataturntable:
+  kafka:
+    topics:
+      prefix: dataturntable
+      pipelines: pipelines
+      system: system
+      dead-letter: dead-letter
+  docker:
+    module:
+      base-image: python:3.11-slim
+      network: dataturntable
+    resources:
+      cpu-limit: "1.0"
+      memory-limit: "512m"
+  mqtt:
+    integrated:
+      internal-broker-url: ${MQTT_INTEGRATED_INTERNAL_BROKER_URL:mqtt://mosquitto:1883}
+      external-broker-url: ${MQTT_INTEGRATED_EXTERNAL_BROKER_URL:mqtt://localhost:1883}
+      websocket-url: ${MQTT_INTEGRATED_WEBSOCKET_URL:ws://localhost:9001}
+      default-topic: ${MQTT_INTEGRATED_DEFAULT_TOPIC:dataturntable/events}
+  pagination:
+    default-size: 20
+    max-size: 100
+
+"%dev":
+  quarkus:
+    datasource:
+      jdbc:
+        url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dataturntable}
+      username: ${DB_USER:dataturntable}
+      password: ${DB_PASSWORD:dataturntable}
+    kafka:
+      bootstrap:
+        servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    redis:
+      hosts: ${REDIS_HOSTS:redis://localhost:6379}
+    flyway:
+      migrate-at-start: true
+
+"%test":
+  quarkus:
+    datasource:
+      db-kind: h2
+      jdbc:
+        url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    flyway:
+      migrate-at-start: false
+
+"%prod":
+  quarkus:
+    datasource:
+      jdbc:
+        url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dataturntable}
+        max-size: 20
+        min-size: 5
+    kafka:
+      bootstrap:
+        servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    redis:
+      hosts: ${REDIS_HOSTS:redis://localhost:6379}

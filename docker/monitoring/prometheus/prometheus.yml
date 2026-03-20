@@ -1,0 +1,79 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files: []
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  - job_name: dataturntable-backend
+    metrics_path: /q/metrics
+    static_configs:
+      - targets: ["backend:8080"]
+
+  - job_name: dataturntable-frontend-nginx
+    static_configs:
+      - targets: ["frontend-nginx-exporter:9113"]
+
+  - job_name: dataturntable-gateway-nginx
+    static_configs:
+      - targets: ["nginx-exporter:9113"]
+
+  - job_name: dataturntable-postgresql
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: dataturntable-redis
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  - job_name: dataturntable-kafka
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+
+  - job_name: dataturntable-node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  - job_name: dataturntable-containers
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
+  - job_name: dataturntable-http-health
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - http://backend:8080/q/health
+          - http://frontend:80/health
+          - http://nginx:80/health
+          - http://docs:80/
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  - job_name: dataturntable-tcp-health
+    metrics_path: /probe
+    params:
+      module: [tcp_connect]
+    static_configs:
+      - targets:
+          - postgresql:5432
+          - kafka:9092
+          - redis:6379
+          - mosquitto:1883
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
