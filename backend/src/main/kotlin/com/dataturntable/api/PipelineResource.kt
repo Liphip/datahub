@@ -73,11 +73,15 @@ class PipelineResource {
         if (graphDefinition !is Map<*, *>) return null
         val nodes = graphDefinition["nodes"] as? List<*> ?: return null
         val nodeIds = mutableSetOf<String>()
+        val nodeTypes = mutableMapOf<String, String>()
+        val nodeConfigs = mutableMapOf<String, Map<*, *>>()
         for (node in nodes) {
             val nodeMap = node as? Map<*, *> ?: continue
             val nodeId = nodeMap["id"]?.toString() ?: "unknown-node"
             nodeIds.add(nodeId)
             val nodeType = (nodeMap["type"] as? String)?.uppercase() ?: continue
+            nodeTypes[nodeId] = nodeType
+            nodeConfigs[nodeId] = nodeMap
             if (nodeType !in setOf("IMPORT", "PROCESSING", "ALERT", "EXPORT")) {
                 return "Node $nodeId has unsupported type: $nodeType"
             }
@@ -132,9 +136,11 @@ class PipelineResource {
 
         val edges = graphDefinition["edges"] as? List<*> ?: emptyList<Any>()
         val indegree = mutableMapOf<String, Int>()
+        val outdegree = mutableMapOf<String, Int>()
         val adjacency = mutableMapOf<String, MutableList<String>>()
         nodeIds.forEach { nodeId ->
             indegree[nodeId] = 0
+            outdegree[nodeId] = 0
             adjacency[nodeId] = mutableListOf()
         }
 
@@ -147,6 +153,34 @@ class PipelineResource {
             }
             adjacency[fromId]?.add(toId)
             indegree[toId] = (indegree[toId] ?: 0) + 1
+            outdegree[fromId] = (outdegree[fromId] ?: 0) + 1
+        }
+
+        for (nodeId in nodeIds) {
+            val nodeType = nodeTypes[nodeId] ?: continue
+            val incoming = indegree[nodeId] ?: 0
+            val outgoing = outdegree[nodeId] ?: 0
+            val nodeMap = nodeConfigs[nodeId]
+            when (nodeType) {
+                "IMPORT" -> {
+                    if (incoming != 0) return "Node $nodeId (IMPORT) cannot have incoming edges"
+                    if (outgoing == 0) return "Node $nodeId (IMPORT) must have at least one outgoing edge"
+                }
+                "PROCESSING" -> {
+                    val allowMultiInput = (nodeMap?.get("allowMultiInput") as? Boolean)
+                        ?: (nodeMap?.get("isMergeNode") as? Boolean)
+                        ?: false
+                    if (incoming == 0) return "Node $nodeId (PROCESSING) must have at least one incoming edge"
+                    if (!allowMultiInput && incoming > 1) {
+                        return "Node $nodeId (PROCESSING) has multiple incoming edges. Mark it as merge/join node (allowMultiInput=true) to accept fan-in"
+                    }
+                    if (outgoing == 0) return "Node $nodeId (PROCESSING) must have at least one outgoing edge"
+                }
+                "ALERT", "EXPORT" -> {
+                    if (incoming == 0) return "Node $nodeId ($nodeType) must have at least one incoming edge"
+                    if (outgoing != 0) return "Node $nodeId ($nodeType) cannot have outgoing edges"
+                }
+            }
         }
 
         val queue = ArrayDeque(indegree.filterValues { it == 0 }.keys)

@@ -5,7 +5,7 @@ WORKDIR /app
 COPY backend/pom.xml .
 COPY backend/src src
 
-RUN mvn -B package -DskipTests
+RUN --mount=type=cache,target=/root/.m2 mvn -B package -DskipTests
 
 FROM eclipse-temurin:21-jre-alpine
 

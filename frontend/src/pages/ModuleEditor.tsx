@@ -9,23 +9,17 @@ import type { CodeModule } from '../types';
 const TEMPLATES = {
   IMPORT: `class ImportModule:
     """
-    Receives or fetches data from an external source.
-    Entry node in the pipeline DAG.
+    Handles inbound payload transformation/parsing.
+    Connector connectivity is managed by the platform.
     """
 
-    def connect(self, config: dict):
-        """Initialise connection. Called once on container start."""
-        # Example: self.client = MQTTClient(config['broker'])
-        pass
-
-    def fetch(self) -> dict | pd.DataFrame:
-        """Fetch one record or batch. Called on schedule or in a loop."""
-        # Example: return {"temperature": 23.5, "timestamp": "2024-01-01T00:00:00Z"}
-        pass
-
-    def disconnect(self):
-        """Clean up connection. Called on container stop."""
-        pass
+    def fetch(self, data: dict, connector: dict | None = None) -> dict:
+        """Transform inbound payload before downstream processing."""
+        result = dict(data or {})
+        result["_importHandled"] = True
+        if connector:
+            result["_connectorType"] = connector.get("connectorType") or connector.get("type")
+        return result
 `,
   PROCESSING: `class ProcessingModule:
     """
@@ -70,23 +64,17 @@ const TEMPLATES = {
 `,
   EXPORT: `class ExportModule:
     """
-    Sends data to external systems or exposes pull endpoints.
-    Terminal node — does not forward data downstream.
+    Handles outbound payload shaping.
+    Connector delivery and connectivity are managed by the platform.
     """
 
-    def connect(self, config: dict):
-        """Open connection or register endpoint."""
-        # Example: self.client = RESTClient(config['url'])
-        pass
-
-    def send(self, data: dict | pd.DataFrame):
-        """Push data to destination or update the exposed endpoint's buffer."""
-        # Example: self.client.post(data)
-        pass
-
-    def disconnect(self):
-        """Clean up or deregister endpoint."""
-        pass
+    def send(self, data: dict, connector: dict | None = None) -> dict:
+        """Prepare final outbound payload returned to connector runtime."""
+        result = dict(data or {})
+        result["_exportHandled"] = True
+        if connector:
+            result["_connectorName"] = connector.get("name") or connector.get("id")
+        return result
 `
 };
 

@@ -351,199 +351,257 @@ class PipelineConsumer {
         val moduleLogs = mutableListOf<Map<String, Any?>>()
         val executionLog = mutableListOf<String>()
         val connectorConfigsByVersion = resolveConnectorConfigsByModuleVersion(pipeline)
-        
+        val pipelineId = pipeline.id.toString()
+
+        data class GraphNode(
+            val id: String,
+            val type: ModuleType,
+            val moduleVersionId: UUID,
+            val connector: ResolvedConnector?
+        )
+
+        fun executeNode(
+            node: GraphNode,
+            moduleInput: Any?,
+            order: Int
+        ): Any? {
+            val version = ModuleVersion.findById(node.moduleVersionId)
+                ?: throw IllegalStateException("Missing module version for node ${node.id}")
+            val stage = node.type.name
+            LOG.infof("Executing %s node %s: %s", stage, node.id, version.module?.name)
+            executionLog.add("START $stage #$order ${version.module?.name ?: version.id} [${node.id}]")
+            try {
+                val output = dockerService.executeModule(
+                    version,
+                    moduleInput,
+                    pipelineId,
+                    runId,
+                    node.type,
+                    node.connector?.config
+                )
+                moduleLogs.add(
+                    mapOf(
+                        "stage" to stage,
+                        "order" to order,
+                        "nodeId" to node.id,
+                        "moduleVersionId" to version.id,
+                        "moduleName" to version.module?.name,
+                        "success" to true,
+                        "stdout" to trimLog(output.stdout),
+                        "stderr" to trimLog(output.stderr),
+                        "exitCode" to output.exitCode,
+                        "durationMs" to output.durationMs,
+                        "connector" to node.connector?.summary
+                    )
+                )
+                executionLog.add("DONE $stage #$order ${version.module?.name ?: version.id} [${node.id}] (${output.durationMs}ms)")
+                return output.result
+            } catch (e: ModuleExecutionException) {
+                moduleLogs.add(
+                    mapOf(
+                        "stage" to stage,
+                        "order" to order,
+                        "nodeId" to node.id,
+                        "moduleVersionId" to version.id,
+                        "moduleName" to version.module?.name,
+                        "success" to false,
+                        "stdout" to trimLog(e.stdout),
+                        "stderr" to trimLog(e.stderr),
+                        "exitCode" to e.exitCode,
+                        "error" to e.message,
+                        "connector" to node.connector?.summary
+                    )
+                )
+                executionLog.add("FAIL $stage #$order ${version.module?.name ?: version.id} [${node.id}]: ${e.message}")
+                throw e
+            }
+        }
+
+        val graph = parseJsonMap(pipeline.graphDefinition)
+        val graphNodesRaw = graph["nodes"] as? List<*>
+        val graphEdgesRaw = graph["edges"] as? List<*>
+
+        if (!graphNodesRaw.isNullOrEmpty()) {
+            val graphNodes = graphNodesRaw.mapNotNull { raw ->
+                val nodeMap = raw as? Map<*, *> ?: return@mapNotNull null
+                val nodeId = nodeMap["id"]?.toString()?.trim().orEmpty()
+                if (nodeId.isBlank()) return@mapNotNull null
+                val nodeType = try {
+                    ModuleType.valueOf(nodeMap["type"]?.toString()?.uppercase() ?: return@mapNotNull null)
+                } catch (_: Exception) {
+                    return@mapNotNull null
+                }
+                val moduleVersionId = parseUuid(nodeMap["moduleVersionId"]?.toString()) ?: return@mapNotNull null
+                GraphNode(
+                    id = nodeId,
+                    type = nodeType,
+                    moduleVersionId = moduleVersionId,
+                    connector = connectorConfigsByVersion[moduleVersionId]
+                )
+            }
+            val nodeById = graphNodes.associateBy { it.id }
+            val indegree = mutableMapOf<String, Int>()
+            val upstream = mutableMapOf<String, MutableList<String>>()
+            val downstream = mutableMapOf<String, MutableList<String>>()
+            nodeById.keys.forEach { nodeId ->
+                indegree[nodeId] = 0
+                upstream[nodeId] = mutableListOf()
+                downstream[nodeId] = mutableListOf()
+            }
+
+            graphEdgesRaw.orEmpty().forEach { rawEdge ->
+                val edgeMap = rawEdge as? Map<*, *> ?: return@forEach
+                val from = edgeMap["from"]?.toString()?.trim().orEmpty()
+                val to = edgeMap["to"]?.toString()?.trim().orEmpty()
+                if (from !in nodeById || to !in nodeById) return@forEach
+                downstream[from]?.add(to)
+                upstream[to]?.add(from)
+                indegree[to] = (indegree[to] ?: 0) + 1
+            }
+
+            val queue = ArrayDeque(indegree.filterValues { it == 0 }.keys)
+            val topologicalOrder = mutableListOf<String>()
+            while (queue.isNotEmpty()) {
+                val nodeId = queue.removeFirst()
+                topologicalOrder.add(nodeId)
+                downstream[nodeId].orEmpty().forEach { next ->
+                    val updated = (indegree[next] ?: 0) - 1
+                    indegree[next] = updated
+                    if (updated == 0) queue.add(next)
+                }
+            }
+            val orderedNodeIds = if (topologicalOrder.size == nodeById.size) topologicalOrder else nodeById.keys.toList()
+
+            val outputs = mutableMapOf<String, Any?>()
+            orderedNodeIds.forEachIndexed { index, nodeId ->
+                val node = nodeById[nodeId] ?: return@forEachIndexed
+                val inputCandidates = upstream[nodeId].orEmpty().mapNotNull { parentId -> outputs[parentId] }
+                val nodeInput: Any? = when {
+                    inputCandidates.isEmpty() && node.type == ModuleType.IMPORT -> inputData
+                    inputCandidates.isEmpty() -> null
+                    inputCandidates.size == 1 -> inputCandidates.first()
+                    else -> mapOf("inputs" to inputCandidates)
+                }
+                if (nodeInput == null && node.type != ModuleType.IMPORT) {
+                    executionLog.add("SKIP ${node.type.name} #${index + 1} ${node.id} (no input)")
+                    return@forEachIndexed
+                }
+
+                val output = executeNode(node, nodeInput, index + 1)
+                outputs[node.id] = output
+                results[node.id] = mapOf(
+                    "type" to node.type.name,
+                    "moduleVersionId" to node.moduleVersionId,
+                    "result" to output
+                )
+            }
+
+            val terminalPayloads = orderedNodeIds
+                .filter { downstream[it].isNullOrEmpty() }
+                .mapNotNull { outputs[it] }
+            val alertPayload = when {
+                terminalPayloads.isNotEmpty() -> terminalPayloads.last()
+                outputs.isNotEmpty() -> outputs.values.lastOrNull()
+                else -> inputData
+            }
+
+            if (alertPayload is Map<*, *>) {
+                @Suppress("UNCHECKED_CAST")
+                val alertMapPayload = alertPayload as? Map<String, Any>
+                if (alertMapPayload != null) {
+                    val alertReport = alertDispatcher.evaluateRulesForPipeline(pipeline, alertMapPayload)
+                    results["alertsFired"] = alertReport.firedAlerts
+                    results["alertEvaluation"] = mapOf(
+                        "evaluatedRules" to alertReport.evaluatedRules,
+                        "matchedRules" to alertReport.matchedRules,
+                        "firedAlerts" to alertReport.firedAlerts,
+                        "cooldownSkipped" to alertReport.cooldownSkipped
+                    )
+                }
+            }
+
+            return mapOf(
+                "result" to results,
+                "moduleLogs" to moduleLogs,
+                "executionLog" to executionLog
+            )
+        }
+
         var data = inputData
-        
         pipeline.importModuleVersionId?.let { importId ->
             val importVersion = ModuleVersion.findById(importId)
             if (importVersion != null) {
                 val connectorContext = importVersion.id?.let { connectorConfigsByVersion[it] }
-                LOG.infof("Executing import module: %s", importVersion.module?.name)
-                executionLog.add("START IMPORT ${importVersion.module?.name ?: importVersion.id}")
-                try {
-                    val importOutput = dockerService.executeModule(
-                        importVersion,
-                        data,
-                        pipeline.id.toString(),
-                        runId,
-                        ModuleType.IMPORT,
-                        connectorContext?.config
-                    )
-                    val importResult = importOutput.result
-                    results["import"] = importResult
-                    moduleLogs.add(mapOf(
-                        "stage" to "IMPORT",
-                        "moduleVersionId" to importVersion.id,
-                        "moduleName" to importVersion.module?.name,
-                        "success" to true,
-                        "stdout" to trimLog(importOutput.stdout),
-                        "stderr" to trimLog(importOutput.stderr),
-                        "exitCode" to importOutput.exitCode,
-                        "durationMs" to importOutput.durationMs,
-                        "connector" to connectorContext?.summary
-                    ))
-                    executionLog.add("DONE IMPORT ${importVersion.module?.name ?: importVersion.id} (${importOutput.durationMs}ms)")
-                    if (importResult is Map<*, *>) {
-                        @Suppress("UNCHECKED_CAST")
-                        data = importResult as? Map<String, Any>
-                    }
-                } catch (e: ModuleExecutionException) {
-                    moduleLogs.add(mapOf(
-                        "stage" to "IMPORT",
-                        "moduleVersionId" to importVersion.id,
-                        "moduleName" to importVersion.module?.name,
-                        "success" to false,
-                        "stdout" to trimLog(e.stdout),
-                        "stderr" to trimLog(e.stderr),
-                        "exitCode" to e.exitCode,
-                        "error" to e.message,
-                        "connector" to connectorContext?.summary
-                    ))
-                    executionLog.add("FAIL IMPORT ${importVersion.module?.name ?: importVersion.id}: ${e.message}")
-                    throw e
-                }
-            }
-        }
-        
-        pipeline.processingModuleVersionIds.forEachIndexed { index, processingId ->
-            val processingVersion = ModuleVersion.findById(processingId)
-            if (processingVersion != null && data != null) {
-                LOG.infof("Executing processing module %d: %s", index + 1, processingVersion.module?.name)
-                executionLog.add("START PROCESSING #${index + 1} ${processingVersion.module?.name ?: processingVersion.id}")
-                try {
-                    val processingOutput = dockerService.executeModule(
-                        processingVersion,
-                        data,
-                        pipeline.id.toString(),
-                        runId,
-                        ModuleType.PROCESSING
-                    )
-                    val processingResult = processingOutput.result
-                    results["processing_${index + 1}"] = processingResult
-                    moduleLogs.add(mapOf(
-                        "stage" to "PROCESSING",
-                        "order" to (index + 1),
-                        "moduleVersionId" to processingVersion.id,
-                        "moduleName" to processingVersion.module?.name,
-                        "success" to true,
-                        "stdout" to trimLog(processingOutput.stdout),
-                        "stderr" to trimLog(processingOutput.stderr),
-                        "exitCode" to processingOutput.exitCode,
-                        "durationMs" to processingOutput.durationMs
-                    ))
-                    executionLog.add("DONE PROCESSING #${index + 1} ${processingVersion.module?.name ?: processingVersion.id} (${processingOutput.durationMs}ms)")
-                    if (processingResult is Map<*, *>) {
-                        @Suppress("UNCHECKED_CAST")
-                        data = processingResult as? Map<String, Any>
-                    }
-                } catch (e: ModuleExecutionException) {
-                    moduleLogs.add(mapOf(
-                        "stage" to "PROCESSING",
-                        "order" to (index + 1),
-                        "moduleVersionId" to processingVersion.id,
-                        "moduleName" to processingVersion.module?.name,
-                        "success" to false,
-                        "stdout" to trimLog(e.stdout),
-                        "stderr" to trimLog(e.stderr),
-                        "exitCode" to e.exitCode,
-                        "error" to e.message
-                    ))
-                    executionLog.add("FAIL PROCESSING #${index + 1} ${processingVersion.module?.name ?: processingVersion.id}: ${e.message}")
-                    throw e
-                }
-            }
-        }
-        
-        pipeline.exportModuleVersionIds.forEachIndexed { index, exportId ->
-            val exportVersion = ModuleVersion.findById(exportId)
-            if (exportVersion != null && data != null) {
-                val connectorContext = exportVersion.id?.let { connectorConfigsByVersion[it] }
-                LOG.infof("Executing export module %d: %s", index + 1, exportVersion.module?.name)
-                executionLog.add("START EXPORT #${index + 1} ${exportVersion.module?.name ?: exportVersion.id}")
-                try {
-                    val exportOutput = dockerService.executeModule(
-                        exportVersion,
-                        data,
-                        pipeline.id.toString(),
-                        runId,
-                        ModuleType.EXPORT,
-                        connectorContext?.config
-                    )
-                    val exportResult = exportOutput.result
-                    results["export_${index + 1}"] = exportResult
-                    moduleLogs.add(mapOf(
-                        "stage" to "EXPORT",
-                        "order" to (index + 1),
-                        "moduleVersionId" to exportVersion.id,
-                        "moduleName" to exportVersion.module?.name,
-                        "success" to true,
-                        "stdout" to trimLog(exportOutput.stdout),
-                        "stderr" to trimLog(exportOutput.stderr),
-                        "exitCode" to exportOutput.exitCode,
-                        "durationMs" to exportOutput.durationMs,
-                        "connector" to connectorContext?.summary
-                    ))
-                    executionLog.add("DONE EXPORT #${index + 1} ${exportVersion.module?.name ?: exportVersion.id} (${exportOutput.durationMs}ms)")
-                } catch (e: ModuleExecutionException) {
-                    moduleLogs.add(mapOf(
-                        "stage" to "EXPORT",
-                        "order" to (index + 1),
-                        "moduleVersionId" to exportVersion.id,
-                        "moduleName" to exportVersion.module?.name,
-                        "success" to false,
-                        "stdout" to trimLog(e.stdout),
-                        "stderr" to trimLog(e.stderr),
-                        "exitCode" to e.exitCode,
-                        "error" to e.message,
-                        "connector" to connectorContext?.summary
-                    ))
-                    executionLog.add("FAIL EXPORT #${index + 1} ${exportVersion.module?.name ?: exportVersion.id}: ${e.message}")
-                    throw e
+                val output = executeNode(
+                    GraphNode(
+                        id = "import",
+                        type = ModuleType.IMPORT,
+                        moduleVersionId = importVersion.id!!,
+                        connector = connectorContext
+                    ),
+                    data,
+                    1
+                )
+                results["import"] = output
+                if (output is Map<*, *>) {
+                    @Suppress("UNCHECKED_CAST")
+                    data = output as? Map<String, Any>
                 }
             }
         }
 
-        val graphAlertVersions = resolveAlertModuleVersionsFromGraph(pipeline)
-        graphAlertVersions.forEachIndexed { index, alertVersion ->
-            if (data == null) return@forEachIndexed
-            LOG.infof("Executing alert module %d: %s", index + 1, alertVersion.module?.name)
-            executionLog.add("START ALERT #${index + 1} ${alertVersion.module?.name ?: alertVersion.id}")
-            try {
-                val alertOutput = dockerService.executeModule(
-                    alertVersion,
+        pipeline.processingModuleVersionIds.forEachIndexed { index, processingId ->
+            val processingVersion = ModuleVersion.findById(processingId)
+            if (processingVersion != null && data != null) {
+                val output = executeNode(
+                    GraphNode(
+                        id = "processing-${index + 1}",
+                        type = ModuleType.PROCESSING,
+                        moduleVersionId = processingVersion.id!!,
+                        connector = null
+                    ),
                     data,
-                    pipeline.id.toString(),
-                    runId,
-                    ModuleType.ALERT
+                    index + 2
                 )
-                results["alert_${index + 1}"] = alertOutput.result
-                moduleLogs.add(mapOf(
-                    "stage" to "ALERT",
-                    "order" to (index + 1),
-                    "moduleVersionId" to alertVersion.id,
-                    "moduleName" to alertVersion.module?.name,
-                    "success" to true,
-                    "stdout" to trimLog(alertOutput.stdout),
-                    "stderr" to trimLog(alertOutput.stderr),
-                    "exitCode" to alertOutput.exitCode,
-                    "durationMs" to alertOutput.durationMs
-                ))
-                executionLog.add("DONE ALERT #${index + 1} ${alertVersion.module?.name ?: alertVersion.id} (${alertOutput.durationMs}ms)")
-            } catch (e: ModuleExecutionException) {
-                moduleLogs.add(mapOf(
-                    "stage" to "ALERT",
-                    "order" to (index + 1),
-                    "moduleVersionId" to alertVersion.id,
-                    "moduleName" to alertVersion.module?.name,
-                    "success" to false,
-                    "stdout" to trimLog(e.stdout),
-                    "stderr" to trimLog(e.stderr),
-                    "exitCode" to e.exitCode,
-                    "error" to e.message
-                ))
-                executionLog.add("FAIL ALERT #${index + 1} ${alertVersion.module?.name ?: alertVersion.id}: ${e.message}")
-                throw e
+                results["processing_${index + 1}"] = output
+                if (output is Map<*, *>) {
+                    @Suppress("UNCHECKED_CAST")
+                    data = output as? Map<String, Any>
+                }
             }
+        }
+
+        pipeline.exportModuleVersionIds.forEachIndexed { index, exportId ->
+            val exportVersion = ModuleVersion.findById(exportId)
+            if (exportVersion != null && data != null) {
+                val connectorContext = exportVersion.id?.let { connectorConfigsByVersion[it] }
+                val output = executeNode(
+                    GraphNode(
+                        id = "export-${index + 1}",
+                        type = ModuleType.EXPORT,
+                        moduleVersionId = exportVersion.id!!,
+                        connector = connectorContext
+                    ),
+                    data,
+                    index + 2 + pipeline.processingModuleVersionIds.size
+                )
+                results["export_${index + 1}"] = output
+            }
+        }
+
+        resolveAlertModuleVersionsFromGraph(pipeline).forEachIndexed { index, alertVersion ->
+            if (data == null) return@forEachIndexed
+            val output = executeNode(
+                GraphNode(
+                    id = "alert-${index + 1}",
+                    type = ModuleType.ALERT,
+                    moduleVersionId = alertVersion.id!!,
+                    connector = null
+                ),
+                data,
+                index + 2 + pipeline.processingModuleVersionIds.size + pipeline.exportModuleVersionIds.size
+            )
+            results["alert_${index + 1}"] = output
         }
 
         val alertPayload = data ?: inputData

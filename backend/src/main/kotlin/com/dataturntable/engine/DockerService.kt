@@ -159,7 +159,7 @@ class DockerService {
         
         inputData?.let {
             dockerArgs.add("-e")
-            dockerArgs.add("INPUT_DATA=${it.toString()}")
+            dockerArgs.add("INPUT_DATA=${objectMapper.writeValueAsString(it)}")
         }
 
         connectorConfig?.takeIf { it.isNotEmpty() }?.let {
@@ -238,6 +238,7 @@ class DockerService {
         // Provide helper functions for modules in the execution environment.
         // alert_fn and query_fn are no-op stubs here; the platform can upgrade them to call back via APIs or messaging.
         val helperCode = """
+            |from __future__ import annotations
             |import json
             |import os
             |import inspect
@@ -266,78 +267,110 @@ class DockerService {
             |        return len(params) >= count
             |    except Exception:
             |        return False
+            |
+            |def _build_module_instance(class_name, config):
+            |    cls = globals().get(class_name)
+            |    if not inspect.isclass(cls):
+            |        return None
+            |    try:
+            |        init_fn = getattr(cls, '__init__', None)
+            |        if init_fn and _supports_args(init_fn, 1):
+            |            return cls(config)
+            |        return cls()
+            |    except Exception:
+            |        return cls()
+            |
+            |def _resolve_callable(class_name, method_name, config):
+            |    instance = _build_module_instance(class_name, config)
+            |    if instance is not None:
+            |        method = getattr(instance, method_name, None)
+            |        if callable(method):
+            |            return method
+            |    fn = globals().get(method_name)
+            |    if callable(fn):
+            |        return fn
+            |    return None
+            |
+            |def _load_input_data():
+            |    try:
+            |        return json.loads(os.environ.get('INPUT_DATA', '{}'))
+            |    except Exception:
+            |        return {}
         """.trimMargin()
         
         val script = when (moduleType) {
             ModuleType.IMPORT -> """
-                |import sys
-                |import json
                 |$helperCode
+                |import json
+                |input_data = _load_input_data()
                 |connector_data = _connector_data()
                 |$code
-                |if 'connect' in dir() and callable(connect):
-                |    connect(connector_data) if _supports_args(connect, 1) else connect()
                 |result = {}
-                |if 'fetch' in dir() and callable(fetch):
-                |    result = fetch(connector_data) if _supports_args(fetch, 1) else fetch()
+                |fetch_fn = _resolve_callable('ImportModule', 'fetch', connector_data)
+                |if callable(fetch_fn):
+                |    if _supports_args(fetch_fn, 2):
+                |        result = fetch_fn(input_data, connector_data)
+                |    elif _supports_args(fetch_fn, 1):
+                |        result = fetch_fn(input_data)
+                |    else:
+                |        result = fetch_fn()
                 |print(json.dumps(result))
             """.trimMargin()
             
             ModuleType.PROCESSING -> """
-                |import sys
-                |import json
                 |$helperCode
-                |input_data = json.loads(__import__('os').environ.get('INPUT_DATA', '{}'))
+                |import json
+                |input_data = _load_input_data()
                 |connector_data = _connector_data()
                 |$code
                 |result = input_data
-                |if 'process' in dir() and callable(process):
-                |    if _supports_args(process, 2):
-                |        result = process(input_data, connector_data)
-                |    elif _supports_args(process, 1):
-                |        result = process(input_data)
+                |process_fn = _resolve_callable('ProcessingModule', 'process', connector_data)
+                |if callable(process_fn):
+                |    if _supports_args(process_fn, 2):
+                |        result = process_fn(input_data, connector_data)
+                |    elif _supports_args(process_fn, 1):
+                |        result = process_fn(input_data)
                 |    else:
-                |        result = process()
+                |        result = process_fn()
                 |print(json.dumps(result))
             """.trimMargin()
             
             ModuleType.ALERT -> """
-                |import sys
-                |import json
                 |$helperCode
-                |input_data = json.loads(__import__('os').environ.get('INPUT_DATA', '{}'))
+                |import json
+                |input_data = _load_input_data()
                 |connector_data = _connector_data()
                 |$code
                 |result = False
-                |if 'evaluate' in dir() and callable(evaluate):
-                |    if _supports_args(evaluate, 2):
-                |        result = evaluate(input_data, connector_data)
-                |    elif _supports_args(evaluate, 1):
-                |        result = evaluate(input_data)
+                |evaluate_fn = _resolve_callable('AlertModule', 'evaluate', connector_data)
+                |if callable(evaluate_fn):
+                |    if _supports_args(evaluate_fn, 3):
+                |        result = evaluate_fn(input_data, alert_fn, query_fn)
+                |    elif _supports_args(evaluate_fn, 2):
+                |        result = evaluate_fn(input_data, alert_fn)
+                |    elif _supports_args(evaluate_fn, 1):
+                |        result = evaluate_fn(input_data)
                 |    else:
-                |        result = evaluate()
+                |        result = evaluate_fn()
                 |print(json.dumps({"alert_fired": result}))
             """.trimMargin()
             
             ModuleType.EXPORT -> """
-                |import sys
-                |import json
                 |$helperCode
-                |input_data = json.loads(__import__('os').environ.get('INPUT_DATA', '{}'))
+                |import json
+                |input_data = _load_input_data()
                 |connector_data = _connector_data()
                 |$code
-                |if 'connect' in dir() and callable(connect):
-                |    connect(connector_data) if _supports_args(connect, 1) else connect()
-                |if 'send' in dir() and callable(send):
-                |    if _supports_args(send, 2):
-                |        send(input_data, connector_data)
-                |    elif _supports_args(send, 1):
-                |        send(input_data)
+                |result = input_data
+                |send_fn = _resolve_callable('ExportModule', 'send', connector_data)
+                |if callable(send_fn):
+                |    if _supports_args(send_fn, 2):
+                |        result = send_fn(input_data, connector_data)
+                |    elif _supports_args(send_fn, 1):
+                |        result = send_fn(input_data)
                 |    else:
-                |        send()
-                |if 'disconnect' in dir() and callable(disconnect):
-                |    disconnect()
-                |print(json.dumps({"status": "sent"}))
+                |        result = send_fn()
+                |print(json.dumps({"status": "sent", "result": result}))
             """.trimMargin()
         }
         
