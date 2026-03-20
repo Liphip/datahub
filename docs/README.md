@@ -18,10 +18,11 @@ This directory contains product, API, operations, and user documentation.
 
 ## Web Docs (`/docs`)
 
-A standalone static documentation site is provided at:
+A standalone MkDocs Material documentation service is provided at:
 
-- Source: `frontend/public/docs/`
-- Runtime URL: `/docs` (served by the frontend web server)
-- Framework: Docsify (static, no backend runtime required)
+- Source: `docs-site/`
+- Runtime URL (subdomain): `docs.localhost`
+- Runtime URL (fallback): `/docs`
+- Framework: MkDocs Material
 
-The web docs support language switching (EN/DE) and are intentionally separate from the React application pages.
+The docs site is intentionally separate from the React application pages and runs as its own container/service.

@@ -128,8 +128,18 @@ services:
         condition: service_healthy
       frontend:
         condition: service_healthy
+      docs:
+        condition: service_started
       grafana:
         condition: service_started
+
+  docs:
+    build:
+      context: ..
+      dockerfile: docker/docs.Dockerfile
+    container_name: dataturntable-docs
+    ports:
+      - "3002:80"
 
   prometheus:
     image: prom/prometheus:v2.54.1

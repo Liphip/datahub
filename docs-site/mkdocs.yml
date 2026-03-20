@@ -1,0 +1,46 @@
+site_name: DataTurntable Documentation
+site_description: End-user and administrator documentation for DataTurntable
+site_url: https://docs.dataturntable.local
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: cyan
+      accent: blue
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - English:
+      - Getting Started: en/getting-started.md
+      - Beginner Guide: en/beginner-guide.md
+      - Administrator Guide: en/admin-guide.md
+      - Monitoring and Logging: en/monitoring-logging.md
+      - Operations Runbook: en/operations-runbook.md
+      - Troubleshooting: en/troubleshooting.md
+      - FAQ: en/faq.md
+  - Deutsch:
+      - Erste Schritte: de/getting-started.md
+      - Einsteiger-Guide: de/beginner-guide.md
+      - Administratoren-Guide: de/admin-guide.md
+      - Monitoring und Logging: de/monitoring-logging.md
+      - Betriebs-Runbook: de/operations-runbook.md
+      - Troubleshooting: de/troubleshooting.md
+      - FAQ: de/faq.md

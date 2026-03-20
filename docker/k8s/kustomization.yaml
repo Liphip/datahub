@@ -9,6 +9,7 @@ resources:
   - infra/messaging.yaml
   - backend/deployment.yaml
   - frontend/deployment.yaml
+  - docs/deployment.yaml
   - ingress/ingress.yaml
   - monitoring/prometheus.yaml
   - monitoring/loki.yaml

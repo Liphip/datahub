@@ -55,7 +55,9 @@ npm run build
 | Grafana (direct) | http://localhost:3001 (admin/admin) |
 | Grafana (subdomain via gateway) | http://monitoring.localhost |
 | Monitoring fallback route | http://localhost/monitoring |
-| User Docs (standalone Docsify site) | http://localhost/docs |
+| User Docs (direct service) | http://localhost:3002 |
+| User Docs (subdomain via gateway) | http://docs.localhost |
+| User Docs (fallback route) | http://localhost/docs |
 
 ## Monitoring Deployment Modes
 
@@ -95,6 +97,7 @@ docker stack deploy -c docker/docker-stack.app.yml dataturntable
 - Pod annotations on backend/frontend enable per-pod metrics scraping
 - Promtail DaemonSet collects logs from all pods in `dataturntable` namespace
 - Grafana ingress host: `monitoring.dataturntable.example.com`
+- Docs ingress host: `docs.dataturntable.example.com`
 
 ### System and Docker/Container Insights
 

@@ -229,8 +229,8 @@ Bei Eskalation an Plattform-Support mitgeben:
 
 Pfad der eigenstaendigen Dokumentationsseite:
 
-- `/docs` (Docsify-basierte statische Dokumentation)
+- `/docs` (MkDocs-Material Dokumentationsservice)
 
 Quelle der eigenstaendigen Doku:
 
-- `frontend/public/docs/`
+- `docs-site/`

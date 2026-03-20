@@ -88,6 +88,9 @@ Push to WebSocket     ──────────► │   UDP endpoints;    
     - Grafana (direct): http://localhost:3001 (admin/admin)
     - Grafana (via gateway): http://monitoring.localhost
     - Monitoring fallback route: http://localhost/monitoring
+    - Docs (direct): http://localhost:3002
+    - Docs (via gateway): http://docs.localhost
+    - Docs fallback route: http://localhost/docs
     - Loki API: http://localhost:3100
 
 ### Building from Source
@@ -237,6 +240,7 @@ docker stack deploy -c docker/docker-stack.app.yml dataturntable
 ```
 
 - Deploys full platform services in Swarm: PostgreSQL, Kafka, Redis, Mosquitto, Backend, Frontend, Nginx
+- Includes dedicated docs service (`dataturntable/docs:latest`) for user/admin documentation
 - Scales stateless services by default (`backend=3`, `frontend=3`, `nginx=2`)
 - Works with the monitoring stack on the shared `dataturntable` overlay network
 ### Kubernetes
@@ -248,6 +252,7 @@ kubectl apply -k docker/k8s/
 
 Monitoring endpoint host for Kubernetes ingress:
 - `monitoring.dataturntable.example.com` → Grafana
+- `docs.dataturntable.example.com` → Documentation portal
 
 Kubernetes bundle now includes full application + monitoring resources:
 - App services: PostgreSQL, Kafka, Redis, Mosquitto, Backend, Frontend

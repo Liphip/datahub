@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dataturntable-docs
+  labels:
+    app: dataturntable
+    component: docs
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: dataturntable
+      component: docs
+  template:
+    metadata:
+      labels:
+        app: dataturntable
+        component: docs
+    spec:
+      containers:
+        - name: docs
+          image: dataturntable/docs:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dataturntable-docs
+  labels:
+    app: dataturntable
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+  selector:
+    app: dataturntable
+    component: docs

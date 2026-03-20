@@ -229,8 +229,8 @@ When escalating to platform support, include:
 
 Standalone docs site path:
 
-- `/docs` (Docsify-based static documentation)
+- `/docs` (MkDocs Material documentation service)
 
 Source of standalone docs site:
 
-- `frontend/public/docs/`
+- `docs-site/`

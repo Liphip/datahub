@@ -1,6 +1,0 @@
-* [Home](#/README)
-* [Beginner Guide](#/en/beginner-guide)
-* [Admin Guide](#/en/admin-guide)
-* [Operations](#/en/runbooks)
-* [Troubleshooting](#/en/troubleshooting)
-* [Deutsch](#/de/README)

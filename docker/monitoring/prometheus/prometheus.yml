@@ -51,6 +51,7 @@ scrape_configs:
           - http://backend:8080/q/health
           - http://frontend:80/health
           - http://nginx:80/health
+          - http://docs:80/
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
