@@ -11,6 +11,21 @@ This site is intentionally separate from the application UI and can be hosted in
 - monitoring and observability guidance
 - troubleshooting workflows and escalation tips
 
+## Start Here by Persona
+
+- New user with little experience: [Beginner Guide](#/en/beginner-guide)
+- Tenant or platform administrator: [Admin Guide](#/en/admin-guide)
+- Incident responder: [Troubleshooting](#/en/troubleshooting)
+
+## Recommended Learning Path
+
+1. [Quick Start](#/en/getting-started)
+2. [Tenants and Roles](#/en/tenants-and-roles)
+3. [Modules](#/en/modules)
+4. [Pipelines](#/en/pipelines)
+5. [Monitoring and Logs](#/en/monitoring-logs)
+6. [Runbooks](#/en/runbooks)
+
 ## Audience
 
 - tenant admins
