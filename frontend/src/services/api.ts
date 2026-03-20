@@ -601,13 +601,15 @@ class ApiService {
     return response.data;
   }
 
-  async createConnector(tenantId: string, name: string, connectorType: string, direction: string, config?: Record<string, unknown>, description?: string): Promise<Connector> {
-    const response = await this.client.post<Connector>(`/connectors?tenantId=${tenantId}`, { 
-      name, 
-      connectorType, 
-      direction, 
+  async createConnector(tenantId: string, name: string, connectorType: string, direction: string, config?: Record<string, unknown>, description?: string, options?: { pollingEnabled?: boolean; pollingIntervalSeconds?: number }): Promise<Connector> {
+    const response = await this.client.post<Connector>(`/connectors?tenantId=${tenantId}`, {
+      name,
+      connectorType,
+      direction,
       config: config || {},
-      description 
+      description,
+      pollingEnabled: options?.pollingEnabled ?? false,
+      pollingIntervalSeconds: options?.pollingIntervalSeconds ?? 60,
     });
     return response.data;
   }

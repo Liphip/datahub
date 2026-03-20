@@ -150,6 +150,8 @@ class ConnectorResource {
             "connectorType" to connector.connectorType?.name,
             "direction" to connector.direction?.name,
             "config" to configValue,
+            "pollingEnabled" to connector.pollingEnabled,
+            "pollingIntervalSeconds" to connector.pollingIntervalSeconds,
             "description" to connector.description,
             "isActive" to connector.isActive,
             "pipelineReferenceCount" to pipelineReferenceCount,
@@ -639,9 +641,12 @@ class ConnectorResource {
 
         val parsedConnectorType = parseConnectorType(connectorType)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid connector type")).build()
+        if (direction.uppercase() == "BOTH") {
+            return Response.status(400).entity(mapOf("error" to "Direction BOTH is no longer supported. Connectors must be INPUT or OUTPUT.")).build()
+        }
         val parsedDirection = parseDirection(direction)
-            ?: return Response.status(400).entity(mapOf("error" to "Invalid direction")).build()
-        
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid direction. Must be INPUT or OUTPUT")).build()
+
         if (tenantId == null) {
             return Response.status(400)
                 .entity(mapOf("error" to "Tenant ID is required"))
@@ -684,6 +689,8 @@ class ConnectorResource {
             this.config = EncryptionUtils.encrypt(configPlainJson)
             this.description = request["description"] as? String
             this.isActive = true
+            this.pollingEnabled = request["pollingEnabled"] as? Boolean ?: false
+            this.pollingIntervalSeconds = (request["pollingIntervalSeconds"] as? Number)?.toInt() ?: 60
             this.createdAt = java.time.Instant.now()
             this.updatedAt = java.time.Instant.now()
         }
@@ -1103,10 +1110,16 @@ class ConnectorResource {
                 connector.connectorType = parsed
             }
             request["direction"]?.let {
-                val parsed = parseDirection(it as String)
-                    ?: return Response.status(400).entity(mapOf("error" to "Invalid direction")).build()
+                val dirStr = (it as String).uppercase()
+                if (dirStr == "BOTH") {
+                    return Response.status(400).entity(mapOf("error" to "Direction BOTH is no longer supported. Use INPUT or OUTPUT.")).build()
+                }
+                val parsed = parseDirection(dirStr)
+                    ?: return Response.status(400).entity(mapOf("error" to "Invalid direction. Must be INPUT or OUTPUT")).build()
                 connector.direction = parsed
             }
+            (request["pollingEnabled"] as? Boolean)?.let { connector.pollingEnabled = it }
+            (request["pollingIntervalSeconds"] as? Number)?.let { connector.pollingIntervalSeconds = it.toInt() }
             request["config"]?.let {
                 if (it is Map<*, *> && it.isEmpty()) {
                     return@let

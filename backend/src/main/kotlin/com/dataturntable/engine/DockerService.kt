@@ -64,23 +64,24 @@ class DockerService {
         pipelineId: String,
         runId: String,
         moduleType: ModuleType,
-        connectorConfig: Map<String, Any?>? = null
+        /** Non-sensitive connector metadata (name, type, topic, etc.) for informational use in module. No credentials. */
+        connectorMeta: Map<String, Any?>? = null
     ): ModuleExecutionOutput {
         val containerName = "dt-${pipelineId}-${runId}-${moduleType.name.lowercase()}-${UUID.randomUUID()}"
-        
+
         LOG.infof("Executing module %s in container %s", moduleVersion.module?.name, containerName)
-        
+
         return try {
             val code = moduleVersion.code ?: throw IllegalStateException("Module code is empty")
             val requirements = moduleVersion.requirements ?: ""
-            
+
             val output = runContainer(
                 containerName = containerName,
                 code = code,
                 requirements = requirements,
                 inputData = inputData,
                 moduleType = moduleType,
-                connectorConfig = connectorConfig
+                connectorMeta = connectorMeta
             )
             
             cleanupContainer(containerName)
@@ -130,21 +131,18 @@ class DockerService {
         requirements: String,
         inputData: Any?,
         moduleType: ModuleType,
-        connectorConfig: Map<String, Any?>?
+        connectorMeta: Map<String, Any?>?
     ): RawContainerResult {
         val scriptContent = buildModuleScript(code, moduleType)
-        
+
         val dockerArgs = mutableListOf(
             "docker", "run",
             "--rm",
             "--name", containerName
         )
 
-        if (allowNetwork) {
-            dockerArgs.addAll(listOf("--network", networkName))
-        } else {
-            dockerArgs.addAll(listOf("--network", "none"))
-        }
+        // Modules never need network access — the platform handles all I/O via ConnectorRuntimeService.
+        dockerArgs.addAll(listOf("--network", "none"))
 
         dockerArgs.addAll(listOf(
             "--user", "1000:1000",
@@ -156,15 +154,20 @@ class DockerService {
             "-e", "MODULE_REQUIREMENTS=$requirements",
             "-e", "MODULE_TYPE=${moduleType.name}"
         ))
-        
+
+        // For MERGE nodes, inputData is a List — serialise it as a JSON array.
+        // For all other nodes it is a Map or primitive — serialise as-is.
         inputData?.let {
+            val serialised = objectMapper.writeValueAsString(it)
             dockerArgs.add("-e")
-            dockerArgs.add("INPUT_DATA=${it.toString()}")
+            dockerArgs.add("INPUT_DATA=$serialised")
         }
 
-        connectorConfig?.takeIf { it.isNotEmpty() }?.let {
+        // Non-sensitive connector metadata (connector type, name, topic, path, etc.)
+        // Credentials are NEVER passed to the container.
+        connectorMeta?.takeIf { it.isNotEmpty() }?.let {
             dockerArgs.add("-e")
-            dockerArgs.add("CONNECTOR_CONFIG=${objectMapper.writeValueAsString(it)}")
+            dockerArgs.add("CONNECTOR_META=${objectMapper.writeValueAsString(it)}")
         }
         
         dockerArgs.add(baseImage)
@@ -235,112 +238,138 @@ class DockerService {
     }
     
     private fun buildModuleScript(code: String, moduleType: ModuleType): String {
-        // Provide helper functions for modules in the execution environment.
-        // alert_fn and query_fn are no-op stubs here; the platform can upgrade them to call back via APIs or messaging.
+        // Shared runtime helpers injected into every module container.
+        // KEY DESIGN PRINCIPLE:
+        //   IMPORT modules receive already-fetched data (INPUT_DATA env var) from the platform.
+        //   EXPORT modules return shaped data; the platform delivers it via the connector.
+        //   Modules never make network calls — all I/O is the platform's responsibility.
         val helperCode = """
-            |import json
-            |import os
-            |import inspect
+            |import json, os, inspect
             |
             |def alert_fn(severity='info', message='', payload=None):
-            |    # Placeholder: platform should intercept this output and handle alert dispatch.
+            |    """Fire an alert. The platform intercepts __alert__ lines in stdout."""
             |    print(json.dumps({'__alert__': {'severity': severity, 'message': message, 'payload': payload}}))
             |
             |def query_fn(query):
-            |    # Placeholder for querying platform stored data
+            |    """Query platform stored data. Returns empty dict in current runtime."""
             |    return {}
             |
-            |def _connector_data():
+            |def _connector_meta():
+            |    """Non-sensitive connector metadata (type, name, topic, etc.) for informational use only."""
             |    try:
-            |        return json.loads(os.environ.get('CONNECTOR_CONFIG', '{}'))
+            |        return json.loads(os.environ.get('CONNECTOR_META', '{}'))
             |    except Exception:
             |        return {}
             |
-            |def _supports_args(fn, count):
+            |def _load_input():
+            |    try:
+            |        return json.loads(os.environ.get('INPUT_DATA', '{}'))
+            |    except Exception:
+            |        return {}
+            |
+            |def _load_inputs_list():
+            |    try:
+            |        raw = os.environ.get('INPUT_DATA', '[]')
+            |        parsed = json.loads(raw)
+            |        return parsed if isinstance(parsed, list) else [parsed]
+            |    except Exception:
+            |        return []
+            |
+            |def _call(fn, *args):
+            |    """Call fn with as many args as its signature accepts (up to len(args))."""
             |    try:
             |        sig = inspect.signature(fn)
-            |        params = [p for p in sig.parameters.values() if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
-            |        has_varargs = any(p.kind == p.VAR_POSITIONAL for p in sig.parameters.values())
-            |        if has_varargs:
-            |            return True
-            |        return len(params) >= count
+            |        params = [p for p in sig.parameters.values()
+            |                  if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+            |        has_var = any(p.kind == p.VAR_POSITIONAL for p in sig.parameters.values())
+            |        n = len(args) if has_var else min(len(params), len(args))
+            |        return fn(*args[:n])
+            |    except Exception as e:
+            |        raise RuntimeError(f"Module call failed: {e}") from e
+            |
+            |def _resolve(class_name, method_name):
+            |    """Find method_name on class_name instance, or as a bare function."""
+            |    cls = globals().get(class_name)
+            |    if inspect.isclass(cls):
+            |        try:
+            |            inst = cls(_connector_meta()) if _has_config_init(cls) else cls()
+            |            m = getattr(inst, method_name, None)
+            |            if callable(m):
+            |                return m
+            |        except Exception:
+            |            pass
+            |    fn = globals().get(method_name)
+            |    return fn if callable(fn) else None
+            |
+            |def _has_config_init(cls):
+            |    try:
+            |        sig = inspect.signature(cls.__init__)
+            |        params = [p for p in sig.parameters.values()
+            |                  if p.name != 'self' and p.kind in
+            |                  (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.VAR_POSITIONAL)]
+            |        return len(params) > 0
             |    except Exception:
             |        return False
         """.trimMargin()
-        
+
         val script = when (moduleType) {
             ModuleType.IMPORT -> """
-                |import sys
-                |import json
                 |$helperCode
-                |connector_data = _connector_data()
+                |# INPUT_DATA = raw payload already fetched by the platform connector.
+                |# The module's job is ONLY to parse/transform/validate it.
+                |# Do NOT make network calls here — the platform handles all I/O.
+                |input_data = _load_input()
+                |connector_meta = _connector_meta()
                 |$code
-                |if 'connect' in dir() and callable(connect):
-                |    connect(connector_data) if _supports_args(connect, 1) else connect()
-                |result = {}
-                |if 'fetch' in dir() and callable(fetch):
-                |    result = fetch(connector_data) if _supports_args(fetch, 1) else fetch()
+                |fn = _resolve('ImportModule', 'parse')
+                |result = _call(fn, input_data, connector_meta) if fn else input_data
                 |print(json.dumps(result))
             """.trimMargin()
-            
+
             ModuleType.PROCESSING -> """
-                |import sys
-                |import json
                 |$helperCode
-                |input_data = json.loads(__import__('os').environ.get('INPUT_DATA', '{}'))
-                |connector_data = _connector_data()
+                |# input_data = output of the single upstream node (dict or primitive).
+                |input_data = _load_input()
                 |$code
-                |result = input_data
-                |if 'process' in dir() and callable(process):
-                |    if _supports_args(process, 2):
-                |        result = process(input_data, connector_data)
-                |    elif _supports_args(process, 1):
-                |        result = process(input_data)
-                |    else:
-                |        result = process()
+                |fn = _resolve('ProcessingModule', 'process')
+                |result = _call(fn, input_data, query_fn) if fn else input_data
                 |print(json.dumps(result))
             """.trimMargin()
-            
-            ModuleType.ALERT -> """
-                |import sys
-                |import json
+
+            ModuleType.MERGE -> """
                 |$helperCode
-                |input_data = json.loads(__import__('os').environ.get('INPUT_DATA', '{}'))
-                |connector_data = _connector_data()
+                |# inputs = list of outputs from ALL upstream nodes (always a list, ≥2 items).
+                |inputs = _load_inputs_list()
                 |$code
-                |result = False
-                |if 'evaluate' in dir() and callable(evaluate):
-                |    if _supports_args(evaluate, 2):
-                |        result = evaluate(input_data, connector_data)
-                |    elif _supports_args(evaluate, 1):
-                |        result = evaluate(input_data)
-                |    else:
-                |        result = evaluate()
-                |print(json.dumps({"alert_fired": result}))
+                |fn = _resolve('MergeModule', 'merge')
+                |result = _call(fn, inputs) if fn else inputs[0] if inputs else {}
+                |print(json.dumps(result))
             """.trimMargin()
-            
-            ModuleType.EXPORT -> """
-                |import sys
-                |import json
+
+            ModuleType.ALERT -> """
                 |$helperCode
-                |input_data = json.loads(__import__('os').environ.get('INPUT_DATA', '{}'))
-                |connector_data = _connector_data()
+                |# input_data = upstream node output. Call alert_fn() to fire an alert.
+                |# Return True if fired, False otherwise. This is a TERMINAL node.
+                |input_data = _load_input()
                 |$code
-                |if 'connect' in dir() and callable(connect):
-                |    connect(connector_data) if _supports_args(connect, 1) else connect()
-                |if 'send' in dir() and callable(send):
-                |    if _supports_args(send, 2):
-                |        send(input_data, connector_data)
-                |    elif _supports_args(send, 1):
-                |        send(input_data)
-                |    else:
-                |        send()
-                |if 'disconnect' in dir() and callable(disconnect):
-                |    disconnect()
-                |print(json.dumps({"status": "sent"}))
+                |fn = _resolve('AlertModule', 'evaluate')
+                |result = _call(fn, input_data, alert_fn, query_fn) if fn else False
+                |print(json.dumps({"alert_fired": bool(result)}))
+            """.trimMargin()
+
+            ModuleType.EXPORT -> """
+                |$helperCode
+                |# input_data = shaped payload from upstream. Return the final outbound dict.
+                |# The platform delivers it to the external system — do NOT make network calls here.
+                |input_data = _load_input()
+                |connector_meta = _connector_meta()
+                |$code
+                |fn = _resolve('ExportModule', 'shape')
+                |result = _call(fn, input_data, connector_meta) if fn else input_data
+                |print(json.dumps(result))
             """.trimMargin()
         }
-        
+
         return java.util.Base64.getEncoder().encodeToString(script.toByteArray())
     }
     

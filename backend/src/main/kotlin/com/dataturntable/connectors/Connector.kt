@@ -36,13 +36,27 @@ class Connector : PanacheEntityBase() {
     
     @Column(name = "is_active")
     var isActive: Boolean = true
-    
+
+    /**
+     * Whether the platform scheduler should poll this connector on an interval.
+     * Only applicable for INPUT connectors (e.g. a REST API that DataTurntable fetches from periodically).
+     * Push connectors (MQTT, WebSocket, webhooks) keep this false — they auto-trigger when data arrives.
+     */
+    @Column(name = "polling_enabled")
+    var pollingEnabled: Boolean = false
+
+    /**
+     * Polling interval in seconds. Used when pollingEnabled = true.
+     */
+    @Column(name = "polling_interval_seconds")
+    var pollingIntervalSeconds: Int = 60
+
     @Column(name = "created_at")
     var createdAt: Instant? = null
-    
+
     @Column(name = "updated_at")
     var updatedAt: Instant? = null
-    
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by")
     var createdBy: com.dataturntable.auth.User? = null
@@ -91,6 +105,9 @@ class Connector : PanacheEntityBase() {
     }
     
     enum class Direction {
-        INPUT, OUTPUT, BOTH
+        /** Connector receives data into the platform. Used on IMPORT nodes. */
+        INPUT,
+        /** Connector sends data out of the platform. Used on EXPORT nodes. */
+        OUTPUT
     }
 }
