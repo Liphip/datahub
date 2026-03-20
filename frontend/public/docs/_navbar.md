@@ -1,0 +1,5 @@
+* [Home](/)
+* [Getting Started](/en/getting-started.md)
+* [Operations](/en/runbooks.md)
+* [Troubleshooting](/en/troubleshooting.md)
+* [Deutsch](/de/)

@@ -1,0 +1,14 @@
+- Overview
+  - [Welcome](/README.md)
+  - [Quick Start](/en/getting-started.md)
+- Core Usage
+  - [Tenants and Roles](/en/tenants-and-roles.md)
+  - [Modules](/en/modules.md)
+  - [Pipelines](/en/pipelines.md)
+  - [Data Explorer](/en/data-explorer.md)
+  - [Connectors and Alerts](/en/connectors-alerts.md)
+- Operations
+  - [Monitoring and Logs](/en/monitoring-logs.md)
+  - [Runbooks and Maintenance](/en/runbooks.md)
+  - [Troubleshooting](/en/troubleshooting.md)
+  - [FAQ](/en/faq.md)

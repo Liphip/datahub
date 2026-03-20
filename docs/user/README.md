@@ -25,4 +25,5 @@ The user guides cover:
 An interactive static docs site is available at `/docs`.
 
 - Source files: `frontend/public/docs/`
+- Rendering framework: Docsify
 - Languages: English and German

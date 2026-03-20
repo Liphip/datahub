@@ -1,0 +1,5 @@
+* [Start](/de/)
+* [Erste Schritte](/de/getting-started.md)
+* [Betrieb](/de/runbooks.md)
+* [Troubleshooting](/de/troubleshooting.md)
+* [English](/)

@@ -1,0 +1,14 @@
+- Uebersicht
+  - [Willkommen](/de/README.md)
+  - [Schnellstart](/de/getting-started.md)
+- Kernnutzung
+  - [Mandanten und Rollen](/de/tenants-and-roles.md)
+  - [Module](/de/modules.md)
+  - [Pipelines](/de/pipelines.md)
+  - [Daten-Explorer](/de/data-explorer.md)
+  - [Konnektoren und Alarme](/de/connectors-alerts.md)
+- Betrieb
+  - [Monitoring und Logs](/de/monitoring-logs.md)
+  - [Runbooks und Wartung](/de/runbooks.md)
+  - [Troubleshooting](/de/troubleshooting.md)
+  - [FAQ](/de/faq.md)

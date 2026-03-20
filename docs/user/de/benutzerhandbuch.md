@@ -174,3 +174,63 @@ Typischerweise liegt ein Datasource-UID-Mismatch in provisionierten Dashboards v
 ### Kann Monitoring getrennt von den App-Services laufen?
 
 Ja. Monitoring kann zentral laufen und Multi-Instance-Deployments in Swarm/Kubernetes per Service Discovery scrapen.
+
+## 13. Praktische Tutorials
+
+### Tutorial A: Neue Pipeline erstellen und validieren
+
+1. Mandantenspezifische Module anlegen/waehlen.
+2. Pipeline import -> processing -> export erstellen.
+3. Manuellen Lauf starten.
+4. Ergebnis im Daten-Explorer validieren.
+5. Alarmverhalten auf Signal/Rauschen pruefen.
+
+Erfolgskriterien:
+
+- Run erfolgreich
+- Latenz im erwarteten Rahmen
+- keine unerwartete Alarmflut
+
+### Tutorial B: Performance-Regression untersuchen
+
+1. Startzeitpunkt der Regression im Dashboard bestimmen.
+2. In Grafana p95-Latenz vor/nachher vergleichen.
+3. In Loki Logs nach Fehler- oder Retry-Spitzen suchen.
+4. Letzte Modul-/Pipeline-Versionen pruefen.
+5. Bei hohem Risiko auf stabile Version zurueckrollen.
+
+### Tutorial C: Mandantenzugriff validieren
+
+1. Read-only-Testbenutzer anlegen.
+2. Rolle in Nicht-Produktion zuweisen.
+3. Pruefen: lesen erlaubt, schreiben verboten.
+4. Nachweis dokumentieren (Screenshot + Audit-Notiz).
+
+## 14. Operative Tipp-Sammlung
+
+- Release-Notizen mit `was`, `warum`, `risiko`, `rollback` pflegen.
+- Bei Vorfaellen immer Zeitzone mitprotokollieren.
+- Erst enges Query-Fenster, dann schrittweise erweitern.
+- Pro Releasefenster moeglichst nur eine grosse Variable aendern.
+- Veraltete Module und ungenutzte Konnektoren regelmaessig aufraeumen.
+
+## 15. Eskalationsvorlage
+
+Bei Eskalation an Plattform-Support mitgeben:
+
+- Mandanten-ID sowie betroffene Pipeline-/Modul-IDs
+- erster beobachteter Zeitstempel inklusive Zeitzone
+- zuletzt ausgerollte Aenderungen
+- Metrik-Panel-Query und Screenshot
+- relevante Log-Auszuege
+- bereits umgesetzte Sofortmassnahmen
+
+## 16. Dokumentationsseite
+
+Pfad der eigenstaendigen Dokumentationsseite:
+
+- `/docs` (Docsify-basierte statische Dokumentation)
+
+Quelle der eigenstaendigen Doku:
+
+- `frontend/public/docs/`

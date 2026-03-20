@@ -212,6 +212,7 @@ This section catalogues every known gap between the current codebase and a shipp
 - Added Kubernetes app infra manifests for Kafka/Redis/Mosquitto and wired them into kustomization so k8s now covers full runtime stack plus monitoring.
 - Added infrastructure visibility dashboards/targets for host hardware and Docker containers (Node Exporter + cAdvisor) so Grafana includes system-level operational telemetry.
 - Added standalone multilingual user documentation experience: exhaustive EN/DE manuals under `docs/user/` plus static i18n docs site served at `/docs` from `frontend/public/docs` (independent of main React app navigation/routes).
+- Expanded `/docs` into a framework-based Docsify documentation portal with bilingual navigation, topic sidebars, searchable guides, runbooks, troubleshooting playbooks, and FAQ pages for operators and end users.
 
 ---
 

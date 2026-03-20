@@ -22,5 +22,6 @@ A standalone static documentation site is provided at:
 
 - Source: `frontend/public/docs/`
 - Runtime URL: `/docs` (served by the frontend web server)
+- Framework: Docsify (static, no backend runtime required)
 
 The web docs support language switching (EN/DE) and are intentionally separate from the React application pages.

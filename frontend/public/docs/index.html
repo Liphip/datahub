@@ -3,42 +3,40 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>DataTurntable Docs</title>
-    <link rel="stylesheet" href="/docs/styles.css" />
+    <title>DataTurntable Documentation</title>
+    <meta name="description" content="DataTurntable standalone user documentation" />
+    <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify@4/lib/themes/vue.css" />
+    <link rel="stylesheet" href="/docs/theme.css" />
   </head>
   <body>
-    <header class="hero">
-      <div class="container">
-        <div class="hero-top">
-          <h1 id="title"></h1>
-          <select id="lang" aria-label="Language selector">
-            <option value="en">English</option>
-            <option value="de">Deutsch</option>
-          </select>
-        </div>
-        <p id="subtitle"></p>
-        <p id="updated" class="muted"></p>
-      </div>
-    </header>
-
-    <main class="container">
-      <section class="panel">
-        <h2 id="quickLinksTitle"></h2>
-        <div id="quickLinks" class="chips"></div>
-      </section>
-
-      <section id="sections" class="grid"></section>
-
-      <section class="panel">
-        <h2 id="faqTitle"></h2>
-        <div id="faq"></div>
-      </section>
-    </main>
-
-    <footer class="container footer">
-      <p>Repository manuals: <code>docs/user/en/user-guide.md</code> and <code>docs/user/de/benutzerhandbuch.md</code></p>
-    </footer>
-
-    <script src="/docs/app.js"></script>
+    <div id="app">Loading docs...</div>
+    <script>
+      window.$docsify = {
+        name: 'DataTurntable Docs',
+        repo: '',
+        loadSidebar: true,
+        loadNavbar: true,
+        subMaxLevel: 3,
+        auto2top: true,
+        homepage: 'README.md',
+        alias: {
+          '/de/_sidebar.md': '/de/_sidebar.md',
+          '/de/.*/_sidebar.md': '/de/_sidebar.md',
+          '/_sidebar.md': '/_sidebar.md',
+          '/de/_navbar.md': '/de/_navbar.md',
+          '/de/.*/_navbar.md': '/de/_navbar.md',
+          '/_navbar.md': '/_navbar.md'
+        },
+        search: {
+          depth: 4,
+          maxAge: 86400000,
+          placeholder: 'Search docs',
+          noData: 'No results found'
+        }
+      };
+    </script>
+    <script src="//cdn.jsdelivr.net/npm/docsify@4"></script>
+    <script src="//cdn.jsdelivr.net/npm/docsify/lib/plugins/search.min.js"></script>
+    <script src="//cdn.jsdelivr.net/npm/docsify-copy-code@2"></script>
   </body>
 </html>

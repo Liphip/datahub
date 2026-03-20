@@ -174,3 +174,63 @@ Usually datasource UID mismatch in provisioned dashboards; ensure dashboard JSON
 ### Can monitoring run separately from application services?
 
 Yes. Monitoring can be centralized and scrape multi-instance Swarm/Kubernetes application deployments.
+
+## 13. Practical Tutorials
+
+### Tutorial A: Create and Verify a New Pipeline
+
+1. Create or select a tenant-specific module set.
+2. Create pipeline linking import -> processing -> export.
+3. Trigger a manual run.
+4. Validate output table in Data Explorer.
+5. Confirm alert silence/noise behavior is acceptable.
+
+Success criteria:
+
+- run status successful
+- latency near baseline
+- no unexpected alert storms
+
+### Tutorial B: Investigate a Performance Regression
+
+1. Identify regression start time from Dashboard trends.
+2. Open Grafana and compare p95 latency before/after.
+3. Check Loki logs for error bursts or retry loops.
+4. Validate recent module/pipeline version changes.
+5. Roll back if risk remains high.
+
+### Tutorial C: Tenant Access Validation
+
+1. Create a read-only test user.
+2. Assign role in a non-production tenant.
+3. Verify user can view but cannot mutate data.
+4. Capture evidence (screenshots + audit note).
+
+## 14. Operational Tips Library
+
+- Keep a release-note template with `what changed`, `why`, `risk`, and `rollback`.
+- For incidents, always capture timezone with timestamps.
+- Use narrow query windows first, then widen gradually.
+- Prefer one major variable change per release window.
+- Regularly prune stale modules and orphaned connectors.
+
+## 15. Escalation Template
+
+When escalating to platform support, include:
+
+- tenant ID and affected pipeline/module IDs
+- first observed timestamp and timezone
+- recent changes deployed
+- metrics panel query and screenshot
+- relevant log excerpts
+- temporary mitigation already attempted
+
+## 16. Documentation Site
+
+Standalone docs site path:
+
+- `/docs` (Docsify-based static documentation)
+
+Source of standalone docs site:
+
+- `frontend/public/docs/`
