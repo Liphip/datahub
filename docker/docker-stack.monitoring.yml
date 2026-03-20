@@ -111,10 +111,6 @@ services:
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
-    command:
-      - --docker_only=true
-      - --store_container_labels=true
-      - --whitelisted_container_labels=com.docker.compose.service,com.docker.compose.project,com.docker.swarm.service.name
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
