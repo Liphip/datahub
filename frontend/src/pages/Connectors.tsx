@@ -6,7 +6,7 @@ import api from '../services/api';
 import type { Connector, BrokerCredential, ConnectorImpactSummary, ConnectorReferenceSummary } from '../types';
 
 const connectorTypes = ['MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'CUSTOM'] as const;
-const directions = ['INPUT', 'OUTPUT', 'BOTH'] as const;
+const directions = ['INPUT', 'OUTPUT'] as const;
 type ConnectorType = typeof connectorTypes[number];
 
 type ConnectorConfigField = {
@@ -101,7 +101,9 @@ export default function Connectors() {
     connectorType: 'MQTT' as ConnectorType,
     direction: 'INPUT' as Connector['direction'],
     config: initialConfigByType('MQTT'),
-    description: ''
+    description: '',
+    pollingEnabled: false,
+    pollingIntervalSeconds: 60,
   });
   const [mqttDefaults, setMqttDefaults] = useState<{
     internalBrokerUrl: string;
@@ -301,7 +303,7 @@ export default function Connectors() {
       ? (mqttDefaults?.internalBrokerUrl || 'mqtt://mosquitto:1883')
       : (mqttDefaults?.externalBrokerUrl || 'mqtt://localhost:1883');
     const topicBase = mqttDefaults?.defaultTopic || 'dataturntable/events';
-    const topicSuffix = formData.direction === 'OUTPUT' ? '/out' : formData.direction === 'BOTH' ? '/bi' : '/in';
+    const topicSuffix = formData.direction === 'OUTPUT' ? '/out' : '/in';
     setFormData((prev) => ({
       ...prev,
       config: {
@@ -360,6 +362,8 @@ export default function Connectors() {
           direction: formData.direction as Connector['direction'],
           description: formData.description,
           config: parsedConfig,
+          pollingEnabled: formData.pollingEnabled,
+          pollingIntervalSeconds: formData.pollingIntervalSeconds,
         };
 
         await api.updateConnector(editingConnector.id, updatePayload);
@@ -380,7 +384,8 @@ export default function Connectors() {
           formData.connectorType,
           formData.direction,
           config,
-          formData.description
+          formData.description,
+          { pollingEnabled: formData.pollingEnabled, pollingIntervalSeconds: formData.pollingIntervalSeconds }
         );
       }
 
@@ -391,7 +396,9 @@ export default function Connectors() {
         connectorType: 'MQTT',
         direction: 'INPUT',
         config: initialConfigByType('MQTT'),
-        description: ''
+        description: '',
+        pollingEnabled: false,
+        pollingIntervalSeconds: 60,
       });
 
       await loadConnectors(tenantId);
@@ -587,6 +594,8 @@ export default function Connectors() {
       direction: connector.direction,
       config: initialConfigByType(connector.connectorType, connector.config),
       description: connector.description || '',
+      pollingEnabled: connector.pollingEnabled ?? false,
+      pollingIntervalSeconds: connector.pollingIntervalSeconds ?? 60,
     });
     setShowModal(true);
   };
@@ -600,6 +609,8 @@ export default function Connectors() {
       direction: 'INPUT',
       config: initialConfigByType('MQTT'),
       description: '',
+      pollingEnabled: false,
+      pollingIntervalSeconds: 60,
     });
     setShowModal(true);
   };
@@ -619,7 +630,7 @@ export default function Connectors() {
     switch (direction) {
       case 'INPUT': return 'bg-green-100 text-green-800';
       case 'OUTPUT': return 'bg-red-100 text-red-800';
-      case 'BOTH': return 'bg-purple-100 text-purple-800';
+      // 'BOTH' direction removed — INPUT/OUTPUT only
       default: return 'bg-gray-100 text-gray-800';
     }
   };
@@ -1393,8 +1404,37 @@ export default function Connectors() {
                     ))}
                   </div>
                   <p className="mt-2 text-xs text-slate-500">
-                    Direction: <strong>{formData.direction}</strong> - use INPUT for ingest, OUTPUT for delivery, BOTH for bidirectional adapters.
+                    Direction: <strong>{formData.direction}</strong> — INPUT connectors receive data; OUTPUT connectors deliver data.
                   </p>
+                  {formData.direction === 'INPUT' && (
+                    <div className="mt-3 space-y-2">
+                      <div className="flex items-center gap-3">
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={formData.pollingEnabled}
+                            onChange={(e) => setFormData((prev) => ({ ...prev, pollingEnabled: e.target.checked }))}
+                            className="rounded"
+                          />
+                          <span className="font-medium text-gray-700">Enable polling</span>
+                        </label>
+                        <span className="text-xs text-slate-400">(platform periodically fetches from this connector)</span>
+                      </div>
+                      {formData.pollingEnabled && (
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Poll interval (seconds)</label>
+                          <input
+                            type="number"
+                            min={5}
+                            max={86400}
+                            value={formData.pollingIntervalSeconds}
+                            onChange={(e) => setFormData((prev) => ({ ...prev, pollingIntervalSeconds: Number(e.target.value) || 60 }))}
+                            className="input w-32"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 
                 <div>

@@ -48,7 +48,7 @@ export interface CodeModule {
   tenantId?: string;
   name: string;
   description?: string;
-  moduleType: 'IMPORT' | 'PROCESSING' | 'ALERT' | 'EXPORT';
+  moduleType: 'IMPORT' | 'PROCESSING' | 'MERGE' | 'ALERT' | 'EXPORT';
   isActive: boolean;
   createdAt: string;
   versionCount?: number;
@@ -197,7 +197,7 @@ export interface PipelineRun {
   alertsFired?: number;
   alertEvaluation?: Record<string, unknown>;
   moduleLogs?: Array<{
-    stage: 'IMPORT' | 'PROCESSING' | 'EXPORT' | string;
+    stage: 'IMPORT' | 'PROCESSING' | 'MERGE' | 'ALERT' | 'EXPORT' | string;
     order?: number;
     moduleVersionId?: string;
     moduleName?: string;
@@ -354,10 +354,12 @@ export interface Connector {
   tenantId?: string;
   name: string;
   connectorType: 'MQTT' | 'REST' | 'WEBSOCKET' | 'UDP' | 'FILE' | 'CUSTOM';
-  direction: 'INPUT' | 'OUTPUT' | 'BOTH';
+  direction: 'INPUT' | 'OUTPUT';
   config: Record<string, unknown>;
   description?: string;
   isActive: boolean;
+  pollingEnabled: boolean;
+  pollingIntervalSeconds: number;
   pipelineReferenceCount?: number;
   createdAt: string;
 }

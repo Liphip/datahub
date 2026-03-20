@@ -9,53 +9,71 @@ import type { CodeModule } from '../types';
 const TEMPLATES = {
   IMPORT: `class ImportModule:
     """
-    Handles inbound payload transformation/parsing.
-    Connector connectivity is managed by the platform.
+    IMPORT node — parse and transform data the platform has already fetched.
+
+    The platform connector handles all network I/O before this module runs.
+    You receive the raw payload as \`input_data\` — do NOT make network calls here.
+
+    connector_meta contains non-sensitive metadata (type, name, topic, etc.)
+    for informational use only. Credentials are never passed to modules.
     """
 
-    def fetch(self, data: dict, connector: dict | None = None) -> dict:
-        """Transform inbound payload before downstream processing."""
-        result = dict(data or {})
-        result["_importHandled"] = True
-        if connector:
-            result["_connectorType"] = connector.get("connectorType") or connector.get("type")
-        return result
+    def parse(self, input_data: dict, connector_meta: dict = None) -> dict:
+        """Transform/validate the raw fetched payload. Return the parsed record."""
+        # Example: extract and rename fields
+        # return {
+        #     "temperature": input_data.get("temp_c"),
+        #     "sensor_id": input_data.get("id"),
+        # }
+        return input_data
 `,
   PROCESSING: `class ProcessingModule:
     """
-    Transform, filter, or enrich incoming data.
+    PROCESSING node — transform, filter, or enrich data from one upstream node.
 
-    Return the modified data dict or DataFrame to pass it downstream.
+    Return the modified dict to pass it downstream.
     Return None to drop the message.
-    Raise an exception to route the message to the dead-letter queue.
+    Raise an exception to fail the pipeline run.
     """
 
-    def process(self, data: dict | pd.DataFrame,
-                query_fn=None) -> dict | pd.DataFrame | None:
+    def process(self, data: dict, query_fn=None) -> dict | None:
         # Example: add a derived field
         # data["celsius"] = (data["fahrenheit"] - 32) * 5 / 9
         return data
 `,
+  MERGE: `class MergeModule:
+    """
+    MERGE node — fan-in from two or more upstream nodes.
+
+    \`inputs\` is a list of dicts, one per upstream node, in topological order.
+    Return a single dict to pass downstream.
+    """
+
+    def merge(self, inputs: list) -> dict:
+        # Example: merge all upstream dicts, later keys win
+        result = {}
+        for item in inputs:
+            if isinstance(item, dict):
+                result.update(item)
+        return result
+`,
   ALERT: `class AlertModule:
     """
-    Evaluates conditions and dispatches alerts.
-    Terminal node — does NOT modify or forward the data stream.
+    ALERT node — evaluate conditions and fire alerts via the platform.
+    Terminal node — does NOT forward data downstream.
+
+    Call alert_fn(severity, message, payload) to fire an alert.
+    Return True if an alert was fired, False otherwise.
     """
 
-    def __init__(self, config: dict):
-        self.threshold = config.get('threshold', 80)
-        self.severity = config.get('severity', 'warning')
+    def __init__(self, config: dict = None):
+        cfg = config or {}
+        self.threshold = cfg.get('threshold', 80)
+        self.severity = cfg.get('severity', 'warning')
 
-    def evaluate(self, data: dict | pd.DataFrame,
-                 alert_fn=None,
-                 query_fn=None) -> bool:
-        """
-        Evaluate alert condition.
-        Call alert_fn(severity, message, payload) to fire an alert.
-        Return True if alert fired, False otherwise.
-        """
+    def evaluate(self, data: dict, alert_fn=None, query_fn=None) -> bool:
         # Example:
-        # if data['value'] > self.threshold:
+        # if data.get('value', 0) > self.threshold:
         #     alert_fn(severity=self.severity,
         #              message=f"Value {data['value']} exceeds threshold",
         #              payload=data)
@@ -64,18 +82,24 @@ const TEMPLATES = {
 `,
   EXPORT: `class ExportModule:
     """
-    Handles outbound payload shaping.
-    Connector delivery and connectivity are managed by the platform.
+    EXPORT node — shape the outbound payload the platform will deliver.
+
+    The platform connector handles all network I/O after this module returns.
+    Do NOT make network calls here — return the dict you want delivered.
+
+    connector_meta contains non-sensitive metadata (type, name, topic, etc.)
+    for informational use only.
     """
 
-    def send(self, data: dict, connector: dict | None = None) -> dict:
-        """Prepare final outbound payload returned to connector runtime."""
-        result = dict(data or {})
-        result["_exportHandled"] = True
-        if connector:
-            result["_connectorName"] = connector.get("name") or connector.get("id")
-        return result
-`
+    def shape(self, data: dict, connector_meta: dict = None) -> dict:
+        """Return the final payload to be delivered by the platform connector."""
+        # Example: rename/filter fields before sending
+        # return {
+        #     "sensor": data.get("sensor_id"),
+        #     "value": data.get("temperature"),
+        # }
+        return data
+`,
 };
 
 export default function ModuleEditor() {

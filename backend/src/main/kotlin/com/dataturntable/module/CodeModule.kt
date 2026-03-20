@@ -8,7 +8,16 @@ import java.time.Instant
 import java.util.UUID
 
 enum class ModuleType {
-    IMPORT, PROCESSING, EXPORT, ALERT
+    /** Receives raw data from a connector and parses/transforms it. Platform fetches — no network I/O in module. */
+    IMPORT,
+    /** Transforms, filters, or enriches data. Single upstream input. */
+    PROCESSING,
+    /** Fan-in node: merges two or more upstream outputs into one. Different class/signature from PROCESSING. */
+    MERGE,
+    /** Evaluates conditions and dispatches alerts via a predefined alert channel. Terminal node. */
+    ALERT,
+    /** Shapes the outbound payload. Platform delivers — no network I/O in module. Terminal node. */
+    EXPORT
 }
 
 @Entity

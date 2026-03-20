@@ -72,19 +72,19 @@ class PipelineResource {
     private fun validateGraphDefinition(tenantId: UUID, graphDefinition: Any?): String? {
         if (graphDefinition !is Map<*, *>) return null
         val nodes = graphDefinition["nodes"] as? List<*> ?: return null
+
         val nodeIds = mutableSetOf<String>()
         val nodeTypes = mutableMapOf<String, String>()
-        val nodeConfigs = mutableMapOf<String, Map<*, *>>()
+
         for (node in nodes) {
             val nodeMap = node as? Map<*, *> ?: continue
             val nodeId = nodeMap["id"]?.toString() ?: "unknown-node"
             nodeIds.add(nodeId)
             val nodeType = (nodeMap["type"] as? String)?.uppercase() ?: continue
-            nodeTypes[nodeId] = nodeType
-            nodeConfigs[nodeId] = nodeMap
-            if (nodeType !in setOf("IMPORT", "PROCESSING", "ALERT", "EXPORT")) {
+            if (nodeType !in setOf("IMPORT", "PROCESSING", "MERGE", "ALERT", "EXPORT")) {
                 return "Node $nodeId has unsupported type: $nodeType"
             }
+            nodeTypes[nodeId] = nodeType
 
             val moduleVersionId = nodeMap["moduleVersionId"] as? String
                 ?: return "Node $nodeId ($nodeType) requires moduleVersionId"
@@ -100,104 +100,100 @@ class PipelineResource {
             if (module.tenant?.id != tenantId) {
                 return "Node $nodeId references module from another tenant"
             }
-            val expectedType = try {
-                ModuleType.valueOf(nodeType)
-            } catch (_: Exception) {
-                null
-            }
+            val expectedType = try { ModuleType.valueOf(nodeType) } catch (_: Exception) { null }
             if (expectedType != null && module.moduleType != expectedType) {
-                return "Node $nodeId expects $nodeType module version, found ${module.moduleType?.name ?: "unknown"}"
+                return "Node $nodeId expects $nodeType module, found ${module.moduleType?.name ?: "unknown"}"
             }
 
-            if (nodeType != "IMPORT" && nodeType != "EXPORT") continue
-
-            val connectorId = nodeMap["connectorId"] as? String
-                ?: return "Node $nodeId ($nodeType) requires connectorId"
-            val connectorUuid = try {
-                UUID.fromString(connectorId)
-            } catch (_: Exception) {
-                return "Node $nodeId has invalid connectorId: $connectorId"
-            }
-            val connector = em.find(Connector::class.java, connectorUuid)
-                ?: return "Node $nodeId references missing connector: $connectorId"
-
-            if (connector.tenant?.id != tenantId) {
-                return "Node $nodeId references connector from another tenant"
-            }
-
-            val direction = connector.direction?.name
-            if (nodeType == "IMPORT" && direction !in setOf("INPUT", "BOTH")) {
-                return "Node $nodeId requires INPUT/BOTH connector direction (found $direction)"
-            }
-            if (nodeType == "EXPORT" && direction !in setOf("OUTPUT", "BOTH")) {
-                return "Node $nodeId requires OUTPUT/BOTH connector direction (found $direction)"
+            // IMPORT and EXPORT must have a connector; MERGE/PROCESSING/ALERT must not.
+            when (nodeType) {
+                "IMPORT", "EXPORT" -> {
+                    val connectorId = nodeMap["connectorId"] as? String
+                        ?: return "Node $nodeId ($nodeType) requires connectorId"
+                    val connectorUuid = try {
+                        UUID.fromString(connectorId)
+                    } catch (_: Exception) {
+                        return "Node $nodeId has invalid connectorId: $connectorId"
+                    }
+                    val connector = em.find(Connector::class.java, connectorUuid)
+                        ?: return "Node $nodeId references missing connector: $connectorId"
+                    if (connector.tenant?.id != tenantId) {
+                        return "Node $nodeId references connector from another tenant"
+                    }
+                    val direction = connector.direction?.name
+                    if (nodeType == "IMPORT" && direction != "INPUT") {
+                        return "Node $nodeId (IMPORT) requires INPUT connector direction (found $direction)"
+                    }
+                    if (nodeType == "EXPORT" && direction != "OUTPUT") {
+                        return "Node $nodeId (EXPORT) requires OUTPUT connector direction (found $direction)"
+                    }
+                }
+                "MERGE" -> {
+                    if (nodeMap["connectorId"] != null) {
+                        return "Node $nodeId (MERGE) must not have a connector — it only merges data streams"
+                    }
+                }
             }
         }
 
+        // ── Edge validation ──────────────────────────────────────────────────
         val edges = graphDefinition["edges"] as? List<*> ?: emptyList<Any>()
-        val indegree = mutableMapOf<String, Int>()
-        val outdegree = mutableMapOf<String, Int>()
-        val adjacency = mutableMapOf<String, MutableList<String>>()
-        nodeIds.forEach { nodeId ->
-            indegree[nodeId] = 0
-            outdegree[nodeId] = 0
-            adjacency[nodeId] = mutableListOf()
-        }
+        val indegree  = nodeIds.associateWith { 0 }.toMutableMap()
+        val outdegree = nodeIds.associateWith { 0 }.toMutableMap()
+        val adjacency = nodeIds.associateWith { mutableListOf<String>() }.toMutableMap()
 
         for (edge in edges) {
             val edgeMap = edge as? Map<*, *> ?: continue
             val fromId = edgeMap["from"]?.toString() ?: continue
-            val toId = edgeMap["to"]?.toString() ?: continue
+            val toId   = edgeMap["to"]?.toString() ?: continue
             if (fromId !in nodeIds || toId !in nodeIds) {
                 return "Edge $fromId -> $toId references unknown node"
             }
             adjacency[fromId]?.add(toId)
-            indegree[toId] = (indegree[toId] ?: 0) + 1
+            indegree[toId]  = (indegree[toId] ?: 0) + 1
             outdegree[fromId] = (outdegree[fromId] ?: 0) + 1
         }
 
+        // ── Per-node contract enforcement ────────────────────────────────────
         for (nodeId in nodeIds) {
             val nodeType = nodeTypes[nodeId] ?: continue
             val incoming = indegree[nodeId] ?: 0
             val outgoing = outdegree[nodeId] ?: 0
-            val nodeMap = nodeConfigs[nodeId]
             when (nodeType) {
                 "IMPORT" -> {
                     if (incoming != 0) return "Node $nodeId (IMPORT) cannot have incoming edges"
                     if (outgoing == 0) return "Node $nodeId (IMPORT) must have at least one outgoing edge"
                 }
                 "PROCESSING" -> {
-                    val allowMultiInput = (nodeMap?.get("allowMultiInput") as? Boolean)
-                        ?: (nodeMap?.get("isMergeNode") as? Boolean)
-                        ?: false
-                    if (incoming == 0) return "Node $nodeId (PROCESSING) must have at least one incoming edge"
-                    if (!allowMultiInput && incoming > 1) {
-                        return "Node $nodeId (PROCESSING) has multiple incoming edges. Mark it as merge/join node (allowMultiInput=true) to accept fan-in"
-                    }
+                    if (incoming != 1) return "Node $nodeId (PROCESSING) must have exactly 1 incoming edge (use MERGE for fan-in)"
                     if (outgoing == 0) return "Node $nodeId (PROCESSING) must have at least one outgoing edge"
+                }
+                "MERGE" -> {
+                    if (incoming < 2) return "Node $nodeId (MERGE) must have at least 2 incoming edges"
+                    if (outgoing == 0) return "Node $nodeId (MERGE) must have at least one outgoing edge"
                 }
                 "ALERT", "EXPORT" -> {
                     if (incoming == 0) return "Node $nodeId ($nodeType) must have at least one incoming edge"
-                    if (outgoing != 0) return "Node $nodeId ($nodeType) cannot have outgoing edges"
+                    if (outgoing != 0) return "Node $nodeId ($nodeType) cannot have outgoing edges (terminal node)"
                 }
             }
         }
 
-        val queue = ArrayDeque(indegree.filterValues { it == 0 }.keys)
-        var visitedCount = 0
+        // ── Cycle detection (Kahn's algorithm) ───────────────────────────────
+        val kahn = indegree.toMutableMap()
+        val queue = ArrayDeque(kahn.filterValues { it == 0 }.keys)
+        var visited = 0
         while (queue.isNotEmpty()) {
             val nodeId = queue.removeFirst()
-            visitedCount += 1
-            adjacency[nodeId].orEmpty().forEach { nextId ->
-                val updated = (indegree[nextId] ?: 0) - 1
-                indegree[nextId] = updated
-                if (updated == 0) {
-                    queue.add(nextId)
-                }
+            visited++
+            adjacency[nodeId].orEmpty().forEach { next ->
+                val updated = (kahn[next] ?: 0) - 1
+                kahn[next] = updated
+                if (updated == 0) queue.add(next)
             }
         }
-        if (visitedCount != nodeIds.size) {
-            return "Graph contains a cycle; pipelines must be acyclic"
+        if (visited != nodeIds.size) {
+            return "Graph contains a cycle — pipelines must be acyclic"
         }
 
         return null
@@ -697,10 +693,14 @@ class PipelineResource {
             this.updatedAt = java.time.Instant.now()
         }
         pipeline.persist()
-        
+        em.flush()
+        if (graphDefinition != null) {
+            syncConnectorPipelineMap(pipeline.id!!, graphDefinition)
+        }
+
         return Response.status(201).entity(pipelineToMap(pipeline)).build()
     }
-    
+
     @GET
     @Path("/{id}")
     fun get(@PathParam("id") id: String): Response {
@@ -781,6 +781,7 @@ class PipelineResource {
                     return Response.status(400).entity(mapOf("error" to graphValidationError)).build()
                 }
                 pipeline.graphDefinition = objectMapper.writeValueAsString(it)
+                syncConnectorPipelineMap(pipeline.id!!, it)
             }
             pipeline.updatedAt = java.time.Instant.now()
             pipeline.persist()
@@ -790,6 +791,38 @@ class PipelineResource {
         }
     }
     
+    /**
+     * Rebuild the connector_pipeline_map for a single pipeline after its graph is saved.
+     * Deletes all existing mappings for this pipeline, then re-inserts one row per
+     * (connectorId, nodeId, nodeType) tuple found in the graph.
+     */
+    private fun syncConnectorPipelineMap(pipelineId: UUID, graphDefinition: Any?) {
+        if (graphDefinition !is Map<*, *>) return
+
+        em.createNativeQuery("DELETE FROM connector_pipeline_map WHERE pipeline_id = :pid")
+            .setParameter("pid", pipelineId)
+            .executeUpdate()
+
+        val nodes = graphDefinition["nodes"] as? List<*> ?: return
+        for (node in nodes) {
+            if (node !is Map<*, *>) continue
+            val connectorId = node["connectorId"]?.toString()?.trim()?.takeIf { it.isNotEmpty() } ?: continue
+            val nodeId   = node["id"]?.toString() ?: continue
+            val nodeType = node["type"]?.toString() ?: continue
+            val connectorUuid = try { UUID.fromString(connectorId) } catch (_: Exception) { continue }
+            em.createNativeQuery(
+                """INSERT INTO connector_pipeline_map (id, connector_id, pipeline_id, node_id, node_type)
+                   VALUES (gen_random_uuid(), :cid, :pid, :nid, :ntype)
+                   ON CONFLICT (connector_id, pipeline_id, node_id) DO NOTHING"""
+            )
+                .setParameter("cid", connectorUuid)
+                .setParameter("pid", pipelineId)
+                .setParameter("nid", nodeId)
+                .setParameter("ntype", nodeType)
+                .executeUpdate()
+        }
+    }
+
     private fun enqueuePipelineRun(
         pipeline: Pipeline,
         triggerType: TriggerType,

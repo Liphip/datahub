@@ -8,6 +8,7 @@ import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.alert.AlertDispatcher
 import com.dataturntable.connectors.BrokerCredential
 import com.dataturntable.connectors.Connector
+import com.dataturntable.connectors.ConnectorRuntimeService
 import com.dataturntable.security.EncryptionUtils
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.smallrye.reactive.messaging.annotations.Blocking
@@ -53,12 +54,22 @@ class PipelineConsumer {
     @Inject
     lateinit var alertDispatcher: AlertDispatcher
 
+    @Inject
+    lateinit var connectorRuntime: ConnectorRuntimeService
+
     @PersistenceContext
     lateinit var em: EntityManager
 
+    /**
+     * Full connector context for a node: decrypted config for platform use + non-sensitive
+     * metadata forwarded to the module container as CONNECTOR_META.
+     */
     private data class ResolvedConnector(
+        /** Decrypted config used by ConnectorRuntimeService to fetch/deliver. */
         val config: Map<String, Any?>,
-        val summary: Map<String, Any?>
+        /** Non-sensitive subset forwarded to the module as CONNECTOR_META (no credentials). */
+        val meta: Map<String, Any?>,
+        val connector: Connector
     )
 
     private fun parseJsonMap(raw: String?): Map<String, Any?> {
@@ -79,79 +90,70 @@ class PipelineConsumer {
         }
     }
 
-    private fun resolveConnectorConfigsByModuleVersion(pipeline: Pipeline): Map<UUID, ResolvedConnector> {
+    private fun resolveConnectorsByNodeId(pipeline: Pipeline): Map<String, ResolvedConnector> {
         val tenantId = pipeline.tenant?.id ?: return emptyMap()
         val graph = parseJsonMap(pipeline.graphDefinition)
         val nodes = graph["nodes"] as? List<*> ?: return emptyMap()
-        val resolved = mutableMapOf<UUID, ResolvedConnector>()
+        val resolved = mutableMapOf<String, ResolvedConnector>()
 
         nodes.forEach { node ->
             val nodeMap = node as? Map<*, *> ?: return@forEach
             val nodeType = nodeMap["type"]?.toString()?.uppercase() ?: return@forEach
             if (nodeType != "IMPORT" && nodeType != "EXPORT") return@forEach
 
-            val moduleVersionId = parseUuid(nodeMap["moduleVersionId"]?.toString()) ?: return@forEach
+            val nodeId = nodeMap["id"]?.toString()?.trim() ?: return@forEach
             val connectorId = parseUuid(nodeMap["connectorId"]?.toString()) ?: return@forEach
             val connector = em.find(Connector::class.java, connectorId) ?: return@forEach
             if (connector.tenant?.id != tenantId) return@forEach
 
-            val rawConfig = try {
-                EncryptionUtils.decrypt(connector.config)
-            } catch (_: Exception) {
-                "{}"
-            }
-            val config = parseJsonMap(rawConfig).toMutableMap()
+            // Decrypt full config (used by ConnectorRuntimeService for actual fetch/deliver)
+            val decryptedConfig = connectorRuntime.decryptConfig(connector).toMutableMap()
 
+            // Inject MQTT credentials if present (only into platform-side config, not module)
             if (connector.connectorType == Connector.ConnectorType.MQTT) {
-                val brokerCredentialId = parseUuid(config["brokerCredentialId"]?.toString())
+                val brokerCredentialId = parseUuid(decryptedConfig["brokerCredentialId"]?.toString())
                 if (brokerCredentialId != null) {
                     val credential = em.find(BrokerCredential::class.java, brokerCredentialId)
                     if (credential != null && credential.tenant?.id == tenantId && credential.isActive) {
-                        config["username"] = credential.username
+                        decryptedConfig["username"] = credential.username
                         val password = credential.passwordEncrypted?.let {
-                            try {
-                                EncryptionUtils.decrypt(it)
-                            } catch (_: Exception) {
-                                null
-                            }
+                            try { EncryptionUtils.decrypt(it) } catch (_: Exception) { null }
                         }
-                        if (!password.isNullOrBlank()) {
-                            config["password"] = password
-                        }
-                        config["brokerCredentialName"] = credential.name
+                        if (!password.isNullOrBlank()) decryptedConfig["password"] = password
+                        decryptedConfig["brokerCredentialName"] = credential.name
                     }
                 }
             }
 
-            val summary = mapOf(
+            // Non-sensitive metadata forwarded to module container as CONNECTOR_META.
+            // Credentials (password, token, key) are explicitly excluded.
+            val meta = mapOf(
                 "id" to connector.id?.toString(),
                 "name" to connector.name,
                 "connectorType" to connector.connectorType?.name,
                 "direction" to connector.direction?.name,
-                "broker" to config["broker"],
-                "topic" to config["topic"],
-                "username" to config["username"],
-                "brokerCredentialId" to config["brokerCredentialId"],
-                "brokerCredentialName" to config["brokerCredentialName"]
+                "pollingEnabled" to connector.pollingEnabled,
+                "broker" to decryptedConfig["broker"],
+                "topic" to decryptedConfig["topic"],
+                "baseUrl" to decryptedConfig["baseUrl"],
+                "path" to decryptedConfig["path"],
+                "method" to decryptedConfig["method"],
+                "host" to decryptedConfig["host"],
+                "port" to decryptedConfig["port"]
             ).filterValues { it != null }
 
-            resolved[moduleVersionId] = ResolvedConnector(config = config, summary = summary)
+            resolved[nodeId] = ResolvedConnector(
+                config = decryptedConfig,
+                meta = meta,
+                connector = connector
+            )
         }
 
         return resolved
     }
 
-    private fun resolveAlertModuleVersionsFromGraph(pipeline: Pipeline): List<ModuleVersion> {
-        val graph = parseJsonMap(pipeline.graphDefinition)
-        val nodes = graph["nodes"] as? List<*> ?: return emptyList()
-        return nodes.mapNotNull { node ->
-            val nodeMap = node as? Map<*, *> ?: return@mapNotNull null
-            val nodeType = nodeMap["type"]?.toString()?.uppercase() ?: return@mapNotNull null
-            if (nodeType != "ALERT") return@mapNotNull null
-            val moduleVersionId = parseUuid(nodeMap["moduleVersionId"]?.toString()) ?: return@mapNotNull null
-            ModuleVersion.findById(moduleVersionId)
-        }
-    }
+    // resolveAlertModuleVersionsFromGraph removed — alerts are now proper ALERT nodes in the graph
+    // and execute via the normal topological order in executePipeline.
     
     @Incoming("pipeline-input")
     @Blocking
@@ -350,7 +352,7 @@ class PipelineConsumer {
         val results = mutableMapOf<String, Any?>()
         val moduleLogs = mutableListOf<Map<String, Any?>>()
         val executionLog = mutableListOf<String>()
-        val connectorConfigsByVersion = resolveConnectorConfigsByModuleVersion(pipeline)
+        val connectorsByNodeId = resolveConnectorsByNodeId(pipeline)
         val pipelineId = pipeline.id.toString()
 
         data class GraphNode(
@@ -360,260 +362,201 @@ class PipelineConsumer {
             val connector: ResolvedConnector?
         )
 
-        fun executeNode(
-            node: GraphNode,
-            moduleInput: Any?,
-            order: Int
-        ): Any? {
+        /**
+         * Execute a single pipeline node.
+         *
+         * IMPORT  — platform fetches from connector when no inputData exists, then module parses.
+         * MERGE   — receives a List of upstream outputs; different class/method signature.
+         * EXPORT  — module shapes data, then platform delivers via connector.
+         * PROCESSING / ALERT — standard single-input execution.
+         */
+        fun executeNode(node: GraphNode, moduleInput: Any?, order: Int): Any? {
             val version = ModuleVersion.findById(node.moduleVersionId)
                 ?: throw IllegalStateException("Missing module version for node ${node.id}")
             val stage = node.type.name
             LOG.infof("Executing %s node %s: %s", stage, node.id, version.module?.name)
             executionLog.add("START $stage #$order ${version.module?.name ?: version.id} [${node.id}]")
+
+            // For IMPORT with no upstream data: platform fetches from connector before calling module.
+            val resolvedInput: Any? = if (node.type == ModuleType.IMPORT && moduleInput == null) {
+                val conn = node.connector
+                if (conn != null) {
+                    LOG.infof("IMPORT node %s: platform fetching from connector %s (%s)",
+                        node.id, conn.connector.name, conn.connector.connectorType)
+                    try {
+                        connectorRuntime.fetchFromConnector(conn.connector, conn.config) ?: emptyMap<String, Any>()
+                    } catch (e: Exception) {
+                        LOG.warnf("Connector fetch failed for node %s: %s — using empty input", node.id, e.message)
+                        emptyMap<String, Any>()
+                    }
+                } else emptyMap<String, Any>()
+            } else {
+                moduleInput
+            }
+
             try {
                 val output = dockerService.executeModule(
                     version,
-                    moduleInput,
+                    resolvedInput,
                     pipelineId,
                     runId,
                     node.type,
-                    node.connector?.config
+                    node.connector?.meta
                 )
-                moduleLogs.add(
-                    mapOf(
-                        "stage" to stage,
-                        "order" to order,
-                        "nodeId" to node.id,
-                        "moduleVersionId" to version.id,
-                        "moduleName" to version.module?.name,
-                        "success" to true,
-                        "stdout" to trimLog(output.stdout),
-                        "stderr" to trimLog(output.stderr),
-                        "exitCode" to output.exitCode,
-                        "durationMs" to output.durationMs,
-                        "connector" to node.connector?.summary
-                    )
-                )
+
+                // For EXPORT: platform delivers shaped result via connector after module runs.
+                if (node.type == ModuleType.EXPORT) {
+                    val conn = node.connector
+                    if (conn != null && output.result != null) {
+                        LOG.infof("EXPORT node %s: platform delivering via connector %s (%s)",
+                            node.id, conn.connector.name, conn.connector.connectorType)
+                        try {
+                            connectorRuntime.deliverViaConnector(conn.connector, conn.config, output.result)
+                        } catch (e: Exception) {
+                            LOG.warnf("Connector deliver failed for node %s: %s", node.id, e.message)
+                        }
+                    }
+                }
+
+                moduleLogs.add(mapOf(
+                    "stage" to stage,
+                    "order" to order,
+                    "nodeId" to node.id,
+                    "moduleVersionId" to version.id,
+                    "moduleName" to version.module?.name,
+                    "success" to true,
+                    "stdout" to trimLog(output.stdout),
+                    "stderr" to trimLog(output.stderr),
+                    "exitCode" to output.exitCode,
+                    "durationMs" to output.durationMs,
+                    "connector" to node.connector?.meta
+                ))
                 executionLog.add("DONE $stage #$order ${version.module?.name ?: version.id} [${node.id}] (${output.durationMs}ms)")
                 return output.result
+
             } catch (e: ModuleExecutionException) {
-                moduleLogs.add(
-                    mapOf(
-                        "stage" to stage,
-                        "order" to order,
-                        "nodeId" to node.id,
-                        "moduleVersionId" to version.id,
-                        "moduleName" to version.module?.name,
-                        "success" to false,
-                        "stdout" to trimLog(e.stdout),
-                        "stderr" to trimLog(e.stderr),
-                        "exitCode" to e.exitCode,
-                        "error" to e.message,
-                        "connector" to node.connector?.summary
-                    )
-                )
+                moduleLogs.add(mapOf(
+                    "stage" to stage,
+                    "order" to order,
+                    "nodeId" to node.id,
+                    "moduleVersionId" to version.id,
+                    "moduleName" to version.module?.name,
+                    "success" to false,
+                    "stdout" to trimLog(e.stdout),
+                    "stderr" to trimLog(e.stderr),
+                    "exitCode" to e.exitCode,
+                    "error" to e.message,
+                    "connector" to node.connector?.meta
+                ))
                 executionLog.add("FAIL $stage #$order ${version.module?.name ?: version.id} [${node.id}]: ${e.message}")
                 throw e
             }
         }
 
+        // ── Parse graph ──────────────────────────────────────────────────────
         val graph = parseJsonMap(pipeline.graphDefinition)
-        val graphNodesRaw = graph["nodes"] as? List<*>
-        val graphEdgesRaw = graph["edges"] as? List<*>
+        val graphNodesRaw = graph["nodes"] as? List<*> ?: emptyList<Any>()
+        val graphEdgesRaw = graph["edges"] as? List<*> ?: emptyList<Any>()
 
-        if (!graphNodesRaw.isNullOrEmpty()) {
-            val graphNodes = graphNodesRaw.mapNotNull { raw ->
-                val nodeMap = raw as? Map<*, *> ?: return@mapNotNull null
-                val nodeId = nodeMap["id"]?.toString()?.trim().orEmpty()
-                if (nodeId.isBlank()) return@mapNotNull null
-                val nodeType = try {
-                    ModuleType.valueOf(nodeMap["type"]?.toString()?.uppercase() ?: return@mapNotNull null)
-                } catch (_: Exception) {
-                    return@mapNotNull null
-                }
-                val moduleVersionId = parseUuid(nodeMap["moduleVersionId"]?.toString()) ?: return@mapNotNull null
-                GraphNode(
-                    id = nodeId,
-                    type = nodeType,
-                    moduleVersionId = moduleVersionId,
-                    connector = connectorConfigsByVersion[moduleVersionId]
-                )
-            }
-            val nodeById = graphNodes.associateBy { it.id }
-            val indegree = mutableMapOf<String, Int>()
-            val upstream = mutableMapOf<String, MutableList<String>>()
-            val downstream = mutableMapOf<String, MutableList<String>>()
-            nodeById.keys.forEach { nodeId ->
-                indegree[nodeId] = 0
-                upstream[nodeId] = mutableListOf()
-                downstream[nodeId] = mutableListOf()
-            }
-
-            graphEdgesRaw.orEmpty().forEach { rawEdge ->
-                val edgeMap = rawEdge as? Map<*, *> ?: return@forEach
-                val from = edgeMap["from"]?.toString()?.trim().orEmpty()
-                val to = edgeMap["to"]?.toString()?.trim().orEmpty()
-                if (from !in nodeById || to !in nodeById) return@forEach
-                downstream[from]?.add(to)
-                upstream[to]?.add(from)
-                indegree[to] = (indegree[to] ?: 0) + 1
-            }
-
-            val queue = ArrayDeque(indegree.filterValues { it == 0 }.keys)
-            val topologicalOrder = mutableListOf<String>()
-            while (queue.isNotEmpty()) {
-                val nodeId = queue.removeFirst()
-                topologicalOrder.add(nodeId)
-                downstream[nodeId].orEmpty().forEach { next ->
-                    val updated = (indegree[next] ?: 0) - 1
-                    indegree[next] = updated
-                    if (updated == 0) queue.add(next)
-                }
-            }
-            val orderedNodeIds = if (topologicalOrder.size == nodeById.size) topologicalOrder else nodeById.keys.toList()
-
-            val outputs = mutableMapOf<String, Any?>()
-            orderedNodeIds.forEachIndexed { index, nodeId ->
-                val node = nodeById[nodeId] ?: return@forEachIndexed
-                val inputCandidates = upstream[nodeId].orEmpty().mapNotNull { parentId -> outputs[parentId] }
-                val nodeInput: Any? = when {
-                    inputCandidates.isEmpty() && node.type == ModuleType.IMPORT -> inputData
-                    inputCandidates.isEmpty() -> null
-                    inputCandidates.size == 1 -> inputCandidates.first()
-                    else -> mapOf("inputs" to inputCandidates)
-                }
-                if (nodeInput == null && node.type != ModuleType.IMPORT) {
-                    executionLog.add("SKIP ${node.type.name} #${index + 1} ${node.id} (no input)")
-                    return@forEachIndexed
-                }
-
-                val output = executeNode(node, nodeInput, index + 1)
-                outputs[node.id] = output
-                results[node.id] = mapOf(
-                    "type" to node.type.name,
-                    "moduleVersionId" to node.moduleVersionId,
-                    "result" to output
-                )
-            }
-
-            val terminalPayloads = orderedNodeIds
-                .filter { downstream[it].isNullOrEmpty() }
-                .mapNotNull { outputs[it] }
-            val alertPayload = when {
-                terminalPayloads.isNotEmpty() -> terminalPayloads.last()
-                outputs.isNotEmpty() -> outputs.values.lastOrNull()
-                else -> inputData
-            }
-
-            if (alertPayload is Map<*, *>) {
-                @Suppress("UNCHECKED_CAST")
-                val alertMapPayload = alertPayload as? Map<String, Any>
-                if (alertMapPayload != null) {
-                    val alertReport = alertDispatcher.evaluateRulesForPipeline(pipeline, alertMapPayload)
-                    results["alertsFired"] = alertReport.firedAlerts
-                    results["alertEvaluation"] = mapOf(
-                        "evaluatedRules" to alertReport.evaluatedRules,
-                        "matchedRules" to alertReport.matchedRules,
-                        "firedAlerts" to alertReport.firedAlerts,
-                        "cooldownSkipped" to alertReport.cooldownSkipped
-                    )
-                }
-            }
-
-            return mapOf(
-                "result" to results,
-                "moduleLogs" to moduleLogs,
-                "executionLog" to executionLog
+        val graphNodes = graphNodesRaw.mapNotNull { raw ->
+            val nodeMap = raw as? Map<*, *> ?: return@mapNotNull null
+            val nodeId = nodeMap["id"]?.toString()?.trim().orEmpty().ifBlank { return@mapNotNull null }
+            val nodeType = try {
+                ModuleType.valueOf(nodeMap["type"]?.toString()?.uppercase() ?: return@mapNotNull null)
+            } catch (_: Exception) { return@mapNotNull null }
+            val moduleVersionId = parseUuid(nodeMap["moduleVersionId"]?.toString()) ?: return@mapNotNull null
+            GraphNode(
+                id = nodeId,
+                type = nodeType,
+                moduleVersionId = moduleVersionId,
+                connector = connectorsByNodeId[nodeId]
             )
         }
 
-        var data = inputData
-        pipeline.importModuleVersionId?.let { importId ->
-            val importVersion = ModuleVersion.findById(importId)
-            if (importVersion != null) {
-                val connectorContext = importVersion.id?.let { connectorConfigsByVersion[it] }
-                val output = executeNode(
-                    GraphNode(
-                        id = "import",
-                        type = ModuleType.IMPORT,
-                        moduleVersionId = importVersion.id!!,
-                        connector = connectorContext
-                    ),
-                    data,
-                    1
-                )
-                results["import"] = output
-                if (output is Map<*, *>) {
-                    @Suppress("UNCHECKED_CAST")
-                    data = output as? Map<String, Any>
+        val nodeById = graphNodes.associateBy { it.id }
+        val indegree   = nodeById.keys.associateWith { 0 }.toMutableMap()
+        val upstream   = nodeById.keys.associateWith { mutableListOf<String>() }.toMutableMap()
+        val downstream = nodeById.keys.associateWith { mutableListOf<String>() }.toMutableMap()
+
+        graphEdgesRaw.forEach { rawEdge ->
+            val edgeMap = rawEdge as? Map<*, *> ?: return@forEach
+            val from = edgeMap["from"]?.toString()?.trim().orEmpty()
+            val to   = edgeMap["to"]?.toString()?.trim().orEmpty()
+            if (from !in nodeById || to !in nodeById) return@forEach
+            downstream[from]?.add(to)
+            upstream[to]?.add(from)
+            indegree[to] = (indegree[to] ?: 0) + 1
+        }
+
+        // Kahn's topological sort (deterministic: sort keys for consistent ordering)
+        val queue = ArrayDeque(indegree.filterValues { it == 0 }.keys.sorted())
+        val topologicalOrder = mutableListOf<String>()
+        while (queue.isNotEmpty()) {
+            val nodeId = queue.removeFirst()
+            topologicalOrder.add(nodeId)
+            downstream[nodeId].orEmpty().sorted().forEach { next ->
+                val updated = (indegree[next] ?: 0) - 1
+                indegree[next] = updated
+                if (updated == 0) queue.add(next)
+            }
+        }
+        val orderedNodeIds = if (topologicalOrder.size == nodeById.size) topologicalOrder else nodeById.keys.toList()
+
+        // ── Execute in topological order ─────────────────────────────────────
+        val outputs = mutableMapOf<String, Any?>()
+        orderedNodeIds.forEachIndexed { index, nodeId ->
+            val node = nodeById[nodeId] ?: return@forEachIndexed
+            val upstreamOutputs = upstream[nodeId].orEmpty().mapNotNull { outputs[it] }
+
+            val nodeInput: Any? = when (node.type) {
+                ModuleType.IMPORT -> {
+                    // Use injected data if present; otherwise connector fetch happens inside executeNode.
+                    upstreamOutputs.firstOrNull() ?: inputData
+                }
+                ModuleType.MERGE -> {
+                    // MERGE always receives a list — the module's merge() method gets the whole list.
+                    upstreamOutputs.ifEmpty { null }
+                }
+                else -> when (upstreamOutputs.size) {
+                    0    -> null
+                    1    -> upstreamOutputs.first()
+                    else -> upstreamOutputs.last()
                 }
             }
-        }
 
-        pipeline.processingModuleVersionIds.forEachIndexed { index, processingId ->
-            val processingVersion = ModuleVersion.findById(processingId)
-            if (processingVersion != null && data != null) {
-                val output = executeNode(
-                    GraphNode(
-                        id = "processing-${index + 1}",
-                        type = ModuleType.PROCESSING,
-                        moduleVersionId = processingVersion.id!!,
-                        connector = null
-                    ),
-                    data,
-                    index + 2
-                )
-                results["processing_${index + 1}"] = output
-                if (output is Map<*, *>) {
-                    @Suppress("UNCHECKED_CAST")
-                    data = output as? Map<String, Any>
-                }
+            if (nodeInput == null && node.type !in setOf(ModuleType.IMPORT, ModuleType.MERGE)) {
+                executionLog.add("SKIP ${node.type.name} #${index + 1} ${node.id} (no input)")
+                return@forEachIndexed
             }
+
+            val output = executeNode(node, nodeInput, index + 1)
+            outputs[node.id] = output
+            results[node.id] = mapOf(
+                "type" to node.type.name,
+                "moduleVersionId" to node.moduleVersionId,
+                "result" to output
+            )
         }
 
-        pipeline.exportModuleVersionIds.forEachIndexed { index, exportId ->
-            val exportVersion = ModuleVersion.findById(exportId)
-            if (exportVersion != null && data != null) {
-                val connectorContext = exportVersion.id?.let { connectorConfigsByVersion[it] }
-                val output = executeNode(
-                    GraphNode(
-                        id = "export-${index + 1}",
-                        type = ModuleType.EXPORT,
-                        moduleVersionId = exportVersion.id!!,
-                        connector = connectorContext
-                    ),
-                    data,
-                    index + 2 + pipeline.processingModuleVersionIds.size
+        // ── Declarative alert rule evaluation on terminal output ──────────────
+        val terminalOutput = orderedNodeIds
+            .filter { downstream[it].isNullOrEmpty() }
+            .mapNotNull { outputs[it] }
+            .lastOrNull() ?: outputs.values.lastOrNull() ?: inputData
+
+        if (terminalOutput is Map<*, *>) {
+            @Suppress("UNCHECKED_CAST")
+            val alertMap = terminalOutput as? Map<String, Any>
+            if (alertMap != null) {
+                val alertReport = alertDispatcher.evaluateRulesForPipeline(pipeline, alertMap)
+                results["alertsFired"] = alertReport.firedAlerts
+                results["alertEvaluation"] = mapOf(
+                    "evaluatedRules" to alertReport.evaluatedRules,
+                    "matchedRules" to alertReport.matchedRules,
+                    "firedAlerts" to alertReport.firedAlerts,
+                    "cooldownSkipped" to alertReport.cooldownSkipped
                 )
-                results["export_${index + 1}"] = output
             }
-        }
-
-        resolveAlertModuleVersionsFromGraph(pipeline).forEachIndexed { index, alertVersion ->
-            if (data == null) return@forEachIndexed
-            val output = executeNode(
-                GraphNode(
-                    id = "alert-${index + 1}",
-                    type = ModuleType.ALERT,
-                    moduleVersionId = alertVersion.id!!,
-                    connector = null
-                ),
-                data,
-                index + 2 + pipeline.processingModuleVersionIds.size + pipeline.exportModuleVersionIds.size
-            )
-            results["alert_${index + 1}"] = output
-        }
-
-        val alertPayload = data ?: inputData
-        if (alertPayload != null) {
-            val alertReport = alertDispatcher.evaluateRulesForPipeline(pipeline, alertPayload)
-            results["alertsFired"] = alertReport.firedAlerts
-            results["alertEvaluation"] = mapOf(
-                "evaluatedRules" to alertReport.evaluatedRules,
-                "matchedRules" to alertReport.matchedRules,
-                "firedAlerts" to alertReport.firedAlerts,
-                "cooldownSkipped" to alertReport.cooldownSkipped
-            )
         }
 
         return mapOf(
