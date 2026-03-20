@@ -55,6 +55,7 @@ npm run build
 | Grafana (direct) | http://localhost:3001 (admin/admin) |
 | Grafana (subdomain via gateway) | http://monitoring.localhost |
 | Monitoring fallback route | http://localhost/monitoring |
+| User Docs (standalone static site) | http://localhost/docs |
 
 ## Monitoring Deployment Modes
 
