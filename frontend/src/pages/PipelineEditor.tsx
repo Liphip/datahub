@@ -126,10 +126,10 @@ function makeNodeId() {
 
 function graphToFlow(
   graph: Pipeline['graphDefinition'],
-): { nodes: Node[]; edges: Edge[] } {
+): { nodes: DagNodeType[]; edges: Edge[] } {
   if (!graph) return { nodes: [], edges: [] };
 
-  const nodes: Node[] = (graph.nodes ?? []).map((raw, idx) => ({
+  const nodes: DagNodeType[] = (graph.nodes ?? []).map((raw, idx) => ({
     id: String(raw.id ?? `n-${idx}`),
     type: 'dagNode',
     position: (raw.position as { x: number; y: number }) ?? { x: 150 + idx * 200, y: 150 },
@@ -154,12 +154,12 @@ function graphToFlow(
 }
 
 function flowToGraph(
-  nodes: Node[],
+  nodes: DagNodeType[],
   edges: Edge[],
 ): Pipeline['graphDefinition'] {
   return {
     nodes: nodes.map((n) => {
-      const d = n.data as PipelineNodeData;
+      const d = n.data;
       return {
         id: n.id,
         type: d.nodeType,
@@ -208,8 +208,8 @@ export default function PipelineEditor() {
   const [description, setDescription] = useState('');
   const [isActive, setIsActive] = useState(false);
 
-  // React Flow state
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  // React Flow state — typed with our domain node type for inference
+  const [nodes, setNodes, onNodesChange] = useNodesState<DagNodeType>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
@@ -269,7 +269,7 @@ export default function PipelineEditor() {
   // ── React Flow handlers ────────────────────────────────────────────────────
 
   const onConnect = useCallback(
-    (connection: Connection) => setEdges((eds) => addEdge(connection, eds)),
+    (connection: Connection) => setEdges((eds: Edge[]) => addEdge(connection, eds)),
     [setEdges],
   );
 
@@ -297,30 +297,30 @@ export default function PipelineEditor() {
         connectorId: undefined,
       } satisfies PipelineNodeData,
     };
-    setNodes((nds) => [...nds, newNode]);
+    setNodes((nds: DagNodeType[]) => [...nds, newNode as DagNodeType]);
     setSelectedNodeId(newId);
   };
 
   const deleteSelectedNode = () => {
     if (!selectedNodeId) return;
-    setNodes((nds) => nds.filter((n) => n.id !== selectedNodeId));
-    setEdges((eds) => eds.filter((e) => e.source !== selectedNodeId && e.target !== selectedNodeId));
+    setNodes((nds: DagNodeType[]) => nds.filter((n: DagNodeType) => n.id !== selectedNodeId));
+    setEdges((eds: Edge[]) => eds.filter((e: Edge) => e.source !== selectedNodeId && e.target !== selectedNodeId));
     setSelectedNodeId(null);
   };
 
   // ── Selected node helpers ──────────────────────────────────────────────────
 
   const selectedNode = useMemo(
-    () => nodes.find((n) => n.id === selectedNodeId) ?? null,
+    () => nodes.find((n: DagNodeType) => n.id === selectedNodeId) ?? null,
     [nodes, selectedNodeId],
   );
 
   const updateSelectedNodeData = (patch: Partial<PipelineNodeData>) => {
     if (!selectedNodeId) return;
-    setNodes((nds) =>
-      nds.map((n) =>
+    setNodes((nds: DagNodeType[]) =>
+      nds.map((n: DagNodeType) =>
         n.id === selectedNodeId
-          ? { ...n, data: { ...(n.data as PipelineNodeData), ...patch } }
+          ? { ...n, data: { ...n.data, ...patch } }
           : n,
       ),
     );

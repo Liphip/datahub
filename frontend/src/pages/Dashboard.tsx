@@ -103,17 +103,30 @@ function StatCard({
   value,
   sub,
   colorClass = 'text-slate-800 dark:text-slate-100',
+  accentClass,
+  icon,
 }: {
   label: string;
   value: string | number;
   sub?: string;
   colorClass?: string;
+  /** Top-border gradient CSS class — e.g. 'from-emerald-400 to-emerald-600' */
+  accentClass?: string;
+  icon?: React.ReactNode;
 }) {
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4">
-      <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">{label}</p>
-      <p className={`mt-1 text-2xl font-bold ${colorClass}`}>{value}</p>
-      {sub && <p className="mt-0.5 text-xs text-slate-400">{sub}</p>}
+    <div className="relative bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+      {accentClass && (
+        <div className={`absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r ${accentClass}`} />
+      )}
+      <div className="p-4">
+        <div className="flex items-start justify-between">
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">{label}</p>
+          {icon && <span className="text-slate-300 dark:text-slate-600">{icon}</span>}
+        </div>
+        <p className={`mt-1.5 text-2xl font-bold tabular-nums ${colorClass}`}>{value}</p>
+        {sub && <p className="mt-0.5 text-xs text-slate-400">{sub}</p>}
+      </div>
     </div>
   );
 }
@@ -265,8 +278,6 @@ export default function Dashboard() {
   const runningPipelines = pipelines.filter(
     (p) => p.latestRunStatus === 'RUNNING' || p.latestRunStatus === 'PENDING'
   );
-  const maxTrend = Math.max(1, ...(summary?.trendBuckets?.map((b) => b.totalRuns) ?? [1]));
-
   const currentTenantName =
     tenantContexts.find((c) => c.tenantId === tenantId)?.tenantName ?? 'Tenant';
   const userDisplayName = user?.firstName
@@ -276,22 +287,33 @@ export default function Dashboard() {
   return (
     <div className="space-y-8">
       {/* ── Welcome banner ───────────────────────────────────────────────────── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">
-            {t('dashboard.welcomeBack', { name: userDisplayName })}
-          </h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            {currentTenantName} · {new Date().toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link to="/pipelines" className="btn-primary text-sm">
-            + New Pipeline
-          </Link>
-          <Link to="/modules" className="btn-secondary text-sm">
-            + New Module
-          </Link>
+      <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-primary-600 to-primary-800 dark:from-primary-800 dark:to-primary-950 p-6 text-white shadow-lg shadow-primary-900/20">
+        {/* decorative orb */}
+        <div className="pointer-events-none absolute -top-8 -right-8 w-40 h-40 rounded-full bg-white/5" />
+        <div className="pointer-events-none absolute -bottom-12 right-16 w-64 h-64 rounded-full bg-white/5" />
+        <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">
+              {t('dashboard.welcomeBack', { name: userDisplayName })}
+            </h1>
+            <p className="mt-1 text-sm text-primary-200 dark:text-primary-300">
+              {currentTenantName} · {new Date().toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Link
+              to="/pipelines"
+              className="px-4 py-2 bg-white text-primary-700 rounded-lg hover:bg-primary-50 transition-colors font-medium text-sm shadow-sm"
+            >
+              + New Pipeline
+            </Link>
+            <Link
+              to="/modules"
+              className="px-4 py-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white rounded-lg transition-colors font-medium text-sm"
+            >
+              + New Module
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -399,32 +421,38 @@ export default function Dashboard() {
             label="Total Pipelines"
             value={loading ? '–' : pipelines.length}
             colorClass="text-slate-800 dark:text-slate-100"
+            accentClass="from-slate-300 to-slate-400"
           />
           <StatCard
             label="Active"
             value={loading ? '–' : activePipelines}
             colorClass="text-emerald-600 dark:text-emerald-400"
+            accentClass="from-emerald-400 to-emerald-600"
           />
           <StatCard
             label="Running Now"
             value={loading ? '–' : runningPipelines.length}
             colorClass={runningPipelines.length > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'}
+            accentClass={runningPipelines.length > 0 ? 'from-amber-400 to-amber-600' : 'from-slate-200 to-slate-300'}
           />
           <StatCard
             label="Failed (latest)"
             value={loading ? '–' : problematicPipelines.length}
             colorClass={problematicPipelines.length > 0 ? 'text-red-600 dark:text-red-400' : 'text-slate-500'}
+            accentClass={problematicPipelines.length > 0 ? 'from-red-400 to-red-600' : 'from-slate-200 to-slate-300'}
           />
           <StatCard
             label="Success Rate"
             value={loading ? '–' : fmtRate(summary?.successRate)}
             sub={`${reliabilityWindow === 1 ? 'last hour' : reliabilityWindow === 24 ? 'last 24h' : 'last 7 days'}`}
             colorClass={rateColor(summary?.successRate)}
+            accentClass="from-primary-400 to-primary-600"
           />
           <StatCard
             label="Avg Duration"
             value={loading ? '–' : fmt(summary?.avgDurationMs)}
             colorClass="text-slate-700 dark:text-slate-200"
+            accentClass="from-violet-400 to-violet-600"
           />
         </div>
       </section>
@@ -543,9 +571,13 @@ export default function Dashboard() {
             {/* Trend chart */}
             <div className="rounded-lg border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 p-2">
               <MiniSparkline buckets={summary?.trendBuckets ?? []} height={48} />
-              <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+              <div className="flex items-center justify-between text-[10px] text-slate-400 mt-1">
                 <span>{reliabilityWindow === 1 ? 'Last hour' : reliabilityWindow === 24 ? 'Last 24 hours' : 'Last 7 days'}</span>
-                <span>🟢 ok · 🟡 some failures · 🔴 many failures</span>
+                <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />ok</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />some</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" />many</span>
+                </span>
               </div>
             </div>
           </div>
