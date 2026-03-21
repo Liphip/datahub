@@ -16,6 +16,7 @@ import {
   type Connection,
   type Node,
   type Edge,
+  type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -34,6 +35,8 @@ type ModuleVersionOption = ModuleVersion & {
   moduleName: string;
   moduleType: CodeModule['moduleType'];
 };
+
+type DagNodeType = Node<PipelineNodeData, 'dagNode'>;
 
 // ─── Node colour map ──────────────────────────────────────────────────────────
 
@@ -55,8 +58,7 @@ const NODE_ICON: Record<NodeType, string> = {
 
 // ─── Custom DAG node ──────────────────────────────────────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function DagNode({ data, selected }: NodeProps<any>) {
+function DagNode({ data, selected }: NodeProps<DagNodeType>) {
   const d = data as PipelineNodeData;
   const colors = NODE_COLORS[d.nodeType] ?? 'border-gray-400 bg-gray-50';
   const isSource = d.nodeType === 'IMPORT';
@@ -112,7 +114,7 @@ function DagNode({ data, selected }: NodeProps<any>) {
   );
 }
 
-const nodeTypes = { dagNode: memo(DagNode) };
+const nodeTypes: NodeTypes = { dagNode: memo(DagNode) };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

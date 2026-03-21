@@ -1,11 +1,14 @@
 -- V5__merge_module_connector_update.sql
 -- Add MERGE module type; restrict connector direction to INPUT/OUTPUT only
 
--- Update module_type check constraint to include 'merge'
+-- Normalize existing lowercase module_type values to uppercase
+UPDATE code_modules SET module_type = UPPER(module_type) WHERE module_type = LOWER(module_type);
+
+-- Update module_type check constraint to include 'merge' and use uppercase (matches Hibernate @Enumerated(EnumType.STRING))
 ALTER TABLE code_modules DROP CONSTRAINT IF EXISTS code_modules_module_type_check;
 ALTER TABLE code_modules
     ADD CONSTRAINT code_modules_module_type_check
-    CHECK (module_type IN ('import', 'processing', 'merge', 'export', 'alert'));
+    CHECK (UPPER(module_type) IN ('IMPORT', 'PROCESSING', 'MERGE', 'EXPORT', 'ALERT'));
 
 -- Update connector direction check constraint to remove 'BOTH'
 -- First migrate any existing BOTH connectors to INPUT (safer default)
