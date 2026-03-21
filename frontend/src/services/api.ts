@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, DataSummaryResponse, DataBlob, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, Role, Membership, TenantContext, BrokerCredential } from '../types';
+import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertRule, AlertHistory, DataSummaryResponse, DataBlob, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, Role, Membership, TenantContext, BrokerCredential } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 export const API_STATUS_EVENT = 'dataturntable:api-status';
@@ -376,6 +376,12 @@ class ApiService {
 
   async getPipelineRunSummary(tenantId: string, limit = 50, sinceHours = 24): Promise<PipelineRunSummary> {
     const response = await this.client.get<PipelineRunSummary>(`/pipelines/runs/summary?tenantId=${tenantId}&limit=${limit}&sinceHours=${sinceHours}`);
+    return response.data;
+  }
+
+  /** Returns per-tenant run stats for every tenant the current user belongs to — single roundtrip. */
+  async getAllTenantRunSummaries(sinceHours: 1 | 24 | 168 = 24): Promise<TenantRunSummary[]> {
+    const response = await this.client.get<TenantRunSummary[]>(`/pipelines/runs/summary/all?sinceHours=${sinceHours}`);
     return response.data;
   }
 

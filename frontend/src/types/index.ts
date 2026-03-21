@@ -457,3 +457,26 @@ export interface DataBlob {
   sizeBytes: number;
   createdAt: string;
 }
+
+/** Returned by GET /pipelines/runs/summary/all — one entry per tenant the user belongs to */
+export interface TenantRunSummary {
+  tenantId: string;
+  tenantName: string;
+  pipelineCount: number;
+  activePipelineCount: number;
+  sinceHours: number;
+  bucketSeconds: number;
+  totalRuns: number;
+  successRuns: number;
+  failedRuns: number;
+  inFlightRuns: number;
+  successRate: number;
+  avgDurationMs?: number;
+  trendBuckets: {
+    bucketStart: string;
+    totalRuns: number;
+    successRuns: number;
+    failedRuns: number;
+    inFlightRuns: number;
+  }[];
+}

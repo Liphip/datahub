@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Pipeline, PipelineRun, PipelineRunSummary } from '../types';
+import type { Pipeline, PipelineRun, PipelineRunSummary, TenantRunSummary } from '../types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -85,16 +85,15 @@ function MiniSparkline({
   );
 }
 
-// ── Per-tenant data ───────────────────────────────────────────────────────────
+// ── Per-tenant data (backed by TenantRunSummary from the all-tenants endpoint) ─
 
-interface TenantStats {
-  tenantId: string;
-  tenantName: string;
+interface TenantStats extends TenantRunSummary {
   roleName?: string;
-  summary: PipelineRunSummary | null;
-  pipelineCount: number;
-  activePipelines: number;
   loading: boolean;
+  /** activePipelines mirrors activePipelineCount for consistent local naming */
+  activePipelines: number;
+  /** summary sub-object for components that expect PipelineRunSummary shape */
+  summary: Pick<PipelineRunSummary, 'successRate' | 'totalRuns' | 'trendBuckets'> | null;
 }
 
 // ── Stat card ─────────────────────────────────────────────────────────────────
@@ -199,49 +198,52 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, [tenantId, reliabilityWindow, t]);
 
-  // ── Fetch all-tenants stats ────────────────────────────────────────────────
+  // ── Fetch all-tenants stats via single endpoint ────────────────────────────
   useEffect(() => {
     if (tenantContexts.length < 2) { setTenantStats([]); return; }
     let cancelled = false;
 
-    const initial: TenantStats[] = tenantContexts.map((ctx) => ({
-      tenantId: ctx.tenantId,
-      tenantName: ctx.tenantName,
-      roleName: ctx.roleName,
-      summary: null,
-      pipelineCount: 0,
-      activePipelines: 0,
-      loading: true,
-    }));
-    setTenantStats(initial);
+    // Show loading skeletons immediately
+    setTenantStats(
+      tenantContexts.map((ctx) => ({
+        tenantId: ctx.tenantId,
+        tenantName: ctx.tenantName,
+        roleName: ctx.roleName,
+        pipelineCount: 0,
+        activePipelineCount: 0,
+        activePipelines: 0,
+        sinceHours: 24,
+        bucketSeconds: 3600,
+        totalRuns: 0,
+        successRuns: 0,
+        failedRuns: 0,
+        inFlightRuns: 0,
+        successRate: 0,
+        trendBuckets: [],
+        summary: null,
+        loading: true,
+      }))
+    );
 
-    tenantContexts.forEach(async (ctx) => {
-      try {
-        const [pl, sm] = await Promise.all([
-          api.getPipelines(ctx.tenantId).catch(() => [] as Pipeline[]),
-          api.getPipelineRunSummary(ctx.tenantId, 50, 24).catch(() => null),
-        ]);
-        if (cancelled) return;
-        setTenantStats((prev) =>
-          prev.map((s) =>
-            s.tenantId === ctx.tenantId
-              ? {
-                  ...s,
-                  loading: false,
-                  pipelineCount: pl.length,
-                  activePipelines: pl.filter((p) => p.isActive).length,
-                  summary: sm,
-                }
-              : s
-          )
-        );
-      } catch {
-        if (!cancelled) {
-          setTenantStats((prev) =>
-            prev.map((s) => (s.tenantId === ctx.tenantId ? { ...s, loading: false } : s))
-          );
-        }
-      }
+    api.getAllTenantRunSummaries(24).then((summaries) => {
+      if (cancelled) return;
+      // Merge API results with tenant contexts (to preserve roleName)
+      const roleByTenant = Object.fromEntries(tenantContexts.map((c) => [c.tenantId, c.roleName]));
+      setTenantStats(
+        summaries.map((s) => ({
+          ...s,
+          roleName: roleByTenant[s.tenantId],
+          activePipelines: s.activePipelineCount,
+          summary: {
+            successRate: s.successRate,
+            totalRuns: s.totalRuns,
+            trendBuckets: s.trendBuckets,
+          },
+          loading: false,
+        }))
+      );
+    }).catch(() => {
+      if (!cancelled) setTenantStats([]);
     });
 
     return () => { cancelled = true; };
@@ -359,21 +361,21 @@ export default function Dashboard() {
                           <p className="text-[10px] text-slate-400 uppercase tracking-wide">Pipelines</p>
                         </div>
                         <div className="text-center">
-                          <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400">{ts.activePipelines}</p>
+                          <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400">{ts.activePipelineCount}</p>
                           <p className="text-[10px] text-slate-400 uppercase tracking-wide">Active</p>
                         </div>
                         <div className="text-center">
-                          <p className={`text-lg font-bold ${rateColor(ts.summary?.successRate)}`}>
-                            {fmtRate(ts.summary?.successRate)}
+                          <p className={`text-lg font-bold ${rateColor(ts.successRate)}`}>
+                            {fmtRate(ts.successRate)}
                           </p>
                           <p className="text-[10px] text-slate-400 uppercase tracking-wide">Success</p>
                         </div>
                       </div>
 
-                      {ts.summary?.trendBuckets && ts.summary.trendBuckets.length > 0 && (
+                      {ts.trendBuckets.length > 0 && (
                         <div className="border-t border-slate-100 dark:border-slate-800 pt-3">
-                          <MiniSparkline buckets={ts.summary.trendBuckets} height={24} />
-                          <p className="text-[10px] text-slate-400 mt-1">24h trend · {ts.summary.totalRuns} runs</p>
+                          <MiniSparkline buckets={ts.trendBuckets} height={24} />
+                          <p className="text-[10px] text-slate-400 mt-1">24h trend · {ts.totalRuns} runs</p>
                         </div>
                       )}
                     </>
