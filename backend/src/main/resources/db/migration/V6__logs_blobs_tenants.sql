@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS data_blobs (
     content_type    VARCHAR(255),
     size_bytes      BIGINT,
     storage_path    TEXT,           -- server-side filesystem / object store path
-    uploaded_by     UUID REFERENCES auth_users(id) ON DELETE SET NULL,
+    uploaded_by     UUID REFERENCES users(id) ON DELETE SET NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_data_blobs_tenant ON data_blobs(tenant_id);
