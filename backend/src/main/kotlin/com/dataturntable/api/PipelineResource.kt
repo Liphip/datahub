@@ -446,6 +446,104 @@ class PipelineResource {
         ).build()
     }
 
+    /**
+     * Cross-tenant run summary — returns pipeline stats for every tenant the calling user
+     * has a membership in, in a single request.  Used by the global Dashboard overview.
+     */
+    @GET
+    @Path("/runs/summary/all")
+    fun getAllTenantRunSummaries(
+        @QueryParam("sinceHours") sinceHours: Int?
+    ): Response {
+        val currentUser = currentUser()
+            ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+
+        val hours = sinceHours ?: 24
+        if (hours !in setOf(1, 24, 168)) {
+            return Response.status(400).entity(mapOf("error" to "Invalid sinceHours")).build()
+        }
+
+        val bucketSeconds = when (hours) { 1 -> 10 * 60L; 24 -> 60 * 60L; else -> 6 * 60 * 60L }
+        val bucketCount   = when (hours) { 1 -> 6;        24 -> 24;       else -> 28              }
+        val sinceInstant  = java.time.Instant.now().minus(java.time.Duration.ofHours(hours.toLong()))
+
+        // Collect the tenants this user belongs to (explicit memberships only — no implicit superadmin wildcard)
+        val tenantEntries: List<Pair<UUID, String>> = currentUser.loadMemberships()
+            .distinctBy { it.tenant?.id }
+            .mapNotNull { m ->
+                val t  = m.tenant ?: return@mapNotNull null
+                val id = t.id    ?: return@mapNotNull null
+                id to (t.name ?: "")
+            }
+
+        val results = tenantEntries.map { (tenantId, tenantName) ->
+            val pipelines = em.createQuery(
+                "SELECT p FROM Pipeline p WHERE p.tenant.id = :tenantId",
+                Pipeline::class.java
+            ).setParameter("tenantId", tenantId).resultList
+
+            val runs = em.createQuery(
+                "SELECT r FROM PipelineRun r WHERE r.pipeline.tenant.id = :tenantId AND r.startedAt >= :since ORDER BY r.startedAt DESC",
+                PipelineRun::class.java
+            )
+                .setParameter("tenantId", tenantId)
+                .setParameter("since", sinceInstant)
+                .setMaxResults(500)
+                .resultList
+
+            val total   = runs.size
+            val success = runs.count { it.status.name == "SUCCESS" }
+            val failed  = runs.count { it.status.name == "FAILED" }
+            val running = runs.count { it.status.name == "RUNNING" || it.status.name == "PENDING" }
+
+            val durations = runs.mapNotNull { r ->
+                if (r.startedAt != null && r.completedAt != null)
+                    java.time.Duration.between(r.startedAt, r.completedAt).toMillis()
+                else null
+            }
+            val avgDurationMs  = if (durations.isNotEmpty()) durations.average().toLong() else null
+            val successRate    = if (total > 0) success.toDouble() / total else 0.0
+
+            val buckets = MutableList(bucketCount) { i ->
+                mutableMapOf<String, Any>(
+                    "bucketStart" to sinceInstant.plusSeconds(i.toLong() * bucketSeconds).toString(),
+                    "totalRuns" to 0, "successRuns" to 0, "failedRuns" to 0, "inFlightRuns" to 0
+                )
+            }
+            runs.forEach { r ->
+                val at  = r.startedAt ?: return@forEach
+                val sec = java.time.Duration.between(sinceInstant, at).seconds
+                if (sec < 0) return@forEach
+                val idx = (sec / bucketSeconds).toInt().coerceIn(0, bucketCount - 1)
+                val b   = buckets[idx]
+                b["totalRuns"] = (b["totalRuns"] as Int) + 1
+                when (r.status.name) {
+                    "SUCCESS"          -> b["successRuns"]  = (b["successRuns"]  as Int) + 1
+                    "FAILED"           -> b["failedRuns"]   = (b["failedRuns"]   as Int) + 1
+                    "RUNNING","PENDING"-> b["inFlightRuns"] = (b["inFlightRuns"] as Int) + 1
+                }
+            }
+
+            mapOf(
+                "tenantId"            to tenantId.toString(),
+                "tenantName"          to tenantName,
+                "pipelineCount"       to pipelines.size,
+                "activePipelineCount" to pipelines.count { it.isActive },
+                "sinceHours"          to hours,
+                "bucketSeconds"       to bucketSeconds,
+                "totalRuns"           to total,
+                "successRuns"         to success,
+                "failedRuns"          to failed,
+                "inFlightRuns"        to running,
+                "successRate"         to successRate,
+                "avgDurationMs"       to avgDurationMs,
+                "trendBuckets"        to buckets
+            )
+        }
+
+        return Response.ok(results).build()
+    }
+
     @GET
     @Path("/{id}/runs/summary")
     fun getPipelineRunSummary(
