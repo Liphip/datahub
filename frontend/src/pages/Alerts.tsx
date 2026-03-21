@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { AlertChannel, AlertRule, AlertHistory, Pipeline } from '../types';
+import type { AlertChannel, AlertHistory } from '../types';
 
 type AlertChannelType = AlertChannel['channelType'];
 type ChannelConfigField = {
@@ -57,42 +57,22 @@ export default function Alerts() {
   const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
   const canReadAlerts = hasAbility('alert:read') || hasAbility('alert:configure');
   const canConfigureAlerts = hasAbility('alert:configure');
-  const canReadPipelines = hasAbility('pipeline:read');
+
   const [channels, setChannels] = useState<AlertChannel[]>([]);
-  const [rules, setRules] = useState<AlertRule[]>([]);
   const [history, setHistory] = useState<AlertHistory[]>([]);
-  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState<'channels' | 'rules' | 'history'>('channels');
+  const [activeTab, setActiveTab] = useState<'channels' | 'history'>('channels');
   const [showChannelModal, setShowChannelModal] = useState(false);
-  const [showRuleModal, setShowRuleModal] = useState(false);
   const [editingChannel, setEditingChannel] = useState<AlertChannel | null>(null);
-  const [editingRule, setEditingRule] = useState<AlertRule | null>(null);
   const [newChannelName, setNewChannelName] = useState('');
   const [newChannelType, setNewChannelType] = useState<AlertChannelType>('WEBHOOK');
   const [newChannelConfig, setNewChannelConfig] = useState<Record<string, string>>(initialChannelConfig('WEBHOOK'));
   const [creatingChannel, setCreatingChannel] = useState(false);
-  const [newRuleName, setNewRuleName] = useState('');
-  const [newRuleCondition, setNewRuleCondition] = useState('');
-  const [ruleConditionError, setRuleConditionError] = useState('');
-  const [builderLogic, setBuilderLogic] = useState<'single' | 'any' | 'all'>('single');
-  const [builderFieldA, setBuilderFieldA] = useState('temperature');
-  const [builderOperatorA, setBuilderOperatorA] = useState('>');
-  const [builderValueA, setBuilderValueA] = useState('80');
-  const [builderFieldB, setBuilderFieldB] = useState('status');
-  const [builderOperatorB, setBuilderOperatorB] = useState('==');
-  const [builderValueB, setBuilderValueB] = useState('CRITICAL');
-  const [builderSeverity, setBuilderSeverity] = useState('WARNING');
-  const [builderMessage, setBuilderMessage] = useState('Threshold exceeded');
-  const [newRuleChannelId, setNewRuleChannelId] = useState('');
-  const [newRulePipelineId, setNewRulePipelineId] = useState('');
-  const [creatingRule, setCreatingRule] = useState(false);
   const [confirmDeleteChannelId, setConfirmDeleteChannelId] = useState<string | null>(null);
-  const [confirmDeleteRuleId, setConfirmDeleteRuleId] = useState<string | null>(null);
   const [deletingChannelId, setDeletingChannelId] = useState<string | null>(null);
-  const [deletingRuleId, setDeletingRuleId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [copiedChannelId, setCopiedChannelId] = useState<string | null>(null);
 
   const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
 
@@ -109,36 +89,30 @@ export default function Alerts() {
       }
       if (!canReadAlerts) {
         setChannels([]);
-        setRules([]);
         setHistory([]);
-        setPipelines([]);
         setError('');
         setLoading(false);
         return;
       }
-      
+
       try {
-        const [channelsData, rulesData, historyData, pipelinesData] = await Promise.all([
+        const [channelsData, historyData] = await Promise.all([
           api.getAlertChannels(tenantId),
-          api.getAlertRules(tenantId),
           api.getAlertHistory(tenantId, 20),
-          canReadPipelines ? api.getPipelines(tenantId) : Promise.resolve([] as Pipeline[]),
         ]);
         setChannels(channelsData);
-        setRules(rulesData);
         setHistory(historyData);
-        setPipelines(pipelinesData);
         setError('');
-      } catch (error) {
-        console.error('Error fetching alerts:', error);
+      } catch (err) {
+        console.error('Error fetching alerts:', err);
         setError(t('common.loadingFailed'));
       } finally {
         setLoading(false);
       }
     };
-    
+
     fetchData();
-  }, [tenantId, canReadAlerts, canReadPipelines, t]);
+  }, [tenantId, canReadAlerts, t]);
 
   const handleCreateChannel = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -147,7 +121,7 @@ export default function Alerts() {
       return;
     }
     if (!tenantId || !newChannelName) return;
-    
+
     setCreatingChannel(true);
     try {
       const requiredMissing = channelConfigSchema[newChannelType]
@@ -169,6 +143,7 @@ export default function Alerts() {
         }
         return acc;
       }, {});
+
       if (editingChannel) {
         const updated = await api.updateAlertChannel(editingChannel.id, {
           name: newChannelName,
@@ -187,110 +162,12 @@ export default function Alerts() {
       setNewChannelConfig(initialChannelConfig('WEBHOOK'));
       setError('');
       showToast(editingChannel ? t('alerts.alertChannelUpdated') : t('alerts.alertChannelCreated'), 'success');
-    } catch (error) {
-      console.error('Error creating channel:', error);
+    } catch (err) {
+      console.error('Error creating channel:', err);
       setError(t('alerts.failedCreateChannel'));
     } finally {
       setCreatingChannel(false);
     }
-  };
-
-  const handleCreateRule = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!canConfigureAlerts) {
-      showToast(t('alerts.permissionManageRules'), 'error');
-      return;
-    }
-    if (!tenantId || !newRuleName) return;
-    
-    setCreatingRule(true);
-    try {
-      const condition = JSON.parse(newRuleCondition || '{}');
-      setRuleConditionError('');
-      if (editingRule) {
-        const updated = await api.updateAlertRule(editingRule.id, {
-          name: newRuleName,
-          condition,
-          channelId: newRuleChannelId || undefined,
-          pipelineId: newRulePipelineId || undefined,
-        });
-        setRules(rules.map((r) => (r.id === updated.id ? updated : r)));
-      } else {
-        const newRule = await api.createAlertRule(
-          tenantId,
-          newRuleName,
-          condition,
-          newRuleChannelId || undefined,
-          newRulePipelineId || undefined
-        );
-        setRules([...rules, newRule]);
-      }
-      setShowRuleModal(false);
-      setEditingRule(null);
-      setNewRuleName('');
-      setNewRuleCondition('');
-      setNewRuleChannelId('');
-      setNewRulePipelineId('');
-      setError('');
-      showToast(editingRule ? t('alerts.alertRuleUpdated') : t('alerts.alertRuleCreated'), 'success');
-    } catch (error) {
-      console.error('Error creating rule:', error);
-      setRuleConditionError(t('alerts.invalidConditionJson'));
-      setError(t('alerts.failedCreateRuleCheckJson'));
-    } finally {
-      setCreatingRule(false);
-    }
-  };
-
-  const useConditionTemplate = (type: 'threshold' | 'exists' | 'any') => {
-    if (type === 'threshold') {
-      setNewRuleCondition(JSON.stringify({ field: 'temperature', operator: '>', value: 80, severity: 'WARNING', message: 'Temperature threshold exceeded' }, null, 2));
-    } else if (type === 'exists') {
-      setNewRuleCondition(JSON.stringify({ field: 'deviceId', operator: 'exists', severity: 'INFO', message: 'Device payload received' }, null, 2));
-    } else {
-      setNewRuleCondition(JSON.stringify({ any: [{ field: 'temperature', operator: '>', value: 80 }, { field: 'status', operator: '==', value: 'CRITICAL' }], severity: 'CRITICAL', message: 'Critical condition met' }, null, 2));
-    }
-    setRuleConditionError('');
-  };
-
-  const coerceConditionValue = (value: string): string | number | boolean => {
-    const normalized = value.trim();
-    if (normalized.toLowerCase() === 'true') return true;
-    if (normalized.toLowerCase() === 'false') return false;
-    const asNumber = Number(normalized);
-    if (!Number.isNaN(asNumber) && normalized !== '') return asNumber;
-    return normalized;
-  };
-
-  const buildConditionObject = () => {
-    const makeClause = (field: string, operator: string, value: string) => {
-      if (operator === 'exists') {
-        return { field, operator };
-      }
-      return { field, operator, value: coerceConditionValue(value) };
-    };
-
-    const clauseA = makeClause(builderFieldA, builderOperatorA, builderValueA);
-    const clauseB = makeClause(builderFieldB, builderOperatorB, builderValueB);
-    const meta = {
-      severity: builderSeverity,
-      message: builderMessage,
-    };
-
-    if (builderLogic === 'single') {
-      return { ...clauseA, ...meta };
-    }
-
-    return {
-      [builderLogic]: [clauseA, clauseB],
-      ...meta,
-    };
-  };
-
-  const applyBuilderToJson = () => {
-    const condition = buildConditionObject();
-    setNewRuleCondition(JSON.stringify(condition, null, 2));
-    setRuleConditionError('');
   };
 
   const handleDeleteChannel = async (id: string) => {
@@ -313,26 +190,6 @@ export default function Alerts() {
     }
   };
 
-  const handleDeleteRule = async (id: string) => {
-    if (!canConfigureAlerts) {
-      showToast(t('alerts.permissionDeleteRules'), 'error');
-      return;
-    }
-    setDeletingRuleId(id);
-    try {
-      await api.deleteAlertRule(id);
-      setRules(rules.filter((rule) => rule.id !== id));
-      setConfirmDeleteRuleId(null);
-      setError('');
-      showToast(t('alerts.alertRuleDeleted'), 'success');
-    } catch (err) {
-      console.error('Error deleting rule:', err);
-      setError(t('alerts.failedDeleteRule'));
-    } finally {
-      setDeletingRuleId(null);
-    }
-  };
-
   const openEditChannel = (channel: AlertChannel) => {
     if (!canConfigureAlerts) return;
     setEditingChannel(channel);
@@ -350,17 +207,14 @@ export default function Alerts() {
     setShowChannelModal(true);
   };
 
-  const openEditRule = (rule: AlertRule) => {
-    if (!canConfigureAlerts) return;
-    setEditingRule(rule);
-    setNewRuleName(rule.name);
-    setNewRuleChannelId(rule.channelId || '');
-    setNewRulePipelineId(rule.pipelineId || '');
-    const conditionValue = typeof rule.condition === 'string'
-      ? rule.condition
-      : JSON.stringify(rule.condition ?? {}, null, 2);
-    setNewRuleCondition(conditionValue);
-    setShowRuleModal(true);
+  const copyChannelId = async (id: string) => {
+    try {
+      await navigator.clipboard.writeText(id);
+      setCopiedChannelId(id);
+      setTimeout(() => setCopiedChannelId(null), 2000);
+    } catch {
+      // clipboard not available
+    }
   };
 
   return (
@@ -390,7 +244,7 @@ export default function Alerts() {
       )}
 
       <div className="mb-4 flex space-x-2">
-        {(['channels', 'rules', 'history'] as const).map((tab) => (
+        {(['channels', 'history'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -417,21 +271,55 @@ export default function Alerts() {
         <>
           {activeTab === 'channels' && (
             <div className="space-y-4">
+              <div className="rounded border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                <p className="font-semibold mb-1">How ALERT modules fire channels</p>
+                <p className="mb-2">
+                  Alert modules dispatch alerts by returning a special object from their code. The platform detects this return value and fires the matching channel:
+                </p>
+                <pre className="bg-blue-100 rounded px-3 py-2 text-xs font-mono overflow-x-auto whitespace-pre-wrap">{`return {
+  "__alert__": {
+    "channelId": "<id>",
+    "title": "Threshold exceeded",
+    "message": "Temperature is above limit",
+    "severity": "WARNING",
+    "payload": {}
+  }
+}`}</pre>
+                <p className="mt-2 text-blue-800 text-xs">
+                  Copy the channel ID from any channel card below to use in your module code.
+                </p>
+              </div>
+
               {canConfigureAlerts && (
                 <div className="flex justify-end">
                   <button onClick={openCreateChannel} className="btn-primary text-sm">{t('alerts.addChannel')}</button>
                 </div>
               )}
+
               {channels.length > 0 ? (
                 channels.map((channel) => (
                   <div key={channel.id} className="card">
                     <div className="flex justify-between items-start">
                       <div>
                         <h3 className="text-lg font-semibold">{channel.name}</h3>
-                        <p className="text-sm text-gray-500">{channel.description}</p>
-                        <span className="inline-block mt-2 px-2 py-1 text-xs font-medium rounded bg-gray-100">
-                          {channel.channelType}
-                        </span>
+                        {channel.description && (
+                          <p className="text-sm text-gray-500">{channel.description}</p>
+                        )}
+                        <div className="flex items-center gap-2 mt-2 flex-wrap">
+                          <span className="inline-block px-2 py-1 text-xs font-medium rounded bg-gray-100">
+                            {channel.channelType}
+                          </span>
+                          <span className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded bg-slate-100 text-slate-700 font-mono">
+                            {channel.id}
+                            <button
+                              onClick={() => copyChannelId(channel.id)}
+                              className="ml-1 text-slate-500 hover:text-slate-800"
+                              title="Copy channel ID"
+                            >
+                              {copiedChannelId === channel.id ? '✓' : '⎘'}
+                            </button>
+                          </span>
+                        </div>
                       </div>
                       <span className={`px-2 py-1 text-xs rounded ${channel.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
                         {channel.isActive ? t('common.active') : t('common.inactive')}
@@ -477,70 +365,6 @@ export default function Alerts() {
               ) : (
                 <div className="card text-center py-8">
                   <p className="text-gray-500">{t('alerts.noChannels')}</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {activeTab === 'rules' && (
-            <div className="space-y-4">
-              {canConfigureAlerts && (
-                <div className="flex justify-end">
-                  <button onClick={() => setShowRuleModal(true)} className="btn-primary text-sm">{t('alerts.addRule')}</button>
-                </div>
-              )}
-              {rules.length > 0 ? (
-                rules.map((rule) => (
-                  <div key={rule.id} className="card">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="text-lg font-semibold">{rule.name}</h3>
-                        <p className="text-sm text-gray-500">{rule.description}</p>
-                      </div>
-                        <span className={`px-2 py-1 text-xs rounded ${rule.enabled ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
-                          {rule.enabled ? t('alerts.enabled') : t('alerts.disabled')}
-                        </span>
-                      </div>
-                      {canConfigureAlerts && (
-                        <div className="mt-4 flex justify-end">
-                          <button
-                            onClick={() => openEditRule(rule)}
-                            className="mr-3 text-sm text-blue-600 hover:text-blue-800"
-                          >
-                            {t('common.edit')}
-                          </button>
-                          {confirmDeleteRuleId === rule.id ? (
-                            <div className="flex items-center space-x-2">
-                              <span className="text-xs text-gray-500">{t('common.deleteConfirm')}</span>
-                              <button
-                                onClick={() => handleDeleteRule(rule.id)}
-                                disabled={deletingRuleId === rule.id}
-                                className="text-sm text-red-600 hover:text-red-800"
-                              >
-                                {deletingRuleId === rule.id ? t('common.deleting') : t('common.yes')}
-                              </button>
-                              <button
-                                onClick={() => setConfirmDeleteRuleId(null)}
-                                className="text-sm text-gray-500 hover:text-gray-700"
-                              >
-                                {t('common.no')}
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => setConfirmDeleteRuleId(rule.id)}
-                              className="text-sm text-red-600 hover:text-red-800"
-                            >
-                              {t('common.delete')}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                ))
-              ) : (
-                <div className="card text-center py-8">
-                  <p className="text-gray-500">{t('alerts.noRules')}</p>
                 </div>
               )}
             </div>
@@ -618,12 +442,12 @@ export default function Alerts() {
                   <option value="MQTT">MQTT</option>
                 </select>
               </div>
-              <div className="mb-4 rounded border border-slate-200 dark:border-slate-700 p-3">
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">{newChannelType} Configuration</label>
+              <div className="mb-4 rounded border border-slate-200 p-3">
+                <label className="block text-sm font-medium text-slate-700 mb-2">{newChannelType} Configuration</label>
                 <div className="space-y-3">
                   {(channelConfigSchema[newChannelType] || []).map((field) => (
                     <div key={field.key}>
-                      <label className="block text-sm text-slate-600 dark:text-slate-300 mb-1">
+                      <label className="block text-sm text-slate-600 mb-1">
                         {t(field.labelKey)}{field.required ? ` ${t('common.required')}` : ''}
                       </label>
                       <input
@@ -658,139 +482,6 @@ export default function Alerts() {
                   className="btn-primary"
                 >
                   {creatingChannel ? t('common.saving') : editingChannel ? t('common.save') : t('common.create')}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {showRuleModal && canConfigureAlerts && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <h2 className="text-xl font-bold mb-4">{editingRule ? t('alerts.editRule') : t('alerts.addRule')}</h2>
-            <form onSubmit={handleCreateRule}>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('alerts.channelName')}</label>
-                <input
-                  type="text"
-                  value={newRuleName}
-                  onChange={(e) => setNewRuleName(e.target.value)}
-                  className="input w-full"
-                  required
-                />
-              </div>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('alerts.channelType')}</label>
-                <select
-                  value={newRuleChannelId}
-                  onChange={(e) => setNewRuleChannelId(e.target.value)}
-                  className="input w-full"
-                >
-                  <option value="">{t('alerts.selectChannel')}</option>
-                  {channels.map((channel) => (
-                    <option key={channel.id} value={channel.id}>{channel.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('alerts.pipelineOptional')}</label>
-                <select
-                  value={newRulePipelineId}
-                  onChange={(e) => setNewRulePipelineId(e.target.value)}
-                  className="input w-full"
-                >
-                  <option value="">{t('alerts.anyPipeline')}</option>
-                  {pipelines.map((pipeline) => (
-                    <option key={pipeline.id} value={pipeline.id}>{pipeline.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('alerts.conditionJson')}</label>
-                <div className="mb-3 rounded border border-gray-200 p-3 bg-gray-50">
-                  <div className="grid grid-cols-2 gap-2 mb-2">
-                    <select value={builderLogic} onChange={(e) => setBuilderLogic(e.target.value as 'single' | 'any' | 'all')} className="input w-full">
-                      <option value="single">{t('alerts.singleCondition')}</option>
-                      <option value="any">{t('alerts.anyOf')}</option>
-                      <option value="all">{t('alerts.allOf')}</option>
-                    </select>
-                    <select value={builderSeverity} onChange={(e) => setBuilderSeverity(e.target.value)} className="input w-full">
-                      <option value="INFO">{t('alerts.severityInfo')}</option>
-                      <option value="WARNING">{t('alerts.severityWarning')}</option>
-                      <option value="CRITICAL">{t('alerts.severityCritical')}</option>
-                      <option value="ERROR">{t('alerts.severityError')}</option>
-                    </select>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 mb-2">
-                    <input value={builderFieldA} onChange={(e) => setBuilderFieldA(e.target.value)} className="input w-full" placeholder={t('alerts.fieldPlaceholder')} />
-                    <select value={builderOperatorA} onChange={(e) => setBuilderOperatorA(e.target.value)} className="input w-full">
-                      <option value=">">&gt;</option>
-                      <option value=">=">&gt;=</option>
-                      <option value="<">&lt;</option>
-                      <option value="<=">&lt;=</option>
-                      <option value="==">==</option>
-                      <option value="!=">!=</option>
-                      <option value="contains">contains</option>
-                      <option value="exists">exists</option>
-                    </select>
-                    <input value={builderValueA} onChange={(e) => setBuilderValueA(e.target.value)} className="input w-full" placeholder={t('alerts.valuePlaceholder')} disabled={builderOperatorA === 'exists'} />
-                  </div>
-                  {builderLogic !== 'single' && (
-                    <div className="grid grid-cols-3 gap-2 mb-2">
-                      <input value={builderFieldB} onChange={(e) => setBuilderFieldB(e.target.value)} className="input w-full" placeholder={t('alerts.fieldPlaceholder')} />
-                      <select value={builderOperatorB} onChange={(e) => setBuilderOperatorB(e.target.value)} className="input w-full">
-                        <option value=">">&gt;</option>
-                        <option value=">=">&gt;=</option>
-                        <option value="<">&lt;</option>
-                        <option value="<=">&lt;=</option>
-                        <option value="==">==</option>
-                        <option value="!=">!=</option>
-                        <option value="contains">contains</option>
-                        <option value="exists">exists</option>
-                      </select>
-                      <input value={builderValueB} onChange={(e) => setBuilderValueB(e.target.value)} className="input w-full" placeholder={t('alerts.valuePlaceholder')} disabled={builderOperatorB === 'exists'} />
-                    </div>
-                  )}
-                  <div className="flex gap-2">
-                    <input value={builderMessage} onChange={(e) => setBuilderMessage(e.target.value)} className="input w-full" placeholder={t('alerts.messagePlaceholder')} />
-                    <button type="button" onClick={applyBuilderToJson} className="px-3 py-2 text-xs border border-gray-300 rounded hover:bg-white">{t('common.applyBuilder')}</button>
-                  </div>
-                </div>
-                <div className="mb-2 flex gap-2 flex-wrap">
-                  <button type="button" onClick={() => useConditionTemplate('threshold')} className="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50">{t('alerts.threshold')}</button>
-                  <button type="button" onClick={() => useConditionTemplate('exists')} className="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50">{t('alerts.exists')}</button>
-                  <button type="button" onClick={() => useConditionTemplate('any')} className="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50">{t('alerts.anyOfButton')}</button>
-                </div>
-                <textarea
-                  value={newRuleCondition}
-                  onChange={(e) => {
-                    setNewRuleCondition(e.target.value);
-                    setRuleConditionError('');
-                  }}
-                  className="input w-full"
-                  placeholder={t('alerts.conditionBuilderPlaceholder')}
-                  rows={3}
-                />
-                {ruleConditionError && <p className="mt-1 text-xs text-red-600">{ruleConditionError}</p>}
-              </div>
-              <div className="flex justify-end space-x-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowRuleModal(false);
-                    setEditingRule(null);
-                  }}
-                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                >
-                  {t('common.cancel')}
-                </button>
-                <button
-                  type="submit"
-                  disabled={creatingRule}
-                  className="btn-primary"
-                >
-                  {creatingRule ? t('common.saving') : editingRule ? t('common.save') : t('common.create')}
                 </button>
               </div>
             </form>

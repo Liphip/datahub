@@ -29,6 +29,8 @@ interface PipelineNodeData extends Record<string, unknown> {
   label: string;
   moduleVersionId?: string;
   connectorId?: string;
+  /** MQTT topic scoped to this pipeline node (connector only defines the broker) */
+  mqttTopic?: string;
 }
 
 type ModuleVersionOption = ModuleVersion & {
@@ -136,6 +138,7 @@ function graphToFlow(
       label: String(raw.label ?? raw.type ?? 'Node'),
       moduleVersionId: raw.moduleVersionId as string | undefined,
       connectorId: raw.connectorId as string | undefined,
+      mqttTopic: raw.mqttTopic as string | undefined,
     } satisfies PipelineNodeData,
   }));
 
@@ -163,6 +166,7 @@ function flowToGraph(
         label: d.label,
         moduleVersionId: d.moduleVersionId,
         connectorId: d.connectorId,
+        mqttTopic: d.mqttTopic,
         position: n.position,
       };
     }),
@@ -601,46 +605,80 @@ function NodeConfigPanel({
       </div>
 
       {data.nodeType === 'IMPORT' && (
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Input connector</label>
-          <select
-            className="border rounded px-2 py-1 text-sm w-full"
-            value={data.connectorId ?? ''}
-            onChange={(e) => onChange({ connectorId: e.target.value || undefined })}
-            disabled={!canWrite}
-          >
-            <option value="">— select INPUT connector —</option>
-            {inputConnectors.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} ({c.connectorType})
-              </option>
-            ))}
-          </select>
-          <p className="text-[10px] text-gray-400 mt-1">
-            The platform will fetch data from this connector before your parse() runs.
-          </p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Input connector</label>
+            <select
+              className="border rounded px-2 py-1 text-sm w-full"
+              value={data.connectorId ?? ''}
+              onChange={(e) => onChange({ connectorId: e.target.value || undefined })}
+              disabled={!canWrite}
+            >
+              <option value="">— select INPUT connector —</option>
+              {inputConnectors.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.connectorType})
+                </option>
+              ))}
+            </select>
+            <p className="text-[10px] text-gray-400 mt-1">
+              The platform will fetch data from this connector before your parse() runs.
+            </p>
+          </div>
+          {inputConnectors.find((c) => c.id === data.connectorId)?.connectorType === 'MQTT' && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">MQTT Topic</label>
+              <input
+                className="border rounded px-2 py-1 text-sm w-full"
+                value={data.mqttTopic ?? ''}
+                onChange={(e) => onChange({ mqttTopic: e.target.value || undefined })}
+                placeholder="sensors/+/telemetry"
+                disabled={!canWrite}
+              />
+              <p className="text-[10px] text-gray-400 mt-1">
+                Topic to subscribe to (broker is defined in the connector).
+              </p>
+            </div>
+          )}
         </div>
       )}
 
       {data.nodeType === 'EXPORT' && (
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Output connector</label>
-          <select
-            className="border rounded px-2 py-1 text-sm w-full"
-            value={data.connectorId ?? ''}
-            onChange={(e) => onChange({ connectorId: e.target.value || undefined })}
-            disabled={!canWrite}
-          >
-            <option value="">— select OUTPUT connector —</option>
-            {outputConnectors.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name} ({c.connectorType})
-              </option>
-            ))}
-          </select>
-          <p className="text-[10px] text-gray-400 mt-1">
-            The platform will deliver your shape() result to this connector.
-          </p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Output connector</label>
+            <select
+              className="border rounded px-2 py-1 text-sm w-full"
+              value={data.connectorId ?? ''}
+              onChange={(e) => onChange({ connectorId: e.target.value || undefined })}
+              disabled={!canWrite}
+            >
+              <option value="">— select OUTPUT connector —</option>
+              {outputConnectors.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.connectorType})
+                </option>
+              ))}
+            </select>
+            <p className="text-[10px] text-gray-400 mt-1">
+              The platform will deliver your shape() result to this connector.
+            </p>
+          </div>
+          {outputConnectors.find((c) => c.id === data.connectorId)?.connectorType === 'MQTT' && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">MQTT Topic</label>
+              <input
+                className="border rounded px-2 py-1 text-sm w-full"
+                value={data.mqttTopic ?? ''}
+                onChange={(e) => onChange({ mqttTopic: e.target.value || undefined })}
+                placeholder="output/results"
+                disabled={!canWrite}
+              />
+              <p className="text-[10px] text-gray-400 mt-1">
+                Topic to publish to (broker is defined in the connector).
+              </p>
+            </div>
+          )}
         </div>
       )}
 

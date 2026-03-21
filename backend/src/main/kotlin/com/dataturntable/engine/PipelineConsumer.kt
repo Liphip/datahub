@@ -4,6 +4,7 @@ import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineRun
+import com.dataturntable.pipeline.PipelineRunNodeLog
 import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.alert.AlertDispatcher
 import com.dataturntable.connectors.BrokerCredential
@@ -273,7 +274,7 @@ class PipelineConsumer {
         val executionStartedAt = System.currentTimeMillis()
 
         try {
-            val result = executePipeline(pipeline, runId, dataPayload)
+            val result = executePipeline(pipeline, run, runId, dataPayload)
             val executionMs = System.currentTimeMillis() - executionStartedAt
             
             if (run != null) {
@@ -348,7 +349,7 @@ class PipelineConsumer {
         }
     }
     
-    private fun executePipeline(pipeline: Pipeline, runId: String, inputData: Map<String, Any>?): Map<String, Any?> {
+    private fun executePipeline(pipeline: Pipeline, run: PipelineRun?, runId: String, inputData: Map<String, Any>?): Map<String, Any?> {
         val results = mutableMapOf<String, Any?>()
         val moduleLogs = mutableListOf<Map<String, Any?>>()
         val executionLog = mutableListOf<String>()
@@ -418,6 +419,41 @@ class PipelineConsumer {
                     }
                 }
 
+                // Dispatch channel alert if ALERT module returned __alert__ key
+                if (node.type == ModuleType.ALERT) {
+                    val resultMap = output.result as? Map<*, *>
+                    val alertPayload = resultMap?.get("__alert__") as? Map<*, *>
+                    if (alertPayload != null) {
+                        try {
+                            @Suppress("UNCHECKED_CAST")
+                            alertDispatcher.dispatchToChannel(
+                                pipeline = pipeline,
+                                channelRef = alertPayload["channelId"]?.toString()
+                                    ?: alertPayload["channelName"]?.toString(),
+                                title = alertPayload["title"]?.toString() ?: "Pipeline Alert",
+                                message = alertPayload["message"]?.toString() ?: "",
+                                severity = alertPayload["severity"]?.toString() ?: "WARNING",
+                                payload = alertPayload["payload"] as? Map<String, Any>
+                            )
+                        } catch (ae: Exception) {
+                            LOG.warnf("Alert dispatch failed for node %s: %s", node.id, ae.message)
+                        }
+                    }
+                }
+
+                val nodeLog = PipelineRunNodeLog().apply {
+                    this.run = run
+                    this.nodeId = node.id
+                    this.nodeType = stage
+                    this.moduleName = version.module?.name
+                    this.success = true
+                    this.stdout = trimLog(output.stdout)
+                    this.stderr = trimLog(output.stderr, 4000)
+                    this.durationMs = output.durationMs
+                    this.executedAt = java.time.Instant.now()
+                }
+                if (run != null) nodeLog.persist()
+
                 moduleLogs.add(mapOf(
                     "stage" to stage,
                     "order" to order,
@@ -435,6 +471,19 @@ class PipelineConsumer {
                 return output.result
 
             } catch (e: ModuleExecutionException) {
+                val nodeLog = PipelineRunNodeLog().apply {
+                    this.run = run
+                    this.nodeId = node.id
+                    this.nodeType = stage
+                    this.moduleName = version.module?.name
+                    this.success = false
+                    this.stdout = trimLog(e.stdout)
+                    this.stderr = trimLog(e.stderr, 4000)
+                    this.errorMessage = e.message
+                    this.executedAt = java.time.Instant.now()
+                }
+                if (run != null) nodeLog.persist()
+
                 moduleLogs.add(mapOf(
                     "stage" to stage,
                     "order" to order,
@@ -480,8 +529,9 @@ class PipelineConsumer {
 
         graphEdgesRaw.forEach { rawEdge ->
             val edgeMap = rawEdge as? Map<*, *> ?: return@forEach
-            val from = edgeMap["from"]?.toString()?.trim().orEmpty()
-            val to   = edgeMap["to"]?.toString()?.trim().orEmpty()
+            // React Flow serialises as source/target; also accept legacy from/to
+            val from = (edgeMap["source"] ?: edgeMap["from"])?.toString()?.trim().orEmpty()
+            val to   = (edgeMap["target"] ?: edgeMap["to"])?.toString()?.trim().orEmpty()
             if (from !in nodeById || to !in nodeById) return@forEach
             downstream[from]?.add(to)
             upstream[to]?.add(from)
@@ -538,26 +588,8 @@ class PipelineConsumer {
             )
         }
 
-        // ── Declarative alert rule evaluation on terminal output ──────────────
-        val terminalOutput = orderedNodeIds
-            .filter { downstream[it].isNullOrEmpty() }
-            .mapNotNull { outputs[it] }
-            .lastOrNull() ?: outputs.values.lastOrNull() ?: inputData
-
-        if (terminalOutput is Map<*, *>) {
-            @Suppress("UNCHECKED_CAST")
-            val alertMap = terminalOutput as? Map<String, Any>
-            if (alertMap != null) {
-                val alertReport = alertDispatcher.evaluateRulesForPipeline(pipeline, alertMap)
-                results["alertsFired"] = alertReport.firedAlerts
-                results["alertEvaluation"] = mapOf(
-                    "evaluatedRules" to alertReport.evaluatedRules,
-                    "matchedRules" to alertReport.matchedRules,
-                    "firedAlerts" to alertReport.firedAlerts,
-                    "cooldownSkipped" to alertReport.cooldownSkipped
-                )
-            }
-        }
+        // Alerts are now dispatched inside ALERT module nodes via __alert__ in their output.
+        // No separate rule evaluation pass is needed here.
 
         return mapOf(
             "result" to results,

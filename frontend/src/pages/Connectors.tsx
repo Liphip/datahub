@@ -21,7 +21,6 @@ type ConnectorConfigField = {
 const connectorConfigSchema: Record<ConnectorType, ConnectorConfigField[]> = {
   MQTT: [
     { key: 'broker', label: 'Broker URL', type: 'url', required: true, placeholder: 'mqtt://broker:1883' },
-    { key: 'topic', label: 'Topic', required: true, placeholder: 'sensors/+/telemetry' },
     { key: 'clientId', label: 'Client ID', placeholder: 'dt-edge-ingest' },
     { key: 'username', label: 'Username' },
     { key: 'password', label: 'Password', type: 'password' },

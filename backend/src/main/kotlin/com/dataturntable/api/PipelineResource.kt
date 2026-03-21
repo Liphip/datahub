@@ -2,6 +2,7 @@ package com.dataturntable.api
 
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineRun
+import com.dataturntable.pipeline.PipelineRunNodeLog
 import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.connectors.Connector
@@ -144,8 +145,9 @@ class PipelineResource {
 
         for (edge in edges) {
             val edgeMap = edge as? Map<*, *> ?: continue
-            val fromId = edgeMap["from"]?.toString() ?: continue
-            val toId   = edgeMap["to"]?.toString() ?: continue
+            // React Flow serialises edges with "source"/"target"; also accept legacy "from"/"to"
+            val fromId = (edgeMap["source"] ?: edgeMap["from"])?.toString() ?: continue
+            val toId   = (edgeMap["target"] ?: edgeMap["to"])?.toString() ?: continue
             if (fromId !in nodeIds || toId !in nodeIds) {
                 return "Edge $fromId -> $toId references unknown node"
             }
@@ -1170,8 +1172,25 @@ class PipelineResource {
         } else {
             null
         }
-        val moduleLogs = if (withDetails) metrics["moduleLogs"] else null
         val executionLog = if (withDetails) metrics["executionLog"] else null
+
+        // Load persisted node logs from DB (preferred over in-metrics JSON)
+        val dbNodeLogs = if (withDetails) {
+            PipelineRunNodeLog.findByRunId(runUuid).map { log ->
+                mapOf(
+                    "nodeId" to log.nodeId,
+                    "stage" to log.nodeType,
+                    "moduleName" to log.moduleName,
+                    "success" to log.success,
+                    "stdout" to log.stdout,
+                    "stderr" to log.stderr,
+                    "error" to log.errorMessage,
+                    "durationMs" to log.durationMs,
+                    "executedAt" to log.executedAt
+                )
+            }
+        } else null
+        val moduleLogs = if (withDetails) (dbNodeLogs?.takeIf { it.isNotEmpty() } ?: metrics["moduleLogs"]) else null
 
         return Response.ok(
             mapOf(
@@ -1190,6 +1209,46 @@ class PipelineResource {
                 "alertsFired" to alertsFired
             )
         ).build()
+    }
+
+    @GET
+    @Path("/{id}/runs/{runId}/logs")
+    fun getRunLogs(
+        @PathParam("id") id: String,
+        @PathParam("runId") runId: String
+    ): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val pipelineId = try { UUID.fromString(id) } catch (_: Exception) {
+            return Response.status(400).entity(mapOf("error" to "Invalid pipeline id")).build()
+        }
+        val runUuid = try { UUID.fromString(runId) } catch (_: Exception) {
+            return Response.status(400).entity(mapOf("error" to "Invalid run id")).build()
+        }
+        val pipeline = em.find(Pipeline::class.java, pipelineId)
+            ?: return Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
+        val tenantId = pipeline.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
+        requireTenantAccess(currentUser, tenantId, "pipeline:read")?.let { return it }
+        val run = em.find(PipelineRun::class.java, runUuid)
+            ?: return Response.status(404).entity(mapOf("error" to "Run not found")).build()
+        if (run.pipeline?.id != pipeline.id)
+            return Response.status(404).entity(mapOf("error" to "Run not found for this pipeline")).build()
+
+        val logs = PipelineRunNodeLog.findByRunId(runUuid).map { log ->
+            mapOf(
+                "id" to log.id,
+                "nodeId" to log.nodeId,
+                "stage" to log.nodeType,
+                "moduleName" to log.moduleName,
+                "success" to log.success,
+                "stdout" to log.stdout,
+                "stderr" to log.stderr,
+                "error" to log.errorMessage,
+                "durationMs" to log.durationMs,
+                "executedAt" to log.executedAt
+            )
+        }
+        return Response.ok(mapOf("runId" to run.id, "logs" to logs)).build()
     }
 
     @GET

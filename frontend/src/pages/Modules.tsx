@@ -5,11 +5,12 @@ import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { CodeModule } from '../types';
 
-const MODULE_TYPES = ['IMPORT', 'PROCESSING', 'EXPORT', 'ALERT'] as const;
+const MODULE_TYPES = ['IMPORT', 'PROCESSING', 'MERGE', 'EXPORT', 'ALERT'] as const;
 
 const moduleTypeColors: Record<string, string> = {
   IMPORT: 'bg-blue-100 text-blue-800',
   PROCESSING: 'bg-purple-100 text-purple-800',
+  MERGE: 'bg-violet-100 text-violet-800',
   EXPORT: 'bg-green-100 text-green-800',
   ALERT: 'bg-red-100 text-red-800',
 };

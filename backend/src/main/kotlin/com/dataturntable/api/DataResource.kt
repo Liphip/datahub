@@ -9,10 +9,13 @@ import io.quarkus.security.Authenticated
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
+import jakarta.transaction.Transactional
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
+import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.eclipse.microprofile.jwt.JsonWebToken
+import java.io.File
 import java.sql.Timestamp
 import java.time.Instant
 import java.time.LocalDateTime
@@ -29,10 +32,13 @@ class DataResource {
 
     @Inject
     lateinit var jwt: JsonWebToken
-    
+
     @PersistenceContext
     lateinit var em: EntityManager
-    
+
+    @ConfigProperty(name = "dataturntable.data.blob-dir", defaultValue = "/data/blobs")
+    lateinit var blobDir: String
+
     private val objectMapper = ObjectMapper()
     private val tableNameRegex = Regex("^[A-Za-z0-9_]+$")
     private val columnNameRegex = Regex("^[A-Za-z_][A-Za-z0-9_]*$")
@@ -513,5 +519,193 @@ class DataResource {
     
     private fun sanitizeTableName(table: String): String {
         return table.replace(Regex("[^a-zA-Z0-9_]"), "")
+    }
+
+    // ── Blob storage ──────────────────────────────────────────────────────────
+
+    @GET
+    @Path("/{tenantId}/blobs")
+    fun listBlobs(@PathParam("tenantId") tenantId: String): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val tenantUuid = parseTenantUuid(tenantId)
+        requireTenantAccess(currentUser, tenantUuid.toString(), "data:read")?.let { return it }
+
+        return try {
+            val rows = em.createNativeQuery(
+                "SELECT id, name, content_type, size_bytes, created_at FROM data_blobs WHERE tenant_id = :tid ORDER BY created_at DESC"
+            ).setParameter("tid", tenantUuid).resultList
+            val blobs = rows.map { row ->
+                val r = row as Array<*>
+                mapOf("id" to r[0]?.toString(), "name" to r[1], "contentType" to r[2], "sizeBytes" to r[3], "createdAt" to r[4]?.toString())
+            }
+            Response.ok(mapOf("blobs" to blobs)).build()
+        } catch (e: Exception) {
+            Response.status(500).entity(mapOf("error" to "Failed to list blobs: ${e.message}")).build()
+        }
+    }
+
+    @POST
+    @Path("/{tenantId}/blobs")
+    @Consumes(MediaType.MULTIPART_FORM_DATA)
+    @Transactional
+    fun uploadBlob(
+        @PathParam("tenantId") tenantId: String,
+        @FormParam("name") name: String?,
+        @FormParam("file") fileBytes: ByteArray?
+    ): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val tenantUuid = parseTenantUuid(tenantId)
+        requireTenantAccess(currentUser, tenantUuid.toString(), "data:write")?.let { return it }
+        if (fileBytes == null || fileBytes.isEmpty())
+            return Response.status(400).entity(mapOf("error" to "No file provided")).build()
+        val fileName = (name ?: "upload-${UUID.randomUUID()}").replace(Regex("[^a-zA-Z0-9._\\-]"), "_")
+
+        return try {
+            val dir = File("$blobDir/$tenantId").also { it.mkdirs() }
+            val blobId = UUID.randomUUID()
+            val storagePath = "${dir.absolutePath}/$blobId-$fileName"
+            File(storagePath).writeBytes(fileBytes)
+
+            em.createNativeQuery(
+                "INSERT INTO data_blobs (id, tenant_id, name, size_bytes, storage_path, uploaded_by) VALUES (:id, :tid, :name, :size, :path, :uid)"
+            ).setParameter("id", blobId)
+             .setParameter("tid", tenantUuid)
+             .setParameter("name", fileName)
+             .setParameter("size", fileBytes.size.toLong())
+             .setParameter("path", storagePath)
+             .setParameter("uid", currentUser.id)
+             .executeUpdate()
+
+            Response.status(201).entity(mapOf("id" to blobId, "name" to fileName, "sizeBytes" to fileBytes.size)).build()
+        } catch (e: Exception) {
+            Response.status(500).entity(mapOf("error" to "Upload failed: ${e.message}")).build()
+        }
+    }
+
+    @GET
+    @Path("/{tenantId}/blobs/{blobId}/download")
+    fun downloadBlob(
+        @PathParam("tenantId") tenantId: String,
+        @PathParam("blobId") blobId: String
+    ): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val tenantUuid = parseTenantUuid(tenantId)
+        requireTenantAccess(currentUser, tenantUuid.toString(), "data:read")?.let { return it }
+
+        return try {
+            val blobUuid = UUID.fromString(blobId)
+            val rows = em.createNativeQuery(
+                "SELECT name, content_type, storage_path FROM data_blobs WHERE id = :id AND tenant_id = :tid"
+            ).setParameter("id", blobUuid).setParameter("tid", tenantUuid).resultList
+
+            if (rows.isEmpty()) return Response.status(404).entity(mapOf("error" to "Blob not found")).build()
+            val r = rows[0] as Array<*>
+            val storagePath = r[2]?.toString() ?: return Response.status(404).entity(mapOf("error" to "No storage path")).build()
+            val file = File(storagePath)
+            if (!file.exists()) return Response.status(404).entity(mapOf("error" to "File not found on disk")).build()
+
+            Response.ok(file.readBytes())
+                .header("Content-Disposition", "attachment; filename=\"${r[0]}\"")
+                .type(r[1]?.toString() ?: MediaType.APPLICATION_OCTET_STREAM)
+                .build()
+        } catch (e: Exception) {
+            Response.status(500).entity(mapOf("error" to "Download failed: ${e.message}")).build()
+        }
+    }
+
+    @DELETE
+    @Path("/{tenantId}/blobs/{blobId}")
+    @Transactional
+    fun deleteBlob(
+        @PathParam("tenantId") tenantId: String,
+        @PathParam("blobId") blobId: String
+    ): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val tenantUuid = parseTenantUuid(tenantId)
+        requireTenantAccess(currentUser, tenantUuid.toString(), "data:write")?.let { return it }
+
+        return try {
+            val blobUuid = UUID.fromString(blobId)
+            val rows = em.createNativeQuery(
+                "SELECT storage_path FROM data_blobs WHERE id = :id AND tenant_id = :tid"
+            ).setParameter("id", blobUuid).setParameter("tid", tenantUuid).resultList
+            if (rows.isEmpty()) return Response.status(404).entity(mapOf("error" to "Blob not found")).build()
+            val path = rows[0]?.toString()
+            if (!path.isNullOrBlank()) File(path).delete()
+            em.createNativeQuery("DELETE FROM data_blobs WHERE id = :id").setParameter("id", blobUuid).executeUpdate()
+            Response.noContent().build()
+        } catch (e: Exception) {
+            Response.status(500).entity(mapOf("error" to "Delete failed: ${e.message}")).build()
+        }
+    }
+
+    // ── Table registry ────────────────────────────────────────────────────────
+
+    @POST
+    @Path("/{tenantId}/tables/register")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Transactional
+    fun registerTable(
+        @PathParam("tenantId") tenantId: String,
+        request: Map<String, Any>
+    ): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val tenantUuid = parseTenantUuid(tenantId)
+        requireTenantAccess(currentUser, tenantUuid.toString(), "data:write")?.let { return it }
+
+        val tableName = requireValidTableName(request["tableName"] as? String)
+        val tableType = (request["tableType"] as? String ?: "timeseries").lowercase()
+        if (tableType !in setOf("timeseries", "relational"))
+            return Response.status(400).entity(mapOf("error" to "Invalid tableType")).build()
+
+        return try {
+            val schemaJson = if (tableType == "relational") {
+                objectMapper.writeValueAsString(request["columns"] ?: emptyList<Any>())
+            } else null
+
+            // Ensure the physical table exists
+            ensureTableExists(tenantId, tableName)
+            if (tableType == "relational" && request["columns"] != null) {
+                @Suppress("UNCHECKED_CAST")
+                val columns = request["columns"] as? List<Map<String, String>> ?: emptyList()
+                ensureRelationalTableExists(tenantId, tableName, columns)
+            }
+
+            em.createNativeQuery(
+                """INSERT INTO data_table_registry (tenant_id, table_name, table_type, schema_def)
+                   VALUES (:tid, :name, :type, CAST(:schema AS jsonb))
+                   ON CONFLICT (tenant_id, table_name) DO UPDATE SET table_type = EXCLUDED.table_type, schema_def = EXCLUDED.schema_def"""
+            ).setParameter("tid", tenantUuid)
+             .setParameter("name", tableName)
+             .setParameter("type", tableType)
+             .setParameter("schema", schemaJson)
+             .executeUpdate()
+
+            Response.status(201).entity(mapOf("tableName" to tableName, "tableType" to tableType)).build()
+        } catch (e: WebApplicationException) {
+            e.response
+        } catch (e: Exception) {
+            Response.status(500).entity(mapOf("error" to "Register failed: ${e.message}")).build()
+        }
+    }
+
+    private fun ensureRelationalTableExists(tenantId: String, tableName: String, columns: List<Map<String, String>>) {
+        val safeTable = "tenant_${tenantId.replace("-", "_")}_$tableName"
+        val colDefs = columns.joinToString(", ") { col ->
+            val colName = col["name"]?.replace(Regex("[^a-zA-Z0-9_]"), "") ?: return@joinToString ""
+            val colType = when (col["type"]?.uppercase()) {
+                "INTEGER" -> "INTEGER"
+                "FLOAT" -> "DOUBLE PRECISION"
+                "BOOLEAN" -> "BOOLEAN"
+                "JSONB" -> "JSONB"
+                "TIMESTAMPTZ" -> "TIMESTAMPTZ"
+                else -> "TEXT"
+            }
+            "$colName $colType"
+        }.filter { it.isNotBlank() }
+        if (colDefs.isEmpty()) return
+        em.createNativeQuery(
+            "CREATE TABLE IF NOT EXISTS $safeTable (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id UUID DEFAULT '${tenantId}', $colDefs)"
+        ).executeUpdate()
     }
 }

@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, DataSummaryResponse, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, Role, Membership, TenantContext, BrokerCredential } from '../types';
+import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, AlertChannel, AlertRule, AlertHistory, DataSummaryResponse, DataBlob, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, Role, Membership, TenantContext, BrokerCredential } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 export const API_STATUS_EVENT = 'dataturntable:api-status';
@@ -683,6 +683,29 @@ class ApiService {
 
   async deleteRole(id: string): Promise<void> {
     await this.client.delete(`/roles/${id}`);
+  }
+
+  // Data blobs
+  async getDataBlobs(tenantId: string): Promise<DataBlob[]> {
+    const response = await this.client.get<DataBlob[]>(`/data/${tenantId}/blobs`);
+    return response.data;
+  }
+
+  async uploadDataBlob(tenantId: string, file: File): Promise<DataBlob> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await this.client.post<DataBlob>(`/data/${tenantId}/blobs`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  }
+
+  getDataBlobUrl(tenantId: string, blobId: string): string {
+    return `${API_BASE_URL}/data/${tenantId}/blobs/${encodeURIComponent(blobId)}`;
+  }
+
+  async deleteDataBlob(tenantId: string, blobId: string): Promise<void> {
+    await this.client.delete(`/data/${tenantId}/blobs/${encodeURIComponent(blobId)}`);
   }
 }
 

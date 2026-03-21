@@ -367,6 +367,96 @@ class AlertDispatcher {
         }
     }
     
+    /**
+     * Called when an ALERT module returns `{"__alert__": {...}}` in its output.
+     * Looks up the channel by ID (preferred) or by name within the pipeline's tenant,
+     * creates an AlertHistory entry, and dispatches it.
+     *
+     * @param channelRef  Channel UUID string or channel name.
+     */
+    @Transactional
+    fun dispatchToChannel(
+        pipeline: Pipeline,
+        channelRef: String?,
+        title: String,
+        message: String,
+        severity: String = "WARNING",
+        payload: Map<String, Any>? = null
+    ) {
+        if (!alertsEnabled) {
+            LOG.infof("Alerts disabled, skipping channel dispatch for '%s'", title)
+            return
+        }
+        val tenantId = pipeline.tenant?.id ?: run {
+            LOG.warn("Cannot dispatch alert: pipeline has no tenant")
+            return
+        }
+
+        val channel: AlertChannel? = if (channelRef != null) {
+            // Try UUID lookup first, then fall back to name search within tenant
+            val byId = try {
+                val uuid = java.util.UUID.fromString(channelRef)
+                em.find(AlertChannel::class.java, uuid)
+                    ?.takeIf { it.tenant?.id == tenantId && it.isActive }
+            } catch (_: Exception) { null }
+
+            byId ?: em.createQuery(
+                "SELECT c FROM AlertChannel c WHERE c.tenant.id = :tid AND c.name = :name AND c.isActive = true",
+                AlertChannel::class.java
+            ).setParameter("tid", tenantId).setParameter("name", channelRef)
+                .resultList.firstOrNull()
+        } else {
+            // No channel specified — try the first active channel for this tenant
+            em.createQuery(
+                "SELECT c FROM AlertChannel c WHERE c.tenant.id = :tid AND c.isActive = true ORDER BY c.createdAt ASC",
+                AlertChannel::class.java
+            ).setParameter("tid", tenantId).setMaxResults(1).resultList.firstOrNull()
+        }
+
+        if (channel == null) {
+            LOG.warnf("Alert channel not found for ref '%s' in tenant %s — alert not dispatched", channelRef, tenantId)
+            return
+        }
+
+        val parsedSeverity = parseSeverity(severity)
+        val alert = AlertHistory().apply {
+            this.tenant = pipeline.tenant
+            this.channel = channel
+            this.severity = parsedSeverity
+            this.title = title
+            this.message = message
+            this.status = AlertStatus.PENDING
+            this.payload = payload?.let { objectMapper.writeValueAsString(it) }
+            this.sentAt = java.time.Instant.now()
+        }
+        alert.persist()
+        dispatchAlertToChannel(channel, alert)
+    }
+
+    /** Dispatch an alert directly to a channel (no rule required). */
+    @Transactional
+    fun dispatchAlertToChannel(channel: AlertChannel, alert: AlertHistory) {
+        if (!alertsEnabled) return
+        try {
+            when (channel.channelType) {
+                null -> throw IllegalArgumentException("Channel type not set")
+                MQTT -> dispatchMqttAlert(channel, alert)
+                WEBHOOK -> dispatchWebhookAlert(channel, alert)
+                REST -> dispatchRestAlert(channel, alert)
+                EMAIL -> dispatchEmailAlert(channel, alert)
+                SLACK -> dispatchSlackAlert(channel, alert)
+            }
+            alert.status = AlertStatus.SENT
+            alert.sentAt = java.time.Instant.now()
+            alert.persist()
+            LOG.infof("Channel alert dispatched: %s -> %s", channel.name, alert.title)
+        } catch (e: Exception) {
+            LOG.errorf("Failed to dispatch channel alert: %s", e.message)
+            alert.status = AlertStatus.FAILED
+            alert.persist()
+        }
+    }
+
     fun createAlertFromRule(
         rule: AlertRule,
         pipeline: Pipeline,

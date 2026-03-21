@@ -199,6 +199,7 @@ export interface PipelineRun {
   moduleLogs?: Array<{
     stage: 'IMPORT' | 'PROCESSING' | 'MERGE' | 'ALERT' | 'EXPORT' | string;
     order?: number;
+    nodeId?: string;
     moduleVersionId?: string;
     moduleName?: string;
     success?: boolean;
@@ -206,6 +207,7 @@ export interface PipelineRun {
     stderr?: string;
     exitCode?: number;
     durationMs?: number;
+    executedAt?: string;
     error?: string;
     connector?: {
       id?: string;
@@ -433,5 +435,25 @@ export interface Role {
   abilities: string[];
   isDefault: boolean;
   isSystem: boolean;
+  createdAt: string;
+}
+
+export interface ModuleLog {
+  nodeId?: string;
+  stage: string;
+  moduleName?: string;
+  success: boolean;
+  stdout?: string;
+  stderr?: string;
+  error?: string;
+  durationMs?: number;
+  executedAt?: string;
+}
+
+export interface DataBlob {
+  id: string;
+  name: string;
+  contentType: string;
+  sizeBytes: number;
   createdAt: string;
 }
