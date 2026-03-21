@@ -1,254 +1,512 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Pipeline, PipelineRun, CodeModule, Connector, Tenant, PipelineRunSummary } from '../types';
+import type { Pipeline, PipelineRun, PipelineRunSummary } from '../types';
 
-interface TenantNode extends Tenant {
-  children?: TenantNode[];
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fmt(ms?: number | null) {
+  if (ms == null) return 'n/a';
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }
+
+function fmtRate(rate?: number | null) {
+  if (rate == null) return 'n/a';
+  return `${Math.round(rate * 100)}%`;
+}
+
+function rateColor(rate?: number | null) {
+  if (rate == null) return 'text-slate-500';
+  if (rate >= 0.9) return 'text-emerald-600 dark:text-emerald-400';
+  if (rate >= 0.75) return 'text-amber-600 dark:text-amber-400';
+  return 'text-red-600 dark:text-red-400';
+}
+
+function rateBg(rate?: number | null) {
+  if (rate == null) return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300';
+  if (rate >= 0.9) return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300';
+  if (rate >= 0.75) return 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300';
+  return 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300';
+}
+
+const STATUS_DOT: Record<string, string> = {
+  SUCCESS:   'bg-emerald-500',
+  FAILED:    'bg-red-500',
+  RUNNING:   'bg-amber-400 animate-pulse',
+  PENDING:   'bg-slate-400',
+  CANCELLED: 'bg-slate-300',
+};
+
+const STATUS_BADGE: Record<string, string> = {
+  SUCCESS:   'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300',
+  FAILED:    'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
+  RUNNING:   'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
+  PENDING:   'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300',
+  CANCELLED: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
+};
+
+// ── Mini sparkline (bar chart) ────────────────────────────────────────────────
+
+function MiniSparkline({
+  buckets,
+  height = 28,
+}: {
+  buckets: PipelineRunSummary['trendBuckets'];
+  height?: number;
+}) {
+  const max = Math.max(1, ...buckets.map((b) => b.totalRuns));
+  if (buckets.length === 0) return <div className="text-xs text-slate-400">No data</div>;
+  return (
+    <div className="flex items-end gap-px" style={{ height }}>
+      {buckets.map((b, i) => {
+        const ratio = b.totalRuns / max;
+        const failShare = b.totalRuns > 0 ? b.failedRuns / b.totalRuns : 0;
+        const bg =
+          b.totalRuns === 0
+            ? 'bg-slate-200 dark:bg-slate-700'
+            : failShare > 0.4
+            ? 'bg-red-400 dark:bg-red-500'
+            : failShare > 0
+            ? 'bg-amber-400 dark:bg-amber-500'
+            : 'bg-emerald-400 dark:bg-emerald-500';
+        return (
+          <div
+            key={i}
+            className={`flex-1 rounded-t ${bg} min-h-[2px]`}
+            style={{ height: `${Math.max(8, Math.round(ratio * 100))}%` }}
+            title={`${new Date(b.bucketStart).toLocaleString()} · ${b.totalRuns} runs (${b.failedRuns} failed)`}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Per-tenant data ───────────────────────────────────────────────────────────
+
+interface TenantStats {
+  tenantId: string;
+  tenantName: string;
+  roleName?: string;
+  summary: PipelineRunSummary | null;
+  pipelineCount: number;
+  activePipelines: number;
+  loading: boolean;
+}
+
+// ── Stat card ─────────────────────────────────────────────────────────────────
+
+function StatCard({
+  label,
+  value,
+  sub,
+  colorClass = 'text-slate-800 dark:text-slate-100',
+}: {
+  label: string;
+  value: string | number;
+  sub?: string;
+  colorClass?: string;
+}) {
+  return (
+    <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4">
+      <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">{label}</p>
+      <p className={`mt-1 text-2xl font-bold ${colorClass}`}>{value}</p>
+      {sub && <p className="mt-0.5 text-xs text-slate-400">{sub}</p>}
+    </div>
+  );
+}
+
+// ── Section heading ───────────────────────────────────────────────────────────
+
+function SectionHeading({
+  children,
+  action,
+}: {
+  children: React.ReactNode;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between mb-4">
+      <h2 className="text-base font-semibold text-slate-800 dark:text-slate-100">{children}</h2>
+      {action}
+    </div>
+  );
+}
+
+// ── Main Dashboard ────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
   const { t } = useTranslation();
-  const { user, selectedTenantId, tenantContexts } = useAuthStore();
+  const { user, selectedTenantId, tenantContexts, switchTenant } = useAuthStore();
   const navigate = useNavigate();
+
+  const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
+
+  // Current-tenant data
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
-  const [allRuns, setAllRuns] = useState<(PipelineRun & { pipelineName?: string })[]>([]);
-  const [modules, setModules] = useState<CodeModule[]>([]);
-  const [connectors, setConnectors] = useState<Connector[]>([]);
-  const [tenantTree, setTenantTree] = useState<TenantNode[]>([]);
-  const [runSummary, setRunSummary] = useState<PipelineRunSummary | null>(null);
+  const [recentRuns, setRecentRuns] = useState<(PipelineRun & { pipelineName?: string })[]>([]);
+  const [summary, setSummary] = useState<PipelineRunSummary | null>(null);
   const [reliabilityWindow, setReliabilityWindow] = useState<1 | 24 | 168>(24);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
+  // Cross-tenant stats
+  const [tenantStats, setTenantStats] = useState<TenantStats[]>([]);
 
+  // ── Fetch current-tenant data ──────────────────────────────────────────────
   useEffect(() => {
-    const fetchData = async () => {
-      if (!tenantId) { setLoading(false); return; }
-      try {
-        const [pipelinesData, modulesData, connectorsData] = await Promise.all([
-          api.getPipelines(tenantId, { includeRunSummary: true }),
-          api.getModules(tenantId),
-          api.getConnectors(tenantId),
-        ]);
-        setPipelines(pipelinesData);
-        setModules(modulesData);
-        setConnectors(connectorsData);
+    if (!tenantId) { setLoading(false); return; }
+    let cancelled = false;
+    setLoading(true);
+    setError('');
 
+    const run = async () => {
+      try {
+        const [pipelinesData, summaryData] = await Promise.all([
+          api.getPipelines(tenantId, { includeRunSummary: true }),
+          api.getPipelineRunSummary(tenantId, 50, reliabilityWindow).catch(() => null),
+        ]);
+        if (cancelled) return;
+        setPipelines(pipelinesData);
+        setSummary(summaryData);
+
+        // Collect recent runs across all pipelines (top 10)
         const runLists = await Promise.all(
           pipelinesData.map(async (p) => {
             try {
               const runs = await api.getPipelineRuns(p.id);
               return runs.slice(0, 3).map((r) => ({ ...r, pipelineName: p.name }));
-            } catch {
-              return [];
-            }
+            } catch { return []; }
           })
         );
-        const combined = runLists
-          .flat()
-          .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
-          .slice(0, 10);
-        setAllRuns(combined);
-
-        try {
-          const summary = await api.getPipelineRunSummary(tenantId, 50, reliabilityWindow);
-          setRunSummary(summary);
-        } catch {
-          setRunSummary(null);
-        }
-
-        if (user?.superadmin) {
-          try {
-            const tenants = await api.getTenantsRecursive();
-            setTenantTree(tenants as TenantNode[]);
-          } catch {
-            setTenantTree([]);
-          }
-        }
-
-        setError('');
+        if (cancelled) return;
+        setRecentRuns(
+          runLists
+            .flat()
+            .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
+            .slice(0, 12)
+        );
       } catch {
-        setError(t('dashboard.failedToLoadDashboard'));
+        if (!cancelled) setError(t('dashboard.failedToLoadDashboard'));
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
-    fetchData();
-  }, [tenantId, user?.superadmin, reliabilityWindow, t]);
+    run();
+    return () => { cancelled = true; };
+  }, [tenantId, reliabilityWindow, t]);
 
-  const activePipelines = pipelines.filter((p) => p.isActive).length;
-  const failedRuns = allRuns.filter((r) => r.status === 'FAILED').length;
-  const successRuns = allRuns.filter((r) => r.status === 'SUCCESS').length;
-  const problematicPipelines = pipelines
-    .filter((p) => p.latestRunStatus === 'FAILED' || p.latestRunStatus === 'RUNNING' || p.latestRunStatus === 'PENDING')
-    .sort((a, b) => {
-      const weight = (s?: string) => (s === 'FAILED' ? 0 : s === 'RUNNING' || s === 'PENDING' ? 1 : 2);
-      const w = weight(a.latestRunStatus) - weight(b.latestRunStatus);
-      if (w !== 0) return w;
-      const aTime = a.latestRunStartedAt ? new Date(a.latestRunStartedAt).getTime() : 0;
-      const bTime = b.latestRunStartedAt ? new Date(b.latestRunStartedAt).getTime() : 0;
-      return bTime - aTime;
+  // ── Fetch all-tenants stats ────────────────────────────────────────────────
+  useEffect(() => {
+    if (tenantContexts.length < 2) { setTenantStats([]); return; }
+    let cancelled = false;
+
+    const initial: TenantStats[] = tenantContexts.map((ctx) => ({
+      tenantId: ctx.tenantId,
+      tenantName: ctx.tenantName,
+      roleName: ctx.roleName,
+      summary: null,
+      pipelineCount: 0,
+      activePipelines: 0,
+      loading: true,
+    }));
+    setTenantStats(initial);
+
+    tenantContexts.forEach(async (ctx) => {
+      try {
+        const [pl, sm] = await Promise.all([
+          api.getPipelines(ctx.tenantId).catch(() => [] as Pipeline[]),
+          api.getPipelineRunSummary(ctx.tenantId, 50, 24).catch(() => null),
+        ]);
+        if (cancelled) return;
+        setTenantStats((prev) =>
+          prev.map((s) =>
+            s.tenantId === ctx.tenantId
+              ? {
+                  ...s,
+                  loading: false,
+                  pipelineCount: pl.length,
+                  activePipelines: pl.filter((p) => p.isActive).length,
+                  summary: sm,
+                }
+              : s
+          )
+        );
+      } catch {
+        if (!cancelled) {
+          setTenantStats((prev) =>
+            prev.map((s) => (s.tenantId === ctx.tenantId ? { ...s, loading: false } : s))
+          );
+        }
+      }
     });
 
-  const runStatusColor: Record<string, string> = {
-    SUCCESS: 'bg-green-500',
-    FAILED: 'bg-red-500',
-    RUNNING: 'bg-yellow-400 animate-pulse',
-    PENDING: 'bg-gray-400',
-    CANCELLED: 'bg-gray-300',
-  };
+    return () => { cancelled = true; };
+  }, [tenantContexts]);
 
-  const stats = [
-    { label: t('dashboard.totalPipelines'), value: pipelines.length, color: 'text-primary-600' },
-    { label: t('dashboard.activePipelines'), value: activePipelines, color: 'text-green-600' },
-    { label: t('dashboard.modules'), value: modules.length, color: 'text-purple-600' },
-    { label: t('dashboard.connectors'), value: connectors.length, color: 'text-blue-600' },
-    { label: t('dashboard.recentSuccesses'), value: successRuns, color: 'text-green-600' },
-    { label: t('dashboard.recentFailures'), value: failedRuns, color: failedRuns > 0 ? 'text-red-600' : 'text-gray-500' },
-  ];
+  const handleSwitchTenant = useCallback(
+    async (tId: string) => {
+      await switchTenant(tId);
+      navigate('/');
+    },
+    [switchTenant, navigate]
+  );
 
-  const flattenTenants = (nodes: TenantNode[]): TenantNode[] =>
-    nodes.flatMap((node) => [node, ...flattenTenants((node.children || []) as TenantNode[])]);
+  // ── Derived values ─────────────────────────────────────────────────────────
+  const activePipelines = pipelines.filter((p) => p.isActive).length;
+  const problematicPipelines = pipelines.filter(
+    (p) => p.latestRunStatus === 'FAILED'
+  );
+  const runningPipelines = pipelines.filter(
+    (p) => p.latestRunStatus === 'RUNNING' || p.latestRunStatus === 'PENDING'
+  );
+  const maxTrend = Math.max(1, ...(summary?.trendBuckets?.map((b) => b.totalRuns) ?? [1]));
 
-  const maxTenantDepth = (nodes: TenantNode[], depth = 1): number => {
-    if (nodes.length === 0) return depth - 1;
-    return Math.max(
-      ...nodes.map((node) => {
-        const children = (node.children || []) as TenantNode[];
-        return children.length > 0 ? maxTenantDepth(children, depth + 1) : depth;
-      })
-    );
-  };
-
-  const allTenants = flattenTenants(tenantTree);
-  const leafTenants = allTenants.filter((t) => !t.children || t.children.length === 0).length;
-  const latestTenantUpdate = allTenants
-    .map((t) => t.updatedAt)
-    .filter((d): d is string => Boolean(d))
-    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
-
-  const maxTrendTotal = Math.max(1, ...(runSummary?.trendBuckets?.map((b) => b.totalRuns) ?? [1]));
+  const currentTenantName =
+    tenantContexts.find((c) => c.tenantId === tenantId)?.tenantName ?? 'Tenant';
+  const userDisplayName = user?.firstName
+    ? `${user.firstName}${user.lastName ? ' ' + user.lastName : ''}`
+    : user?.email ?? '';
 
   return (
-    <div className="px-4 py-6 sm:px-0">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">{t('dashboard.title')}</h1>
-        <p className="mt-1 text-sm text-gray-600">
-          {t('dashboard.welcomeBack', { name: user?.firstName || user?.email })}
-        </p>
+    <div className="space-y-8">
+      {/* ── Welcome banner ───────────────────────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">
+            {t('dashboard.welcomeBack', { name: userDisplayName })}
+          </h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            {currentTenantName} · {new Date().toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Link to="/pipelines" className="btn-primary text-sm">
+            + New Pipeline
+          </Link>
+          <Link to="/modules" className="btn-secondary text-sm">
+            + New Module
+          </Link>
+        </div>
       </div>
 
       {error && (
-        <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">{error}</div>
+        <div className="rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+          {error}
+        </div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
-        {stats.map((s) => (
-          <div key={s.label} className="card text-center">
-            <div className={`text-2xl font-bold ${s.color}`}>
-              {loading ? '–' : s.value}
-            </div>
-            <div className="text-xs text-gray-500 mt-1">{s.label}</div>
-          </div>
-        ))}
-      </div>
+      {/* ── Multi-tenant overview (only when user has multiple tenants) ──────── */}
+      {tenantContexts.length > 1 && (
+        <section>
+          <SectionHeading>All Workspaces</SectionHeading>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            {tenantStats.map((ts) => {
+              const isSelected = ts.tenantId === tenantId;
+              return (
+                <div
+                  key={ts.tenantId}
+                  className={`bg-white dark:bg-slate-900 rounded-xl border-2 p-5 transition-shadow hover:shadow-md ${
+                    isSelected
+                      ? 'border-primary-500 dark:border-primary-500'
+                      : 'border-slate-200 dark:border-slate-800'
+                  }`}
+                >
+                  <div className="flex items-start justify-between mb-4">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-lg bg-primary-100 dark:bg-primary-900/40 flex items-center justify-center">
+                          <span className="text-sm font-bold text-primary-700 dark:text-primary-300">
+                            {ts.tenantName[0]?.toUpperCase()}
+                          </span>
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">{ts.tenantName}</h3>
+                          {ts.roleName && (
+                            <p className="text-xs text-slate-400">{ts.roleName}</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    {!isSelected && (
+                      <button
+                        onClick={() => handleSwitchTenant(ts.tenantId)}
+                        className="text-xs text-primary-600 dark:text-primary-400 hover:underline"
+                      >
+                        Switch →
+                      </button>
+                    )}
+                    {isSelected && (
+                      <span className="text-xs bg-primary-100 dark:bg-primary-900/40 text-primary-700 dark:text-primary-300 px-2 py-0.5 rounded-full font-medium">
+                        Active
+                      </span>
+                    )}
+                  </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 card">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold">{t('dashboard.recentPipelineRuns')}</h2>
-            <Link to="/pipelines" className="text-sm text-primary-600 hover:text-primary-700">{t('dashboard.viewAll')}</Link>
+                  {ts.loading ? (
+                    <div className="animate-pulse space-y-2">
+                      <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-3/4" />
+                      <div className="h-8 bg-slate-100 dark:bg-slate-800 rounded mt-3" />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-3 gap-3 mb-3">
+                        <div className="text-center">
+                          <p className="text-lg font-bold text-slate-800 dark:text-slate-100">{ts.pipelineCount}</p>
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wide">Pipelines</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400">{ts.activePipelines}</p>
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wide">Active</p>
+                        </div>
+                        <div className="text-center">
+                          <p className={`text-lg font-bold ${rateColor(ts.summary?.successRate)}`}>
+                            {fmtRate(ts.summary?.successRate)}
+                          </p>
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wide">Success</p>
+                        </div>
+                      </div>
+
+                      {ts.summary?.trendBuckets && ts.summary.trendBuckets.length > 0 && (
+                        <div className="border-t border-slate-100 dark:border-slate-800 pt-3">
+                          <MiniSparkline buckets={ts.summary.trendBuckets} height={24} />
+                          <p className="text-[10px] text-slate-400 mt-1">24h trend · {ts.summary.totalRuns} runs</p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
+        </section>
+      )}
+
+      {/* ── Current tenant KPI row ────────────────────────────────────────────── */}
+      <section>
+        {tenantContexts.length > 1 && (
+          <SectionHeading>
+            {currentTenantName} — Overview
+          </SectionHeading>
+        )}
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4">
+          <StatCard
+            label="Total Pipelines"
+            value={loading ? '–' : pipelines.length}
+            colorClass="text-slate-800 dark:text-slate-100"
+          />
+          <StatCard
+            label="Active"
+            value={loading ? '–' : activePipelines}
+            colorClass="text-emerald-600 dark:text-emerald-400"
+          />
+          <StatCard
+            label="Running Now"
+            value={loading ? '–' : runningPipelines.length}
+            colorClass={runningPipelines.length > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'}
+          />
+          <StatCard
+            label="Failed (latest)"
+            value={loading ? '–' : problematicPipelines.length}
+            colorClass={problematicPipelines.length > 0 ? 'text-red-600 dark:text-red-400' : 'text-slate-500'}
+          />
+          <StatCard
+            label="Success Rate"
+            value={loading ? '–' : fmtRate(summary?.successRate)}
+            sub={`${reliabilityWindow === 1 ? 'last hour' : reliabilityWindow === 24 ? 'last 24h' : 'last 7 days'}`}
+            colorClass={rateColor(summary?.successRate)}
+          />
+          <StatCard
+            label="Avg Duration"
+            value={loading ? '–' : fmt(summary?.avgDurationMs)}
+            colorClass="text-slate-700 dark:text-slate-200"
+          />
+        </div>
+      </section>
+
+      {/* ── Main content grid ─────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        {/* ── Recent runs ───────────────────────────────────────────────────── */}
+        <div className="xl:col-span-2 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5">
+          <SectionHeading
+            action={
+              <Link to="/pipelines" className="text-xs text-primary-600 dark:text-primary-400 hover:underline">
+                View all →
+              </Link>
+            }
+          >
+            Recent Pipeline Runs
+          </SectionHeading>
 
           {loading ? (
             <div className="animate-pulse space-y-3">
-              {[1, 2, 3].map(i => <div key={i} className="h-10 bg-gray-200 rounded"></div>)}
+              {Array.from({ length: 5 }, (_, i) => (
+                <div key={i} className="h-12 bg-slate-100 dark:bg-slate-800 rounded-lg" />
+              ))}
             </div>
-          ) : allRuns.length > 0 ? (
-            <div className="space-y-2">
-              {allRuns.map((run) => (
-                <div key={run.id} className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded">
-                  <div className="flex items-center space-x-3 min-w-0">
-                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${runStatusColor[run.status] ?? 'bg-gray-400'}`} />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium truncate">{run.pipelineName ?? t('dashboard.pipeline')}</p>
-                      <p className="text-xs text-gray-400">{run.triggerType}</p>
-                    </div>
+          ) : recentRuns.length === 0 ? (
+            <div className="text-center py-12">
+              <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto mb-3">
+                <svg className="w-6 h-6 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
+                  <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                </svg>
+              </div>
+              <p className="text-sm text-slate-500">{t('dashboard.noPipelineRunsYet')}</p>
+              <Link to="/pipelines" className="mt-3 inline-block text-sm text-primary-600 dark:text-primary-400 hover:underline">
+                Create your first pipeline →
+              </Link>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100 dark:divide-slate-800">
+              {recentRuns.map((run) => (
+                <div key={run.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
+                  <span
+                    className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[run.status] ?? 'bg-slate-400'}`}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">
+                      {run.pipelineName ?? t('dashboard.pipeline')}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      {run.triggerType} · {new Date(run.startedAt).toLocaleString()}
+                      {run.durationMs != null && ` · ${fmt(run.durationMs)}`}
+                    </p>
                   </div>
-                  <div className="shrink-0 text-right ml-4">
-                    <span className={`px-2 py-0.5 text-xs rounded font-medium ${
-                      run.status === 'SUCCESS' ? 'bg-green-100 text-green-800' :
-                      run.status === 'FAILED' ? 'bg-red-100 text-red-800' :
-                      run.status === 'RUNNING' ? 'bg-yellow-100 text-yellow-800' :
-                      'bg-gray-100 text-gray-700'
-                    }`}>
-                      {run.status}
-                    </span>
-                    <p className="text-xs text-gray-400 mt-1">{new Date(run.startedAt).toLocaleString()}</p>
-                  </div>
+                  <span
+                    className={`shrink-0 px-2 py-0.5 text-xs font-medium rounded-full ${STATUS_BADGE[run.status] ?? 'bg-slate-100 text-slate-700'}`}
+                  >
+                    {run.status}
+                  </span>
                 </div>
               ))}
             </div>
-          ) : (
-            <p className="text-gray-500 text-center py-8">{t('dashboard.noPipelineRunsYet')}</p>
           )}
         </div>
 
-        <div className="space-y-6">
-          {!loading && (
-            <div className="card border-l-4 border-l-amber-500">
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-base font-semibold">{t('dashboard.problemPipelines')}</h2>
-                <span className={`text-xs px-2 py-0.5 rounded ${problematicPipelines.length > 0 ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'}`}>
-                  {problematicPipelines.length}
-                </span>
-              </div>
-              {problematicPipelines.length > 0 ? (
-                <>
-                  <ul className="space-y-2 mb-3">
-                    {problematicPipelines.slice(0, 5).map((p) => (
-                      <li key={p.id} className="flex items-center justify-between text-sm">
-                        <Link to={`/pipelines/${p.id}`} className="text-primary-600 hover:underline truncate">
-                          {p.name}
-                        </Link>
-                        <span className={`ml-2 px-2 py-0.5 rounded text-xs ${
-                          p.latestRunStatus === 'FAILED'
-                            ? 'bg-red-100 text-red-800'
-                            : 'bg-yellow-100 text-yellow-800'
-                        }`}>
-                          {p.latestRunStatus}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                  <Link to="/pipelines?health=PROBLEMATIC" className="btn-secondary block text-center text-sm">{t('dashboard.openProblemView')}</Link>
-                </>
-              ) : (
-                <p className="text-sm text-gray-500">{t('dashboard.noProblemPipelines')}</p>
-              )}
-            </div>
-          )}
-
-          <div className="card">
+        {/* ── Right column ──────────────────────────────────────────────────── */}
+        <div className="space-y-5">
+          {/* Reliability trend */}
+          <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-base font-semibold">{t('dashboard.executionReliability')}</h2>
-              <div className="flex items-center gap-1">
+              <h2 className="text-base font-semibold text-slate-800 dark:text-slate-100">
+                {t('dashboard.executionReliability')}
+              </h2>
+              <div className="flex gap-1">
                 {([
-                  { label: t('dashboard.last1h'), value: 1 },
-                  { label: t('dashboard.last24h'), value: 24 },
-                  { label: t('dashboard.last7d'), value: 168 },
-                ] as const).map((opt) => (
+                  { label: '1h', value: 1 as const },
+                  { label: '24h', value: 24 as const },
+                  { label: '7d', value: 168 as const },
+                ]).map((opt) => (
                   <button
                     key={opt.value}
                     onClick={() => setReliabilityWindow(opt.value)}
-                    className={`px-2 py-1 text-xs rounded border ${
+                    className={`px-2 py-0.5 text-xs rounded border transition-colors ${
                       reliabilityWindow === opt.value
-                        ? 'bg-primary-600 text-white border-primary-600'
-                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                        ? 'bg-primary-600 text-white border-primary-600 dark:bg-primary-500 dark:border-primary-500'
+                        : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
                     }`}
                   >
                     {opt.label}
@@ -256,104 +514,147 @@ export default function Dashboard() {
                 ))}
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3 text-sm">
+
+            <div className="grid grid-cols-2 gap-3 text-sm mb-4">
               <div>
-                <p className="text-gray-500">{t('dashboard.window')}</p>
-                <p className="font-semibold text-gray-900">{runSummary?.sinceHours ? `${runSummary.sinceHours}h` : 'n/a'}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Total Runs</p>
+                <p className="font-semibold text-slate-800 dark:text-slate-100">{summary?.totalRuns ?? 0}</p>
               </div>
               <div>
-                <p className="text-gray-500">{t('dashboard.successRate')}</p>
-                <p className={`font-semibold ${(runSummary?.successRate ?? 0) >= 0.9 ? 'text-green-700' : (runSummary?.successRate ?? 0) >= 0.75 ? 'text-amber-700' : 'text-red-700'}`}>
-                  {runSummary ? `${Math.round(runSummary.successRate * 100)}%` : 'n/a'}
+                <p className="text-xs text-slate-500 dark:text-slate-400">Success Rate</p>
+                <p className={`font-semibold ${rateColor(summary?.successRate)}`}>
+                  {fmtRate(summary?.successRate)}
                 </p>
               </div>
               <div>
-                <p className="text-gray-500">{t('dashboard.failures')}</p>
-                <p className="font-semibold text-gray-900">{runSummary?.failedRuns ?? 0}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Failures</p>
+                <p className="font-semibold text-slate-800 dark:text-slate-100">{summary?.failedRuns ?? 0}</p>
               </div>
               <div>
-                <p className="text-gray-500">{t('dashboard.inFlight')}</p>
-                <p className="font-semibold text-gray-900">{runSummary?.inFlightRuns ?? 0}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">In-flight</p>
+                <p className={`font-semibold ${(summary?.inFlightRuns ?? 0) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-800 dark:text-slate-100'}`}>
+                  {summary?.inFlightRuns ?? 0}
+                </p>
               </div>
             </div>
-            <p className="mt-3 text-xs text-gray-500">{t('dashboard.averageDuration')}: {runSummary?.avgDurationMs != null ? `${runSummary.avgDurationMs} ms` : 'n/a'}</p>
-            <div className="mt-3">
-              <div className="flex items-end gap-1 h-16 rounded border border-gray-200 bg-gray-50 px-2 py-1">
-                {(runSummary?.trendBuckets ?? []).map((bucket) => {
-                  const ratio = bucket.totalRuns / maxTrendTotal;
-                  const failureShare = bucket.totalRuns > 0 ? bucket.failedRuns / bucket.totalRuns : 0;
-                  const bg = failureShare > 0.4 ? 'bg-red-400' : failureShare > 0 ? 'bg-amber-400' : 'bg-green-400';
-                  const targetHealth = bucket.failedRuns > 0 ? 'FAILED' : bucket.inFlightRuns > 0 ? 'RUNNING' : 'HEALTHY';
-                  return (
-                    <button
-                      type="button"
-                      key={bucket.bucketStart}
-                      className={`flex-1 rounded-t ${bg}`}
-                      title={`${new Date(bucket.bucketStart).toLocaleString()} | total:${bucket.totalRuns} success:${bucket.successRuns} failed:${bucket.failedRuns} running:${bucket.inFlightRuns}`}
-                      style={{ height: `${Math.max(8, Math.round(ratio * 100))}%` }}
-                      onClick={() => navigate(`/pipelines?health=${targetHealth}&sinceHours=${reliabilityWindow}&bucketStart=${encodeURIComponent(bucket.bucketStart)}&bucketSeconds=${runSummary?.bucketSeconds ?? 0}`)}
-                    />
-                  );
-                })}
-              </div>
-              <div className="mt-1 flex justify-between text-[10px] text-gray-500">
-                <span>{reliabilityWindow === 1 ? t('dashboard.lastHour') : reliabilityWindow === 24 ? t('dashboard.lastDay') : t('dashboard.last7Days')}</span>
-                <span>{t('dashboard.trendLegend')}</span>
+
+            {/* Trend chart */}
+            <div className="rounded-lg border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 p-2">
+              <MiniSparkline buckets={summary?.trendBuckets ?? []} height={48} />
+              <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+                <span>{reliabilityWindow === 1 ? 'Last hour' : reliabilityWindow === 24 ? 'Last 24 hours' : 'Last 7 days'}</span>
+                <span>🟢 ok · 🟡 some failures · 🔴 many failures</span>
               </div>
             </div>
           </div>
 
-          <div className="card">
-            <h2 className="text-base font-semibold mb-3">{t('dashboard.quickActions')}</h2>
-            <div className="space-y-2">
-              <Link to="/modules" className="btn-primary block text-center text-sm">{t('dashboard.createModule')}</Link>
-              <Link to="/pipelines" className="btn-secondary block text-center text-sm">{t('dashboard.createPipeline')}</Link>
-              <Link to="/connectors" className="btn-secondary block text-center text-sm">{t('dashboard.addConnector')}</Link>
-            </div>
-          </div>
-
-          {user?.superadmin && (
-            <div className="card">
-              <h2 className="text-base font-semibold mb-3">{t('dashboard.tenantTopology')}</h2>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="text-gray-500">{t('dashboard.total')}</p>
-                  <p className="font-semibold text-gray-900">{loading ? '–' : allTenants.length}</p>
-                </div>
-                <div>
-                  <p className="text-gray-500">{t('dashboard.roots')}</p>
-                  <p className="font-semibold text-gray-900">{loading ? '–' : tenantTree.length}</p>
-                </div>
-                <div>
-                  <p className="text-gray-500">{t('dashboard.leafTenants')}</p>
-                  <p className="font-semibold text-gray-900">{loading ? '–' : leafTenants}</p>
-                </div>
-                <div>
-                  <p className="text-gray-500">{t('dashboard.maxDepth')}</p>
-                  <p className="font-semibold text-gray-900">{loading ? '–' : maxTenantDepth(tenantTree)}</p>
-                </div>
+          {/* Problem pipelines */}
+          {!loading && (problematicPipelines.length > 0 || runningPipelines.length > 0) && (
+            <div className="bg-white dark:bg-slate-900 rounded-xl border border-amber-200 dark:border-amber-900/50 p-5">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-base font-semibold text-slate-800 dark:text-slate-100">
+                  {t('dashboard.problemPipelines')}
+                </h2>
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${rateBg(problematicPipelines.length === 0 ? 1 : 0)}`}>
+                  {problematicPipelines.length} failed
+                </span>
               </div>
-              <p className="mt-3 text-xs text-gray-500">
-                Last tenant update: {latestTenantUpdate ? new Date(latestTenantUpdate).toLocaleString() : 'n/a'}
-              </p>
-              <Link to="/tenants" className="btn-secondary block text-center text-sm mt-3">{t('dashboard.openTenantTree')}</Link>
+              <ul className="space-y-2">
+                {[...problematicPipelines, ...runningPipelines].slice(0, 6).map((p) => (
+                  <li key={p.id} className="flex items-center justify-between text-sm">
+                    <Link
+                      to={`/pipelines/${p.id}`}
+                      className="text-primary-600 dark:text-primary-400 hover:underline truncate flex-1 min-w-0"
+                    >
+                      {p.name}
+                    </Link>
+                    <span
+                      className={`ml-2 shrink-0 px-2 py-0.5 text-xs rounded-full font-medium ${STATUS_BADGE[p.latestRunStatus ?? ''] ?? 'bg-slate-100 text-slate-700'}`}
+                    >
+                      {p.latestRunStatus}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {problematicPipelines.length > 0 && (
+                <Link
+                  to="/pipelines?health=PROBLEMATIC"
+                  className="btn-secondary block text-center text-sm mt-3"
+                >
+                  View problem view
+                </Link>
+              )}
             </div>
           )}
 
+          {/* Quick actions */}
+          <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5">
+            <h2 className="text-base font-semibold text-slate-800 dark:text-slate-100 mb-3">
+              {t('dashboard.quickActions')}
+            </h2>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { label: 'New Module', href: '/modules', primary: true },
+                { label: 'New Pipeline', href: '/pipelines', primary: false },
+                { label: 'Add Connector', href: '/connectors', primary: false },
+                { label: 'View Data', href: '/data', primary: false },
+                { label: 'Alerts', href: '/alerts', primary: false },
+                { label: 'Users', href: '/users', primary: false },
+              ].map((item) => (
+                <Link
+                  key={item.href}
+                  to={item.href}
+                  className={`text-center text-xs py-2 px-3 rounded-lg border font-medium transition-colors ${
+                    item.primary
+                      ? 'bg-primary-600 dark:bg-primary-500 text-white border-primary-600 dark:border-primary-500 hover:bg-primary-700 dark:hover:bg-primary-600'
+                      : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+          </div>
+
+          {/* Pipeline list (compact) */}
           {!loading && pipelines.length > 0 && (
-            <div className="card">
-              <h2 className="text-base font-semibold mb-3">{t('nav.pipelines')}</h2>
+            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5">
+              <SectionHeading
+                action={
+                  <Link to="/pipelines" className="text-xs text-primary-600 dark:text-primary-400 hover:underline">
+                    All →
+                  </Link>
+                }
+              >
+                Pipelines
+              </SectionHeading>
               <ul className="space-y-2">
-                {pipelines.slice(0, 5).map((p) => (
-                  <li key={p.id} className="flex items-center justify-between text-sm">
-                    <Link to={`/pipelines/${p.id}`} className="text-primary-600 hover:underline truncate">
+                {pipelines.slice(0, 7).map((p) => (
+                  <li key={p.id} className="flex items-center gap-2 text-sm">
+                    <span
+                      className={`w-2 h-2 rounded-full shrink-0 ${
+                        p.isActive ? 'bg-emerald-400' : 'bg-slate-300 dark:bg-slate-600'
+                      }`}
+                    />
+                    <Link
+                      to={`/pipelines/${p.id}`}
+                      className="flex-1 truncate text-slate-700 dark:text-slate-200 hover:text-primary-600 dark:hover:text-primary-400 hover:underline"
+                    >
                       {p.name}
                     </Link>
-                    <span className={`shrink-0 ml-2 w-2 h-2 rounded-full ${p.isActive ? 'bg-green-400' : 'bg-gray-300'}`} />
+                    {p.latestRunStatus && (
+                      <span
+                        className={`shrink-0 px-1.5 py-0.5 text-[10px] rounded font-medium ${STATUS_BADGE[p.latestRunStatus] ?? ''}`}
+                      >
+                        {p.latestRunStatus}
+                      </span>
+                    )}
                   </li>
                 ))}
-                {pipelines.length > 5 && (
-                  <li className="text-xs text-gray-400">{t('dashboard.more', { count: pipelines.length - 5 })}</li>
+                {pipelines.length > 7 && (
+                  <li className="text-xs text-slate-400 pt-1">
+                    +{pipelines.length - 7} more
+                  </li>
                 )}
               </ul>
             </div>
