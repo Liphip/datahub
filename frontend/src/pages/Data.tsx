@@ -565,7 +565,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
                       value={relationalWhere}
                       onChange={(e) => setRelationalWhere(e.target.value)}
                       className="input text-sm font-mono"
-                      placeholder='e.g. status = \'active\' AND value > 10'
+                      placeholder="e.g. status = 'active' AND value > 10"
                     />
                   </div>
                 )}

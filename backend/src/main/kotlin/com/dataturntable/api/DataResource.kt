@@ -702,8 +702,8 @@ class DataResource {
                 else -> "TEXT"
             }
             "$colName $colType"
-        }.filter { it.isNotBlank() }
-        if (colDefs.isEmpty()) return
+        }
+        if (colDefs.isBlank()) return
         em.createNativeQuery(
             "CREATE TABLE IF NOT EXISTS $safeTable (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id UUID DEFAULT '${tenantId}', $colDefs)"
         ).executeUpdate()
