@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
@@ -56,7 +56,7 @@ const NODE_ICON: Record<NodeType, string> = {
 // ─── Custom DAG node ──────────────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function DagNode({ id, data, selected }: NodeProps<any>) {
+function DagNode({ data, selected }: NodeProps<any>) {
   const d = data as PipelineNodeData;
   const colors = NODE_COLORS[d.nodeType] ?? 'border-gray-400 bg-gray-50';
   const isSource = d.nodeType === 'IMPORT';
@@ -112,7 +112,7 @@ function DagNode({ id, data, selected }: NodeProps<any>) {
   );
 }
 
-const nodeTypes = { dagNode: DagNode };
+const nodeTypes = { dagNode: memo(DagNode) };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
