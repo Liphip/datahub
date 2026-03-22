@@ -3,7 +3,19 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import api from '../services/api';
 import type { PipelineRun, Pipeline } from '../types';
 
-// Module-level cache so navigating away and back doesn't lose log data
+// Module-level cache so navigating away and back doesn't lose log data.
+// Capped at 50 entries to prevent unbounded memory growth in long sessions.
+const MAX_CACHE = 50;
+
+function cappedSet<V>(map: Map<string, V>, key: string, value: V) {
+  if (map.size >= MAX_CACHE && !map.has(key)) {
+    // Evict oldest entry (first key in insertion order)
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+  }
+  map.set(key, value);
+}
+
 const runCache = new Map<string, PipelineRun>();
 const pipelineCache = new Map<string, Pipeline>();
 
@@ -194,8 +206,8 @@ export default function RunDetail() {
           api.getPipelineRun(pipelineId, runId, true),
           api.getPipeline(pipelineId),
         ]);
-        runCache.set(runId, runData);
-        pipelineCache.set(pipelineId, pipelineData);
+        cappedSet(runCache, runId, runData);
+        cappedSet(pipelineCache, pipelineId, pipelineData);
         setRun(runData);
         setPipeline(pipelineData);
       } catch (err) {
@@ -210,7 +222,7 @@ export default function RunDetail() {
     const timer = setInterval(async () => {
       try {
         const runData = await api.getPipelineRun(pipelineId, runId, true);
-        runCache.set(runId, runData);
+        cappedSet(runCache, runId, runData);
         setRun(runData);
         if (runData.status !== 'RUNNING' && runData.status !== 'PENDING') {
           clearInterval(timer);

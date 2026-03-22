@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, memo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
@@ -186,6 +186,8 @@ export default function PipelineEditor() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
+  // Ref to current pipeline ID so polling closures always see the latest value
+  const pipelineIdRef = useRef<string | undefined>();
   const canWritePipelines = Boolean(
     user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('pipeline:write')
   );
@@ -194,6 +196,8 @@ export default function PipelineEditor() {
   );
 
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
+  // Keep pipelineIdRef in sync so polling closures are never stale
+  useEffect(() => { pipelineIdRef.current = pipeline?.id; }, [pipeline?.id]);
   const [moduleVersionOptions, setModuleVersionOptions] = useState<ModuleVersionOption[]>([]);
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [loading, setLoading] = useState(true);
@@ -382,8 +386,10 @@ export default function PipelineEditor() {
 
   const pollRunStatus = (runId: string) => {
     const timer = setTimeout(async () => {
+      const pid = pipelineIdRef.current;
+      if (!pid) return;
       try {
-        const run = await api.getPipelineRun(pipeline!.id, runId);
+        const run = await api.getPipelineRun(pid, runId);
         setLatestRun(run);
         setRecentRuns((prev) => {
           const exists = prev.some((r) => r.id === run.id);

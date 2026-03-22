@@ -16,6 +16,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * A long-running warm container that accepts module jobs via stdin/stdout.
@@ -90,6 +91,9 @@ class WarmContainerPool {
 
     private val basePool  = ConcurrentLinkedDeque<WarmContainer>()
     private val reqPools  = ConcurrentHashMap<String, ConcurrentLinkedDeque<WarmContainer>>()
+
+    /** Tracks how many base containers are currently being spawned to prevent over-spawning. */
+    private val spawningCount = AtomicInteger(0)
 
     // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -208,13 +212,20 @@ class WarmContainerPool {
     // ── Internal helpers ───────────────────────────────────────────────────────
 
     private fun spawnIntoBase() {
-        val c = spawn("")
-        if (c != null) basePool.offer(c)
-        else LOG.warn("Failed to pre-warm a base container")
+        spawningCount.incrementAndGet()
+        try {
+            val c = spawn("")
+            if (c != null) basePool.offer(c)
+            else LOG.warn("Failed to pre-warm a base container")
+        } finally {
+            spawningCount.decrementAndGet()
+        }
     }
 
     private fun ensureBasePool() {
-        val deficit = basePoolSize - basePool.size
+        // Account for containers currently being spawned to avoid over-spawning
+        val effective = basePool.size + spawningCount.get()
+        val deficit = basePoolSize - effective
         if (deficit > 0) repeat(deficit) { io.submit { spawnIntoBase() } }
     }
 

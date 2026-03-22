@@ -1,7 +1,49 @@
-import { useEffect, useState } from 'react';
+import { Component, useEffect, useState } from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './stores/auth';
 import { API_STATUS_EVENT } from './services/api';
+
+class ErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('ErrorBoundary caught:', error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50">
+          <div className="max-w-md text-center p-8">
+            <h1 className="text-xl font-bold text-gray-900 mb-2">Something went wrong</h1>
+            <p className="text-sm text-gray-500 mb-4">{this.state.error?.message}</p>
+            <button
+              onClick={() => {
+                this.setState({ hasError: false, error: null });
+                window.location.href = '/';
+              }}
+              className="px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 text-sm"
+            >
+              Go to Dashboard
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 import Login from './pages/Login';
 import Setup from './pages/Setup';
 import Dashboard from './pages/Dashboard';
@@ -69,6 +111,7 @@ function App() {
   }, []);
 
   return (
+    <ErrorBoundary>
     <BrowserRouter>
       {!apiAvailable && (
         <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2 text-sm flex items-center justify-between">
@@ -109,6 +152,7 @@ function App() {
         />
       </Routes>
     </BrowserRouter>
+    </ErrorBoundary>
   );
 }
 

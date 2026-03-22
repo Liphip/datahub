@@ -93,9 +93,18 @@ export const useAuthStore = create<AuthState>()(
             isAuthenticated: true,
             isLoading: false,
           });
-        } catch {
-          localStorage.removeItem('token');
-          set({ user: null, token: null, selectedTenantId: null, tenantContexts: [], isAuthenticated: false, isLoading: false });
+        } catch (err: unknown) {
+          // Only clear auth state on 401 (invalid/expired token).
+          // Network errors (no response) should NOT log the user out —
+          // they'll see the API-unavailable banner and can retry.
+          const status = (err as { response?: { status?: number } })?.response?.status;
+          if (status === 401 || status === 403) {
+            localStorage.removeItem('token');
+            set({ user: null, token: null, selectedTenantId: null, tenantContexts: [], isAuthenticated: false, isLoading: false });
+          } else {
+            // Network error or 5xx — keep existing auth state, just stop loading
+            set({ isLoading: false });
+          }
         }
       },
     }),
