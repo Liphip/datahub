@@ -209,6 +209,7 @@ export interface PipelineRun {
     durationMs?: number;
     executedAt?: string;
     error?: string;
+    result?: unknown;
     connector?: {
       id?: string;
       name?: string;

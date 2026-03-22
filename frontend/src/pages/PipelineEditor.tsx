@@ -201,6 +201,7 @@ export default function PipelineEditor() {
   const [triggering, setTriggering] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [latestRun, setLatestRun] = useState<PipelineRun | null>(null);
+  const [recentRuns, setRecentRuns] = useState<PipelineRun[]>([]);
   const [runPollingTimer, setRunPollingTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
 
   // Pipeline metadata
@@ -250,9 +251,13 @@ export default function PipelineEditor() {
           setNodes(fn);
           setEdges(fe);
           if (pipelineData.latestRunId) {
-            // Fetch the latest run with full details (moduleLogs, stdout, etc.)
+            // Fetch recent runs and the latest with full details
             try {
-              const run = await api.getPipelineRun(id!, pipelineData.latestRunId);
+              const [runs, run] = await Promise.all([
+                api.getPipelineRuns(id!),
+                api.getPipelineRun(id!, pipelineData.latestRunId),
+              ]);
+              setRecentRuns(runs.slice(0, 10));
               setLatestRun(run);
             } catch {
               // Non-critical: ignore if we can't load latest run
@@ -364,6 +369,7 @@ export default function PipelineEditor() {
     try {
       const run = await api.triggerPipeline(pipeline.id);
       setLatestRun(run);
+      setRecentRuns((prev) => [run, ...prev].slice(0, 10));
       showToast('Pipeline triggered', 'success');
       // poll run status
       pollRunStatus(run.id);
@@ -379,6 +385,11 @@ export default function PipelineEditor() {
       try {
         const run = await api.getPipelineRun(pipeline!.id, runId);
         setLatestRun(run);
+        setRecentRuns((prev) => {
+          const exists = prev.some((r) => r.id === run.id);
+          if (exists) return prev.map((r) => (r.id === run.id ? run : r));
+          return [run, ...prev].slice(0, 10);
+        });
         if (run.status === 'RUNNING' || run.status === 'PENDING') {
           pollRunStatus(runId);
         }
@@ -403,6 +414,7 @@ export default function PipelineEditor() {
         if (newRunId && newRunId !== latestRun?.id) {
           const run = await api.getPipelineRun(id, newRunId);
           setLatestRun(run);
+          setRecentRuns((prev) => [run, ...prev.filter((r) => r.id !== run.id)].slice(0, 10));
           if (run.status === 'RUNNING' || run.status === 'PENDING') {
             pollRunStatus(run.id);
           }
@@ -556,7 +568,7 @@ export default function PipelineEditor() {
               onChange={updateSelectedNodeData}
             />
           ) : (
-            <RunLogPanel latestRun={latestRun} pipelineId={pipeline?.id} />
+            <RunLogPanel latestRun={latestRun} recentRuns={recentRuns} pipelineId={pipeline?.id} />
           )}
         </div>
       </div>
@@ -730,8 +742,39 @@ function NodeConfigPanel({
 
 // ─── Run log side panel ───────────────────────────────────────────────────────
 
-function RunLogPanel({ latestRun, pipelineId }: { latestRun: PipelineRun | null; pipelineId?: string }) {
-  if (!latestRun) {
+const STATUS_DOT: Record<string, string> = {
+  SUCCESS:   'bg-emerald-500',
+  FAILED:    'bg-red-500',
+  RUNNING:   'bg-amber-400 animate-pulse',
+  PENDING:   'bg-slate-400 animate-pulse',
+  CANCELLED: 'bg-slate-300',
+};
+
+const STATUS_TEXT: Record<string, string> = {
+  SUCCESS:   'text-emerald-700',
+  FAILED:    'text-red-700',
+  RUNNING:   'text-blue-600',
+  PENDING:   'text-amber-600',
+  CANCELLED: 'text-gray-500',
+};
+
+function fmtDuration(ms?: number | null) {
+  if (ms == null) return '';
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
+}
+
+function RunLogPanel({
+  latestRun,
+  recentRuns,
+  pipelineId,
+}: {
+  latestRun: PipelineRun | null;
+  recentRuns: PipelineRun[];
+  pipelineId?: string;
+}) {
+  if (!latestRun && recentRuns.length === 0) {
     return (
       <div className="p-4 text-sm text-gray-400">
         <p className="font-medium text-gray-600 mb-1">Execution log</p>
@@ -740,65 +783,98 @@ function RunLogPanel({ latestRun, pipelineId }: { latestRun: PipelineRun | null;
     );
   }
 
-  const statusColor: Record<string, string> = {
-    SUCCESS: 'text-green-700',
-    FAILED:  'text-red-700',
-    RUNNING: 'text-blue-700',
-    PENDING: 'text-amber-600',
-  };
-
   return (
-    <div className="p-4 space-y-3 text-sm">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className="font-medium text-gray-700">Latest run</p>
-          <p className={`text-xs font-semibold ${statusColor[latestRun.status] ?? 'text-gray-500'}`}>
-            {latestRun.status}
-          </p>
-          <p className="text-[10px] text-gray-400">
-            {new Date(latestRun.startedAt).toLocaleString()}
-            {latestRun.durationMs != null && ` · ${latestRun.durationMs}ms`}
-          </p>
-          {latestRun.errorMessage && (
-            <p className="text-xs text-red-600 mt-1 break-words">{latestRun.errorMessage}</p>
-          )}
-        </div>
-        {pipelineId && latestRun.id && (
-          <Link
-            to={`/pipelines/${pipelineId}/runs/${latestRun.id}`}
-            className="shrink-0 text-[11px] text-primary-600 hover:underline whitespace-nowrap"
-          >
-            Full logs →
-          </Link>
-        )}
-      </div>
-
-      {latestRun.moduleLogs && latestRun.moduleLogs.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-xs font-medium text-gray-600">Module logs</p>
-          {latestRun.moduleLogs.map((log, i) => (
-            <div key={i} className="rounded border p-2 text-[11px] bg-gray-50">
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-semibold text-gray-700">{log.stage}{log.moduleName ? ` · ${log.moduleName}` : ''}</span>
-                <span className={log.success ? 'text-green-600' : 'text-red-600'}>
-                  {log.success ? '✓' : '✗'}
+    <div className="flex flex-col h-full">
+      {/* Latest run detail */}
+      {latestRun && (
+        <div className="p-4 border-b space-y-2">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Latest run</p>
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[latestRun.status] ?? 'bg-gray-400'}`} />
+                <span className={`text-sm font-bold ${STATUS_TEXT[latestRun.status] ?? 'text-gray-700'}`}>
+                  {latestRun.status}
                 </span>
+                {latestRun.durationMs != null && (
+                  <span className="text-xs text-gray-400 font-mono">{fmtDuration(latestRun.durationMs)}</span>
+                )}
               </div>
-              {log.stdout && (
-                <pre className="text-gray-600 whitespace-pre-wrap break-all bg-white rounded p-1 border text-[10px] max-h-40 overflow-y-auto">
-                  {log.stdout}
-                </pre>
-              )}
-              {log.stderr && (
-                <pre className="text-red-500 whitespace-pre-wrap break-all bg-white rounded p-1 border text-[10px] max-h-24 overflow-y-auto mt-1">
-                  {log.stderr}
-                </pre>
-              )}
-              {log.error && (
-                <p className="text-red-600 mt-1 break-words">{log.error}</p>
+              <p className="text-[10px] text-gray-400 mt-0.5">
+                {new Date(latestRun.startedAt).toLocaleString()} · {latestRun.triggerType}
+              </p>
+              {latestRun.errorMessage && (
+                <p className="text-xs text-red-600 mt-1 break-words">{latestRun.errorMessage}</p>
               )}
             </div>
-          ))}
+            {pipelineId && (
+              <Link
+                to={`/pipelines/${pipelineId}/runs/${latestRun.id}`}
+                className="shrink-0 text-[11px] text-primary-600 hover:underline whitespace-nowrap"
+              >
+                Full logs →
+              </Link>
+            )}
+          </div>
+
+          {/* Module summary for latest run */}
+          {latestRun.moduleLogs && latestRun.moduleLogs.length > 0 && (
+            <div className="space-y-1">
+              {latestRun.moduleLogs
+                .slice()
+                .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+                .map((log, i) => (
+                  <div
+                    key={i}
+                    className={`flex items-center gap-2 text-[11px] rounded px-2 py-1 ${
+                      log.success === false ? 'bg-red-50 border border-red-200' : 'bg-gray-50 border border-gray-100'
+                    }`}
+                  >
+                    <span className={`font-semibold ${log.success ? 'text-emerald-600' : 'text-red-600'}`}>
+                      {log.success ? '✓' : '✗'}
+                    </span>
+                    <span className="font-medium text-gray-700 truncate flex-1">
+                      {log.moduleName ?? log.stage}
+                    </span>
+                    <span className="text-gray-400 shrink-0">{log.stage}</span>
+                    {log.durationMs != null && (
+                      <span className="text-gray-400 font-mono shrink-0">{fmtDuration(log.durationMs)}</span>
+                    )}
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Recent runs list */}
+      {recentRuns.length > 0 && (
+        <div className="flex-1 overflow-y-auto p-4">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+            Recent runs ({recentRuns.length})
+          </p>
+          <div className="space-y-1">
+            {recentRuns.map((run) => (
+              <Link
+                key={run.id}
+                to={pipelineId ? `/pipelines/${pipelineId}/runs/${run.id}` : '#'}
+                className={`flex items-center gap-2 px-2 py-1.5 rounded text-[11px] hover:bg-gray-50 transition-colors ${
+                  run.id === latestRun?.id ? 'bg-primary-50 border border-primary-200' : 'border border-transparent'
+                }`}
+              >
+                <span className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[run.status] ?? 'bg-gray-400'}`} />
+                <span className={`font-semibold shrink-0 ${STATUS_TEXT[run.status] ?? 'text-gray-500'}`}>
+                  {run.status}
+                </span>
+                <span className="text-gray-400 flex-1 truncate">
+                  {new Date(run.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </span>
+                {run.durationMs != null && (
+                  <span className="text-gray-400 font-mono shrink-0">{fmtDuration(run.durationMs)}</span>
+                )}
+              </Link>
+            ))}
+          </div>
         </div>
       )}
     </div>

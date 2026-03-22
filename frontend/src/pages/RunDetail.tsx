@@ -8,10 +8,10 @@ const runCache = new Map<string, PipelineRun>();
 const pipelineCache = new Map<string, Pipeline>();
 
 const STATUS_COLOR: Record<string, string> = {
-  SUCCESS: 'bg-green-100 text-green-800 border-green-300',
-  FAILED:  'bg-red-100 text-red-800 border-red-300',
-  RUNNING: 'bg-blue-100 text-blue-800 border-blue-300',
-  PENDING: 'bg-amber-100 text-amber-800 border-amber-300',
+  SUCCESS:   'bg-emerald-100 text-emerald-800 border-emerald-300',
+  FAILED:    'bg-red-100 text-red-800 border-red-300',
+  RUNNING:   'bg-blue-100 text-blue-800 border-blue-300',
+  PENDING:   'bg-amber-100 text-amber-800 border-amber-300',
   CANCELLED: 'bg-gray-100 text-gray-600 border-gray-300',
 };
 
@@ -23,11 +23,39 @@ const NODE_TYPE_COLOR: Record<string, string> = {
   EXPORT:     'bg-rose-100 text-rose-800 border border-rose-300',
 };
 
+const NODE_TYPE_ICON: Record<string, string> = {
+  IMPORT:     '↓',
+  PROCESSING: '⚙',
+  MERGE:      '⊕',
+  ALERT:      '⚠',
+  EXPORT:     '↑',
+};
+
 function formatDuration(ms?: number) {
   if (ms == null) return '—';
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
   return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
+}
+
+function ResultDisplay({ result }: { result: unknown }) {
+  if (result == null) return <span className="text-gray-400 italic">null</span>;
+
+  if (typeof result === 'object') {
+    const json = JSON.stringify(result, null, 2);
+    const isLong = json.length > 500;
+    return (
+      <pre className="text-xs bg-gray-900 text-emerald-300 rounded p-3 overflow-x-auto whitespace-pre-wrap break-all font-mono leading-relaxed max-h-64 overflow-y-auto">
+        {isLong ? json.slice(0, 500) + '\n…' : json}
+      </pre>
+    );
+  }
+
+  return (
+    <pre className="text-xs bg-gray-900 text-emerald-300 rounded p-3 font-mono">
+      {String(result)}
+    </pre>
+  );
 }
 
 function ModuleLogCard({ log, index }: {
@@ -38,18 +66,23 @@ function ModuleLogCard({ log, index }: {
 
   const stageLabel = log.stage?.toUpperCase() ?? 'MODULE';
   const colorClass = NODE_TYPE_COLOR[stageLabel] ?? 'bg-gray-100 text-gray-700 border border-gray-300';
+  const icon = NODE_TYPE_ICON[stageLabel] ?? '·';
+
+  const hasOutput = log.stdout || log.stderr || log.result != null || log.error;
 
   return (
     <div className="border rounded-lg overflow-hidden shadow-sm">
       {/* Header */}
       <button
-        className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50 text-left"
+        className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${
+          log.success === false ? 'bg-red-50 hover:bg-red-100' : 'bg-white hover:bg-gray-50'
+        }`}
         onClick={() => setExpanded((v) => !v)}
       >
         <div className="flex items-center gap-3 min-w-0">
           <span className="text-gray-400 text-xs font-mono w-5 text-center shrink-0">{index + 1}</span>
           <span className={`text-xs font-semibold px-2 py-0.5 rounded shrink-0 ${colorClass}`}>
-            {stageLabel}
+            {icon} {stageLabel}
           </span>
           <span className="font-medium text-gray-800 truncate">
             {log.moduleName ?? log.moduleVersionId ?? 'Unknown module'}
@@ -65,31 +98,36 @@ function ModuleLogCard({ log, index }: {
           {log.durationMs != null && (
             <span className="text-xs text-gray-400 font-mono">{formatDuration(log.durationMs)}</span>
           )}
-          <span className={`text-sm font-bold ${log.success ? 'text-green-600' : 'text-red-600'}`}>
+          <span className={`text-sm font-bold ${log.success ? 'text-emerald-600' : 'text-red-600'}`}>
             {log.success ? '✓' : '✗'}
           </span>
-          <span className="text-gray-400 text-xs">{expanded ? '▲' : '▼'}</span>
+          {hasOutput && (
+            <span className="text-gray-400 text-xs">{expanded ? '▲' : '▼'}</span>
+          )}
         </div>
       </button>
 
       {/* Body */}
-      {expanded && (
+      {expanded && hasOutput && (
         <div className="border-t bg-gray-50 divide-y">
           {/* Error message */}
           {log.error && (
             <div className="px-4 py-3">
               <p className="text-xs font-semibold text-red-600 mb-1">Error</p>
-              <p className="text-sm text-red-700 break-words">{log.error}</p>
+              <p className="text-sm text-red-700 break-words font-mono">{log.error}</p>
             </div>
           )}
 
-          {/* Connector info */}
-          {log.connector && (
-            <div className="px-4 py-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-500">
-              {log.connector.connectorType && <span><span className="font-medium text-gray-600">Type:</span> {log.connector.connectorType}</span>}
-              {log.connector.name && <span><span className="font-medium text-gray-600">Connector:</span> {log.connector.name}</span>}
-              {log.connector.topic && <span><span className="font-medium text-gray-600">Topic:</span> {log.connector.topic}</span>}
-              {log.connector.broker && <span><span className="font-medium text-gray-600">Broker:</span> {log.connector.broker}</span>}
+          {/* Result / return value */}
+          {log.result != null && (
+            <div className="px-4 py-3">
+              <p className="text-xs font-semibold text-gray-600 mb-1.5">
+                Return value
+                <span className="ml-2 font-normal text-gray-400">
+                  ({Array.isArray(log.result) ? `array[${(log.result as unknown[]).length}]` : typeof log.result})
+                </span>
+              </p>
+              <ResultDisplay result={log.result} />
             </div>
           )}
 
@@ -102,7 +140,9 @@ function ModuleLogCard({ log, index }: {
               </pre>
             </div>
           ) : (
-            <div className="px-4 py-2 text-xs text-gray-400 italic">No stdout output</div>
+            !log.error && log.result == null && (
+              <div className="px-4 py-2 text-xs text-gray-400 italic">No output</div>
+            )
           )}
 
           {/* stderr */}
@@ -112,6 +152,17 @@ function ModuleLogCard({ log, index }: {
               <pre className="text-xs bg-red-950 text-red-200 rounded p-3 overflow-x-auto whitespace-pre-wrap break-all max-h-64 overflow-y-auto font-mono leading-relaxed">
                 {log.stderr}
               </pre>
+            </div>
+          )}
+
+          {/* Connector info */}
+          {log.connector && (
+            <div className="px-4 py-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-500 bg-white">
+              <span className="font-medium text-gray-500">Connector</span>
+              {log.connector.connectorType && <span><span className="font-medium text-gray-600">Type:</span> {log.connector.connectorType}</span>}
+              {log.connector.name && <span><span className="font-medium text-gray-600">Name:</span> {log.connector.name}</span>}
+              {log.connector.topic && <span><span className="font-medium text-gray-600">Topic:</span> {log.connector.topic}</span>}
+              {log.connector.broker && <span><span className="font-medium text-gray-600">Broker:</span> {log.connector.broker}</span>}
             </div>
           )}
 
@@ -159,6 +210,7 @@ export default function RunDetail() {
     const timer = setInterval(async () => {
       try {
         const runData = await api.getPipelineRun(pipelineId, runId, true);
+        runCache.set(runId, runData);
         setRun(runData);
         if (runData.status !== 'RUNNING' && runData.status !== 'PENDING') {
           clearInterval(timer);
@@ -186,8 +238,11 @@ export default function RunDetail() {
   }
 
   const statusClass = STATUS_COLOR[run.status] ?? 'bg-gray-100 text-gray-700 border-gray-300';
-  const logs = run.moduleLogs ?? [];
+  const logs = (run.moduleLogs ?? []).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   const executionLog = run.executionLog ?? [];
+
+  const successCount = logs.filter((l) => l.success).length;
+  const failCount = logs.filter((l) => !l.success).length;
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
@@ -217,9 +272,17 @@ export default function RunDetail() {
             </h1>
             <p className="text-xs text-gray-400 font-mono">{runId}</p>
           </div>
-          <span className={`text-sm font-bold px-3 py-1 rounded border ${statusClass}`}>
-            {run.status}
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            {run.status === 'RUNNING' && (
+              <span className="flex items-center gap-1.5 text-xs text-blue-600">
+                <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                Running…
+              </span>
+            )}
+            <span className={`text-sm font-bold px-3 py-1 rounded border ${statusClass}`}>
+              {run.status}
+            </span>
+          </div>
         </div>
 
         <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
@@ -243,10 +306,27 @@ export default function RunDetail() {
           </div>
         </div>
 
+        {/* Module summary pills */}
+        {logs.length > 0 && (
+          <div className="mt-4 flex items-center gap-3 text-xs">
+            <span className="text-gray-500">{logs.length} module{logs.length !== 1 ? 's' : ''}:</span>
+            {successCount > 0 && (
+              <span className="bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-medium">
+                {successCount} passed
+              </span>
+            )}
+            {failCount > 0 && (
+              <span className="bg-red-100 text-red-800 px-2 py-0.5 rounded-full font-medium">
+                {failCount} failed
+              </span>
+            )}
+          </div>
+        )}
+
         {run.errorMessage && (
           <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded">
             <p className="text-sm font-semibold text-red-700 mb-0.5">Pipeline error</p>
-            <p className="text-sm text-red-600 break-words">{run.errorMessage}</p>
+            <p className="text-sm text-red-600 break-words font-mono">{run.errorMessage}</p>
           </div>
         )}
 

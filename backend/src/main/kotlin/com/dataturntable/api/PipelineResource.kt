@@ -1291,9 +1291,16 @@ class PipelineResource {
         }
         val executionLog = if (withDetails) metrics["executionLog"] else null
 
-        // Load persisted node logs from DB (preferred over in-metrics JSON)
+        // Load persisted node logs from DB, enriched with result from metrics (result not stored in DB)
+        @Suppress("UNCHECKED_CAST")
+        val metricsModuleLogs = metrics["moduleLogs"] as? List<*> ?: emptyList<Any>()
+        val metricsLogsByNodeId: Map<String, Map<*, *>> = metricsModuleLogs
+            .filterIsInstance<Map<*, *>>()
+            .associateBy { it["nodeId"]?.toString() ?: "" }
+
         val dbNodeLogs = if (withDetails) {
             PipelineRunNodeLog.findByRunId(runUuid).map { log ->
+                val metricsEntry = metricsLogsByNodeId[log.nodeId]
                 mapOf(
                     "nodeId" to log.nodeId,
                     "stage" to log.nodeType,
@@ -1303,11 +1310,14 @@ class PipelineResource {
                     "stderr" to log.stderr,
                     "error" to log.errorMessage,
                     "durationMs" to log.durationMs,
-                    "executedAt" to log.executedAt
+                    "executedAt" to log.executedAt,
+                    "result" to metricsEntry?.get("result"),
+                    "order" to metricsEntry?.get("order"),
+                    "connector" to metricsEntry?.get("connector")
                 )
             }
         } else null
-        val moduleLogs = if (withDetails) (dbNodeLogs?.takeIf { it.isNotEmpty() } ?: metrics["moduleLogs"]) else null
+        val moduleLogs = if (withDetails) (dbNodeLogs?.takeIf { it.isNotEmpty() } ?: metricsModuleLogs.ifEmpty { null }) else null
 
         return Response.ok(
             mapOf(

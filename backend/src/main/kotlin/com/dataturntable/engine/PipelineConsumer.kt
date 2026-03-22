@@ -469,6 +469,7 @@ class PipelineConsumer {
                     "stderr" to trimLog(output.stderr),
                     "exitCode" to output.exitCode,
                     "durationMs" to output.durationMs,
+                    "result" to output.result,
                     "connector" to node.connector?.meta
                 ))
                 executionLog.add("DONE $stage #$order ${version.module?.name ?: version.id} [${node.id}] (${output.durationMs}ms)")

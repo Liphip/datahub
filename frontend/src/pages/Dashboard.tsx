@@ -190,7 +190,7 @@ export default function Dashboard() {
           pipelinesData.map(async (p) => {
             try {
               const runs = await api.getPipelineRuns(p.id);
-              return runs.slice(0, 3).map((r) => ({ ...r, pipelineName: p.name }));
+              return runs.slice(0, 10).map((r) => ({ ...r, pipelineName: p.name }));
             } catch { return []; }
           })
         );
@@ -199,7 +199,7 @@ export default function Dashboard() {
           runLists
             .flat()
             .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
-            .slice(0, 12)
+            .slice(0, 30)
         );
       } catch {
         if (!cancelled) setError(t('dashboard.failedToLoadDashboard'));
