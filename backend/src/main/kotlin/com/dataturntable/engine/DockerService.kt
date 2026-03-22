@@ -247,15 +247,15 @@ class DockerService {
             |import json, os, inspect
             |
             |def alert_fn(severity='info', message='', payload=None):
-            |    \"\"\"Fire an alert. The platform intercepts __alert__ lines in stdout.\"\"\"
+            |    # Fire an alert. The platform intercepts __alert__ lines in stdout.
             |    print(json.dumps({'__alert__': {'severity': severity, 'message': message, 'payload': payload}}))
             |
             |def query_fn(query):
-            |    \"\"\"Query platform stored data. Returns empty dict in current runtime.\"\"\"
+            |    # Query platform stored data. Returns empty dict in current runtime.
             |    return {}
             |
             |def _connector_meta():
-            |    \"\"\"Non-sensitive connector metadata (type, name, topic, etc.) for informational use only.\"\"\"
+            |    # Non-sensitive connector metadata (type, name, topic, etc.) for informational use only.
             |    try:
             |        return json.loads(os.environ.get('CONNECTOR_META', '{}'))
             |    except Exception:
@@ -276,7 +276,7 @@ class DockerService {
             |        return []
             |
             |def _call(fn, *args):
-            |    \"\"\"Call fn with as many args as its signature accepts (up to len(args)).\"\"\"
+            |    # Call fn with as many args as its signature accepts (up to len(args)).
             |    try:
             |        sig = inspect.signature(fn)
             |        params = [p for p in sig.parameters.values()
@@ -288,7 +288,7 @@ class DockerService {
             |        raise RuntimeError(f"Module call failed: {e}") from e
             |
             |def _resolve(class_name, method_name):
-            |    \"\"\"Find method_name on class_name instance, or as a bare function.\"\"\"
+            |    # Find method_name on class_name instance, or as a bare function.
             |    cls = globals().get(class_name)
             |    if inspect.isclass(cls):
             |        try:

@@ -2,7 +2,8 @@ package com.dataturntable.module
 
 import com.dataturntable.auth.User
 import com.dataturntable.tenant.Tenant
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase
+import com.dataturntable.PanacheBase
+import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanionBase
 import jakarta.persistence.*
 import java.time.Instant
 import java.util.UUID
@@ -22,7 +23,7 @@ enum class ModuleType {
 
 @Entity
 @Table(name = "code_modules")
-open class CodeModule : PanacheEntityBase() {
+open class CodeModule : PanacheBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -59,18 +60,18 @@ open class CodeModule : PanacheEntityBase() {
     @OrderBy("version DESC")
     var versions: MutableList<ModuleVersion> = mutableListOf()
     
-    companion object {
-        fun findById(id: UUID): CodeModule? = 
-            PanacheEntityBase.find<CodeModule>("id = ?1", id).firstResult()
-        
-        fun findByTenantId(tenantId: UUID): List<CodeModule> = 
-            PanacheEntityBase.list<CodeModule>("tenant.id = ?1", tenantId)
-        
-        fun findByTenantAndType(tenantId: UUID, type: ModuleType): List<CodeModule> = 
-            PanacheEntityBase.list<CodeModule>("tenant.id = ?1 AND moduleType = ?2", tenantId, type)
-        
-        fun findByTenantAndName(tenantId: UUID, name: String, type: ModuleType): CodeModule? = 
-            PanacheEntityBase.find<CodeModule>("tenant.id = ?1 AND name = ?2 AND moduleType = ?3", tenantId, name, type).firstResult()
+    companion object : PanacheCompanionBase<CodeModule, UUID> {
+        override fun findById(id: UUID): CodeModule? =
+            find("id = ?1", id).firstResult()
+
+        fun findByTenantId(tenantId: UUID): List<CodeModule> =
+            list("tenant.id = ?1", tenantId)
+
+        fun findByTenantAndType(tenantId: UUID, type: ModuleType): List<CodeModule> =
+            list("tenant.id = ?1 AND moduleType = ?2", tenantId, type)
+
+        fun findByTenantAndName(tenantId: UUID, name: String, type: ModuleType): CodeModule? =
+            find("tenant.id = ?1 AND name = ?2 AND moduleType = ?3", tenantId, name, type).firstResult()
     }
     
     fun getLatestVersion(): ModuleVersion? = 

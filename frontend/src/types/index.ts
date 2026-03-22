@@ -366,6 +366,20 @@ export interface Connector {
   createdAt: string;
 }
 
+export interface StatusCheck {
+  name: string;
+  status: 'OK' | 'WARN' | 'ERROR' | 'UNKNOWN';
+  message?: string;
+  detail?: string;
+}
+
+export interface ConnectorStatus {
+  connectorId: string;
+  connectorType: string;
+  direction: string;
+  checks: StatusCheck[];
+}
+
 export interface ConnectorReference {
   pipelineId: string;
   pipelineName: string;

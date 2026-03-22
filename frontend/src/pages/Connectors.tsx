@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Connector, BrokerCredential, ConnectorImpactSummary, ConnectorReferenceSummary } from '../types';
+import type { Connector, BrokerCredential, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, StatusCheck } from '../types';
 
 const connectorTypes = ['MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'CUSTOM'] as const;
 const directions = ['INPUT', 'OUTPUT'] as const;
@@ -20,7 +20,11 @@ type ConnectorConfigField = {
 
 const connectorConfigSchema: Record<ConnectorType, ConnectorConfigField[]> = {
   MQTT: [
-    { key: 'broker', label: 'Broker URL', type: 'url', required: true, placeholder: 'mqtt://broker:1883' },
+    {
+      key: 'broker', label: 'Broker URL', type: 'url', required: true,
+      placeholder: 'mqtt://broker:1883  or  mqtts://broker:8883',
+      hint: 'Use mqtt:// for plain TCP (port 1883) or mqtts:// for TLS (port 8883). Port 8883 is auto-upgraded to TLS.',
+    },
     { key: 'clientId', label: 'Client ID', placeholder: 'dt-edge-ingest' },
     { key: 'username', label: 'Username' },
     { key: 'password', label: 'Password', type: 'password' },
@@ -53,8 +57,14 @@ const connectorConfigSchema: Record<ConnectorType, ConnectorConfigField[]> = {
 const initialConfigByType = (type: ConnectorType, existing?: Record<string, unknown>) => {
   const fields = connectorConfigSchema[type] || [];
   return fields.reduce<Record<string, string>>((acc, field) => {
-    const value = existing?.[field.key];
-    acc[field.key] = value == null ? '' : String(value);
+    if (field.type === 'password') {
+      // Never pre-fill password fields — the API masks them as "********".
+      // Leave blank: backend will preserve the stored value when the field is empty.
+      acc[field.key] = '';
+    } else {
+      const value = existing?.[field.key];
+      acc[field.key] = value == null ? '' : String(value);
+    }
     return acc;
   }, {});
 };
@@ -125,6 +135,9 @@ export default function Connectors() {
   const [impactWindowHours, setImpactWindowHours] = useState<1 | 24 | 168>(24);
   const [impactActiveOnly, setImpactActiveOnly] = useState(false);
   const [impactRiskAtLeast, setImpactRiskAtLeast] = useState<'LOW' | 'MEDIUM' | 'HIGH'>('LOW');
+  const [connectorStatuses, setConnectorStatuses] = useState<Record<string, ConnectorStatus>>({});
+  const [modalStatus, setModalStatus] = useState<ConnectorStatus | null>(null);
+  const [loadingModalStatus, setLoadingModalStatus] = useState(false);
   const [disconnectImpactModal, setDisconnectImpactModal] = useState<ConnectorImpactSummary | null>(null);
   const [pendingDisconnectConnector, setPendingDisconnectConnector] = useState<Connector | null>(null);
   const [brokerForm, setBrokerForm] = useState({
@@ -140,6 +153,48 @@ export default function Connectors() {
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
+  };
+
+  // ── Status helpers ─────────────────────────────────────────────────────────
+
+  const aggregateStatus = (status?: ConnectorStatus): 'OK' | 'WARN' | 'ERROR' | 'UNKNOWN' => {
+    if (!status || status.checks.length === 0) return 'UNKNOWN';
+    if (status.checks.some((c: StatusCheck) => c.status === 'ERROR')) return 'ERROR';
+    if (status.checks.some((c: StatusCheck) => c.status === 'WARN')) return 'WARN';
+    if (status.checks.every((c: StatusCheck) => c.status === 'OK')) return 'OK';
+    return 'UNKNOWN';
+  };
+
+  const statusDot = (agg: 'OK' | 'WARN' | 'ERROR' | 'UNKNOWN') => {
+    const colors = { OK: 'bg-green-500', WARN: 'bg-amber-400', ERROR: 'bg-red-500', UNKNOWN: 'bg-gray-300' };
+    const titles = { OK: 'Healthy', WARN: 'Warning', ERROR: 'Error', UNKNOWN: 'Status unknown' };
+    return (
+      <span
+        className={`inline-block w-2.5 h-2.5 rounded-full ${colors[agg]} shrink-0`}
+        title={titles[agg]}
+      />
+    );
+  };
+
+  const loadStatuses = async (tid: string) => {
+    try {
+      const data = await api.getConnectorStatuses(tid);
+      setConnectorStatuses(data);
+    } catch {
+      // status is best-effort; don't show errors to the user
+    }
+  };
+
+  const loadModalStatus = async (connectorId: string) => {
+    setLoadingModalStatus(true);
+    try {
+      const data = await api.getConnectorStatus(connectorId);
+      setModalStatus(data);
+    } catch {
+      setModalStatus(null);
+    } finally {
+      setLoadingModalStatus(false);
+    }
   };
 
   const loadConnectors = async (tid: string) => {
@@ -180,6 +235,7 @@ export default function Connectors() {
         const defaults = await api.getMqttConnectorDefaults().catch(() => null);
         setMqttDefaults(defaults);
         await loadBrokerCredentials(tenantId);
+        await loadStatuses(tenantId);
         setError('');
       } catch (err) {
         console.error('Error fetching connectors:', err);
@@ -191,6 +247,13 @@ export default function Connectors() {
 
     fetchConnectors();
   }, [tenantId, filterType, filterDirection, filterActive, filterQuery, canReadConnectors, canManageBrokerUsers, canReadBrokerUsers]);
+
+  // Periodically refresh connector statuses (every 15s)
+  useEffect(() => {
+    if (!tenantId || !canReadConnectors) return;
+    const interval = setInterval(() => loadStatuses(tenantId), 15000);
+    return () => clearInterval(interval);
+  }, [tenantId, canReadConnectors]);
 
   const openCreateBrokerCredential = () => {
     setEditingBrokerCredential(null);
@@ -301,14 +364,11 @@ export default function Connectors() {
     const broker = mode === 'internal'
       ? (mqttDefaults?.internalBrokerUrl || 'mqtt://mosquitto:1883')
       : (mqttDefaults?.externalBrokerUrl || 'mqtt://localhost:1883');
-    const topicBase = mqttDefaults?.defaultTopic || 'dataturntable/events';
-    const topicSuffix = formData.direction === 'OUTPUT' ? '/out' : '/in';
     setFormData((prev) => ({
       ...prev,
       config: {
         ...prev.config,
         broker,
-        topic: prev.config.topic?.trim() ? prev.config.topic : `${topicBase}${topicSuffix}`,
       },
     }));
   };
@@ -346,7 +406,8 @@ export default function Connectors() {
 
       if (editingConnector) {
         const requiredMissing = connectorConfigSchema[formData.connectorType]
-          .filter((field) => field.required && !formData.config[field.key]?.trim())
+          // Password fields are intentionally left blank when editing (backend preserves existing value)
+          .filter((field) => field.required && field.type !== 'password' && !formData.config[field.key]?.trim())
           .map((field) => field.label);
         if (requiredMissing.length > 0) {
           setError(`Missing required config fields: ${requiredMissing.join(', ')}`);
@@ -495,7 +556,12 @@ export default function Connectors() {
     setTestingId(connector.id);
     try {
       const result = await api.testConnector(connector.id);
-      showToast(result.message || 'Connector test succeeded', 'success');
+      // ok=false means the config is valid but the broker/endpoint rejected the connection
+      if (result.ok === false) {
+        showToast(result.message || 'Connection test failed', 'error');
+      } else {
+        showToast(result.message || 'Connector test succeeded', 'success');
+      }
     } catch (err: any) {
       const missing = err?.response?.data?.missing;
       if (Array.isArray(missing) && missing.length > 0) {
@@ -587,6 +653,8 @@ export default function Connectors() {
   const handleEdit = (connector: Connector) => {
     if (!canWriteConnectors) return;
     setEditingConnector(connector);
+    setModalStatus(null);
+    loadModalStatus(connector.id);
     setFormData({
       name: connector.name,
       connectorType: connector.connectorType,
@@ -765,11 +833,17 @@ export default function Connectors() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {connectors.map((connector) => (
+          {connectors.map((connector) => {
+            const connStatus = connectorStatuses[connector.id];
+            const agg = aggregateStatus(connStatus);
+            return (
             <div key={connector.id} className="card">
               <div className="flex justify-between items-start mb-2">
-                <h3 className="text-lg font-semibold text-gray-900">{connector.name}</h3>
-                <div className="flex space-x-1">
+                <div className="flex items-center gap-2 min-w-0">
+                  {statusDot(agg)}
+                  <h3 className="text-lg font-semibold text-gray-900 truncate">{connector.name}</h3>
+                </div>
+                <div className="flex space-x-1 shrink-0">
                   <span className={`px-2 py-1 text-xs font-medium rounded ${getTypeColor(connector.connectorType)}`}>
                     {connector.connectorType}
                   </span>
@@ -876,8 +950,24 @@ export default function Connectors() {
                   </button>
                 ))}
               </div>
+
+              {/* Inline status summary — show non-OK checks */}
+              {connStatus && connStatus.checks.some((c: StatusCheck) => c.status !== 'OK') && (
+                <div className="mt-2 space-y-1">
+                  {connStatus.checks.filter((c: StatusCheck) => c.status !== 'OK').map((c: StatusCheck, i: number) => (
+                    <div key={i} className={`flex items-start gap-1.5 text-[11px] rounded px-2 py-1 ${
+                      c.status === 'ERROR' ? 'bg-red-50 text-red-700' :
+                      c.status === 'WARN'  ? 'bg-amber-50 text-amber-700' : 'bg-gray-50 text-gray-500'
+                    }`}>
+                      <span className="font-semibold shrink-0">{c.name}:</span>
+                      <span>{c.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          ))}
+          );
+          })}
         </div>
       )}
 
@@ -1390,8 +1480,12 @@ export default function Connectors() {
                             config: { ...formData.config, [field.key]: e.target.value },
                           })}
                           className="input"
-                          placeholder={field.placeholder}
-                          required={field.required}
+                          placeholder={
+                            field.type === 'password' && editingConnector
+                              ? 'leave blank to keep existing'
+                              : field.placeholder
+                          }
+                          required={field.required && !editingConnector}
                           disabled={
                             formData.connectorType === 'MQTT'
                             && Boolean((formData.config.brokerCredentialId || '').trim())
@@ -1405,7 +1499,7 @@ export default function Connectors() {
                   <p className="mt-2 text-xs text-slate-500">
                     Direction: <strong>{formData.direction}</strong> — INPUT connectors receive data; OUTPUT connectors deliver data.
                   </p>
-                  {formData.direction === 'INPUT' && (
+                  {formData.direction === 'INPUT' && (formData.connectorType === 'REST' || formData.connectorType === 'FILE') && (
                     <div className="mt-3 space-y-2">
                       <div className="flex items-center gap-3">
                         <label className="flex items-center gap-2 text-sm cursor-pointer">
@@ -1450,6 +1544,48 @@ export default function Connectors() {
                 </div>
               </div>
               
+              {/* Runtime status — shown only when editing an existing connector */}
+              {editingConnector && (
+                <div className="mt-4 rounded border border-slate-200 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-slate-700">Runtime status</span>
+                    <button
+                      type="button"
+                      onClick={() => loadModalStatus(editingConnector.id)}
+                      disabled={loadingModalStatus}
+                      className="text-xs text-slate-500 hover:text-slate-700 disabled:opacity-40"
+                    >
+                      {loadingModalStatus ? 'Refreshing…' : '↻ Refresh'}
+                    </button>
+                  </div>
+                  {loadingModalStatus && !modalStatus ? (
+                    <p className="text-xs text-slate-400">Loading…</p>
+                  ) : modalStatus ? (
+                    <div className="space-y-1">
+                      {modalStatus.checks.map((check: StatusCheck, i: number) => (
+                        <div key={i} className={`flex items-start gap-2 text-xs rounded px-2 py-1.5 ${
+                          check.status === 'OK'      ? 'bg-green-50 text-green-800' :
+                          check.status === 'ERROR'   ? 'bg-red-50 text-red-800' :
+                          check.status === 'WARN'    ? 'bg-amber-50 text-amber-800' :
+                                                       'bg-gray-50 text-gray-600'
+                        }`}>
+                          <span className="mt-px shrink-0">
+                            {check.status === 'OK' ? '✓' : check.status === 'ERROR' ? '✗' : check.status === 'WARN' ? '⚠' : '?'}
+                          </span>
+                          <div className="min-w-0">
+                            <span className="font-medium">{check.name}</span>
+                            {check.message && <span className="ml-1 opacity-80">{check.message}</span>}
+                            {check.detail && <div className="mt-0.5 opacity-70 break-all">{check.detail}</div>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400">No status available</p>
+                  )}
+                </div>
+              )}
+
               <div className="mt-6 flex justify-end space-x-3">
                 <button
                   type="button"

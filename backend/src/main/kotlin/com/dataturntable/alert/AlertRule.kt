@@ -3,14 +3,15 @@ package com.dataturntable.alert
 import com.dataturntable.auth.User
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.tenant.Tenant
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase
+import com.dataturntable.PanacheBase
+import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanionBase
 import jakarta.persistence.*
 import java.time.Instant
 import java.util.UUID
 
 @Entity
 @Table(name = "alert_rules")
-open class AlertRule : PanacheEntityBase() {
+open class AlertRule : PanacheBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -57,14 +58,12 @@ open class AlertRule : PanacheEntityBase() {
     @OrderBy("sentAt DESC")
     var history: MutableList<AlertHistory> = mutableListOf()
     
-    companion object {
-        fun findById(id: UUID): AlertRule? = 
-            PanacheEntityBase.find<AlertRule>("id = ?1", id).firstResult()
-        
-        fun findByTenantId(tenantId: UUID): List<AlertRule> = 
-            PanacheEntityBase.list<AlertRule>("tenant.id = ?1", tenantId)
-        
-        fun findAll(): List<AlertRule> = 
-            PanacheEntityBase.listAll<AlertRule>()
+    companion object : PanacheCompanionBase<AlertRule, UUID> {
+        override fun findById(id: UUID): AlertRule? =
+            find("id = ?1", id).firstResult()
+
+        fun findByTenantId(tenantId: UUID): List<AlertRule> =
+            list("tenant.id = ?1", tenantId)
+
     }
 }

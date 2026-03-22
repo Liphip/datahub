@@ -6,6 +6,8 @@ import com.dataturntable.pipeline.PipelineRunNodeLog
 import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.connectors.Connector
+import com.dataturntable.connectors.mqtt.MqttIngestService
+import com.dataturntable.connectors.websocket.WebSocketConnectionManager
 import com.dataturntable.engine.PipelineConsumer
 import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
@@ -32,6 +34,12 @@ class PipelineResource {
 
     @Inject
     lateinit var pipelineConsumer: PipelineConsumer
+
+    @Inject
+    lateinit var mqttIngestService: MqttIngestService
+
+    @Inject
+    lateinit var webSocketConnectionManager: WebSocketConnectionManager
 
     @Inject
     lateinit var jwt: JsonWebToken
@@ -798,6 +806,10 @@ class PipelineResource {
             syncConnectorPipelineMap(pipeline.id!!, graphDefinition)
         }
 
+        // Refresh routing tables so MQTT/WS subscriptions stay in sync if pipeline is active
+        mqttIngestService.refreshAll()
+        webSocketConnectionManager.refreshAll()
+
         return Response.status(201).entity(pipelineToMap(pipeline)).build()
     }
 
@@ -837,12 +849,15 @@ class PipelineResource {
                 ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
             requireTenantAccess(currentUser, tenantId, "pipeline:write")?.let { return it }
             pipeline.delete()
+            // Rebuild routing tables to remove this pipeline's subscriptions
+            mqttIngestService.refreshAll()
+            webSocketConnectionManager.refreshAll()
             Response.noContent().build()
         } else {
             Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
         }
     }
-    
+
     @PATCH
     @Path("/{id}")
     @Transactional
@@ -885,6 +900,11 @@ class PipelineResource {
             }
             pipeline.updatedAt = java.time.Instant.now()
             pipeline.persist()
+
+            // Refresh connection managers so topic subscriptions stay in sync with graph changes
+            mqttIngestService.refreshAll()
+            webSocketConnectionManager.refreshAll()
+
             Response.ok(pipelineToMap(pipeline)).build()
         } else {
             Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()

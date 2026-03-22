@@ -3,14 +3,15 @@ package com.dataturntable.pipeline
 import com.dataturntable.auth.User
 import com.dataturntable.tenant.Tenant
 import com.dataturntable.module.ModuleVersion
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase
+import com.dataturntable.PanacheBase
+import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanionBase
 import jakarta.persistence.*
 import java.time.Instant
 import java.util.UUID
 
 @Entity
 @Table(name = "pipelines")
-open class Pipeline : PanacheEntityBase() {
+open class Pipeline : PanacheBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -61,8 +62,8 @@ open class Pipeline : PanacheEntityBase() {
     @OrderBy("startedAt DESC")
     var runs: MutableList<PipelineRun> = mutableListOf()
     
-    companion object {
-        fun findById(id: UUID): Pipeline? =
+    companion object : PanacheCompanionBase<Pipeline, UUID> {
+        override fun findById(id: UUID): Pipeline? =
             getEntityManager()
                 .createQuery("SELECT p FROM Pipeline p WHERE p.id = :id", Pipeline::class.java)
                 .setParameter("id", id)

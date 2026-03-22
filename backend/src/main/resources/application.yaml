@@ -112,6 +112,8 @@ dataturntable:
       cpu-limit: "1.0"
       memory-limit: "512m"
   mqtt:
+    # MQTT connectivity is handled via Eclipse Paho directly (MqttConnectionManager).
+    # These values are exposed to the frontend as defaults for the connector setup UI only.
     integrated:
       internal-broker-url: ${MQTT_INTEGRATED_INTERNAL_BROKER_URL:mqtt://mosquitto:1883}
       external-broker-url: ${MQTT_INTEGRATED_EXTERNAL_BROKER_URL:mqtt://localhost:1883}

@@ -3,7 +3,8 @@ package com.dataturntable.alert
 import com.dataturntable.auth.User
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.tenant.Tenant
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase
+import com.dataturntable.PanacheBase
+import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanionBase
 import jakarta.persistence.*
 import java.time.Instant
 import java.util.UUID
@@ -14,7 +15,7 @@ enum class AlertChannelType {
 
 @Entity
 @Table(name = "alert_channels")
-open class AlertChannel : PanacheEntityBase() {
+open class AlertChannel : PanacheBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -50,14 +51,12 @@ open class AlertChannel : PanacheEntityBase() {
     @JoinColumn(name = "created_by")
     var createdBy: User? = null
     
-    companion object {
-        fun findById(id: UUID): AlertChannel? = 
-            PanacheEntityBase.find<AlertChannel>("id = ?1", id).firstResult()
-        
-        fun findByTenantId(tenantId: UUID): List<AlertChannel> = 
-            PanacheEntityBase.list<AlertChannel>("tenant.id = ?1", tenantId)
-        
-        fun findAll(): List<AlertChannel> = 
-            PanacheEntityBase.listAll<AlertChannel>()
+    companion object : PanacheCompanionBase<AlertChannel, UUID> {
+        override fun findById(id: UUID): AlertChannel? =
+            find("id = ?1", id).firstResult()
+
+        fun findByTenantId(tenantId: UUID): List<AlertChannel> =
+            list("tenant.id = ?1", tenantId)
+
     }
 }

@@ -1,13 +1,14 @@
 package com.dataturntable.connectors
 
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase
+import com.dataturntable.PanacheBase
+import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanionBase
 import jakarta.persistence.*
 import java.time.Instant
 import java.util.UUID
 
 @Entity
 @Table(name = "connectors")
-class Connector : PanacheEntityBase() {
+class Connector : PanacheBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -61,7 +62,7 @@ class Connector : PanacheEntityBase() {
     @JoinColumn(name = "created_by")
     var createdBy: com.dataturntable.auth.User? = null
     
-    companion object {
+    companion object : PanacheCompanionBase<Connector, UUID> {
         fun findByTenantId(tenantId: UUID): List<Connector> {
             return getEntityManager()
                 .createQuery("SELECT c FROM Connector c WHERE c.tenant.id = :tenantId", Connector::class.java)
@@ -91,7 +92,7 @@ class Connector : PanacheEntityBase() {
                 .resultList
         }
         
-        fun findById(connectorId: UUID): Connector? {
+        override fun findById(connectorId: UUID): Connector? {
             return getEntityManager()
                 .createQuery("SELECT c FROM Connector c WHERE c.id = :id", Connector::class.java)
                 .setParameter("id", connectorId)

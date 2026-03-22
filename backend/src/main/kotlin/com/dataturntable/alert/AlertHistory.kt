@@ -1,7 +1,8 @@
 package com.dataturntable.alert
 
 import com.dataturntable.tenant.Tenant
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase
+import com.dataturntable.PanacheBase
+import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanionBase
 import jakarta.persistence.*
 import java.time.Instant
 import java.util.UUID
@@ -16,7 +17,7 @@ enum class AlertStatus {
 
 @Entity
 @Table(name = "alert_history")
-open class AlertHistory : PanacheEntityBase() {
+open class AlertHistory : PanacheBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -54,8 +55,8 @@ open class AlertHistory : PanacheEntityBase() {
     @Column(nullable = false)
     var status: AlertStatus = AlertStatus.PENDING
     
-    companion object {
-        fun findById(id: UUID): AlertHistory? =
+    companion object : PanacheCompanionBase<AlertHistory, UUID> {
+        override fun findById(id: UUID): AlertHistory? =
             getEntityManager()
                 .createQuery("SELECT a FROM AlertHistory a WHERE a.id = :id", AlertHistory::class.java)
                 .setParameter("id", id)

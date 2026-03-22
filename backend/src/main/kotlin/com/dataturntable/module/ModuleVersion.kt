@@ -1,7 +1,8 @@
 package com.dataturntable.module
 
 import com.dataturntable.auth.User
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase
+import com.dataturntable.PanacheBase
+import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanionBase
 import jakarta.persistence.EntityManager
 import jakarta.persistence.*
 import java.time.Instant
@@ -9,7 +10,7 @@ import java.util.UUID
 
 @Entity
 @Table(name = "module_versions")
-open class ModuleVersion : PanacheEntityBase() {
+open class ModuleVersion : PanacheBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -44,18 +45,18 @@ open class ModuleVersion : PanacheEntityBase() {
     @JoinColumn(name = "created_by")
     var createdBy: User? = null
     
-    companion object {
-        fun findById(id: UUID): ModuleVersion? = 
-            PanacheEntityBase.find<ModuleVersion>("id = ?1", id).firstResult()
-        
-        fun findByModuleId(moduleId: UUID): List<ModuleVersion> = 
-            PanacheEntityBase.list<ModuleVersion>("module.id = ?1 ORDER BY version DESC", moduleId)
-        
-        fun findByModuleAndVersion(moduleId: UUID, version: Int): ModuleVersion? = 
-            PanacheEntityBase.find<ModuleVersion>("module.id = ?1 AND version = ?2", moduleId, version).firstResult()
-        
-        fun findByModuleAndTag(moduleId: UUID, tag: String): ModuleVersion? = 
-            PanacheEntityBase.find<ModuleVersion>("module.id = ?1 AND versionTag = ?2", moduleId, tag).firstResult()
+    companion object : PanacheCompanionBase<ModuleVersion, UUID> {
+        override fun findById(id: UUID): ModuleVersion? =
+            find("id = ?1", id).firstResult()
+
+        fun findByModuleId(moduleId: UUID): List<ModuleVersion> =
+            list("module.id = ?1 ORDER BY version DESC", moduleId)
+
+        fun findByModuleAndVersion(moduleId: UUID, version: Int): ModuleVersion? =
+            find("module.id = ?1 AND version = ?2", moduleId, version).firstResult()
+
+        fun findByModuleAndTag(moduleId: UUID, tag: String): ModuleVersion? =
+            find("module.id = ?1 AND versionTag = ?2", moduleId, tag).firstResult()
         
         fun getNextVersion(moduleId: UUID): Int {
             val query = getEntityManager().createQuery("SELECT m FROM ModuleVersion m WHERE m.module.id = :mid ORDER BY m.version DESC", ModuleVersion::class.java)

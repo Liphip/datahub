@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertRule, AlertHistory, DataSummaryResponse, DataBlob, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, Role, Membership, TenantContext, BrokerCredential } from '../types';
+import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertRule, AlertHistory, DataSummaryResponse, DataBlob, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 export const API_STATUS_EVENT = 'dataturntable:api-status';
@@ -658,6 +658,16 @@ class ApiService {
 
   async testConnector(id: string): Promise<{ ok: boolean; message: string; missing?: string[] }> {
     const response = await this.client.post<{ ok: boolean; message: string; missing?: string[] }>(`/connectors/${id}/test`);
+    return response.data;
+  }
+
+  async getConnectorStatus(id: string): Promise<ConnectorStatus> {
+    const response = await this.client.get<ConnectorStatus>(`/connectors/${id}/status`);
+    return response.data;
+  }
+
+  async getConnectorStatuses(tenantId: string): Promise<Record<string, ConnectorStatus>> {
+    const response = await this.client.get<Record<string, ConnectorStatus>>(`/connectors/statuses?tenantId=${tenantId}`);
     return response.data;
   }
 

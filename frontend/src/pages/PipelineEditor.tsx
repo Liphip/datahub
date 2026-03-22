@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, memo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { Pipeline, CodeModule, Connector, ModuleVersion, PipelineRun } from '../types';
@@ -250,8 +250,13 @@ export default function PipelineEditor() {
           setNodes(fn);
           setEdges(fe);
           if (pipelineData.latestRunId) {
-            const run = pipelineData.runs?.find((r) => r.id === pipelineData.latestRunId) ?? null;
-            setLatestRun(run);
+            // Fetch the latest run with full details (moduleLogs, stdout, etc.)
+            try {
+              const run = await api.getPipelineRun(pipelineId!, pipelineData.latestRunId);
+              setLatestRun(run);
+            } catch {
+              // Non-critical: ignore if we can't load latest run
+            }
           }
         } else {
           setName('New Pipeline');
@@ -531,7 +536,7 @@ export default function PipelineEditor() {
               onChange={updateSelectedNodeData}
             />
           ) : (
-            <RunLogPanel latestRun={latestRun} />
+            <RunLogPanel latestRun={latestRun} pipelineId={pipeline?.id} />
           )}
         </div>
       </div>
@@ -705,7 +710,7 @@ function NodeConfigPanel({
 
 // ─── Run log side panel ───────────────────────────────────────────────────────
 
-function RunLogPanel({ latestRun }: { latestRun: PipelineRun | null }) {
+function RunLogPanel({ latestRun, pipelineId }: { latestRun: PipelineRun | null; pipelineId?: string }) {
   if (!latestRun) {
     return (
       <div className="p-4 text-sm text-gray-400">
@@ -724,17 +729,27 @@ function RunLogPanel({ latestRun }: { latestRun: PipelineRun | null }) {
 
   return (
     <div className="p-4 space-y-3 text-sm">
-      <div>
-        <p className="font-medium text-gray-700">Latest run</p>
-        <p className={`text-xs font-semibold ${statusColor[latestRun.status] ?? 'text-gray-500'}`}>
-          {latestRun.status}
-        </p>
-        <p className="text-[10px] text-gray-400">
-          {new Date(latestRun.startedAt).toLocaleString()}
-          {latestRun.durationMs != null && ` · ${latestRun.durationMs}ms`}
-        </p>
-        {latestRun.errorMessage && (
-          <p className="text-xs text-red-600 mt-1 break-words">{latestRun.errorMessage}</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="font-medium text-gray-700">Latest run</p>
+          <p className={`text-xs font-semibold ${statusColor[latestRun.status] ?? 'text-gray-500'}`}>
+            {latestRun.status}
+          </p>
+          <p className="text-[10px] text-gray-400">
+            {new Date(latestRun.startedAt).toLocaleString()}
+            {latestRun.durationMs != null && ` · ${latestRun.durationMs}ms`}
+          </p>
+          {latestRun.errorMessage && (
+            <p className="text-xs text-red-600 mt-1 break-words">{latestRun.errorMessage}</p>
+          )}
+        </div>
+        {pipelineId && latestRun.id && (
+          <Link
+            to={`/pipelines/${pipelineId}/runs/${latestRun.id}`}
+            className="shrink-0 text-[11px] text-primary-600 hover:underline whitespace-nowrap"
+          >
+            Full logs →
+          </Link>
         )}
       </div>
 
@@ -750,12 +765,12 @@ function RunLogPanel({ latestRun }: { latestRun: PipelineRun | null }) {
                 </span>
               </div>
               {log.stdout && (
-                <pre className="text-gray-600 whitespace-pre-wrap break-all bg-white rounded p-1 border text-[10px] max-h-24 overflow-y-auto">
+                <pre className="text-gray-600 whitespace-pre-wrap break-all bg-white rounded p-1 border text-[10px] max-h-40 overflow-y-auto">
                   {log.stdout}
                 </pre>
               )}
               {log.stderr && (
-                <pre className="text-red-500 whitespace-pre-wrap break-all bg-white rounded p-1 border text-[10px] max-h-16 overflow-y-auto mt-1">
+                <pre className="text-red-500 whitespace-pre-wrap break-all bg-white rounded p-1 border text-[10px] max-h-24 overflow-y-auto mt-1">
                   {log.stderr}
                 </pre>
               )}

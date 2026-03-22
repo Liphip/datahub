@@ -1,6 +1,7 @@
 package com.dataturntable.pipeline
 
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase
+import com.dataturntable.PanacheBase
+import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanionBase
 import jakarta.persistence.*
 import java.time.Instant
 import java.util.UUID
@@ -15,7 +16,7 @@ enum class TriggerType {
 
 @Entity
 @Table(name = "pipeline_runs")
-open class PipelineRun : PanacheEntityBase() {
+open class PipelineRun : PanacheBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -48,15 +49,15 @@ open class PipelineRun : PanacheEntityBase() {
     @Column(columnDefinition = "text")
     var metrics: String? = null
     
-    companion object {
-        fun findById(id: UUID): PipelineRun? = 
-            PanacheEntityBase.find<PipelineRun>("id = ?1", id).firstResult()
-        
-        fun findByPipelineId(pipelineId: UUID): List<PipelineRun> = 
-            PanacheEntityBase.list<PipelineRun>("pipeline.id = ?1 ORDER BY startedAt DESC", pipelineId)
-        
-        fun findRunningByPipeline(pipelineId: UUID): PipelineRun? = 
-            PanacheEntityBase.find<PipelineRun>("pipeline.id = ?1 AND status = ?2", pipelineId, PipelineRunStatus.RUNNING).firstResult()
+    companion object : PanacheCompanionBase<PipelineRun, UUID> {
+        override fun findById(id: UUID): PipelineRun? =
+            find("id = ?1", id).firstResult()
+
+        fun findByPipelineId(pipelineId: UUID): List<PipelineRun> =
+            list("pipeline.id = ?1 ORDER BY startedAt DESC", pipelineId)
+
+        fun findRunningByPipeline(pipelineId: UUID): PipelineRun? =
+            find("pipeline.id = ?1 AND status = ?2", pipelineId, PipelineRunStatus.RUNNING).firstResult()
     }
     
     fun markRunning() {

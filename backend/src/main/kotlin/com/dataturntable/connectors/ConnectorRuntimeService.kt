@@ -2,9 +2,12 @@ package com.dataturntable.connectors
 
 import com.dataturntable.connectors.Connector.ConnectorType
 import com.dataturntable.connectors.Connector.Direction
+import com.dataturntable.connectors.mqtt.MqttConnectionManager
+import com.dataturntable.connectors.websocket.WebSocketConnectionManager
 import com.dataturntable.security.EncryptionUtils
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.inject.Inject
 import org.jboss.logging.Logger
 import java.net.URI
 import java.net.http.HttpClient
@@ -44,6 +47,12 @@ class ConnectorRuntimeService {
         .connectTimeout(Duration.ofSeconds(10))
         .build()
 
+    @Inject
+    lateinit var mqttConnectionManager: MqttConnectionManager
+
+    @Inject
+    lateinit var webSocketConnectionManager: WebSocketConnectionManager
+
     // ── Public API ───────────────────────────────────────────────────────────
 
     /**
@@ -79,8 +88,8 @@ class ConnectorRuntimeService {
         when (connector.connectorType) {
             ConnectorType.REST      -> deliverRestOutput(decryptedConfig, data)
             ConnectorType.FILE      -> deliverFileOutput(decryptedConfig, data)
-            ConnectorType.MQTT      -> deliverMqttOutput(decryptedConfig, data)
-            ConnectorType.WEBSOCKET -> deliverWebSocketOutput(decryptedConfig, data)
+            ConnectorType.MQTT      -> deliverMqttOutput(decryptedConfig, data, connector)
+            ConnectorType.WEBSOCKET -> deliverWebSocketOutput(decryptedConfig, data, connector)
             ConnectorType.UDP       -> deliverUdpOutput(decryptedConfig, data)
             ConnectorType.CUSTOM    -> LOG.infof("CUSTOM connector %s — no-op deliver", connector.id)
             null                    -> Unit
@@ -210,19 +219,27 @@ class ConnectorRuntimeService {
 
     // ── MQTT ─────────────────────────────────────────────────────────────────
 
-    private fun deliverMqttOutput(config: Map<String, Any?>, data: Any?) {
-        // TODO: wire to MqttPublishService once available
-        val broker = config["broker"]?.toString() ?: "unknown"
-        val topic  = config["topic"]?.toString() ?: "unknown"
-        LOG.infof("MQTT OUTPUT (stub): publish to %s on %s — implement MqttPublishService", topic, broker)
+    private fun deliverMqttOutput(config: Map<String, Any?>, data: Any?, connector: Connector) {
+        val payloadJson = if (data != null) objectMapper.writeValueAsString(data) else "{}"
+        val topicOverride = config["mqttTopic"]?.toString()?.trim()
+            ?: config["topic"]?.toString()?.trim()
+        mqttConnectionManager.publish(
+            connectorId = connector.id!!,
+            decryptedConfig = config,
+            topicOverride = topicOverride,
+            payloadJson = payloadJson
+        )
     }
 
     // ── WebSocket ─────────────────────────────────────────────────────────────
 
-    private fun deliverWebSocketOutput(config: Map<String, Any?>, data: Any?) {
-        // TODO: implement WebSocket send via WebSocketConnector
-        val url = config["url"]?.toString() ?: "unknown"
-        LOG.infof("WEBSOCKET OUTPUT (stub): send to %s — implement WebSocketConnector.send()", url)
+    private fun deliverWebSocketOutput(config: Map<String, Any?>, data: Any?, connector: Connector) {
+        val payloadJson = if (data != null) objectMapper.writeValueAsString(data) else "{}"
+        webSocketConnectionManager.send(
+            connectorId = connector.id!!,
+            decryptedConfig = config,
+            payloadJson = payloadJson
+        )
     }
 
     // ── UDP ───────────────────────────────────────────────────────────────────

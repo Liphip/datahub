@@ -4,6 +4,11 @@ import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.Connector.Direction
 import com.dataturntable.connectors.Connector.ConnectorType
 import com.dataturntable.connectors.BrokerCredential
+import com.dataturntable.connectors.ConnectorStatusService
+import com.dataturntable.connectors.mqtt.MqttConnectionManager
+import com.dataturntable.connectors.mqtt.MqttIngestService
+import com.dataturntable.connectors.polling.ConnectorPollingService
+import com.dataturntable.connectors.websocket.WebSocketConnectionManager
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.tenant.Tenant
@@ -46,7 +51,25 @@ class ConnectorResource {
 
     @ConfigProperty(name = "dataturntable.mqtt.integrated.default-topic", defaultValue = "dataturntable/events")
     lateinit var mqttDefaultTopic: String
-    
+
+    @Inject
+    lateinit var mqttIngestService: MqttIngestService
+
+    @Inject
+    lateinit var mqttConnectionManager: MqttConnectionManager
+
+    @Inject
+    lateinit var webSocketConnectionManager: WebSocketConnectionManager
+
+    @Inject
+    lateinit var connectorPollingService: ConnectorPollingService
+
+    @Inject
+    lateinit var connectorStatusService: ConnectorStatusService
+
+    /** Connector types that must NOT have pollingEnabled=true (push-based). */
+    private val PUSH_ONLY_TYPES = setOf(ConnectorType.MQTT, ConnectorType.WEBSOCKET, ConnectorType.UDP)
+
     private val objectMapper = ObjectMapper()
 
     private fun getCurrentUser(): User? {
@@ -58,6 +81,31 @@ class ConnectorResource {
     private fun getTenantIdFromToken(): String? {
         val tid = jwt.getClaim("tenantId") as? String
         return if (tid.isNullOrBlank()) null else tid
+    }
+
+    /**
+     * When the frontend sends back a config map, fields masked as "********" (or blanked-out
+     * password fields) mean "user didn't change this — keep the stored value".
+     * Restores those fields from the currently-stored (decrypted) config so we never
+     * overwrite a real secret with a mask placeholder or an empty string.
+     *
+     * Blank-preservation only applies to fields whose key is a known sensitive name
+     * (contains "password", "secret", "token", "key") — non-sensitive empty strings
+     * are stored as-is so they can legitimately be cleared.
+     */
+    private fun restoreMaskedFields(incoming: Map<*, *>, existing: Map<String, Any?>): Map<String, Any?> {
+        val sensitiveFragments = listOf("password", "secret", "token", "apikey", "api_key", "key")
+        return incoming.entries.associate { (k, v) ->
+            val key = k?.toString() ?: ""
+            val lowerKey = key.lowercase()
+            val isSensitive = sensitiveFragments.any { lowerKey.contains(it) }
+            val restored = when {
+                v == "********"                           -> existing[key]   // always restore mask placeholder
+                isSensitive && v is String && v.isEmpty() -> existing[key]   // restore if sensitive field cleared
+                else                                      -> v               // new value provided — use it
+            }
+            key to restored
+        }
     }
 
     private fun maskConnectorConfig(rawConfig: Map<*, *>): Map<String, Any?> {
@@ -681,6 +729,15 @@ class ConnectorResource {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
 
+        // Push-based connectors must not poll — they receive data via their connection managers
+        val pollingAllowed = parsedConnectorType !in PUSH_ONLY_TYPES
+        val requestedPolling = request["pollingEnabled"] as? Boolean ?: false
+        if (requestedPolling && !pollingAllowed) {
+            return Response.status(400).entity(
+                mapOf("error" to "Polling is not supported for $parsedConnectorType connectors — they are push-based")
+            ).build()
+        }
+
         val connector = Connector().apply {
             this.name = name
             this.tenant = tenant
@@ -689,13 +746,23 @@ class ConnectorResource {
             this.config = EncryptionUtils.encrypt(configPlainJson)
             this.description = request["description"] as? String
             this.isActive = true
-            this.pollingEnabled = request["pollingEnabled"] as? Boolean ?: false
+            this.pollingEnabled = if (pollingAllowed) requestedPolling else false
             this.pollingIntervalSeconds = (request["pollingIntervalSeconds"] as? Number)?.toInt() ?: 60
             this.createdAt = java.time.Instant.now()
             this.updatedAt = java.time.Instant.now()
         }
         connector.persist()
-        
+
+        // Refresh connection managers after transaction commits
+        val createdId = connector.id
+        if (createdId != null) {
+            when (parsedConnectorType) {
+                ConnectorType.MQTT -> if (parsedDirection == Direction.INPUT) mqttIngestService.refreshConnector(createdId)
+                ConnectorType.WEBSOCKET -> if (parsedDirection == Direction.INPUT) webSocketConnectionManager.refreshConnector(createdId)
+                else -> if (pollingAllowed && requestedPolling) connectorPollingService.onConnectorChanged(createdId)
+            }
+        }
+
         return Response.status(201).entity(mapOf(
             "id" to connector.id,
             "name" to connector.name,
@@ -979,6 +1046,16 @@ class ConnectorResource {
         connector.isActive = true
         connector.updatedAt = java.time.Instant.now()
         connector.persist()
+
+        val cId = connector.id
+        if (cId != null) {
+            when (connector.connectorType) {
+                ConnectorType.MQTT -> if (connector.direction == Direction.INPUT) mqttIngestService.refreshConnector(cId)
+                ConnectorType.WEBSOCKET -> if (connector.direction == Direction.INPUT) webSocketConnectionManager.refreshConnector(cId)
+                else -> connectorPollingService.onConnectorChanged(cId)
+            }
+        }
+
         return Response.ok(connectorToMap(connector) + mapOf("message" to "Connector connected")).build()
     }
 
@@ -1030,6 +1107,16 @@ class ConnectorResource {
         connector.isActive = false
         connector.updatedAt = java.time.Instant.now()
         connector.persist()
+
+        val cId = connector.id
+        if (cId != null) {
+            when (connector.connectorType) {
+                ConnectorType.MQTT -> if (connector.direction == Direction.INPUT) mqttIngestService.disconnectConnector(cId)
+                ConnectorType.WEBSOCKET -> if (connector.direction == Direction.INPUT) webSocketConnectionManager.disconnectConnector(cId)
+                else -> connectorPollingService.cancelConnector(cId)
+            }
+        }
+
         return Response.ok(connectorToMap(connector) + mapOf("message" to "Connector disconnected")).build()
     }
 
@@ -1056,7 +1143,8 @@ class ConnectorResource {
         }
 
         val requiredKeys = when (connector.connectorType) {
-            ConnectorType.MQTT -> listOf("broker", "topic")
+            // MQTT: topics are configured per pipeline node (mqttTopic field), not per connector
+            ConnectorType.MQTT -> listOf("broker")
             ConnectorType.REST -> listOf("baseUrl")
             ConnectorType.WEBSOCKET -> listOf("url")
             ConnectorType.UDP -> listOf("host", "port")
@@ -1064,8 +1152,10 @@ class ConnectorResource {
             ConnectorType.CUSTOM -> emptyList()
             null -> emptyList()
         }
+        @Suppress("UNCHECKED_CAST")
+        val typedConfig = configValue as Map<String, Any?>
         val missing = requiredKeys.filter { key ->
-            val value = configValue[key]
+            val value = typedConfig[key]
             value == null || (value is String && value.isBlank())
         }
         if (missing.isNotEmpty()) {
@@ -1074,16 +1164,80 @@ class ConnectorResource {
             ).build()
         }
 
+        // For MQTT connectors, perform a real broker connectivity check
+        if (connector.connectorType == ConnectorType.MQTT) {
+            val (ok, message) = mqttConnectionManager.testBrokerConnection(typedConfig)
+            return Response.ok(mapOf(
+                "ok"            to ok,
+                "message"       to message,
+                "connectorId"   to connector.id,
+                "connectorType" to connector.connectorType?.name,
+                "direction"     to connector.direction?.name,
+                "isActive"      to connector.isActive,
+            )).build()
+        }
+
         return Response.ok(mapOf(
-            "ok" to true,
-            "message" to "Connector configuration validated",
-            "connectorId" to connector.id,
+            "ok"            to true,
+            "message"       to "Connector configuration validated",
+            "connectorId"   to connector.id,
             "connectorType" to connector.connectorType?.name,
-            "direction" to connector.direction?.name,
-            "isActive" to connector.isActive
+            "direction"     to connector.direction?.name,
+            "isActive"      to connector.isActive,
         )).build()
     }
-    
+
+    // ── Status endpoints ──────────────────────────────────────────────────────
+
+    /**
+     * GET /connectors/{id}/status
+     * Returns runtime health checks for a single connector.
+     */
+    @GET
+    @Path("/{id}/status")
+    fun getStatus(@PathParam("id") id: String): Response {
+        val connectorId = parseUuid(id)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
+        val connector = em.find(Connector::class.java, connectorId)
+            ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
+        val tenantId = getTenantIdFromToken()
+        if (tenantId != null && connector.tenant?.id?.toString() != tenantId) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        val currentUser = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        if (!SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString())) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        return Response.ok(connectorStatusService.getStatus(connector)).build()
+    }
+
+    /**
+     * GET /connectors/statuses?tenantId=...
+     * Returns a map of connectorId → ConnectorStatusDto for all connectors in the tenant.
+     * Note: literal path "statuses" takes priority over the {id} path parameter in JAX-RS routing.
+     */
+    @GET
+    @Path("/statuses")
+    fun getStatuses(@QueryParam("tenantId") tenantId: String?): Response {
+        val tid = tenantId ?: getTenantIdFromToken()
+            ?: return Response.status(400).entity(mapOf("error" to "tenantId is required")).build()
+        val tenantUuid = parseUuid(tid)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid tenantId")).build()
+        val currentUser = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        if (!SecurityUtils.canAccessTenant(currentUser, tid)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        val connectors = em.createQuery(
+            "SELECT c FROM Connector c WHERE c.tenant.id = :tenantId",
+            Connector::class.java
+        ).setParameter("tenantId", tenantUuid).resultList
+
+        val statuses = connectors.associate { connector ->
+            connector.id!!.toString() to connectorStatusService.getStatus(connector)
+        }
+        return Response.ok(statuses).build()
+    }
+
     @PATCH
     @Path("/{id}")
     @Transactional
@@ -1118,18 +1272,35 @@ class ConnectorResource {
                     ?: return Response.status(400).entity(mapOf("error" to "Invalid direction. Must be INPUT or OUTPUT")).build()
                 connector.direction = parsed
             }
-            (request["pollingEnabled"] as? Boolean)?.let { connector.pollingEnabled = it }
+            (request["pollingEnabled"] as? Boolean)?.let { requested ->
+                if (requested && connector.connectorType in PUSH_ONLY_TYPES) {
+                    return Response.status(400).entity(
+                        mapOf("error" to "Polling is not supported for ${connector.connectorType} connectors")
+                    ).build()
+                }
+                connector.pollingEnabled = requested
+            }
             (request["pollingIntervalSeconds"] as? Number)?.let { connector.pollingIntervalSeconds = it.toInt() }
             request["config"]?.let {
                 if (it is Map<*, *> && it.isEmpty()) {
                     return@let
                 }
+                // Decrypt existing config so we can restore any "********" sentinel values
+                // that the GET response masked — we must never store "********" as the real secret.
+                @Suppress("UNCHECKED_CAST")
+                val existingConfig: Map<String, Any?> = try {
+                    val dec = EncryptionUtils.decrypt(connector.config ?: "{}")
+                    objectMapper.readValue(dec, Map::class.java) as Map<String, Any?>
+                } catch (_: Exception) { emptyMap() }
+
                 val effectiveConfigValue: Any = if (connector.connectorType == ConnectorType.MQTT && it is Map<*, *>) {
                     val tenantUuid = connector.tenant?.id
                         ?: return Response.status(400).entity(mapOf("error" to "Connector tenant not found")).build()
                     val sanitized = sanitizeMqttConfig(it)
                     validateMqttCredentialBinding(tenantUuid, sanitized)?.let { response -> return response }
-                    sanitized
+                    restoreMaskedFields(sanitized, existingConfig)
+                } else if (it is Map<*, *>) {
+                    restoreMaskedFields(it, existingConfig)
                 } else {
                     it
                 }
@@ -1140,7 +1311,17 @@ class ConnectorResource {
             request["isActive"]?.let { connector.isActive = it as Boolean }
             connector.updatedAt = java.time.Instant.now()
             connector.persist()
-            
+
+            // Refresh connection managers
+            val updatedId = connector.id
+            if (updatedId != null) {
+                when (connector.connectorType) {
+                    ConnectorType.MQTT -> mqttIngestService.refreshConnector(updatedId)
+                    ConnectorType.WEBSOCKET -> webSocketConnectionManager.refreshConnector(updatedId)
+                    else -> connectorPollingService.onConnectorChanged(updatedId)
+                }
+            }
+
             Response.ok(mapOf(
                 "id" to connector.id,
                 "name" to connector.name,
@@ -1152,7 +1333,7 @@ class ConnectorResource {
             Response.status(404).entity(mapOf("error" to "Connector not found")).build()
         }
     }
-    
+
     @DELETE
     @Path("/{id}")
     @Transactional
@@ -1184,7 +1365,20 @@ class ConnectorResource {
                     )
                 ).build()
             }
+            val deletedId = connector.id
+            val deletedType = connector.connectorType
+            val deletedDir = connector.direction
             connector.delete()
+
+            // Clean up connection managers
+            if (deletedId != null) {
+                when (deletedType) {
+                    ConnectorType.MQTT -> if (deletedDir == Direction.INPUT) mqttIngestService.disconnectConnector(deletedId)
+                    ConnectorType.WEBSOCKET -> if (deletedDir == Direction.INPUT) webSocketConnectionManager.disconnectConnector(deletedId)
+                    else -> connectorPollingService.cancelConnector(deletedId)
+                }
+            }
+
             Response.noContent().build()
         } else {
             Response.status(404).entity(mapOf("error" to "Connector not found")).build()

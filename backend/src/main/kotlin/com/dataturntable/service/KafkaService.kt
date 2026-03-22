@@ -125,4 +125,22 @@ class KafkaService {
     fun sendToPipelineInput(pipelineId: String, data: Any) {
         sendToPipelineSpecificInput(pipelineId, data)
     }
+
+    /**
+     * Trigger a pipeline run with an attached data payload (for event-driven triggers like MQTT or polling).
+     * The data is embedded in the PipelineTriggerMessage so PipelineConsumer makes it available
+     * to the first IMPORT module as INPUT_DATA.
+     */
+    fun triggerPipelineWithData(pipelineId: String, runId: String, triggerType: com.dataturntable.pipeline.TriggerType, data: Any?) {
+        if (commandEmitter == null) {
+            println("Kafka not available, dropping event-triggered run $runId for pipeline $pipelineId")
+            return
+        }
+        val dataJson = if (data != null) objectMapper.writeValueAsString(data) else "null"
+        val message = """{"runId":"$runId","pipelineId":"$pipelineId","triggerType":"${triggerType.name}","data":$dataJson}"""
+        val metadata = OutgoingKafkaRecordMetadata.builder<String>()
+            .withTopic(getPipelineInputTopic())
+            .build()
+        commandEmitter?.send(Message.of(message, Metadata.of(metadata)))
+    }
 }

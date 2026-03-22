@@ -14,6 +14,7 @@ import Tenants from './pages/Tenants';
 import Users from './pages/Users';
 import Alerts from './pages/Alerts';
 import Data from './pages/Data';
+import RunDetail from './pages/RunDetail';
 import Layout from './components/Layout';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -95,6 +96,7 @@ function App() {
                   <Route path="/modules/:id" element={<ModuleEditor />} />
                   <Route path="/pipelines" element={<Pipelines />} />
                   <Route path="/pipelines/:id" element={<PipelineEditor />} />
+                  <Route path="/pipelines/:id/runs/:runId" element={<RunDetail />} />
                   <Route path="/connectors" element={<Connectors />} />
                   <Route path="/tenants" element={<Tenants />} />
                   <Route path="/users" element={<Users />} />

@@ -1,14 +1,15 @@
 package com.dataturntable.tenant
 
 import com.dataturntable.auth.User
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase
+import com.dataturntable.PanacheBase
+import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanionBase
 import jakarta.persistence.*
 import java.time.Instant
 import java.util.UUID
 
 @Entity
 @Table(name = "memberships")
-class Membership : PanacheEntityBase() {
+class Membership : PanacheBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -32,8 +33,8 @@ class Membership : PanacheEntityBase() {
     @Column(name = "created_at")
     var createdAt: Instant = Instant.now()
     
-    companion object {
-        fun findById(id: UUID): Membership? =
+    companion object : PanacheCompanionBase<Membership, UUID> {
+        override fun findById(id: UUID): Membership? =
             getEntityManager()
                 .createQuery("SELECT m FROM Membership m WHERE m.id = :id", Membership::class.java)
                 .setParameter("id", id)

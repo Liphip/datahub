@@ -1,6 +1,7 @@
 package com.dataturntable.pipeline
 
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase
+import com.dataturntable.PanacheBase
+import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanionBase
 import jakarta.persistence.*
 import java.time.Instant
 import java.util.UUID
@@ -14,7 +15,7 @@ import java.util.UUID
 @Table(name = "pipeline_run_node_logs", indexes = [
     Index(name = "idx_prnl_run_id", columnList = "run_id"),
 ])
-open class PipelineRunNodeLog : PanacheEntityBase() {
+open class PipelineRunNodeLog : PanacheBase() {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -54,7 +55,7 @@ open class PipelineRunNodeLog : PanacheEntityBase() {
     @Column(name = "executed_at", nullable = false)
     var executedAt: Instant = Instant.now()
 
-    companion object {
+    companion object : PanacheCompanionBase<PipelineRunNodeLog, UUID> {
         fun findByRunId(runId: UUID): List<PipelineRunNodeLog> =
             list("run.id = ?1 ORDER BY executedAt ASC", runId)
     }

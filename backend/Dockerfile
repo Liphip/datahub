@@ -9,6 +9,8 @@ RUN --mount=type=cache,target=/root/.m2 mvn -B package -DskipTests
 
 FROM eclipse-temurin:21-jre-alpine
 
+RUN apk add --no-cache docker-cli
+
 WORKDIR /app
 
 COPY --from=build /app/target/quarkus-app/lib/ ./lib/

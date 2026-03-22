@@ -3,14 +3,15 @@ package com.dataturntable.auth
 import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
-import io.quarkus.hibernate.orm.panache.PanacheEntityBase
+import com.dataturntable.PanacheBase
+import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanionBase
 import jakarta.persistence.*
 import java.time.Instant
 import java.util.UUID
 
 @Entity
 @Table(name = "users")
-open class User : PanacheEntityBase() {
+open class User : PanacheBase() {
     
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -49,8 +50,8 @@ open class User : PanacheEntityBase() {
     @OneToMany(mappedBy = "authUser", cascade = [CascadeType.ALL], orphanRemoval = true)
     var memberships: MutableList<Membership> = mutableListOf()
     
-    companion object {
-        fun findById(id: UUID): User? =
+    companion object : PanacheCompanionBase<User, UUID> {
+        override fun findById(id: UUID): User? =
             getEntityManager()
                 .createQuery("SELECT u FROM User u WHERE u.id = :id", User::class.java)
                 .setParameter("id", id)
