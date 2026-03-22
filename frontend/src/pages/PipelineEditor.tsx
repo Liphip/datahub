@@ -252,7 +252,7 @@ export default function PipelineEditor() {
           if (pipelineData.latestRunId) {
             // Fetch the latest run with full details (moduleLogs, stdout, etc.)
             try {
-              const run = await api.getPipelineRun(pipelineId!, pipelineData.latestRunId);
+              const run = await api.getPipelineRun(id!, pipelineData.latestRunId);
               setLatestRun(run);
             } catch {
               // Non-critical: ignore if we can't load latest run
