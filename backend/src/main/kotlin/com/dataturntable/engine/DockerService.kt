@@ -4,12 +4,16 @@ import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.inject.Inject
 import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.jboss.logging.Logger
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 data class ModuleExecutionOutput(
     val result: Any?,
@@ -36,9 +40,17 @@ private data class RawContainerResult(
 
 @ApplicationScoped
 class DockerService {
-    
+
     private val LOG = Logger.getLogger(DockerService::class.java)
     private val objectMapper = ObjectMapper()
+
+    // Thread pool for blocking I/O reads from warm containers
+    private val io = Executors.newCachedThreadPool { r ->
+        Thread(r, "dt-docker-io").also { it.isDaemon = true }
+    }
+
+    @Inject
+    lateinit var warmPool: WarmContainerPool
     
     @ConfigProperty(name = "dataturntable.docker.module.base-image", defaultValue = "python:3.11-slim")
     lateinit var baseImage: String
@@ -67,33 +79,55 @@ class DockerService {
         /** Non-sensitive connector metadata (name, type, topic, etc.) for informational use in module. No credentials. */
         connectorMeta: Map<String, Any?>? = null
     ): ModuleExecutionOutput {
-        val containerName = "dt-${pipelineId}-${runId}-${moduleType.name.lowercase()}-${UUID.randomUUID()}"
+        val code         = moduleVersion.code ?: throw IllegalStateException("Module code is empty")
+        val requirements = moduleVersion.requirements ?: ""
+        val scriptB64    = buildModuleScript(code, moduleType)
+        val envMap       = buildEnvMap(inputData, moduleType, connectorMeta)
 
-        LOG.infof("Executing module %s in container %s", moduleVersion.module?.name, containerName)
+        // ── Try warm pool first ────────────────────────────────────────────────
+        val warm = warmPool.acquire(requirements)
+        if (warm != null) {
+            LOG.debugf("Warm container hit: %s (module: %s)", warm.name, moduleVersion.module?.name)
+            return try {
+                val output = runJobInWarmContainer(warm, scriptB64, envMap)
+                warmPool.release(warm, true)
+                val parsedResult = parseResultPayload(output.stdout)
+                ModuleExecutionOutput(parsedResult, output.stdout, output.stderr, output.exitCode, output.durationMs)
+            } catch (e: ModuleExecutionException) {
+                warmPool.release(warm, false)
+                LOG.errorf("Warm module execution failed: %s", e.message)
+                throw e
+            } catch (e: Exception) {
+                warmPool.release(warm, false)
+                throw ModuleExecutionException("Module execution failed: ${e.message}", cause = e)
+            }
+        }
+
+        // ── Fallback: ephemeral container ──────────────────────────────────────
+        val containerName = "dt-${pipelineId}-${runId}-${moduleType.name.lowercase()}-${UUID.randomUUID()}"
+        LOG.infof("Warm pool miss — ephemeral container: %s (module: %s)", containerName, moduleVersion.module?.name)
 
         return try {
-            val code = moduleVersion.code ?: throw IllegalStateException("Module code is empty")
-            val requirements = moduleVersion.requirements ?: ""
-
             val output = runContainer(
                 containerName = containerName,
                 code = code,
                 requirements = requirements,
                 inputData = inputData,
                 moduleType = moduleType,
-                connectorMeta = connectorMeta
+                connectorMeta = connectorMeta,
             )
-            
             cleanupContainer(containerName)
-            
+
+            // Proactively spawn a warm container for future runs of this module
+            if (requirements.isNotBlank()) {
+                io.submit {
+                    val c = warmPool.spawn(requirements)
+                    if (c != null) warmPool.release(c, true)
+                }
+            }
+
             val parsedResult = parseResultPayload(output.stdout)
-            ModuleExecutionOutput(
-                result = parsedResult,
-                stdout = output.stdout,
-                stderr = output.stderr,
-                exitCode = output.exitCode,
-                durationMs = output.durationMs
-            )
+            ModuleExecutionOutput(parsedResult, output.stdout, output.stderr, output.exitCode, output.durationMs)
         } catch (e: ModuleExecutionException) {
             LOG.errorf("Module execution failed: %s", e.message)
             cleanupContainer(containerName)
@@ -101,11 +135,68 @@ class DockerService {
         } catch (e: Exception) {
             LOG.errorf("Module execution failed: %s", e.message)
             cleanupContainer(containerName)
+            throw ModuleExecutionException("Module execution failed: ${e.message}", cause = e)
+        }
+    }
+
+    /**
+     * Send a job to a warm container and read back the result.
+     * The job carries the base64-encoded module script and env vars; the runner
+     * executes it in a subprocess and returns stdout/stderr/exit_code as JSON.
+     */
+    private fun runJobInWarmContainer(
+        container: WarmContainer,
+        scriptB64: String,
+        envMap: Map<String, String>,
+    ): RawContainerResult {
+        val job = mapOf("code" to scriptB64, "env" to envMap, "timeout" to timeoutSeconds)
+        container.writer.println(objectMapper.writeValueAsString(job))
+
+        val startedAt = System.currentTimeMillis()
+
+        val resultLine = try {
+            io.submit<String?> { container.reader.readLine() }
+                .get(timeoutSeconds.toLong() + 30, TimeUnit.SECONDS)
+        } catch (e: TimeoutException) {
+            container.destroy()
+            throw ModuleExecutionException("Module execution timed out after $timeoutSeconds seconds")
+        }
+
+        if (resultLine == null) {
+            throw ModuleExecutionException("Warm container closed connection unexpectedly")
+        }
+
+        val durationMs = System.currentTimeMillis() - startedAt
+
+        @Suppress("UNCHECKED_CAST")
+        val result   = objectMapper.readValue(resultLine, Map::class.java) as Map<String, Any?>
+        val exitCode = (result["exit_code"] as? Int) ?: 1
+        val stdout   = (result["stdout"] as? String) ?: ""
+        val stderr   = (result["stderr"] as? String) ?: ""
+
+        if (exitCode != 0) {
             throw ModuleExecutionException(
-                message = "Module execution failed: ${e.message}",
-                cause = e
+                message  = "Container exited with code $exitCode",
+                stdout   = stdout,
+                stderr   = stderr,
+                exitCode = exitCode,
             )
         }
+        return RawContainerResult(stdout, stderr, exitCode, durationMs)
+    }
+
+    /** Build the env map passed to warm container jobs (no MODULE_CODE — script is in job.code). */
+    private fun buildEnvMap(
+        inputData: Any?,
+        moduleType: ModuleType,
+        connectorMeta: Map<String, Any?>?,
+    ): Map<String, String> {
+        val map = mutableMapOf("MODULE_TYPE" to moduleType.name)
+        inputData?.let { map["INPUT_DATA"] = objectMapper.writeValueAsString(it) }
+        connectorMeta?.takeIf { it.isNotEmpty() }?.let {
+            map["CONNECTOR_META"] = objectMapper.writeValueAsString(it)
+        }
+        return map
     }
 
     /**
@@ -159,7 +250,7 @@ class DockerService {
         dockerArgs.addAll(listOf(
             "--user", "1000:1000",
             "--read-only",
-            "--tmpfs", "/tmp",
+            "--tmpfs", "/tmp:size=256m",
             "--cpu-shares", (cpuLimit.toDouble() * 1024).toInt().toString(),
             "--memory", memoryLimit,
             "-e", "MODULE_CODE=$scriptContent",
@@ -182,10 +273,35 @@ class DockerService {
             dockerArgs.add("CONNECTOR_META=${objectMapper.writeValueAsString(it)}")
         }
         
-        dockerArgs.add(baseImage)
-        dockerArgs.add("python3")
-        dockerArgs.add("-c")
-        dockerArgs.add("import sys; exec(__import__('base64').b64decode(__import__('os').environ['MODULE_CODE']).decode())")
+        // Bootstrap: optionally install requirements, then exec the module script.
+        // Packages are installed to /tmp/packages (the only writable space under --read-only).
+        val bootstrap = """
+import sys, os, base64, subprocess
+_reqs = os.environ.get('MODULE_REQUIREMENTS', '').strip()
+if _reqs:
+    _r = subprocess.run(
+        [sys.executable, '-m', 'pip', 'install',
+         '--target', '/tmp/packages', '-q', '--no-warn-script-location']
+        + [r for r in _reqs.splitlines() if r.strip()],
+        capture_output=True, text=True,
+    )
+    if _r.returncode != 0:
+        sys.stderr.write('pip install failed: ' + _r.stderr)
+        sys.exit(1)
+    sys.path.insert(0, '/tmp/packages')
+exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
+""".trimIndent()
+
+        // Pass bootstrap via env var (-e must come before image name in docker run)
+        dockerArgs.addAll(listOf(
+            "-e", "__DT_BOOT__=${Base64.getEncoder().encodeToString(bootstrap.toByteArray())}",
+        ))
+
+        dockerArgs.addAll(listOf(
+            baseImage,
+            "python3", "-c",
+            "import base64,os; exec(base64.b64decode(os.environ['__DT_BOOT__']).decode())",
+        ))
         
         return try {
             val processBuilder = ProcessBuilder(dockerArgs)

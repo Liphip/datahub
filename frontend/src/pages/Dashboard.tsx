@@ -162,20 +162,25 @@ export default function Dashboard() {
   const [recentRuns, setRecentRuns] = useState<(PipelineRun & { pipelineName?: string })[]>([]);
   const [summary, setSummary] = useState<PipelineRunSummary | null>(null);
   const [reliabilityWindow, setReliabilityWindow] = useState<1 | 24 | 168>(24);
-  const [loading, setLoading] = useState(true);
+  // Separate loading states for lazy rendering
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [runsLoading, setRunsLoading] = useState(true);
   const [error, setError] = useState('');
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
 
   // Cross-tenant stats
   const [tenantStats, setTenantStats] = useState<TenantStats[]>([]);
 
-  // ── Fetch current-tenant data ──────────────────────────────────────────────
+  // ── Initial load: phase 1 then phase 2 sequentially ──────────────────────────
   useEffect(() => {
-    if (!tenantId) { setLoading(false); return; }
+    if (!tenantId) { setSummaryLoading(false); setRunsLoading(false); return; }
     let cancelled = false;
-    setLoading(true);
+    setSummaryLoading(true);
+    setRunsLoading(true);
     setError('');
 
-    const run = async () => {
+    const init = async () => {
+      // Phase 1: summary + pipelines (renders KPIs immediately)
       try {
         const [pipelinesData, summaryData] = await Promise.all([
           api.getPipelines(tenantId, { includeRunSummary: true }),
@@ -183,9 +188,12 @@ export default function Dashboard() {
         ]);
         if (cancelled) return;
         setPipelines(pipelinesData);
+        // pipelinesData stored in state above
         setSummary(summaryData);
+        setLastRefreshed(new Date());
+        setSummaryLoading(false);
 
-        // Collect recent runs across all pipelines (top 10)
+        // Phase 2: run lists (populates recent runs section)
         const runLists = await Promise.all(
           pipelinesData.map(async (p) => {
             try {
@@ -196,20 +204,57 @@ export default function Dashboard() {
         );
         if (cancelled) return;
         setRecentRuns(
-          runLists
-            .flat()
+          runLists.flat()
             .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
             .slice(0, 30)
         );
       } catch {
         if (!cancelled) setError(t('dashboard.failedToLoadDashboard'));
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) { setSummaryLoading(false); setRunsLoading(false); }
       }
     };
-    run();
+    init();
     return () => { cancelled = true; };
   }, [tenantId, reliabilityWindow, t]);
+
+  // ── Polling: refresh summary every 15s, runs every 60s ───────────────────────
+  useEffect(() => {
+    if (!tenantId) return;
+    let cycle = 0;
+    const interval = setInterval(async () => {
+      cycle++;
+      // Phase 1 every cycle (15s)
+      try {
+        const [pipelinesData, summaryData] = await Promise.all([
+          api.getPipelines(tenantId, { includeRunSummary: true }),
+          api.getPipelineRunSummary(tenantId, 50, reliabilityWindow).catch(() => null),
+        ]);
+        setPipelines(pipelinesData);
+        // pipelinesData stored in state above
+        setSummary(summaryData);
+        setLastRefreshed(new Date());
+
+        // Phase 2 every 4th cycle (60s)
+        if (cycle % 4 === 0) {
+          const runLists = await Promise.all(
+            pipelinesData.map(async (p) => {
+              try {
+                const runs = await api.getPipelineRuns(p.id);
+                return runs.slice(0, 10).map((r) => ({ ...r, pipelineName: p.name }));
+              } catch { return []; }
+            })
+          );
+          setRecentRuns(
+            runLists.flat()
+              .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
+              .slice(0, 30)
+          );
+        }
+      } catch { /* silent polling errors */ }
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [tenantId, reliabilityWindow]);
 
   // ── Fetch all-tenants stats via single endpoint ────────────────────────────
   useEffect(() => {
@@ -419,38 +464,38 @@ export default function Dashboard() {
         <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-4">
           <StatCard
             label="Total Pipelines"
-            value={loading ? '–' : pipelines.length}
+            value={summaryLoading ? '–' : pipelines.length}
             colorClass="text-slate-800 dark:text-slate-100"
             accentClass="from-slate-300 to-slate-400"
           />
           <StatCard
             label="Active"
-            value={loading ? '–' : activePipelines}
+            value={summaryLoading ? '–' : activePipelines}
             colorClass="text-emerald-600 dark:text-emerald-400"
             accentClass="from-emerald-400 to-emerald-600"
           />
           <StatCard
             label="Running Now"
-            value={loading ? '–' : runningPipelines.length}
+            value={summaryLoading ? '–' : runningPipelines.length}
             colorClass={runningPipelines.length > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'}
             accentClass={runningPipelines.length > 0 ? 'from-amber-400 to-amber-600' : 'from-slate-200 to-slate-300'}
           />
           <StatCard
             label="Failed (latest)"
-            value={loading ? '–' : problematicPipelines.length}
+            value={summaryLoading ? '–' : problematicPipelines.length}
             colorClass={problematicPipelines.length > 0 ? 'text-red-600 dark:text-red-400' : 'text-slate-500'}
             accentClass={problematicPipelines.length > 0 ? 'from-red-400 to-red-600' : 'from-slate-200 to-slate-300'}
           />
           <StatCard
             label="Success Rate"
-            value={loading ? '–' : fmtRate(summary?.successRate)}
+            value={summaryLoading ? '–' : fmtRate(summary?.successRate)}
             sub={`${reliabilityWindow === 1 ? 'last hour' : reliabilityWindow === 24 ? 'last 24h' : 'last 7 days'}`}
             colorClass={rateColor(summary?.successRate)}
             accentClass="from-primary-400 to-primary-600"
           />
           <StatCard
             label="Avg Duration"
-            value={loading ? '–' : fmt(summary?.avgDurationMs)}
+            value={summaryLoading ? '–' : fmt(summary?.avgDurationMs)}
             colorClass="text-slate-700 dark:text-slate-200"
             accentClass="from-violet-400 to-violet-600"
           />
@@ -463,15 +508,22 @@ export default function Dashboard() {
         <div className="xl:col-span-2 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5">
           <SectionHeading
             action={
-              <Link to="/pipelines" className="text-xs text-primary-600 dark:text-primary-400 hover:underline">
-                View all →
-              </Link>
+              <div className="flex items-center gap-3">
+                {lastRefreshed && (
+                  <span className="text-[10px] text-slate-400">
+                    Updated {lastRefreshed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  </span>
+                )}
+                <Link to="/pipelines" className="text-xs text-primary-600 dark:text-primary-400 hover:underline">
+                  View all →
+                </Link>
+              </div>
             }
           >
             Recent Pipeline Runs
           </SectionHeading>
 
-          {loading ? (
+          {runsLoading ? (
             <div className="animate-pulse space-y-3">
               {Array.from({ length: 5 }, (_, i) => (
                 <div key={i} className="h-12 bg-slate-100 dark:bg-slate-800 rounded-lg" />
@@ -583,7 +635,7 @@ export default function Dashboard() {
           </div>
 
           {/* Problem pipelines */}
-          {!loading && (problematicPipelines.length > 0 || runningPipelines.length > 0) && (
+          {!summaryLoading && (problematicPipelines.length > 0 || runningPipelines.length > 0) && (
             <div className="bg-white dark:bg-slate-900 rounded-xl border border-amber-200 dark:border-amber-900/50 p-5">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-base font-semibold text-slate-800 dark:text-slate-100">
@@ -651,7 +703,7 @@ export default function Dashboard() {
           </div>
 
           {/* Pipeline list (compact) */}
-          {!loading && pipelines.length > 0 && (
+          {!summaryLoading && pipelines.length > 0 && (
             <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5">
               <SectionHeading
                 action={
