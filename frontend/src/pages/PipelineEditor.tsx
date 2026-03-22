@@ -393,6 +393,26 @@ export default function PipelineEditor() {
     return () => { if (runPollingTimer) clearTimeout(runPollingTimer); };
   }, [runPollingTimer]);
 
+  // ── Background poll for externally-triggered runs (e.g. MQTT) ──────────────
+  useEffect(() => {
+    if (!id || id === 'new' || !pipeline) return;
+    const interval = setInterval(async () => {
+      try {
+        const p = await api.getPipeline(id);
+        const newRunId = p.latestRunId;
+        if (newRunId && newRunId !== latestRun?.id) {
+          const run = await api.getPipelineRun(id, newRunId);
+          setLatestRun(run);
+          if (run.status === 'RUNNING' || run.status === 'PENDING') {
+            pollRunStatus(run.id);
+          }
+        }
+      } catch { /* ignore */ }
+    }, 15000);
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, pipeline?.id, latestRun?.id]);
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   if (loading) {

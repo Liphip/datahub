@@ -48,6 +48,10 @@ class PipelineConsumer {
         if (value.length <= maxLength) return value
         return value.take(maxLength) + "\n...<truncated>"
     }
+
+    /** Strip the platform result sentinel line so only user print() output is shown in logs. */
+    private fun userOutput(stdout: String): String =
+        stdout.lines().filter { !it.trim().startsWith("__RESULT__:") }.joinToString("\n").trim()
     
     @Inject
     lateinit var dockerService: DockerService
@@ -447,7 +451,7 @@ class PipelineConsumer {
                     this.nodeType = stage
                     this.moduleName = version.module?.name
                     this.success = true
-                    this.stdout = trimLog(output.stdout)
+                    this.stdout = trimLog(userOutput(output.stdout))
                     this.stderr = trimLog(output.stderr, 4000)
                     this.durationMs = output.durationMs
                     this.executedAt = java.time.Instant.now()
@@ -461,7 +465,7 @@ class PipelineConsumer {
                     "moduleVersionId" to version.id,
                     "moduleName" to version.module?.name,
                     "success" to true,
-                    "stdout" to trimLog(output.stdout),
+                    "stdout" to trimLog(userOutput(output.stdout)),
                     "stderr" to trimLog(output.stderr),
                     "exitCode" to output.exitCode,
                     "durationMs" to output.durationMs,
@@ -477,7 +481,7 @@ class PipelineConsumer {
                     this.nodeType = stage
                     this.moduleName = version.module?.name
                     this.success = false
-                    this.stdout = trimLog(e.stdout)
+                    this.stdout = trimLog(userOutput(e.stdout))
                     this.stderr = trimLog(e.stderr, 4000)
                     this.errorMessage = e.message
                     this.executedAt = java.time.Instant.now()
@@ -491,7 +495,7 @@ class PipelineConsumer {
                     "moduleVersionId" to version.id,
                     "moduleName" to version.module?.name,
                     "success" to false,
-                    "stdout" to trimLog(e.stdout),
+                    "stdout" to trimLog(userOutput(e.stdout)),
                     "stderr" to trimLog(e.stderr),
                     "exitCode" to e.exitCode,
                     "error" to e.message,

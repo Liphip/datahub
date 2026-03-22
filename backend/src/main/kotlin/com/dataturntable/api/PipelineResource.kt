@@ -369,7 +369,6 @@ class PipelineResource {
         }
         requireTenantAccess(currentUser, tenantId, "pipeline:read")?.let { return it }
 
-        val maxRows = (limit ?: 50).coerceIn(1, 500)
         val hours = sinceHours ?: 24
         if (hours !in setOf(1, 24, 168)) {
             return Response.status(400).entity(mapOf("error" to "Invalid sinceHours")).build()
@@ -387,13 +386,14 @@ class PipelineResource {
         }
 
         val sinceInstant = java.time.Instant.now().minus(java.time.Duration.ofHours(hours.toLong()))
+        // No row limit — load all runs in the window for accurate trend buckets and stats.
+        // For large deployments this query should be backed by an index on (tenant_id, started_at).
         val runs = em.createQuery(
             "SELECT r FROM PipelineRun r WHERE r.pipeline.tenant.id = :tenantId AND r.startedAt >= :since ORDER BY r.startedAt DESC",
             PipelineRun::class.java
         )
             .setParameter("tenantId", tenantUuid)
             .setParameter("since", sinceInstant)
-            .setMaxResults(maxRows)
             .resultList
 
         val total = runs.size
@@ -440,7 +440,7 @@ class PipelineResource {
 
         return Response.ok(
             mapOf(
-                "windowSize" to maxRows,
+                "windowSize" to runs.size,
                 "sinceHours" to hours,
                 "bucketSeconds" to bucketSeconds,
                 "totalRuns" to total,
@@ -594,7 +594,6 @@ class PipelineResource {
         )
             .setParameter("pipelineId", pipelineId)
             .setParameter("since", sinceInstant)
-            .setMaxResults(500)
             .resultList
 
         val total = runs.size

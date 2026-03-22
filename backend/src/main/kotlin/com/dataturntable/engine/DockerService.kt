@@ -108,20 +108,32 @@ class DockerService {
         }
     }
 
+    /**
+     * Parse the structured result from container stdout.
+     * Platform scripts emit the result as `__RESULT__:<json>` on its own line.
+     * Everything else in stdout is user print() output.
+     */
     private fun parseResultPayload(stdout: String): Any? {
         val trimmed = stdout.trim()
         if (trimmed.isBlank()) return null
 
+        // Prefer the sentinel line emitted by the platform script
+        val sentinelLine = trimmed.lines()
+            .lastOrNull { it.trim().startsWith("__RESULT__:") }
+        if (sentinelLine != null) {
+            val json = sentinelLine.trim().removePrefix("__RESULT__:")
+            return try {
+                objectMapper.readValue(json, Any::class.java)
+            } catch (_: Exception) { json }
+        }
+
+        // Fallback: try last non-blank line as JSON (legacy / error paths)
         val lines = trimmed.lines().map { it.trim() }.filter { it.isNotBlank() }
         val candidate = lines.lastOrNull() ?: return trimmed
         return try {
             objectMapper.readValue(candidate, Any::class.java)
         } catch (_: Exception) {
-            try {
-                objectMapper.readValue(trimmed, Any::class.java)
-            } catch (_: Exception) {
-                trimmed
-            }
+            try { objectMapper.readValue(trimmed, Any::class.java) } catch (_: Exception) { trimmed }
         }
     }
     
@@ -318,55 +330,65 @@ class DockerService {
                 |# INPUT_DATA = raw payload already fetched by the platform connector.
                 |# The module's job is ONLY to parse/transform/validate it.
                 |# Do NOT make network calls here — the platform handles all I/O.
+                |import sys as _dt_sys
                 |input_data = _load_input()
                 |connector_meta = _connector_meta()
                 |$code
                 |fn = _resolve('ImportModule', 'parse')
                 |result = _call(fn, input_data, connector_meta) if fn else input_data
-                |print(json.dumps(result))
+                |_dt_sys.stdout.flush()
+                |print('__RESULT__:' + json.dumps(result))
             """.trimMargin()
 
             ModuleType.PROCESSING -> """
                 |$helperCode
                 |# input_data = output of the single upstream node (dict or primitive).
+                |import sys as _dt_sys
                 |input_data = _load_input()
                 |$code
                 |fn = _resolve('ProcessingModule', 'process')
                 |result = _call(fn, input_data, query_fn) if fn else input_data
-                |print(json.dumps(result))
+                |_dt_sys.stdout.flush()
+                |print('__RESULT__:' + json.dumps(result))
             """.trimMargin()
 
             ModuleType.MERGE -> """
                 |$helperCode
                 |# inputs = list of outputs from ALL upstream nodes (always a list, ≥2 items).
+                |import sys as _dt_sys
                 |inputs = _load_inputs_list()
                 |$code
                 |fn = _resolve('MergeModule', 'merge')
                 |result = _call(fn, inputs) if fn else inputs[0] if inputs else {}
-                |print(json.dumps(result))
+                |_dt_sys.stdout.flush()
+                |print('__RESULT__:' + json.dumps(result))
             """.trimMargin()
 
             ModuleType.ALERT -> """
                 |$helperCode
                 |# input_data = upstream node output. Call alert_fn() to fire an alert.
                 |# Return True if fired, False otherwise. This is a TERMINAL node.
+                |import sys as _dt_sys
                 |input_data = _load_input()
                 |$code
                 |fn = _resolve('AlertModule', 'evaluate')
                 |result = _call(fn, input_data, alert_fn, query_fn) if fn else False
-                |print(json.dumps({"alert_fired": bool(result)}))
+                |_dt_sys.stdout.flush()
+                |print('__RESULT__:' + json.dumps({"alert_fired": bool(result)}))
             """.trimMargin()
 
             ModuleType.EXPORT -> """
                 |$helperCode
                 |# input_data = shaped payload from upstream. Return the final outbound dict.
                 |# The platform delivers it to the external system — do NOT make network calls here.
+                |import sys as _dt_sys
                 |input_data = _load_input()
                 |connector_meta = _connector_meta()
                 |$code
                 |fn = _resolve('ExportModule', 'shape')
                 |result = _call(fn, input_data, connector_meta) if fn else input_data
-                |print(json.dumps(result))
+                |_dt_sys.stdout.flush()
+                |print('__RESULT__:' + json.dumps(result))
             """.trimMargin()
         }
 
