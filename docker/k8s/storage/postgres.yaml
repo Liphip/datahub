@@ -97,3 +97,161 @@ spec:
   selector:
     app: dataturntable
     component: database
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dataturntable-pipeline-postgres
+  labels:
+    app: dataturntable
+    component: pipeline-database
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: standard
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pipeline-postgresql
+  labels:
+    app: dataturntable
+    component: pipeline-database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dataturntable
+      component: pipeline-database
+  template:
+    metadata:
+      labels:
+        app: dataturntable
+        component: pipeline-database
+    spec:
+      containers:
+        - name: pipeline-postgres
+          image: timescale/timescaledb:latest-pg16
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: dataturntable-secrets
+                  key: pipeline-db-user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dataturntable-secrets
+                  key: pipeline-db-password
+            - name: POSTGRES_DB
+              value: pipeline_data
+          volumeMounts:
+            - name: pipeline-postgres-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: pipeline-postgres-data
+          persistentVolumeClaim:
+            claimName: dataturntable-pipeline-postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pipeline-postgresql
+  labels:
+    app: dataturntable
+    component: pipeline-database
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+      name: postgres
+  selector:
+    app: dataturntable
+    component: pipeline-database
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dataturntable-monitoring-postgres
+  labels:
+    app: dataturntable
+    component: monitoring-database
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: standard
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitoring-postgresql
+  labels:
+    app: dataturntable
+    component: monitoring-database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dataturntable
+      component: monitoring-database
+  template:
+    metadata:
+      labels:
+        app: dataturntable
+        component: monitoring-database
+    spec:
+      containers:
+        - name: monitoring-postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: dataturntable-secrets
+                  key: monitoring-db-user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dataturntable-secrets
+                  key: monitoring-db-password
+            - name: POSTGRES_DB
+              value: monitoring
+          volumeMounts:
+            - name: monitoring-postgres-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: monitoring-postgres-data
+          persistentVolumeClaim:
+            claimName: dataturntable-monitoring-postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitoring-postgresql
+  labels:
+    app: dataturntable
+    component: monitoring-database
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+      name: postgres
+  selector:
+    app: dataturntable
+    component: monitoring-database

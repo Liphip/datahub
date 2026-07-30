@@ -2,6 +2,7 @@ package com.dataturntable.api
 
 import com.dataturntable.tenant.Tenant
 import com.dataturntable.auth.User
+import com.dataturntable.service.GrafanaSyncService
 import com.dataturntable.service.TenantService
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.security.Authenticated
@@ -17,7 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicLong
 
-@Path("/tenants")
+@Path("/api/internal/v1/tenants")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
@@ -52,6 +53,9 @@ class TenantResource {
 
     @Inject
     lateinit var objectMapper: ObjectMapper
+
+    @Inject
+    lateinit var grafanaSyncService: GrafanaSyncService
 
     private fun getCurrentUser(): User? {
         val subject = jwt.subject ?: return null
@@ -649,6 +653,7 @@ class TenantResource {
         }
         em.persist(tenant)
         tenantService.createDefaultRoles(tenant)
+        grafanaSyncService.queueTenantSync(tenant)
         return Response.status(201).entity(mapOf("id" to tenant.id, "name" to tenant.name)).build()
     }
     
@@ -698,6 +703,7 @@ class TenantResource {
             request["quota"]?.let { tenant.quota = it as String }
             tenant.updatedAt = java.time.Instant.now()
             em.merge(tenant)
+            grafanaSyncService.queueTenantSync(tenant)
             Response.ok(mapOf("id" to tenant.id, "name" to tenant.name)).build()
         } else {
             Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
@@ -731,6 +737,7 @@ class TenantResource {
                     return Response.status(400).entity(mapOf("error" to "Cannot delete the last root tenant")).build()
                 }
             }
+            tenant.id?.let { grafanaSyncService.queueTenantDeletion(it, tenant.name) }
             em.remove(tenant)
             Response.noContent().build()
         } else {

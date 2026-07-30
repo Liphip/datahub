@@ -44,6 +44,17 @@ quarkus:
     binder:
       http-server:
         enabled: true
+    # Publish histogram buckets so Grafana can compute histogram_quantile()
+    distribution:
+      percentiles-histogram:
+        "dt_pipeline_duration_seconds": true
+        "dt_module_duration_seconds": true
+      minimum-expected-value:
+        "dt_pipeline_duration_seconds": "100ms"
+        "dt_module_duration_seconds": "10ms"
+      maximum-expected-value:
+        "dt_pipeline_duration_seconds": "300000ms"
+        "dt_module_duration_seconds": "120000ms"
 
 mp:
   messaging:
@@ -98,6 +109,36 @@ jwt:
   duration: 3600
 
 dataturntable:
+  runtime:
+    role: ${DATATURNTABLE_RUNTIME_ROLE:all}
+    instance-id: ${DATATURNTABLE_RUNTIME_INSTANCE_ID:}
+  connectors:
+    lease:
+      ttl-seconds: ${DATATURNTABLE_CONNECTOR_LEASE_TTL_SECONDS:45}
+      reconcile-interval-seconds: ${DATATURNTABLE_CONNECTOR_LEASE_RECONCILE_INTERVAL_SECONDS:20}
+  grafana:
+    dashboard:
+      enabled: ${DATATURNTABLE_GRAFANA_DASHBOARD_ENABLED:false}
+      base-url: ${DATATURNTABLE_GRAFANA_DASHBOARD_BASE_URL:http://dashboard-grafana:3000}
+      admin-user: ${DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_USER:admin}
+      admin-password: ${DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_PASSWORD:admin}
+      datasource:
+        host: ${DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_HOST:}
+        port: ${DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_PORT:5432}
+        database: ${DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_DATABASE:}
+        user: ${DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_USER:}
+        password: ${DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_PASSWORD:}
+        ssl-mode: ${DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_SSL_MODE:disable}
+    monitoring:
+      enabled: ${DATATURNTABLE_GRAFANA_MONITORING_ENABLED:false}
+      base-url: ${DATATURNTABLE_GRAFANA_MONITORING_BASE_URL:http://grafana:3000}
+      admin-user: ${DATATURNTABLE_GRAFANA_MONITORING_ADMIN_USER:admin}
+      admin-password: ${DATATURNTABLE_GRAFANA_MONITORING_ADMIN_PASSWORD:admin}
+  pipeline-data:
+    jdbc:
+      url: ${DATATURNTABLE_PIPELINE_DATA_JDBC_URL:}
+      username: ${DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME:}
+      password: ${DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD:}
   kafka:
     topics:
       prefix: dataturntable
@@ -139,6 +180,9 @@ dataturntable:
       migrate-at-start: true
 
 "%test":
+  dataturntable:
+    runtime:
+      background-enabled: false
   quarkus:
     datasource:
       db-kind: h2
@@ -146,6 +190,46 @@ dataturntable:
         url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
     flyway:
       migrate-at-start: false
+  mp:
+    messaging:
+      incoming:
+        pipeline-input:
+          enabled: false
+
+"%control-api":
+  dataturntable:
+    runtime:
+      role: control-api
+  mp:
+    messaging:
+      incoming:
+        pipeline-input:
+          enabled: false
+
+"%public-api":
+  dataturntable:
+    runtime:
+      role: public-api
+  mp:
+    messaging:
+      incoming:
+        pipeline-input:
+          enabled: false
+
+"%ingest-edge":
+  dataturntable:
+    runtime:
+      role: ingest-edge
+  mp:
+    messaging:
+      incoming:
+        pipeline-input:
+          enabled: false
+
+"%pipeline-executor":
+  dataturntable:
+    runtime:
+      role: pipeline-executor
 
 "%prod":
   quarkus:

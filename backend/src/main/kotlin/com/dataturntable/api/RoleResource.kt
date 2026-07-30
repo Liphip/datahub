@@ -16,7 +16,7 @@ import jakarta.ws.rs.core.Response
 import org.eclipse.microprofile.jwt.JsonWebToken
 import java.util.UUID
 
-@Path("/roles")
+@Path("/api/internal/v1/roles")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated

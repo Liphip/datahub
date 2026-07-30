@@ -1,7 +1,8 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertRule, AlertHistory, DataSummaryResponse, DataBlob, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential } from '../types';
+import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertRule, AlertHistory, DataSummaryResponse, DataBlob, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
+const PUBLIC_API_BASE_URL = import.meta.env.VITE_PUBLIC_API_URL || '/api/v1';
 export const API_STATUS_EVENT = 'dataturntable:api-status';
 
 type ApiStatusDetail = {
@@ -28,11 +29,20 @@ async function sha256(message: string): Promise<string> {
 
 class ApiService {
   private client: AxiosInstance;
+  private publicClient: AxiosInstance;
 
   constructor() {
     this.client = axios.create({
       baseURL: API_BASE_URL,
       timeout: 30000, // 30 seconds — prevents hung requests
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    this.publicClient = axios.create({
+      baseURL: PUBLIC_API_BASE_URL,
+      timeout: 30000,
       headers: {
         'Content-Type': 'application/json',
       },
@@ -74,6 +84,44 @@ class ApiService {
         return Promise.reject(error);
       }
     );
+
+    this.publicClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+      const token = localStorage.getItem('token');
+      if (token && config.headers) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+      return config;
+    });
+
+    this.publicClient.interceptors.response.use(
+      (response) => {
+        emitApiStatus({ available: true, status: response.status });
+        return response;
+      },
+      (error) => {
+        const requestUrl = String(error.config?.url || '');
+        const isPublicAuthCall = requestUrl.includes('/auth/login')
+          || requestUrl.includes('/auth/register')
+          || requestUrl.includes('/auth/setup');
+
+        const status = error.response?.status as number | undefined;
+        const isConnectivityError = !error.response || (typeof status === 'number' && status >= 500);
+        if (isConnectivityError) {
+          emitApiStatus({
+            available: false,
+            status,
+            message: !error.response ? 'Network request failed' : `Server error (${status})`,
+          });
+        }
+
+        if (error.response?.status === 401 && !isPublicAuthCall) {
+          localStorage.removeItem('token');
+          window.location.href = '/login';
+        }
+        return Promise.reject(error);
+      }
+    );
+
   }
 
   // Auth
@@ -273,8 +321,28 @@ class ApiService {
     return response.data;
   }
 
-  async createModuleVersion(moduleId: string, code: string, requirements?: string, versionTag?: string): Promise<ModuleVersion> {
-    const response = await this.client.post<ModuleVersion>(`/modules/${moduleId}/versions`, { code, requirements, versionTag });
+  async createModuleVersion(
+    moduleId: string,
+    code: string,
+    requirements?: string,
+    versionTag?: string,
+    config?: Record<string, unknown>
+  ): Promise<ModuleVersion> {
+    const response = await this.client.post<ModuleVersion>(`/modules/${moduleId}/versions`, { code, requirements, versionTag, config });
+    return response.data;
+  }
+
+  async updateModuleVersion(
+    moduleId: string,
+    versionId: string,
+    data: { isActive?: boolean; versionTag?: string }
+  ): Promise<ModuleVersion> {
+    const response = await this.client.patch<ModuleVersion>(`/modules/${moduleId}/versions/${versionId}`, data);
+    return response.data;
+  }
+
+  async setDefaultModuleVersion(moduleId: string, versionId: string): Promise<CodeModule> {
+    const response = await this.client.post<CodeModule>(`/modules/${moduleId}/versions/${versionId}/default`);
     return response.data;
   }
 
@@ -415,12 +483,12 @@ class ApiService {
 
   // Alerts
   async getAlertChannels(tenantId: string): Promise<AlertChannel[]> {
-    const response = await this.client.get<AlertChannel[]>(`/alerts/channels?tenantId=${tenantId}`);
+    const response = await this.publicClient.get<AlertChannel[]>(`/alerts/channels?tenantId=${tenantId}`);
     return response.data;
   }
 
   async createAlertChannel(tenantId: string, name: string, channelType: string, config?: Record<string, unknown>): Promise<AlertChannel> {
-    const response = await this.client.post<AlertChannel>(`/alerts/channels?tenantId=${tenantId}`, {
+    const response = await this.publicClient.post<AlertChannel>(`/alerts/channels?tenantId=${tenantId}`, {
       tenantId,
       name,
       channelType,
@@ -430,16 +498,16 @@ class ApiService {
   }
 
   async deleteAlertChannel(id: string): Promise<void> {
-    await this.client.delete(`/alerts/channels/${id}`);
+    await this.publicClient.delete(`/alerts/channels/${id}`);
   }
 
   async updateAlertChannel(id: string, data: Partial<AlertChannel>): Promise<AlertChannel> {
-    const response = await this.client.patch<AlertChannel>(`/alerts/channels/${id}`, data);
+    const response = await this.publicClient.patch<AlertChannel>(`/alerts/channels/${id}`, data);
     return response.data;
   }
 
   async getAlertRules(tenantId: string): Promise<AlertRule[]> {
-    const response = await this.client.get<AlertRule[]>(`/alerts/rules?tenantId=${tenantId}`);
+    const response = await this.publicClient.get<AlertRule[]>(`/alerts/rules?tenantId=${tenantId}`);
     return response.data;
   }
 
@@ -450,7 +518,7 @@ class ApiService {
     channelId?: string,
     pipelineId?: string
   ): Promise<AlertRule> {
-    const response = await this.client.post<AlertRule>(`/alerts/rules?tenantId=${tenantId}`, {
+    const response = await this.publicClient.post<AlertRule>(`/alerts/rules?tenantId=${tenantId}`, {
       tenantId,
       name,
       condition,
@@ -461,18 +529,18 @@ class ApiService {
   }
 
   async deleteAlertRule(id: string): Promise<void> {
-    await this.client.delete(`/alerts/rules/${id}`);
+    await this.publicClient.delete(`/alerts/rules/${id}`);
   }
 
   async updateAlertRule(id: string, data: Partial<AlertRule>): Promise<AlertRule> {
-    const response = await this.client.patch<AlertRule>(`/alerts/rules/${id}`, data);
+    const response = await this.publicClient.patch<AlertRule>(`/alerts/rules/${id}`, data);
     return response.data;
   }
 
   async getAlertHistory(tenantId: string, limit?: number): Promise<AlertHistory[]> {
     const params = new URLSearchParams({ tenantId });
     if (limit) params.append('limit', limit.toString());
-    const response = await this.client.get<AlertHistory[]>(`/alerts/history?${params}`);
+    const response = await this.publicClient.get<AlertHistory[]>(`/alerts/history?${params}`);
     return response.data;
   }
 
@@ -482,24 +550,36 @@ class ApiService {
     table: string,
     params?: Record<string, unknown>
   ): Promise<{ data: unknown[]; count: number }> {
-    const response = await this.client.get<{ data: unknown[]; count: number }>(`/data/${tenantId}/query`, {
+    const response = await this.publicClient.get<{ data: unknown[]; count: number }>(`/data/${tenantId}/query`, {
       params: { table, ...params },
     });
     return response.data;
   }
 
   async insertData(tenantId: string, table: string, data: unknown[]): Promise<{ inserted: number }> {
-    const response = await this.client.post(`/data/${tenantId}/insert?table=${table}`, data);
+    const response = await this.publicClient.post(`/data/${tenantId}/insert?table=${table}`, data);
     return response.data;
   }
 
   async listTables(tenantId: string): Promise<{ tables: { name: string; type: string }[] }> {
-    const response = await this.client.get(`/data/${tenantId}/tables`);
+    const response = await this.publicClient.get(`/data/${tenantId}/tables`);
+    return response.data;
+  }
+
+  async registerTable(
+    tenantId: string,
+    payload: {
+      tableName: string;
+      tableType: 'timeseries' | 'relational';
+      columns?: Array<{ name: string; type: string }>;
+    }
+  ): Promise<DataTableRegistrationResult> {
+    const response = await this.publicClient.post<DataTableRegistrationResult>(`/data/${tenantId}/tables/register`, payload);
     return response.data;
   }
 
   async deleteTable(tenantId: string, table: string): Promise<void> {
-    await this.client.delete(`/data/${tenantId}/tables/${encodeURIComponent(table)}`);
+    await this.publicClient.delete(`/data/${tenantId}/tables/${encodeURIComponent(table)}`);
   }
 
   async getDataSummary(
@@ -514,7 +594,7 @@ class ApiService {
       topTags?: number;
     }
   ): Promise<DataSummaryResponse> {
-    const response = await this.client.get<DataSummaryResponse>(`/data/${tenantId}/summary`, {
+    const response = await this.publicClient.get<DataSummaryResponse>(`/data/${tenantId}/summary`, {
       params: {
         table,
         ...params,
@@ -704,25 +784,27 @@ class ApiService {
 
   // Data blobs
   async getDataBlobs(tenantId: string): Promise<DataBlob[]> {
-    const response = await this.client.get<DataBlob[]>(`/data/${tenantId}/blobs`);
-    return response.data;
+    const response = await this.publicClient.get<{ blobs: DataBlob[] }>(`/data/${tenantId}/blobs`);
+    return response.data.blobs;
   }
 
-  async uploadDataBlob(tenantId: string, file: File): Promise<DataBlob> {
+  async uploadDataBlob(tenantId: string, file: File): Promise<{ id: string; name: string; sizeBytes: number }> {
     const formData = new FormData();
+    formData.append('name', file.name);
     formData.append('file', file);
-    const response = await this.client.post<DataBlob>(`/data/${tenantId}/blobs`, formData, {
+    formData.append('contentType', file.type || 'application/octet-stream');
+    const response = await this.publicClient.post<{ id: string; name: string; sizeBytes: number }>(`/data/${tenantId}/blobs`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     return response.data;
   }
 
   getDataBlobUrl(tenantId: string, blobId: string): string {
-    return `${API_BASE_URL}/data/${tenantId}/blobs/${encodeURIComponent(blobId)}`;
+    return `${PUBLIC_API_BASE_URL}/data/${tenantId}/blobs/${encodeURIComponent(blobId)}/download`;
   }
 
   async deleteDataBlob(tenantId: string, blobId: string): Promise<void> {
-    await this.client.delete(`/data/${tenantId}/blobs/${encodeURIComponent(blobId)}`);
+    await this.publicClient.delete(`/data/${tenantId}/blobs/${encodeURIComponent(blobId)}`);
   }
 }
 

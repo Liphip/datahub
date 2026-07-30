@@ -244,13 +244,16 @@ class DockerService {
             "--name", containerName
         )
 
-        // Modules never need network access — the platform handles all I/O via ConnectorRuntimeService.
-        dockerArgs.addAll(listOf("--network", "none"))
+        // Containers that need pip install require network access to reach PyPI.
+        // Containers with no requirements run fully isolated.
+        val needsNetwork = requirements.isNotBlank()
+        dockerArgs.addAll(listOf("--network", if (needsNetwork) "bridge" else "none"))
 
         dockerArgs.addAll(listOf(
             "--user", "1000:1000",
             "--read-only",
             "--tmpfs", "/tmp:size=256m",
+            "--tmpfs", "/.cache",          // pip cache dir (user 1000 can't write to / otherwise)
             "--cpu-shares", (cpuLimit.toDouble() * 1024).toInt().toString(),
             "--memory", memoryLimit,
             "-e", "MODULE_CODE=$scriptContent",
@@ -503,6 +506,36 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
                 |$code
                 |fn = _resolve('ExportModule', 'shape')
                 |result = _call(fn, input_data, connector_meta) if fn else input_data
+                |_dt_sys.stdout.flush()
+                |print('__RESULT__:' + json.dumps(result))
+            """.trimMargin()
+
+            ModuleType.DB_LOAD -> """
+                |$helperCode
+                |# DB_LOAD modules are platform-managed data-source modules.
+                |# metadata() may describe supported query parameters; load() returns rows.
+                |import sys as _dt_sys
+                |query = _load_input()
+                |$code
+                |meta_fn = _resolve('DbLoadModule', 'metadata')
+                |load_fn = _resolve('DbLoadModule', 'load')
+                |metadata = _call(meta_fn) if meta_fn else {}
+                |result = _call(load_fn, query, {"metadata": metadata, "connector_meta": _connector_meta()}) if load_fn else []
+                |_dt_sys.stdout.flush()
+                |print('__RESULT__:' + json.dumps(result))
+            """.trimMargin()
+
+            ModuleType.DB_SAVE -> """
+                |$helperCode
+                |# DB_SAVE modules are platform-managed data-sink modules.
+                |# metadata() may describe write semantics; prepare() normalizes rows to persist.
+                |import sys as _dt_sys
+                |input_data = _load_input()
+                |$code
+                |meta_fn = _resolve('DbSaveModule', 'metadata')
+                |prepare_fn = _resolve('DbSaveModule', 'prepare')
+                |metadata = _call(meta_fn) if meta_fn else {}
+                |result = _call(prepare_fn, input_data, {"metadata": metadata, "connector_meta": _connector_meta()}) if prepare_fn else input_data
                 |_dt_sys.stdout.flush()
                 |print('__RESULT__:' + json.dumps(result))
             """.trimMargin()

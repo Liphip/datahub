@@ -14,10 +14,12 @@ import jakarta.transaction.Transactional
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import org.eclipse.microprofile.jwt.JsonWebToken
 import java.util.UUID
 
-@Path("/modules")
+@Path("/api/internal/v1/modules")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
@@ -35,6 +37,34 @@ class ModuleResource {
         return em.find(User::class.java, userId)
     }
 
+    private fun canonicalJson(value: Any?): String {
+        return when (value) {
+            null -> "null"
+            is String -> value
+            else -> try {
+                com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(value)
+            } catch (_: Exception) {
+                value.toString()
+            }
+        }
+    }
+
+    private fun contentFingerprint(
+        code: String,
+        requirements: String,
+        config: Any?,
+        versionTag: String?
+    ): String {
+        val normalized = listOf(
+            code.trim(),
+            requirements.trim(),
+            canonicalJson(config),
+            versionTag?.trim().orEmpty()
+        ).joinToString("\n---\n")
+        val digest = MessageDigest.getInstance("SHA-256").digest(normalized.toByteArray(StandardCharsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
     private fun parseModuleType(value: String): ModuleType? {
         return try {
             ModuleType.valueOf(value.uppercase())
@@ -49,6 +79,7 @@ class ModuleResource {
             "moduleId" to version.module?.id,
             "version" to version.version,
             "versionTag" to version.versionTag,
+            "contentFingerprint" to version.contentFingerprint,
             "code" to version.code,
             "requirements" to version.requirements,
             "config" to version.config,
@@ -74,6 +105,8 @@ class ModuleResource {
             .setParameter("moduleId", module.id)
             .resultList
         base["versionCount"] = versions.size
+        base["latestVersionId"] = versions.firstOrNull()?.id
+        base["defaultVersionId"] = module.defaultVersion?.id ?: versions.firstOrNull { it.isActive }?.id ?: versions.firstOrNull()?.id
         if (includeVersions) {
             base["versions"] = versions.map { versionToMap(it) }
         }
@@ -187,6 +220,35 @@ class ModuleResource {
             Response.status(404).entity(mapOf("error" to "Module not found")).build()
         }
     }
+
+    @PATCH
+    @Path("/{id}")
+    @Transactional
+    fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val moduleId = try {
+            UUID.fromString(id)
+        } catch (_: Exception) {
+            return Response.status(400).entity(mapOf("error" to "Invalid module id")).build()
+        }
+        val module = em.find(CodeModule::class.java, moduleId)
+            ?: return Response.status(404).entity(mapOf("error" to "Module not found")).build()
+        val moduleTenantId = module.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Module tenant not found")).build()
+        if (!SecurityUtils.canAccessTenant(currentUser, moduleTenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        if (!SecurityUtils.hasAbility(currentUser, "module:write")) {
+            return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
+        }
+
+        request["name"]?.let { module.name = it as String }
+        request["description"]?.let { module.description = it as String }
+        request["isActive"]?.let { module.isActive = it as Boolean }
+        module.updatedAt = java.time.Instant.now()
+        module.persist()
+        return Response.ok(moduleToMap(module, includeVersions = true)).build()
+    }
     
     @DELETE
     @Path("/{id}")
@@ -265,27 +327,146 @@ class ModuleResource {
         }
         
         val code = request["code"] as? String ?: return Response.status(400).entity(mapOf("error" to "Code is required")).build()
-        
-        val latestVersion = em.createQuery(
+        val requirements = request["requirements"] as? String ?: ""
+        val versionTag = request["versionTag"] as? String
+        val config = request["config"] ?: emptyMap<String, Any?>()
+        val fingerprint = contentFingerprint(code, requirements, config, versionTag)
+
+        val existingVersions = em.createQuery(
+            "SELECT v FROM ModuleVersion v WHERE v.module.id = :moduleId ORDER BY v.version DESC",
+            ModuleVersion::class.java
+        )
+            .setParameter("moduleId", moduleId)
+            .resultList
+
+        val latestVersion = existingVersions.firstOrNull()
+        if (latestVersion != null && latestVersion.contentFingerprint == fingerprint) {
+            module.updatedAt = java.time.Instant.now()
+            module.persist()
+            return Response.ok(versionToMap(latestVersion) + mapOf("createdNewVersion" to false)).build()
+        }
+
+        val latestVersionNumber = em.createQuery(
             "SELECT COALESCE(MAX(v.version), 0) FROM ModuleVersion v WHERE v.module.id = :moduleId",
             java.lang.Integer::class.java
         )
             .setParameter("moduleId", moduleId)
             .singleResult
             .toInt()
-        
+
         val version = ModuleVersion().apply {
             this.module = module
-            this.version = latestVersion + 1
-            this.versionTag = request["versionTag"] as? String
+            this.version = latestVersionNumber + 1
+            this.versionTag = versionTag
+            this.contentFingerprint = fingerprint
             this.code = code
-            this.requirements = request["requirements"] as? String ?: ""
-            this.config = request["config"] as? String ?: "{}"
+            this.requirements = requirements
+            this.config = canonicalJson(config)
             this.isActive = true
             this.createdAt = java.time.Instant.now()
         }
         version.persist()
-        
-        return Response.status(201).entity(mapOf("id" to version.id, "version" to version.version)).build()
+
+        if (module.defaultVersion == null) {
+            module.defaultVersion = version
+        }
+        module.updatedAt = java.time.Instant.now()
+        module.persist()
+
+        return Response.status(201).entity(versionToMap(version) + mapOf("createdNewVersion" to true)).build()
+    }
+
+    @PATCH
+    @Path("/{id}/versions/{versionId}")
+    @Transactional
+    fun updateVersion(@PathParam("id") id: String, @PathParam("versionId") versionId: String, request: Map<String, Any>): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val moduleId = try {
+            UUID.fromString(id)
+        } catch (_: Exception) {
+            return Response.status(400).entity(mapOf("error" to "Invalid module id")).build()
+        }
+        val versionUuid = try {
+            UUID.fromString(versionId)
+        } catch (_: Exception) {
+            return Response.status(400).entity(mapOf("error" to "Invalid version id")).build()
+        }
+        val module = em.find(CodeModule::class.java, moduleId)
+            ?: return Response.status(404).entity(mapOf("error" to "Module not found")).build()
+        val moduleTenantId = module.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Module tenant not found")).build()
+        if (!SecurityUtils.canAccessTenant(currentUser, moduleTenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        if (!SecurityUtils.hasAbility(currentUser, "module:write")) {
+            return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
+        }
+
+        val version = em.find(ModuleVersion::class.java, versionUuid)
+            ?: return Response.status(404).entity(mapOf("error" to "Version not found")).build()
+        if (version.module?.id != module.id) {
+            return Response.status(400).entity(mapOf("error" to "Version does not belong to module")).build()
+        }
+
+        request["isActive"]?.let { version.isActive = it as Boolean }
+        request["versionTag"]?.let { version.versionTag = it as String }
+        version.persist()
+
+        if (module.defaultVersion?.id == version.id && !version.isActive) {
+            val replacementDefault = em.createQuery(
+                "SELECT v FROM ModuleVersion v WHERE v.module.id = :moduleId AND v.isActive = true ORDER BY v.version DESC",
+                ModuleVersion::class.java
+            )
+                .setParameter("moduleId", module.id)
+                .setMaxResults(1)
+                .resultList
+                .firstOrNull()
+            module.defaultVersion = replacementDefault
+            module.updatedAt = java.time.Instant.now()
+            module.persist()
+        }
+
+        return Response.ok(versionToMap(version) + mapOf("defaultVersionId" to module.defaultVersion?.id)).build()
+    }
+
+    @POST
+    @Path("/{id}/versions/{versionId}/default")
+    @Transactional
+    fun setDefaultVersion(@PathParam("id") id: String, @PathParam("versionId") versionId: String): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val moduleId = try {
+            UUID.fromString(id)
+        } catch (_: Exception) {
+            return Response.status(400).entity(mapOf("error" to "Invalid module id")).build()
+        }
+        val versionUuid = try {
+            UUID.fromString(versionId)
+        } catch (_: Exception) {
+            return Response.status(400).entity(mapOf("error" to "Invalid version id")).build()
+        }
+        val module = em.find(CodeModule::class.java, moduleId)
+            ?: return Response.status(404).entity(mapOf("error" to "Module not found")).build()
+        val moduleTenantId = module.tenant?.id?.toString()
+            ?: return Response.status(400).entity(mapOf("error" to "Module tenant not found")).build()
+        if (!SecurityUtils.canAccessTenant(currentUser, moduleTenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        if (!SecurityUtils.hasAbility(currentUser, "module:write")) {
+            return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
+        }
+
+        val version = em.find(ModuleVersion::class.java, versionUuid)
+            ?: return Response.status(404).entity(mapOf("error" to "Version not found")).build()
+        if (version.module?.id != module.id) {
+            return Response.status(400).entity(mapOf("error" to "Version does not belong to module")).build()
+        }
+        if (!version.isActive) {
+            return Response.status(400).entity(mapOf("error" to "Default version must be active")).build()
+        }
+
+        module.defaultVersion = version
+        module.updatedAt = java.time.Instant.now()
+        module.persist()
+        return Response.ok(moduleToMap(module, includeVersions = true)).build()
     }
 }

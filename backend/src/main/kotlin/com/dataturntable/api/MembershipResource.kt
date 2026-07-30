@@ -5,6 +5,7 @@ import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
 import com.dataturntable.security.SecurityUtils
+import com.dataturntable.service.GrafanaSyncService
 import io.quarkus.security.Authenticated
 import org.eclipse.microprofile.jwt.JsonWebToken
 import jakarta.inject.Inject
@@ -16,7 +17,7 @@ import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
 import java.util.UUID
 
-@Path("/tenants/{tenantId}/memberships")
+@Path("/api/internal/v1/tenants/{tenantId}/memberships")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
@@ -27,6 +28,9 @@ class MembershipResource {
 
     @PersistenceContext
     lateinit var em: EntityManager
+
+    @Inject
+    lateinit var grafanaSyncService: GrafanaSyncService
 
     private fun getCurrentUser(): User? {
         val subject = jwt.subject ?: return null
@@ -152,6 +156,8 @@ class MembershipResource {
             this.createdAt = java.time.Instant.now()
         }
         membership.persist()
+        grafanaSyncService.queueMembershipSync(membership)
+        membership.authUser?.let { grafanaSyncService.queueUserSync(it) }
 
         return Response.status(201).entity(toMembershipDto(membership)).build()
     }
@@ -173,7 +179,22 @@ class MembershipResource {
         if (membership.tenant?.id.toString() != tenantId) {
             return Response.status(400).entity(mapOf("error" to "Membership does not belong to tenant")).build()
         }
+        val membershipId = membership.id
+        val membershipTenantId = membership.tenant?.id
+        val membershipTenantName = membership.tenant?.name
+        val membershipUserId = membership.authUser?.id
+        val membershipUserEmail = membership.authUser?.email
         membership.delete()
+        if (membershipId != null) {
+            grafanaSyncService.queueMembershipDeletion(
+                membershipId,
+                membershipTenantId,
+                membershipUserId,
+                membershipTenantName,
+                membershipUserEmail
+            )
+        }
+        membership.authUser?.let { grafanaSyncService.queueUserSync(it) }
         return Response.noContent().build()
     }
 
@@ -206,6 +227,8 @@ class MembershipResource {
         }
         request["abilities"]?.let { membership.abilities = it.toString() }
         membership.persist()
+        grafanaSyncService.queueMembershipSync(membership)
+        membership.authUser?.let { grafanaSyncService.queueUserSync(it) }
 
         return Response.ok(toMembershipDto(membership)).build()
     }

@@ -11,6 +11,8 @@ import jakarta.persistence.PersistenceContext
 import org.hamcrest.CoreMatchers.equalTo
 import org.junit.jupiter.api.Test
 import org.mindrot.jbcrypt.BCrypt
+import java.time.Instant
+import java.util.UUID
 
 @QuarkusTest
 class DataResourceTest {
@@ -68,7 +70,7 @@ class DataResourceTest {
     fun testListTablesRequiresAuth() {
         given()
         .`when`()
-            .get("/api/internal/v1/data/00000000-0000-0000-0000-000000000000/tables")
+            .get("/api/v1/data/00000000-0000-0000-0000-000000000000/tables")
         .then()
             .statusCode(401)
     }
@@ -80,7 +82,7 @@ class DataResourceTest {
         given()
             .header("Authorization", "Bearer $token")
         .`when`()
-            .get("/api/internal/v1/data/not-a-uuid/tables")
+            .get("/api/v1/data/not-a-uuid/tables")
         .then()
             .statusCode(400)
             .body("error", equalTo("Invalid tenantId"))
@@ -95,7 +97,7 @@ class DataResourceTest {
             .header("Authorization", "Bearer $token")
             .queryParam("table", "bad-table;drop")
         .`when`()
-            .get("/api/internal/v1/data/$tenantId/query")
+            .get("/api/v1/data/$tenantId/query")
         .then()
             .statusCode(400)
             .body("error", equalTo("Invalid table name"))
@@ -111,7 +113,7 @@ class DataResourceTest {
             .queryParam("table", "measurements")
             .queryParam("start", "not-a-timestamp")
         .`when`()
-            .get("/api/internal/v1/data/$tenantId/query")
+            .get("/api/v1/data/$tenantId/query")
         .then()
             .statusCode(400)
             .body("error", equalTo("Invalid start timestamp"))
@@ -126,7 +128,7 @@ class DataResourceTest {
         given()
             .header("Authorization", "Bearer $outsiderToken")
         .`when`()
-            .get("/api/internal/v1/data/$tenantId/tables")
+            .get("/api/v1/data/$tenantId/tables")
         .then()
             .statusCode(403)
             .body("error", equalTo("Forbidden"))
@@ -142,10 +144,50 @@ class DataResourceTest {
             .queryParam("table", "measurements")
             .queryParam("numericField", "value;drop")
         .`when`()
-            .get("/api/internal/v1/data/$tenantId/summary")
+            .get("/api/v1/data/$tenantId/summary")
         .then()
             .statusCode(400)
             .body("error", equalTo("Invalid numericField"))
+    }
+
+    @Test
+    fun testRegisterInsertAndQueryDataThroughPublicApi() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+        val tableName = "sensor_${UUID.randomUUID().toString().replace("-", "_").take(12)}"
+        val timestamp = Instant.parse("2026-03-23T12:00:00Z").toString()
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("table", tableName)
+            .contentType(ContentType.JSON)
+            .body(
+                listOf(
+                    mapOf(
+                        "time" to timestamp,
+                        "device_id" to "device-a",
+                        "value" to 42.5,
+                        "tags" to mapOf("location" to "lab")
+                    )
+                )
+            )
+        .`when`()
+            .post("/api/v1/data/$tenantId/insert")
+        .then()
+            .statusCode(200)
+            .body("inserted", equalTo(1))
+            .body("table", equalTo(tableName))
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .queryParam("table", tableName)
+            .queryParam("limit", 10)
+        .`when`()
+            .get("/api/v1/data/$tenantId/query")
+        .then()
+            .statusCode(200)
+            .body("count", equalTo(1))
+            .body("data[0].device_id", equalTo("device-a"))
     }
 
 }

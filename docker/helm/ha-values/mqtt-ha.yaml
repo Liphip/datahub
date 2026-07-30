@@ -1,0 +1,25 @@
+replicaCount: 3
+
+emqxConfig:
+  EMQX_CLUSTER__DISCOVERY_STRATEGY: dns
+  EMQX_CLUSTER__DNS__NAME: mqtt-ha-headless.default.svc.cluster.local
+  EMQX_DASHBOARD__DEFAULT_USERNAME: admin
+  EMQX_DASHBOARD__DEFAULT_PASSWORD: public
+  EMQX_LISTENERS__TCP__DEFAULT__BIND: "0.0.0.0:1883"
+  EMQX_LISTENERS__WS__DEFAULT__BIND: "0.0.0.0:8083"
+
+service:
+  type: ClusterIP
+  mqtt:
+    enabled: true
+    port: 1883
+  websocket:
+    enabled: true
+    port: 8083
+  dashboard:
+    enabled: true
+    port: 18083
+
+persistence:
+  enabled: true
+  size: 20Gi

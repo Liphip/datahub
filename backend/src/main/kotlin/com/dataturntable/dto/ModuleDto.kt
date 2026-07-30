@@ -11,6 +11,8 @@ data class CodeModuleDto(
     val moduleType: ModuleType,
     val isActive: Boolean = true,
     val createdAt: Instant? = null,
+    val latestVersionId: String? = null,
+    val defaultVersionId: String? = null,
     val versions: List<ModuleVersionDto> = emptyList()
 )
 
@@ -25,6 +27,7 @@ data class ModuleVersionDto(
     val moduleId: String?,
     val version: Int,
     val versionTag: String?,
+    val contentFingerprint: String? = null,
     val code: String,
     val requirements: String = "",
     val config: Map<String, Any> = emptyMap(),

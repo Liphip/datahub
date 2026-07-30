@@ -27,6 +27,25 @@ const TEMPLATES = {
         # }
         return input_data
 `,
+  DB_LOAD: `class DbLoadModule:
+    """
+    DB_LOAD module.
+
+    Use metadata() to describe accepted query parameters and load() to fetch
+    rows from the configured schema/table in the platform-managed data DB.
+    """
+
+    def metadata(self) -> dict:
+        return {
+            "defaults": {"limit": 100, "order_by": "created_at desc"},
+            "supported_filters": ["start", "end", "sensor_id"],
+        }
+
+    def load(self, query: dict, context: dict | None = None):
+        # The platform will provide query + table config to the DB runtime.
+        # Return a list of rows or a DataFrame.
+        return []
+`,
   PROCESSING: `class ProcessingModule:
     """
     PROCESSING node — transform, filter, or enrich data from one upstream node.
@@ -100,6 +119,26 @@ const TEMPLATES = {
         # }
         return data
 `,
+  DB_SAVE: `class DbSaveModule:
+    """
+    DB_SAVE module.
+
+    Use metadata() to describe write behaviour and prepare() to normalize rows
+    before the platform persists them into the configured schema/table.
+    """
+
+    def metadata(self) -> dict:
+        return {
+            "mode": "append",
+            "timestamp_column": "created_at",
+            "batch_size": 500,
+        }
+
+    def prepare(self, data: dict | list[dict], context: dict | None = None):
+        if isinstance(data, dict):
+            return [data]
+        return data
+`,
 };
 
 export default function ModuleEditor() {
@@ -112,6 +151,7 @@ export default function ModuleEditor() {
   const [module, setModule] = useState<CodeModule | null>(null);
   const [code, setCode] = useState('');
   const [requirements, setRequirements] = useState('pandas\nnumpy');
+  const [configText, setConfigText] = useState('{}');
   const [versionTag, setVersionTag] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -119,10 +159,14 @@ export default function ModuleEditor() {
   const [loadedVersionId, setLoadedVersionId] = useState<string | null>(null);
   const [loadedCodeSnapshot, setLoadedCodeSnapshot] = useState('');
   const [loadedRequirementsSnapshot, setLoadedRequirementsSnapshot] = useState('');
+  const [loadedConfigSnapshot, setLoadedConfigSnapshot] = useState('{}');
   const [pendingLoadVersionId, setPendingLoadVersionId] = useState<string | null>(null);
 
   const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
-  const hasUnsavedChanges = code !== loadedCodeSnapshot || requirements !== loadedRequirementsSnapshot;
+  const hasUnsavedChanges =
+    code !== loadedCodeSnapshot ||
+    requirements !== loadedRequirementsSnapshot ||
+    configText !== loadedConfigSnapshot;
 
   useEffect(() => {
     const fetchModule = async () => {
@@ -135,19 +179,25 @@ export default function ModuleEditor() {
         if (data.versions && data.versions.length > 0) {
           const latestCode = data.versions[0].code || TEMPLATES[data.moduleType as keyof typeof TEMPLATES] || TEMPLATES.PROCESSING;
           const latestRequirements = data.versions[0].requirements || 'pandas\nnumpy';
+          const latestConfig = JSON.stringify(data.versions[0].config || {}, null, 2);
           setCode(latestCode);
           setRequirements(latestRequirements);
+          setConfigText(latestConfig);
           setLoadedVersionId(data.versions[0].id);
           setLoadedCodeSnapshot(latestCode);
           setLoadedRequirementsSnapshot(latestRequirements);
+          setLoadedConfigSnapshot(latestConfig);
         } else {
           const templateCode = TEMPLATES[data.moduleType as keyof typeof TEMPLATES] || TEMPLATES.PROCESSING;
           const defaultRequirements = 'pandas\nnumpy';
+          const defaultConfig = defaultModuleConfig(data.moduleType);
           setCode(templateCode);
           setRequirements(defaultRequirements);
+          setConfigText(defaultConfig);
           setLoadedVersionId(null);
           setLoadedCodeSnapshot(templateCode);
           setLoadedRequirementsSnapshot(defaultRequirements);
+          setLoadedConfigSnapshot(defaultConfig);
         }
       } catch (error) {
         console.error('Error fetching module:', error);
@@ -170,7 +220,13 @@ export default function ModuleEditor() {
     
     setSaving(true);
     try {
-      await api.createModuleVersion(id, code, requirements, versionTag || undefined);
+      const parsedConfig = parseConfigText();
+      if (!parsedConfig.ok) {
+        showToast(parsedConfig.error, 'error');
+        setSaving(false);
+        return;
+      }
+      await api.createModuleVersion(id, code, requirements, versionTag || undefined, parsedConfig.value);
       const versions = await api.getModuleVersions(id);
       setModule((prev) => prev ? { ...prev, versions } : prev);
       if (versions.length > 0) {
@@ -178,6 +234,7 @@ export default function ModuleEditor() {
       }
       setLoadedCodeSnapshot(code);
       setLoadedRequirementsSnapshot(requirements);
+      setLoadedConfigSnapshot(configText);
       setPendingLoadVersionId(null);
       setVersionTag('');
       showToast(t('modules.versionSaved'), 'success');
@@ -208,6 +265,83 @@ export default function ModuleEditor() {
     );
   }
 
+  function defaultModuleConfig(moduleType: CodeModule['moduleType']) {
+    if (moduleType === 'DB_LOAD') {
+      return JSON.stringify(
+        {
+          table: 'measurements',
+          limit: 100,
+          orderBy: 'created_at',
+          orderDirection: 'DESC',
+          columns: ['device_id', 'value', 'created_at'],
+        },
+        null,
+        2
+      );
+    }
+    if (moduleType === 'DB_SAVE') {
+      return JSON.stringify(
+        {
+          table: 'measurements',
+          mode: 'append',
+          keyColumns: ['device_id', 'created_at'],
+          columnModel: {
+            device_id: 'TEXT',
+            value: 'DOUBLE PRECISION',
+            created_at: 'TIMESTAMPTZ',
+          },
+        },
+        null,
+        2
+      );
+    }
+    return '{}';
+  }
+
+  function parseConfigText():
+    | { ok: true; value: Record<string, unknown> }
+    | { ok: false; error: string } {
+    try {
+      const parsed = JSON.parse(configText || '{}');
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+        return { ok: false, error: 'Module config must be a JSON object.' };
+      }
+      return { ok: true, value: parsed as Record<string, unknown> };
+    } catch {
+      return { ok: false, error: 'Module config must be valid JSON.' };
+    }
+  }
+
+  const refreshModule = async () => {
+    if (!id) return;
+    const data = await api.getModule(id);
+    setModule(data);
+  };
+
+  const handleSetDefaultVersion = async (versionId: string) => {
+    if (!id || !canWriteModules) return;
+    try {
+      const updated = await api.setDefaultModuleVersion(id, versionId);
+      setModule(updated);
+      showToast('Default version updated.', 'success');
+    } catch (error) {
+      console.error('Error setting default version:', error);
+      showToast('Failed to update default version.', 'error');
+    }
+  };
+
+  const handleToggleVersionActive = async (versionId: string, isActive: boolean) => {
+    if (!id || !canWriteModules) return;
+    try {
+      await api.updateModuleVersion(id, versionId, { isActive: !isActive });
+      await refreshModule();
+      showToast(`Version ${!isActive ? 'activated' : 'deactivated'}.`, 'success');
+    } catch (error) {
+      console.error('Error updating version:', error);
+      showToast('Failed to update version state.', 'error');
+    }
+  };
+
   const loadVersionIntoEditor = (versionId: string, skipDirtyGuard = false) => {
     const selectedVersion = module.versions.find((version) => version.id === versionId);
     if (!selectedVersion) return;
@@ -218,11 +352,14 @@ export default function ModuleEditor() {
 
     const nextCode = selectedVersion.code || TEMPLATES[module.moduleType as keyof typeof TEMPLATES] || TEMPLATES.PROCESSING;
     const nextRequirements = selectedVersion.requirements || 'pandas\nnumpy';
+    const nextConfig = JSON.stringify(selectedVersion.config || {}, null, 2);
     setCode(nextCode);
     setRequirements(nextRequirements);
+    setConfigText(nextConfig);
     setLoadedVersionId(selectedVersion.id);
     setLoadedCodeSnapshot(nextCode);
     setLoadedRequirementsSnapshot(nextRequirements);
+    setLoadedConfigSnapshot(nextConfig);
     setPendingLoadVersionId(null);
     showToast(t('modules.versionLoaded', { version: selectedVersion.version }), 'success');
   };
@@ -298,6 +435,18 @@ export default function ModuleEditor() {
               placeholder="pandas&#10;numpy&#10;scikit-learn"
             />
           </div>
+
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Module config (JSON)
+            </label>
+            <textarea
+              value={configText}
+              onChange={(e) => setConfigText(e.target.value)}
+              className="input h-40 font-mono text-sm"
+              placeholder="{&#10;  &quot;table&quot;: &quot;measurements&quot;&#10;}"
+            />
+          </div>
           
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -339,11 +488,23 @@ export default function ModuleEditor() {
                   <div key={v.id} className="p-2 bg-white rounded border text-sm">
                     <div className="flex justify-between">
                       <span className="font-medium">v{v.version}</span>
-                      {v.versionTag && (
-                        <span className="text-xs bg-gray-100 px-2 py-0.5 rounded">
-                          {v.versionTag}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-1">
+                        {module.defaultVersionId === v.id && (
+                          <span className="text-xs bg-blue-100 px-2 py-0.5 rounded text-blue-800">
+                            Default
+                          </span>
+                        )}
+                        {!v.isActive && (
+                          <span className="text-xs bg-amber-100 px-2 py-0.5 rounded text-amber-800">
+                            Inactive
+                          </span>
+                        )}
+                        {v.versionTag && (
+                          <span className="text-xs bg-gray-100 px-2 py-0.5 rounded">
+                            {v.versionTag}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div className="text-xs text-gray-500">
                       {new Date(v.createdAt).toLocaleString()}
@@ -354,6 +515,20 @@ export default function ModuleEditor() {
                         className="px-2 py-0.5 text-xs rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
                       >
                         {t('common.load')}
+                      </button>
+                      {module.defaultVersionId !== v.id && v.isActive && (
+                        <button
+                          onClick={() => handleSetDefaultVersion(v.id)}
+                          className="px-2 py-0.5 text-xs rounded border border-blue-300 text-blue-700 hover:bg-blue-50"
+                        >
+                          Set default
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleToggleVersionActive(v.id, v.isActive)}
+                        className="px-2 py-0.5 text-xs rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
+                      >
+                        {v.isActive ? 'Deactivate' : 'Activate'}
                       </button>
                       {loadedVersionId === v.id && (
                         <span className="text-[11px] text-green-700">{t('modules.loaded')}</span>

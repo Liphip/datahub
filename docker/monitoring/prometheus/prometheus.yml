@@ -9,10 +9,29 @@ scrape_configs:
     static_configs:
       - targets: ["prometheus:9090"]
 
-  - job_name: dataturntable-backend
+  - job_name: dataturntable-blackbox-exporter
+    static_configs:
+      - targets: ["blackbox-exporter:9115"]
+
+  - job_name: dataturntable-control-api
     metrics_path: /q/metrics
     static_configs:
-      - targets: ["backend:8080"]
+      - targets: ["control-api:8080"]
+
+  - job_name: dataturntable-public-api
+    metrics_path: /q/metrics
+    static_configs:
+      - targets: ["public-api:8080"]
+
+  - job_name: dataturntable-ingest-edge
+    metrics_path: /q/metrics
+    static_configs:
+      - targets: ["ingest-edge:8080"]
+
+  - job_name: dataturntable-pipeline-executor
+    metrics_path: /q/metrics
+    static_configs:
+      - targets: ["pipeline-executor:8080"]
 
   - job_name: dataturntable-frontend-nginx
     static_configs:
@@ -48,10 +67,41 @@ scrape_configs:
       module: [http_2xx]
     static_configs:
       - targets:
-          - http://backend:8080/q/health
+          - http://control-api:8080/q/health
+          - http://public-api:8080/q/health
+          - http://ingest-edge:8080/q/health
+          - http://pipeline-executor:8080/q/health
           - http://frontend:80/health
           - http://nginx:80/health
           - http://docs:80/
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  - job_name: dataturntable-observability-http
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - http://control-api:8080/q/health/live
+          - http://control-api:8080/q/health/ready
+          - http://public-api:8080/q/health/live
+          - http://public-api:8080/q/health/ready
+          - http://public-api:8080/q/metrics
+          - http://public-api:8080/api/v1/monitoring/summary
+          - http://ingest-edge:8080/q/health/live
+          - http://ingest-edge:8080/q/health/ready
+          - http://pipeline-executor:8080/q/health/live
+          - http://pipeline-executor:8080/q/health/ready
+          - http://prometheus:9090/-/healthy
+          - http://grafana:3000/api/health
+          - http://dashboard-grafana:3000/api/health
+          - http://loki:3100/ready
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target

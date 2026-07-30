@@ -16,15 +16,20 @@ import jakarta.ws.rs.core.Response
 import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.eclipse.microprofile.jwt.JsonWebToken
 import java.io.File
+import java.sql.Clob
+import java.sql.Connection
+import java.sql.DriverManager
 import java.sql.Timestamp
+import java.sql.Types
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.time.ZoneOffset
 import java.util.UUID
+import java.util.Optional
 import kotlin.math.ceil
 
-@Path("/data")
+@Path("/api/v1/data")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
@@ -38,6 +43,24 @@ class DataResource {
 
     @ConfigProperty(name = "dataturntable.data.blob-dir", defaultValue = "/data/blobs")
     lateinit var blobDir: String
+
+    @ConfigProperty(name = "dataturntable.pipeline-data.jdbc.url", defaultValue = "")
+    lateinit var configuredJdbcUrl: Optional<String>
+
+    @ConfigProperty(name = "dataturntable.pipeline-data.jdbc.username", defaultValue = "")
+    lateinit var configuredJdbcUsername: Optional<String>
+
+    @ConfigProperty(name = "dataturntable.pipeline-data.jdbc.password", defaultValue = "")
+    lateinit var configuredJdbcPassword: Optional<String>
+
+    @ConfigProperty(name = "quarkus.datasource.jdbc.url")
+    lateinit var defaultJdbcUrl: String
+
+    @ConfigProperty(name = "quarkus.datasource.username", defaultValue = "")
+    lateinit var defaultJdbcUsername: String
+
+    @ConfigProperty(name = "quarkus.datasource.password", defaultValue = "")
+    lateinit var defaultJdbcPassword: String
 
     private val objectMapper = ObjectMapper()
     private val tableNameRegex = Regex("^[A-Za-z0-9_]+$")
@@ -79,6 +102,17 @@ class DataResource {
             throw WebApplicationException(Response.status(400).entity(mapOf("error" to "Invalid table name")).build())
         }
         return resolved
+    }
+
+    private fun tenantSchemaName(tenantId: String): String = "tenant_${tenantId.replace("-", "_")}"
+
+    private fun qualifiedTableName(tenantId: String, tableName: String): String =
+        "\"${tenantSchemaName(tenantId)}\".\"$tableName\""
+
+    private fun ensureTenantSchemaExists(tenantId: String) {
+        pipelineConnection().use { connection ->
+            ensureTenantSchemaExists(connection, tenantId)
+        }
     }
 
     private fun requireValidColumnName(name: String?, field: String, defaultValue: String): String {
@@ -146,20 +180,34 @@ class DataResource {
             val startInstant = parseIsoInstant(start, "start")
             val endInstant = parseIsoInstant(end, "end")
 
-            val tableFullName = "tenant_${tenantId.replace("-", "_")}_${tableName}"
+            val tableFullName = qualifiedTableName(tenantId, tableName)
             val sb = StringBuilder("SELECT * FROM $tableFullName")
             val conditions = mutableListOf<String>()
-            if (startInstant != null) conditions.add("time >= :start")
-            if (endInstant != null) conditions.add("time <= :end")
+            if (startInstant != null) conditions.add("\"time\" >= ?")
+            if (endInstant != null) conditions.add("\"time\" <= ?")
             if (conditions.isNotEmpty()) sb.append(" WHERE ").append(conditions.joinToString(" AND "))
-            sb.append(" ORDER BY time DESC LIMIT :limit")
+            sb.append(" ORDER BY \"time\" DESC LIMIT ?")
 
-            val nativeQuery = em.createNativeQuery(sb.toString())
-            if (startInstant != null) nativeQuery.setParameter("start", startInstant)
-            if (endInstant != null) nativeQuery.setParameter("end", endInstant)
-            nativeQuery.setParameter("limit", limitValue)
-
-            val result = nativeQuery.resultList
+            val result = pipelineConnection().use { connection ->
+                connection.prepareStatement(sb.toString()).use { statement ->
+                    var index = 1
+                    if (startInstant != null) statement.setObject(index++, Timestamp.from(startInstant))
+                    if (endInstant != null) statement.setObject(index++, Timestamp.from(endInstant))
+                    statement.setInt(index, limitValue)
+                    statement.executeQuery().use { rs ->
+                        val meta = rs.metaData
+                        val rows = mutableListOf<Map<String, Any?>>()
+                        while (rs.next()) {
+                            val row = linkedMapOf<String, Any?>()
+                            for (i in 1..meta.columnCount) {
+                                row[meta.getColumnLabel(i)] = normalizeJdbcValue(rs.getObject(i))
+                            }
+                            rows += row
+                        }
+                        rows
+                    }
+                }
+            }
             Response.ok(mapOf(
                 "data" to result,
                 "count" to result.size
@@ -199,25 +247,33 @@ class DataResource {
             val tagFieldName = requireValidTagField(tagField)
             val topTagCount = normalizeTopTags(topTags)
 
-            val safeTenant = tenantId.replace("-", "_")
-            if (!tableNameRegex.matches(tableName) || !tableNameRegex.matches(safeTenant)) {
+            if (!tableNameRegex.matches(tableName)) {
                 return Response.status(400).entity(mapOf("error" to "Invalid table name")).build()
             }
 
-            val tableFullName = "tenant_${safeTenant}_${tableName}"
-            val sb = StringBuilder("SELECT time, $numericColumn, tags FROM $tableFullName")
+            val tableFullName = qualifiedTableName(tenantId, tableName)
+            val sb = StringBuilder("SELECT \"time\", \"${numericColumn}\", \"tags\" FROM $tableFullName")
             val conditions = mutableListOf<String>()
-            if (startInstant != null) conditions.add("time >= :start")
-            if (endInstant != null) conditions.add("time <= :end")
+            if (startInstant != null) conditions.add("\"time\" >= :start")
+            if (endInstant != null) conditions.add("\"time\" <= :end")
             if (conditions.isNotEmpty()) sb.append(" WHERE ").append(conditions.joinToString(" AND "))
-            sb.append(" ORDER BY time DESC LIMIT :limit")
-
-            val nativeQuery = em.createNativeQuery(sb.toString())
-            if (startInstant != null) nativeQuery.setParameter("start", startInstant)
-            if (endInstant != null) nativeQuery.setParameter("end", endInstant)
-            nativeQuery.setParameter("limit", limitValue)
-
-            val rows = nativeQuery.resultList
+            sb.append(" ORDER BY \"time\" DESC LIMIT :limit")
+            val sql = sb.toString().replace(":start", "?").replace(":end", "?").replace(":limit", "?")
+            val rows = pipelineConnection().use { connection ->
+                connection.prepareStatement(sql).use { statement ->
+                    var index = 1
+                    if (startInstant != null) statement.setObject(index++, Timestamp.from(startInstant))
+                    if (endInstant != null) statement.setObject(index++, Timestamp.from(endInstant))
+                    statement.setInt(index, limitValue)
+                    statement.executeQuery().use { rs ->
+                        val resultRows = mutableListOf<Array<Any?>>()
+                        while (rs.next()) {
+                            resultRows += arrayOf(rs.getObject(1), rs.getObject(2), rs.getObject(3))
+                        }
+                        resultRows
+                    }
+                }
+            }
             val linePoints = mutableListOf<Pair<Instant, Double>>()
             val tagStats = linkedMapOf<String, MutableMap<String, Double>>()
 
@@ -314,8 +370,13 @@ class DataResource {
 
         return try {
             val tableName = requireValidTableName(table)
-            ensureTableExists(tenantId, tableName)
-            insertDataIntoTable(tenantId, tableName, data)
+            pipelineConnection().use { connection ->
+                connection.autoCommit = false
+                ensureTenantSchemaExists(connection, tenantId)
+                ensureTableExists(connection, tenantId, tableName)
+                insertDataIntoTable(connection, tenantId, tableName, data)
+                connection.commit()
+            }
             Response.ok(mapOf(
                 "inserted" to data.size,
                 "table" to tableName
@@ -337,21 +398,38 @@ class DataResource {
             return Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
         }
         
-        val query = """
-            SELECT table_name 
-            FROM information_schema.tables 
-            WHERE table_schema = 'public' 
-            AND table_name LIKE 'tenant_${tenantId.replace("-", "_")}_%'
-        """.trimIndent()
-        
         return try {
-            val result = em.createNativeQuery(query).resultList
-            val tables = result.map { row ->
-                val name = row.toString()
-                mapOf(
-                    "name" to name,
-                    "type" to if (name.endsWith("_measurements")) "timeseries" else "relational"
-                )
+            val registered = em.createNativeQuery(
+                "SELECT table_name, table_type FROM data_table_registry WHERE tenant_id = :tid ORDER BY table_name"
+            ).setParameter("tid", tenantUuid).resultList
+
+            val registeredTypes = registered.associate { row ->
+                val tuple = row as Array<*>
+                tuple[0].toString() to tuple[1].toString()
+            }
+
+            val tables = pipelineConnection().use { connection ->
+                connection.prepareStatement(
+                    """
+                    SELECT table_name
+                    FROM information_schema.tables
+                    WHERE table_schema = ?
+                    ORDER BY table_name
+                    """.trimIndent()
+                ).use { statement ->
+                    statement.setString(1, tenantSchemaName(tenantId))
+                    statement.executeQuery().use { rs ->
+                        val result = mutableListOf<Map<String, String>>()
+                        while (rs.next()) {
+                            val name = rs.getString(1)
+                            result += mapOf(
+                                "name" to name,
+                                "type" to (registeredTypes[name] ?: if (name == "measurements") "timeseries" else "relational")
+                            )
+                        }
+                        result
+                    }
+                }
             }
             Response.ok(mapOf("tables" to tables)).build()
         } catch (e: Exception) {
@@ -379,53 +457,75 @@ class DataResource {
         }
         
         return try {
-            em.createNativeQuery("DROP TABLE IF EXISTS tenant_${tenantId.replace("-", "_")}_$sanitizedTable").executeUpdate()
+            pipelineConnection().use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.execute("""DROP TABLE IF EXISTS ${qualifiedTableName(tenantId, sanitizedTable)}""")
+                }
+            }
+            em.createNativeQuery(
+                "DELETE FROM data_table_registry WHERE tenant_id = :tid AND table_name = :table"
+            ).setParameter("tid", tenantUuid)
+                .setParameter("table", sanitizedTable)
+                .executeUpdate()
             Response.noContent().build()
         } catch (e: Exception) {
             Response.status(500).entity(mapOf("error" to "Delete failed: ${e.message}")).build()
         }
     }
     
-    private fun ensureTableExists(tenantId: String, tableName: String) {
-        val tableFullName = "tenant_${tenantId.replace("-", "_")}_$tableName"
-        
-        val checkQuery = """
-            SELECT COUNT(*) 
-            FROM information_schema.tables 
-            WHERE table_name = '$tableFullName'
-        """.trimIndent()
-        
-        val count = em.createNativeQuery(checkQuery).singleResult as Number
-        if (count.toInt() == 0) {
+    private fun ensureTableExists(connection: Connection, tenantId: String, tableName: String) {
+        ensureTenantSchemaExists(connection, tenantId)
+        val schema = tenantSchemaName(tenantId)
+        val tableFullName = qualifiedTableName(tenantId, tableName)
+        val isH2 = isH2(connection)
+        val timestampType = if (isH2) "TIMESTAMP WITH TIME ZONE" else "TIMESTAMPTZ"
+        val jsonType = if (isH2) "CLOB" else "JSONB"
+
+        val exists = connection.prepareStatement(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema = ? AND table_name = ?
+            """.trimIndent()
+        ).use { statement ->
+            statement.setString(1, schema)
+            statement.setString(2, tableName)
+            statement.executeQuery().use { rs ->
+                rs.next()
+                rs.getInt(1) > 0
+            }
+        }
+
+        if (!exists) {
             val createQuery = """
                 CREATE TABLE IF NOT EXISTS $tableFullName (
-                    time TIMESTAMPTZ NOT NULL,
-                    device_id VARCHAR(255),
-                    value DOUBLE PRECISION,
-                    tags JSONB,
-                    tenant_id UUID DEFAULT '$tenantId',
-                    PRIMARY KEY (time, device_id)
+                    "time" $timestampType NOT NULL,
+                    "device_id" VARCHAR(255),
+                    "value" DOUBLE PRECISION,
+                    "tags" $jsonType,
+                    "tenant_id" UUID DEFAULT '$tenantId',
+                    PRIMARY KEY ("time", "device_id")
                 )
             """.trimIndent()
-            em.createNativeQuery(createQuery).executeUpdate()
-            
+            connection.createStatement().use { it.execute(createQuery) }
+
             val indexQuery = """
-                CREATE INDEX IF NOT EXISTS idx_${tableFullName}_time 
-                ON $tableFullName(time DESC)
+                CREATE INDEX IF NOT EXISTS idx_${schema}_${tableName}_time 
+                ON $tableFullName("time" DESC)
             """.trimIndent()
-            em.createNativeQuery(indexQuery).executeUpdate()
-            
+            connection.createStatement().use { it.execute(indexQuery) }
+
             val indexQuery2 = """
-                CREATE INDEX IF NOT EXISTS idx_${tableFullName}_device 
-                ON $tableFullName(device_id)
+                CREATE INDEX IF NOT EXISTS idx_${schema}_${tableName}_device 
+                ON $tableFullName("device_id")
             """.trimIndent()
-            em.createNativeQuery(indexQuery2).executeUpdate()
+            connection.createStatement().use { it.execute(indexQuery2) }
         }
     }
     
-    private fun insertDataIntoTable(tenantId: String, tableName: String, data: List<Map<String, Any>>) {
-        val tableFullName = "tenant_${tenantId.replace("-", "_")}_$tableName"
-        
+    private fun insertDataIntoTable(connection: Connection, tenantId: String, tableName: String, data: List<Map<String, Any>>) {
+        val tableFullName = qualifiedTableName(tenantId, tableName)
+
         for (record in data) {
             val time = record["time"]?.toString() ?: Instant.now().toString()
             val deviceId = record["device_id"]?.toString() ?: "unknown"
@@ -442,19 +542,28 @@ class DataResource {
                 )
             }
 
-            val insertQuery = em.createNativeQuery(
+            val sql = if (isH2(connection)) {
                 """
-                INSERT INTO $tableFullName (time, device_id, value, tags, tenant_id)
-                VALUES (:time, :deviceId, :value, :tags, :tenantId)
-                ON CONFLICT (time, device_id) DO UPDATE SET value = EXCLUDED.value, tags = EXCLUDED.tags
+                MERGE INTO $tableFullName ("time", "device_id", "value", "tags", "tenant_id")
+                KEY ("time", "device_id")
+                VALUES (?, ?, ?, ?, ?)
                 """.trimIndent()
-            )
-            insertQuery.setParameter("time", instant)
-            insertQuery.setParameter("deviceId", deviceId)
-            insertQuery.setParameter("value", formatValue(value))
-            insertQuery.setParameter("tags", tags)
-            insertQuery.setParameter("tenantId", tenantId)
-            insertQuery.executeUpdate()
+            } else {
+                """
+                INSERT INTO $tableFullName ("time", "device_id", "value", "tags", "tenant_id")
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT ("time", "device_id") DO UPDATE SET "value" = EXCLUDED."value", "tags" = EXCLUDED."tags"
+                """.trimIndent()
+            }
+            connection.prepareStatement(sql).use { statement ->
+                statement.setObject(1, Timestamp.from(instant))
+                statement.setString(2, deviceId)
+                val numericValue = formatValue(value)
+                if (numericValue == null) statement.setNull(3, Types.DOUBLE) else statement.setDouble(3, numericValue)
+                if (isH2(connection)) statement.setString(4, tags) else statement.setObject(4, tags, Types.OTHER)
+                statement.setObject(5, tenantId)
+                statement.executeUpdate()
+            }
         }
     }
 
@@ -479,6 +588,11 @@ class DataResource {
         if (rawTags == null) return emptyMap()
         return try {
             when (rawTags) {
+                is Clob -> {
+                    val text = rawTags.characterStream.use { it.readText() }
+                    if (text.isBlank()) emptyMap()
+                    else objectMapper.readValue(text, object : TypeReference<Map<String, Any?>>() {})
+                }
                 is Map<*, *> -> rawTags.entries.associate { it.key.toString() to it.value }
                 else -> {
                     val json = rawTags.toString()
@@ -551,7 +665,8 @@ class DataResource {
     fun uploadBlob(
         @PathParam("tenantId") tenantId: String,
         @FormParam("name") name: String?,
-        @FormParam("file") fileBytes: ByteArray?
+        @FormParam("file") fileBytes: ByteArray?,
+        @FormParam("contentType") contentType: String?
     ): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseTenantUuid(tenantId)
@@ -565,12 +680,14 @@ class DataResource {
             val blobId = UUID.randomUUID()
             val storagePath = "${dir.absolutePath}/$blobId-$fileName"
             File(storagePath).writeBytes(fileBytes)
+            val resolvedContentType = contentType?.takeIf { it.isNotBlank() } ?: "application/octet-stream"
 
             em.createNativeQuery(
-                "INSERT INTO data_blobs (id, tenant_id, name, size_bytes, storage_path, uploaded_by) VALUES (:id, :tid, :name, :size, :path, :uid)"
+                "INSERT INTO data_blobs (id, tenant_id, name, content_type, size_bytes, storage_path, uploaded_by) VALUES (:id, :tid, :name, :ctype, :size, :path, :uid)"
             ).setParameter("id", blobId)
              .setParameter("tid", tenantUuid)
              .setParameter("name", fileName)
+             .setParameter("ctype", resolvedContentType)
              .setParameter("size", fileBytes.size.toLong())
              .setParameter("path", storagePath)
              .setParameter("uid", currentUser.id)
@@ -664,11 +781,16 @@ class DataResource {
             } else null
 
             // Ensure the physical table exists
-            ensureTableExists(tenantId, tableName)
-            if (tableType == "relational" && request["columns"] != null) {
-                @Suppress("UNCHECKED_CAST")
-                val columns = request["columns"] as? List<Map<String, String>> ?: emptyList()
-                ensureRelationalTableExists(tenantId, tableName, columns)
+            pipelineConnection().use { connection ->
+                connection.autoCommit = false
+                if (tableType == "relational" && request["columns"] != null) {
+                    @Suppress("UNCHECKED_CAST")
+                    val columns = request["columns"] as? List<Map<String, String>> ?: emptyList()
+                    ensureRelationalTableExists(connection, tenantId, tableName, columns)
+                } else {
+                    ensureTableExists(connection, tenantId, tableName)
+                }
+                connection.commit()
             }
 
             em.createNativeQuery(
@@ -689,8 +811,10 @@ class DataResource {
         }
     }
 
-    private fun ensureRelationalTableExists(tenantId: String, tableName: String, columns: List<Map<String, String>>) {
-        val safeTable = "tenant_${tenantId.replace("-", "_")}_$tableName"
+    private fun ensureRelationalTableExists(connection: Connection, tenantId: String, tableName: String, columns: List<Map<String, String>>) {
+        ensureTenantSchemaExists(connection, tenantId)
+        val safeTable = qualifiedTableName(tenantId, tableName)
+        val timestampType = if (isH2(connection)) "TIMESTAMP WITH TIME ZONE" else "TIMESTAMPTZ"
         val colDefs = columns.joinToString(", ") { col ->
             val colName = col["name"]?.replace(Regex("[^a-zA-Z0-9_]"), "") ?: return@joinToString ""
             val colType = when (col["type"]?.uppercase()) {
@@ -704,8 +828,32 @@ class DataResource {
             "$colName $colType"
         }
         if (colDefs.isBlank()) return
-        em.createNativeQuery(
-            "CREATE TABLE IF NOT EXISTS $safeTable (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), tenant_id UUID DEFAULT '${tenantId}', $colDefs)"
-        ).executeUpdate()
+        connection.createStatement().use { statement ->
+            statement.execute(
+                "CREATE TABLE IF NOT EXISTS $safeTable (tenant_id UUID DEFAULT '${tenantId}', created_at $timestampType DEFAULT CURRENT_TIMESTAMP(), $colDefs)"
+            )
+        }
     }
+
+    private fun ensureTenantSchemaExists(connection: Connection, tenantId: String) {
+        connection.createStatement().use { statement ->
+            statement.execute("""CREATE SCHEMA IF NOT EXISTS "${tenantSchemaName(tenantId)}"""")
+        }
+    }
+
+    private fun pipelineConnection(): Connection {
+        val url = configuredJdbcUrl.orElse("").ifBlank { defaultJdbcUrl }
+        val username = configuredJdbcUsername.orElse("").ifBlank { defaultJdbcUsername }
+        val password = configuredJdbcPassword.orElse("").ifBlank { defaultJdbcPassword }
+        return DriverManager.getConnection(url, username, password)
+    }
+
+    private fun isH2(connection: Connection): Boolean =
+        runCatching { connection.metaData.databaseProductName.contains("H2", ignoreCase = true) }.getOrDefault(false)
+
+    private fun normalizeJdbcValue(value: Any?): Any? =
+        when (value) {
+            is Clob -> value.characterStream.use { it.readText() }
+            else -> value
+        }
 }

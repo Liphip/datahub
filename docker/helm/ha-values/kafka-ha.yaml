@@ -1,0 +1,47 @@
+kraft:
+  enabled: true
+  clusterId: MkU3OEVBNTcwNTJENDM2Qk
+
+controller:
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
+  persistence:
+    size: 50Gi
+
+broker:
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
+  persistence:
+    size: 100Gi
+
+listeners:
+  client:
+    protocol: PLAINTEXT
+  interbroker:
+    protocol: PLAINTEXT
+  controller:
+    protocol: PLAINTEXT
+
+provisioning:
+  enabled: true
+  numPartitions: 12
+  replicationFactor: 3
+  topics:
+    - name: dataturntable.pipelines.input
+      partitions: 12
+      replicationFactor: 3
+    - name: dataturntable.pipelines.output
+      partitions: 12
+      replicationFactor: 3

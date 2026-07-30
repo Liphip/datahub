@@ -1,9 +1,12 @@
 package com.dataturntable.engine
 
+import com.dataturntable.config.RuntimeRoleConfig
+import io.micrometer.core.instrument.MeterRegistry
 import io.quarkus.runtime.ShutdownEvent
 import io.quarkus.runtime.StartupEvent
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.enterprise.event.Observes
+import jakarta.inject.Inject
 import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.jboss.logging.Logger
 import java.io.BufferedReader
@@ -66,6 +69,15 @@ class WarmContainerPool {
         Thread(r, "dt-warm-pool").also { it.isDaemon = true }
     }
 
+    @Inject
+    lateinit var meterRegistry: MeterRegistry
+
+    @Inject
+    lateinit var pipelineMetrics: PipelineMetrics
+
+    @Inject
+    lateinit var runtimeRoleConfig: RuntimeRoleConfig
+
     @ConfigProperty(name = "dataturntable.docker.module.base-image", defaultValue = "python:3.11-slim")
     lateinit var baseImage: String
 
@@ -98,6 +110,19 @@ class WarmContainerPool {
     // ── Lifecycle ──────────────────────────────────────────────────────────────
 
     fun onStart(@Observes ev: StartupEvent) {
+        // Register Prometheus gauges for pool monitoring
+        meterRegistry.gauge("dt_warm_pool_base_size", basePool) { it.size.toDouble() }
+        meterRegistry.gauge("dt_warm_pool_base_target", this) { basePoolSize.toDouble() }
+        meterRegistry.gauge("dt_warm_pool_spawning", spawningCount) { it.get().toDouble() }
+        meterRegistry.gauge("dt_warm_pool_module_pools", reqPools) { it.size.toDouble() }
+        meterRegistry.gauge("dt_warm_pool_module_containers", reqPools) {
+            it.values.sumOf { pool -> pool.size }.toDouble()
+        }
+
+        if (!runtimeRoleConfig.ownsPipelineRuntime()) {
+            LOG.infof("WarmContainerPool startup skipped for runtime role %s", runtimeRoleConfig.role)
+            return
+        }
         if (!poolEnabled) { LOG.info("WarmContainerPool disabled"); return }
         LOG.infof("WarmContainerPool: pre-warming %d base containers", basePoolSize)
         repeat(basePoolSize) { io.submit { spawnIntoBase() } }
@@ -126,9 +151,18 @@ class WarmContainerPool {
             reqPools[hash(requirements)]?.poll()
         }
         return when {
-            container == null    -> null
-            !container.alive     -> { ensureBasePool(); null }
-            else                 -> container
+            container == null    -> {
+                pipelineMetrics.poolAcquireCounter("miss").increment()
+                null
+            }
+            !container.alive     -> {
+                pipelineMetrics.poolAcquireCounter("dead").increment()
+                ensureBasePool(); null
+            }
+            else                 -> {
+                pipelineMetrics.poolAcquireCounter("hit").increment()
+                container
+            }
         }
     }
 
@@ -164,17 +198,22 @@ class WarmContainerPool {
         val name = "dt-warm-${UUID.randomUUID().toString().take(8)}"
         val runnerB64 = buildRunnerB64()
 
+        // Containers that need pip install require network access to reach PyPI.
+        // Containers with no requirements run fully isolated.
+        val needsNetwork = requirements.isNotBlank()
+
         val args = mutableListOf(
             "docker", "run", "-i", "--rm", "--name", name,
-            "--network", "none",
+            "--network", if (needsNetwork) "bridge" else "none",
             "--user", "1000:1000",
             "--read-only",
             "--tmpfs", "/tmp:size=256m",   // pip --target /tmp/packages goes here
+            "--tmpfs", "/.cache",          // pip cache dir (user 1000 can't write to / otherwise)
             "--cpu-shares", (cpuLimit.toDouble() * 1024).toInt().toString(),
             "--memory", memoryLimit,
             "-e", "__DT_RUNNER__=$runnerB64",
         )
-        if (requirements.isNotBlank()) {
+        if (needsNetwork) {
             args.addAll(listOf("-e", "MODULE_REQUIREMENTS=$requirements"))
         }
         args.addAll(listOf(

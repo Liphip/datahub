@@ -11,6 +11,8 @@ import java.util.UUID
 enum class ModuleType {
     /** Receives raw data from a connector and parses/transforms it. Platform fetches — no network I/O in module. */
     IMPORT,
+    /** Platform-managed database source node. Compatible with IMPORT graph nodes. */
+    DB_LOAD,
     /** Transforms, filters, or enriches data. Single upstream input. */
     PROCESSING,
     /** Fan-in node: merges two or more upstream outputs into one. Different class/signature from PROCESSING. */
@@ -18,7 +20,9 @@ enum class ModuleType {
     /** Evaluates conditions and dispatches alerts via a predefined alert channel. Terminal node. */
     ALERT,
     /** Shapes the outbound payload. Platform delivers — no network I/O in module. Terminal node. */
-    EXPORT
+    EXPORT,
+    /** Platform-managed database sink node. Compatible with EXPORT graph nodes. */
+    DB_SAVE
 }
 
 @Entity
@@ -59,6 +63,10 @@ open class CodeModule : PanacheBase() {
     @OneToMany(mappedBy = "module", cascade = [CascadeType.ALL], fetch = FetchType.LAZY)
     @OrderBy("version DESC")
     var versions: MutableList<ModuleVersion> = mutableListOf()
+
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "default_version_id")
+    var defaultVersion: ModuleVersion? = null
     
     companion object : PanacheCompanionBase<CodeModule, UUID> {
         override fun findById(id: UUID): CodeModule? =
@@ -79,4 +87,7 @@ open class CodeModule : PanacheBase() {
     
     fun getActiveVersion(): ModuleVersion? = 
         versions.firstOrNull { it.isActive }
+
+    fun resolveDefaultVersion(): ModuleVersion? =
+        defaultVersion ?: getActiveVersion() ?: getLatestVersion()
 }

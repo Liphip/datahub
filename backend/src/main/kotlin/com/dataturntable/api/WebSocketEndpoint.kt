@@ -7,7 +7,7 @@ import jakarta.websocket.server.PathParam
 import jakarta.websocket.server.ServerEndpoint
 import org.jboss.logging.Logger
 
-@ServerEndpoint("/api/v1/ws/{pipelineId}")
+@ServerEndpoint("/api/ingest/v1/ws/{pipelineId}")
 @ApplicationScoped
 class WebSocketEndpoint {
     

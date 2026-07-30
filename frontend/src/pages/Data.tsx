@@ -130,7 +130,6 @@ export default function Data() {
   const [numericField, setNumericField] = useState('value');
   const [tagField, setTagField] = useState('location');
   const [topTags, setTopTags] = useState(8);
-  const [relationalWhere, setRelationalWhere] = useState('');
   const [sdkCalloutOpen, setSdkCalloutOpen] = useState(false);
 
   // Files tab state
@@ -145,16 +144,13 @@ export default function Data() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  const getShortTableName = (rawName: string, tenant: string) => {
-    const tenantPrefix = `tenant_${tenant.replace(/-/g, '_')}_`;
-    return rawName.startsWith(tenantPrefix) ? rawName.slice(tenantPrefix.length) : rawName;
-  };
+  const getShortTableName = (rawName: string) => rawName;
 
   const fetchTables = async (tenant: string) => {
     const result = await api.listTables(tenant);
     const nextTables = result.tables.map((table) => ({
       rawName: table.name,
-      name: getShortTableName(table.name, tenant),
+      name: getShortTableName(table.name),
       type: table.type,
     }));
     setTables(nextTables);
@@ -238,7 +234,6 @@ export default function Data() {
       const params: Record<string, unknown> = { limit: rowLimit };
       if (startTime) params.start = new Date(startTime).toISOString();
       if (endTime) params.end = new Date(endTime).toISOString();
-      if (!isTimeSeries && relationalWhere.trim()) params.where = relationalWhere.trim();
       const result = await api.queryData(tenantId, selectedTable, params);
       setData(result.data || []);
       if (isTimeSeries) {
@@ -265,25 +260,24 @@ export default function Data() {
 
     setCreatingTable(true);
     try {
-      if (newTableType === 'timeseries') {
-        await api.insertData(tenantId, newTableName.trim(), [
-          { time: new Date().toISOString(), device_id: 'sample-device-001', value: 25.5, tags: { location: 'warehouse' } },
-        ]);
-      } else {
-        // For relational tables, insert a minimal row to create the table
-        const validCols = relationalColumns.filter((c) => c.name.trim());
+      if (newTableType === 'relational') {
+        const validCols = relationalColumns
+          .map((column) => ({ name: column.name.trim(), type: column.colType }))
+          .filter((column) => column.name);
         if (validCols.length === 0) {
           setError('Add at least one column for a relational table.');
           return;
         }
-        const sampleRow: Record<string, unknown> = {};
-        validCols.forEach((c) => {
-          if (c.colType === 'INTEGER') sampleRow[c.name] = 0;
-          else if (c.colType === 'FLOAT') sampleRow[c.name] = 0.0;
-          else if (c.colType === 'BOOLEAN') sampleRow[c.name] = false;
-          else sampleRow[c.name] = '';
+        await api.registerTable(tenantId, {
+          tableName: newTableName.trim(),
+          tableType: 'relational',
+          columns: validCols,
         });
-        await api.insertData(tenantId, newTableName.trim(), [sampleRow]);
+      } else {
+        await api.registerTable(tenantId, {
+          tableName: newTableName.trim(),
+          tableType: 'timeseries',
+        });
       }
       await fetchTables(tenantId);
       setSelectedTable(newTableName.trim());
@@ -424,8 +418,8 @@ export default function Data() {
     );
   }
 
-  const grafanaUrl = (window as { GRAFANA_URL?: string }).GRAFANA_URL || '/grafana';
-  const tablePrefix = `tenant_${tenantId.replace(/-/g, '_')}_`;
+  const grafanaUrl = (window as { GRAFANA_URL?: string }).GRAFANA_URL || '/dashboard';
+  const tableSchema = `tenant_${tenantId.replace(/-/g, '_')}`;
 
   return (
     <div className="px-4 py-6 sm:px-0">
@@ -559,14 +553,10 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
                   </>
                 ) : (
                   <div className="md:col-span-2">
-                    <label className="mb-1 block text-xs font-medium text-gray-600">WHERE clause (optional)</label>
-                    <input
-                      type="text"
-                      value={relationalWhere}
-                      onChange={(e) => setRelationalWhere(e.target.value)}
-                      className="input text-sm font-mono"
-                      placeholder="e.g. status = 'active' AND value > 10"
-                    />
+                    <label className="mb-1 block text-xs font-medium text-gray-600">Relational querying</label>
+                    <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                      Ad hoc SQL filters are intentionally disabled here. Use Grafana or a DB_LOAD module for scoped relational querying.
+                    </div>
                   </div>
                 )}
               </div>
@@ -868,19 +858,19 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
           <div className="rounded border border-blue-200 bg-blue-50 px-4 py-4">
             <h2 className="text-base font-semibold text-blue-900 mb-2">Grafana Data Explorer</h2>
             <p className="text-sm text-blue-800 mb-3">
-              Use the PostgreSQL datasource in Grafana to query your data tables directly. Tables are accessible with the following naming convention:
+              Use the PostgreSQL datasource in Grafana to query your data tables directly. Tenant data lives in a dedicated schema and tables are addressed as:
             </p>
             <div className="rounded bg-white border border-blue-200 px-3 py-2 flex items-center justify-between gap-2 mb-3">
-              <code className="text-sm font-mono text-slate-800">{tablePrefix}{'<table_name>'}</code>
+              <code className="text-sm font-mono text-slate-800">{tableSchema}.{'<table_name>'}</code>
               <button
-                onClick={() => navigator.clipboard.writeText(tablePrefix).then(() => showToast('Copied prefix', 'success'))}
+                onClick={() => navigator.clipboard.writeText(tableSchema).then(() => showToast('Copied schema', 'success'))}
                 className="text-xs text-blue-700 hover:text-blue-900"
               >
-                Copy prefix
+                Copy schema
               </button>
             </div>
             <p className="text-xs text-blue-700">
-              Example: a table named <strong>sensor_readings</strong> is accessible as <code className="font-mono">{tablePrefix}sensor_readings</code> in the <strong>public</strong> schema.
+              Example: a table named <strong>sensor_readings</strong> is accessible as <code className="font-mono">{tableSchema}.sensor_readings</code>.
             </p>
           </div>
 

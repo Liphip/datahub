@@ -27,6 +27,7 @@ type NodeType = 'IMPORT' | 'PROCESSING' | 'MERGE' | 'ALERT' | 'EXPORT';
 interface PipelineNodeData extends Record<string, unknown> {
   nodeType: NodeType;
   label: string;
+  moduleId?: string;
   moduleVersionId?: string;
   connectorId?: string;
   /** MQTT topic scoped to this pipeline node (connector only defines the broker) */
@@ -37,6 +38,8 @@ type ModuleVersionOption = ModuleVersion & {
   moduleName: string;
   moduleType: CodeModule['moduleType'];
 };
+
+type ModuleOption = Pick<CodeModule, 'id' | 'name' | 'moduleType' | 'defaultVersionId'>;
 
 type DagNodeType = Node<PipelineNodeData, 'dagNode'>;
 
@@ -136,6 +139,7 @@ function graphToFlow(
     data: {
       nodeType: raw.type as NodeType,
       label: String(raw.label ?? raw.type ?? 'Node'),
+      moduleId: raw.moduleId as string | undefined,
       moduleVersionId: raw.moduleVersionId as string | undefined,
       connectorId: raw.connectorId as string | undefined,
       mqttTopic: raw.mqttTopic as string | undefined,
@@ -164,6 +168,7 @@ function flowToGraph(
         id: n.id,
         type: d.nodeType,
         label: d.label,
+        moduleId: d.moduleId,
         moduleVersionId: d.moduleVersionId,
         connectorId: d.connectorId,
         mqttTopic: d.mqttTopic,
@@ -199,6 +204,7 @@ export default function PipelineEditor() {
   // Keep pipelineIdRef in sync so polling closures are never stale
   useEffect(() => { pipelineIdRef.current = pipeline?.id; }, [pipeline?.id]);
   const [moduleVersionOptions, setModuleVersionOptions] = useState<ModuleVersionOption[]>([]);
+  const [moduleOptions, setModuleOptions] = useState<ModuleOption[]>([]);
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -243,6 +249,12 @@ export default function PipelineEditor() {
             return versions.map((v) => ({ ...v, moduleName: m.name, moduleType: m.moduleType }));
           })
         );
+        setModuleOptions(modulesData.map((m) => ({
+          id: m.id,
+          name: m.name,
+          moduleType: m.moduleType,
+          defaultVersionId: m.defaultVersionId,
+        })));
         setModuleVersionOptions(versionsByModule.flat());
         setConnectors(connectorsData);
 
@@ -567,6 +579,7 @@ export default function PipelineEditor() {
             <NodeConfigPanel
               nodeId={selectedNodeId!}
               data={selectedData}
+              moduleOptions={moduleOptions}
               moduleVersionOptions={moduleVersionOptions}
               inputConnectors={inputConnectors}
               outputConnectors={outputConnectors}
@@ -587,6 +600,7 @@ export default function PipelineEditor() {
 function NodeConfigPanel({
   nodeId,
   data,
+  moduleOptions,
   moduleVersionOptions,
   inputConnectors,
   outputConnectors,
@@ -595,14 +609,21 @@ function NodeConfigPanel({
 }: {
   nodeId: string;
   data: PipelineNodeData;
+  moduleOptions: ModuleOption[];
   moduleVersionOptions: ModuleVersionOption[];
   inputConnectors: Connector[];
   outputConnectors: Connector[];
   canWrite: boolean;
   onChange: (patch: Partial<PipelineNodeData>) => void;
 }) {
+  const compatibleTypes = data.nodeType === 'IMPORT'
+    ? ['IMPORT', 'DB_LOAD']
+    : data.nodeType === 'EXPORT'
+      ? ['EXPORT', 'DB_SAVE']
+      : [data.nodeType];
+  const filteredModules = moduleOptions.filter((module) => compatibleTypes.includes(module.moduleType.toUpperCase()));
   const filteredVersions = moduleVersionOptions.filter(
-    (v) => v.moduleType.toUpperCase() === data.nodeType,
+    (v) => compatibleTypes.includes(v.moduleType.toUpperCase()) && (!data.moduleId || v.moduleId === data.moduleId),
   );
 
   return (
@@ -626,21 +647,48 @@ function NodeConfigPanel({
 
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">
-          Module version <span className="text-gray-400">({data.nodeType})</span>
+          Module <span className="text-gray-400">({compatibleTypes.join('/')})</span>
+        </label>
+        {filteredModules.length === 0 ? (
+          <p className="text-xs text-amber-600">No compatible modules available.</p>
+        ) : (
+          <select
+            className="border rounded px-2 py-1 text-sm w-full"
+            value={data.moduleId ?? ''}
+            onChange={(e) => {
+              const nextModuleId = e.target.value || undefined;
+              const defaultVersionId = moduleOptions.find((module) => module.id === nextModuleId)?.defaultVersionId;
+              onChange({ moduleId: nextModuleId, moduleVersionId: defaultVersionId });
+            }}
+            disabled={!canWrite}
+          >
+            <option value="">— select module —</option>
+            {filteredModules.map((module) => (
+              <option key={module.id} value={module.id}>
+                {module.name} ({module.moduleType})
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1">
+          Module version
         </label>
         {filteredVersions.length === 0 ? (
-          <p className="text-xs text-amber-600">No {data.nodeType} module versions available.</p>
+          <p className="text-xs text-amber-600">No versions available for the selected module.</p>
         ) : (
           <select
             className="border rounded px-2 py-1 text-sm w-full"
             value={data.moduleVersionId ?? ''}
             onChange={(e) => onChange({ moduleVersionId: e.target.value || undefined })}
-            disabled={!canWrite}
+            disabled={!canWrite || !data.moduleId}
           >
             <option value="">— select module version —</option>
-            {filteredVersions.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.moduleName} v{v.version}{v.versionTag ? ` (${v.versionTag})` : ''}
+            {filteredVersions.map((version) => (
+              <option key={version.id} value={version.id}>
+                v{version.version}{version.versionTag ? ` (${version.versionTag})` : ''}
               </option>
             ))}
           </select>

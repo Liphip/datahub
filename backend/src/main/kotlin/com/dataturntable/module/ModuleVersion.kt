@@ -25,6 +25,9 @@ open class ModuleVersion : PanacheBase() {
     
     @Column(name = "version_tag")
     var versionTag: String? = null
+
+    @Column(name = "content_fingerprint", nullable = false)
+    var contentFingerprint: String = ""
     
     @Column(columnDefinition = "text", nullable = false)
     var code: String? = null

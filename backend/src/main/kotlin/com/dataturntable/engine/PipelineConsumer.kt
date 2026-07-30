@@ -1,17 +1,17 @@
 package com.dataturntable.engine
 
+import com.dataturntable.config.RuntimeRoleConfig
 import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
 import com.dataturntable.pipeline.Pipeline
-import com.dataturntable.pipeline.PipelineRun
-import com.dataturntable.pipeline.PipelineRunNodeLog
-import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.alert.AlertDispatcher
 import com.dataturntable.connectors.BrokerCredential
 import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.ConnectorRuntimeService
 import com.dataturntable.security.EncryptionUtils
+import com.dataturntable.service.PipelineDataService
 import com.fasterxml.jackson.databind.ObjectMapper
+import io.micrometer.core.instrument.MeterRegistry
 import io.smallrye.reactive.messaging.annotations.Blocking
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
@@ -21,6 +21,7 @@ import jakarta.transaction.Transactional
 import org.eclipse.microprofile.reactive.messaging.Incoming
 import org.jboss.logging.Logger
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 data class PipelineTriggerMessage(
     val runId: String,
@@ -40,7 +41,7 @@ data class PipelineEvent(
 
 @ApplicationScoped
 class PipelineConsumer {
-    
+
     private val LOG = Logger.getLogger(PipelineConsumer::class.java)
     private val objectMapper = ObjectMapper()
 
@@ -52,7 +53,7 @@ class PipelineConsumer {
     /** Strip the platform result sentinel line so only user print() output is shown in logs. */
     private fun userOutput(stdout: String): String =
         stdout.lines().filter { !it.trim().startsWith("__RESULT__:") }.joinToString("\n").trim()
-    
+
     @Inject
     lateinit var dockerService: DockerService
 
@@ -61,6 +62,21 @@ class PipelineConsumer {
 
     @Inject
     lateinit var connectorRuntime: ConnectorRuntimeService
+
+    @Inject
+    lateinit var logWriter: PipelineLogWriter
+
+    @Inject
+    lateinit var meterRegistry: MeterRegistry
+
+    @Inject
+    lateinit var metrics: PipelineMetrics
+
+    @Inject
+    lateinit var runtimeRoleConfig: RuntimeRoleConfig
+
+    @Inject
+    lateinit var pipelineDataService: PipelineDataService
 
     @PersistenceContext
     lateinit var em: EntityManager
@@ -159,24 +175,40 @@ class PipelineConsumer {
 
     // resolveAlertModuleVersionsFromGraph removed — alerts are now proper ALERT nodes in the graph
     // and execute via the normal topological order in executePipeline.
-    
+
+    /**
+     * Main Kafka consumer for pipeline execution.
+     *
+     * The outer @Transactional provides a persistence context for reads (Pipeline, ModuleVersion,
+     * Connector lookups). All writes go through [PipelineLogWriter] in REQUIRES_NEW transactions
+     * so the frontend can poll progressive state while this method is still running.
+     */
     @Incoming("pipeline-input")
     @Blocking
     @Transactional
     fun consume(message: String): PipelineEvent {
+        if (!runtimeRoleConfig.ownsPipelineRuntime()) {
+            return PipelineEvent(
+                runId = "skipped",
+                pipelineId = "skipped",
+                stage = "ignored",
+                success = false,
+                error = "Pipeline consumer is disabled for role ${runtimeRoleConfig.role.name}"
+            )
+        }
         LOG.infof("Received pipeline message: %s", message.take(200))
-        
+
         val pipelineMsg: PipelineTriggerMessage?
         var dataPayload: Map<String, Any>? = null
         var pipelineId: String? = null
-        
+
         try {
             pipelineMsg = try {
                 objectMapper.readValue(message, PipelineTriggerMessage::class.java)
             } catch (e: Exception) {
                 null
             }
-            
+
             if (pipelineMsg != null) {
                 pipelineId = pipelineMsg.pipelineId
                 if (pipelineMsg.data is Map<*, *>) {
@@ -210,7 +242,7 @@ class PipelineConsumer {
                 error = e.message
             )
         }
-        
+
         if (pipelineId == null) {
             LOG.error("No pipeline ID found in message")
             return PipelineEvent(
@@ -233,7 +265,7 @@ class PipelineConsumer {
                 error = "Invalid pipeline ID"
             )
         }
-        
+
         val pipeline = Pipeline.findById(pipelineUuid)
         if (pipeline == null) {
             LOG.errorf("Pipeline not found: %s", pipelineId)
@@ -245,24 +277,51 @@ class PipelineConsumer {
                 error = "Pipeline not found"
             )
         }
-        
+
         val runId = pipelineMsg?.runId
             ?: (dataPayload?.get("_runId") as? String)
             ?: (dataPayload?.get("runId") as? String)
             ?: UUID.randomUUID().toString()
 
-        val runUuid = try {
-            UUID.fromString(runId)
-        } catch (_: Exception) {
-            null
-        }
-        val run = runUuid?.let { PipelineRun.findById(it) }
-        if (run != null) {
+        val runUuid = parseUuid(runId)
+
+        // Set retry-of link if applicable
+        if (runUuid != null) {
             val retryOfRunId = parseUuid(dataPayload?.get("_retryOfRunId")?.toString())
-            if (retryOfRunId != null && run.retryOfRunId == null) {
-                run.retryOfRunId = retryOfRunId
+            if (retryOfRunId != null) {
+                logWriter.setRetryOfRunId(runUuid, retryOfRunId)
             }
-            if (run.status == PipelineRunStatus.CANCELLED) {
+        }
+
+        // Check for cancellation before starting
+        if (runUuid != null && logWriter.isCancelled(runUuid)) {
+            return PipelineEvent(
+                runId = runId,
+                pipelineId = pipelineId,
+                stage = "cancelled",
+                success = false,
+                error = "Run cancelled"
+            )
+        }
+
+        // Mark RUNNING — committed immediately so frontend sees it
+        if (runUuid != null) {
+            logWriter.markRunning(runUuid)
+        }
+
+        val executionStartedAt = System.currentTimeMillis()
+
+        try {
+            val result = executePipeline(pipeline, runUuid, runId, dataPayload)
+            val executionMs = System.currentTimeMillis() - executionStartedAt
+
+            // Record Prometheus metrics (histogram timers via PipelineMetrics for _bucket support)
+            metrics.pipelineCounter("SUCCESS", pipeline.name ?: pipelineId).increment()
+            metrics.pipelineTimer(pipeline.name ?: pipelineId, "SUCCESS")
+                .record(executionMs, TimeUnit.MILLISECONDS)
+
+            // Check for cancellation before committing success
+            if (runUuid != null && logWriter.isCancelled(runUuid)) {
                 return PipelineEvent(
                     runId = runId,
                     pipelineId = pipelineId,
@@ -271,40 +330,23 @@ class PipelineConsumer {
                     error = "Run cancelled"
                 )
             }
-            run.status = PipelineRunStatus.RUNNING
-            run.startedAt = java.time.Instant.now()
-            run.persist()
-        }
-        val executionStartedAt = System.currentTimeMillis()
 
-        try {
-            val result = executePipeline(pipeline, run, runId, dataPayload)
-            val executionMs = System.currentTimeMillis() - executionStartedAt
-            
-            if (run != null) {
-                val currentStatus = run.id?.let { em.find(PipelineRun::class.java, it)?.status } ?: run.status
-                if (currentStatus == PipelineRunStatus.CANCELLED) {
-                    return PipelineEvent(
-                        runId = runId,
-                        pipelineId = pipelineId,
-                        stage = "cancelled",
-                        success = false,
-                        error = "Run cancelled"
-                    )
-                }
-                run.status = PipelineRunStatus.SUCCESS
-                run.completedAt = java.time.Instant.now()
-                run.metrics = objectMapper.writeValueAsString(
+            if (runUuid != null) {
+                logWriter.markSuccess(runUuid, objectMapper.writeValueAsString(
                     mapOf(
                         "executionMs" to executionMs,
                         "result" to result["result"],
                         "moduleLogs" to result["moduleLogs"],
                         "executionLog" to result["executionLog"]
                     )
-                )
-                run.persist()
+                ))
             }
-            
+
+            // Structured log for Loki
+            LOG.infof("PIPELINE_COMPLETE pipeline=%s run=%s status=SUCCESS duration_ms=%d modules=%d",
+                pipelineId, runId, executionMs,
+                (result["moduleLogs"] as? List<*>)?.size ?: 0)
+
             return PipelineEvent(
                 runId = runId,
                 pipelineId = pipelineId,
@@ -315,23 +357,25 @@ class PipelineConsumer {
         } catch (e: Exception) {
             LOG.errorf("Pipeline execution failed: %s", e.message)
             val executionMs = System.currentTimeMillis() - executionStartedAt
-            
-            if (run != null) {
-                val currentStatus = run.id?.let { em.find(PipelineRun::class.java, it)?.status } ?: run.status
-                if (currentStatus == PipelineRunStatus.CANCELLED) {
-                    return PipelineEvent(
-                        runId = runId,
-                        pipelineId = pipelineId,
-                        stage = "cancelled",
-                        success = false,
-                        error = "Run cancelled"
-                    )
-                }
-                run.status = PipelineRunStatus.FAILED
-                run.completedAt = java.time.Instant.now()
-                run.errorMessage = e.message
-                val moduleException = e as? ModuleExecutionException
-                run.metrics = objectMapper.writeValueAsString(
+
+            // Record Prometheus metrics (histogram timers via PipelineMetrics for _bucket support)
+            metrics.pipelineCounter("FAILED", pipeline.name ?: pipelineId).increment()
+            metrics.pipelineTimer(pipeline.name ?: pipelineId, "FAILED")
+                .record(executionMs, TimeUnit.MILLISECONDS)
+
+            if (runUuid != null && logWriter.isCancelled(runUuid)) {
+                return PipelineEvent(
+                    runId = runId,
+                    pipelineId = pipelineId,
+                    stage = "cancelled",
+                    success = false,
+                    error = "Run cancelled"
+                )
+            }
+
+            val moduleException = e as? ModuleExecutionException
+            if (runUuid != null) {
+                logWriter.markFailed(runUuid, e.message, objectMapper.writeValueAsString(
                     mapOf(
                         "executionMs" to executionMs,
                         "error" to (e.message ?: "Pipeline execution failed"),
@@ -339,10 +383,13 @@ class PipelineConsumer {
                         "stderr" to (moduleException?.stderr?.let { trimLog(it) }),
                         "exitCode" to moduleException?.exitCode
                     )
-                )
-                run.persist()
+                ))
             }
-            
+
+            // Structured log for Loki
+            LOG.errorf("PIPELINE_COMPLETE pipeline=%s run=%s status=FAILED duration_ms=%d error=%s",
+                pipelineId, runId, executionMs, e.message?.take(200))
+
             return PipelineEvent(
                 runId = runId,
                 pipelineId = pipelineId,
@@ -352,8 +399,8 @@ class PipelineConsumer {
             )
         }
     }
-    
-    private fun executePipeline(pipeline: Pipeline, run: PipelineRun?, runId: String, inputData: Map<String, Any>?): Map<String, Any?> {
+
+    private fun executePipeline(pipeline: Pipeline, runUuid: UUID?, runId: String, inputData: Map<String, Any>?): Map<String, Any?> {
         val results = mutableMapOf<String, Any?>()
         val moduleLogs = mutableListOf<Map<String, Any?>>()
         val executionLog = mutableListOf<String>()
@@ -382,6 +429,8 @@ class PipelineConsumer {
             LOG.infof("Executing %s node %s: %s", stage, node.id, version.module?.name)
             executionLog.add("START $stage #$order ${version.module?.name ?: version.id} [${node.id}]")
 
+            val nodeStartedAt = System.currentTimeMillis()
+
             // For IMPORT with no upstream data: platform fetches from connector before calling module.
             val resolvedInput: Any? = if (node.type == ModuleType.IMPORT && moduleInput == null) {
                 val conn = node.connector
@@ -400,14 +449,32 @@ class PipelineConsumer {
             }
 
             try {
-                val output = dockerService.executeModule(
-                    version,
-                    resolvedInput,
-                    pipelineId,
-                    runId,
-                    node.type,
-                    node.connector?.meta
-                )
+                val output = if (node.type == ModuleType.DB_LOAD || node.type == ModuleType.DB_SAVE) {
+                    val tenantId = pipeline.tenant?.id
+                        ?: throw IllegalStateException("Pipeline tenant missing for ${node.type}")
+                    val dbOutput = pipelineDataService.execute(
+                        moduleVersion = version,
+                        moduleType = node.type,
+                        inputData = resolvedInput,
+                        tenantId = tenantId
+                    )
+                    ModuleExecutionOutput(
+                        result = dbOutput.result,
+                        stdout = dbOutput.stdout,
+                        stderr = dbOutput.stderr,
+                        exitCode = 0,
+                        durationMs = dbOutput.durationMs
+                    )
+                } else {
+                    dockerService.executeModule(
+                        version,
+                        resolvedInput,
+                        pipelineId,
+                        runId,
+                        node.type,
+                        node.connector?.meta
+                    )
+                }
 
                 // For EXPORT: platform delivers shaped result via connector after module runs.
                 if (node.type == ModuleType.EXPORT) {
@@ -445,18 +512,33 @@ class PipelineConsumer {
                     }
                 }
 
-                val nodeLog = PipelineRunNodeLog().apply {
-                    this.run = run
-                    this.nodeId = node.id
-                    this.nodeType = stage
-                    this.moduleName = version.module?.name
-                    this.success = true
-                    this.stdout = trimLog(userOutput(output.stdout))
-                    this.stderr = trimLog(output.stderr, 4000)
-                    this.durationMs = output.durationMs
-                    this.executedAt = java.time.Instant.now()
+                val userStdout = trimLog(userOutput(output.stdout))
+                val trimmedStderr = trimLog(output.stderr, 4000)
+
+                // Persist node log immediately in its own transaction
+                if (runUuid != null) {
+                    logWriter.persistNodeLog(
+                        runId = runUuid,
+                        nodeId = node.id,
+                        nodeType = stage,
+                        moduleName = version.module?.name,
+                        success = true,
+                        stdout = userStdout,
+                        stderr = trimmedStderr,
+                        errorMessage = null,
+                        durationMs = output.durationMs,
+                    )
                 }
-                if (run != null) nodeLog.persist()
+
+                // Record module-level Prometheus metrics (histogram timers for _bucket support)
+                metrics.moduleCounter(stage, "SUCCESS").increment()
+                metrics.moduleTimer(stage, "SUCCESS")
+                    .record(output.durationMs, TimeUnit.MILLISECONDS)
+
+                // Structured log for Loki: module execution
+                LOG.infof("MODULE_EXEC pipeline=%s run=%s node=%s stage=%s module=%s status=SUCCESS duration_ms=%d stdout_len=%d stderr_len=%d",
+                    pipelineId, runId, node.id, stage, version.module?.name,
+                    output.durationMs, userStdout.length, trimmedStderr.length)
 
                 moduleLogs.add(mapOf(
                     "stage" to stage,
@@ -465,8 +547,8 @@ class PipelineConsumer {
                     "moduleVersionId" to version.id,
                     "moduleName" to version.module?.name,
                     "success" to true,
-                    "stdout" to trimLog(userOutput(output.stdout)),
-                    "stderr" to trimLog(output.stderr),
+                    "stdout" to userStdout,
+                    "stderr" to trimmedStderr,
                     "exitCode" to output.exitCode,
                     "durationMs" to output.durationMs,
                     "result" to output.result,
@@ -476,18 +558,42 @@ class PipelineConsumer {
                 return output.result
 
             } catch (e: ModuleExecutionException) {
-                val nodeLog = PipelineRunNodeLog().apply {
-                    this.run = run
-                    this.nodeId = node.id
-                    this.nodeType = stage
-                    this.moduleName = version.module?.name
-                    this.success = false
-                    this.stdout = trimLog(userOutput(e.stdout))
-                    this.stderr = trimLog(e.stderr, 4000)
-                    this.errorMessage = e.message
-                    this.executedAt = java.time.Instant.now()
+                val nodeDurationMs = System.currentTimeMillis() - nodeStartedAt
+                val userStdout = trimLog(userOutput(e.stdout))
+                val trimmedStderr = trimLog(e.stderr, 4000)
+
+                // Persist node log immediately in its own transaction
+                if (runUuid != null) {
+                    logWriter.persistNodeLog(
+                        runId = runUuid,
+                        nodeId = node.id,
+                        nodeType = stage,
+                        moduleName = version.module?.name,
+                        success = false,
+                        stdout = userStdout,
+                        stderr = trimmedStderr,
+                        errorMessage = e.message,
+                        durationMs = nodeDurationMs,
+                    )
                 }
-                if (run != null) nodeLog.persist()
+
+                // Record module-level Prometheus metrics (histogram timers for _bucket support)
+                metrics.moduleCounter(stage, "FAILED").increment()
+                metrics.moduleTimer(stage, "FAILED")
+                    .record(nodeDurationMs, TimeUnit.MILLISECONDS)
+
+                // Structured log for Loki: module failure with stdout/stderr
+                LOG.errorf("MODULE_EXEC pipeline=%s run=%s node=%s stage=%s module=%s status=FAILED duration_ms=%d exit_code=%s error=%s",
+                    pipelineId, runId, node.id, stage, version.module?.name,
+                    nodeDurationMs, e.exitCode, e.message?.take(200))
+                if (userStdout.isNotBlank()) {
+                    LOG.infof("MODULE_STDOUT pipeline=%s run=%s node=%s stdout=%s",
+                        pipelineId, runId, node.id, userStdout.take(2000))
+                }
+                if (trimmedStderr.isNotBlank()) {
+                    LOG.warnf("MODULE_STDERR pipeline=%s run=%s node=%s stderr=%s",
+                        pipelineId, runId, node.id, trimmedStderr.take(2000))
+                }
 
                 moduleLogs.add(mapOf(
                     "stage" to stage,
@@ -496,9 +602,10 @@ class PipelineConsumer {
                     "moduleVersionId" to version.id,
                     "moduleName" to version.module?.name,
                     "success" to false,
-                    "stdout" to trimLog(userOutput(e.stdout)),
-                    "stderr" to trimLog(e.stderr),
+                    "stdout" to userStdout,
+                    "stderr" to trimmedStderr,
                     "exitCode" to e.exitCode,
+                    "durationMs" to nodeDurationMs,
                     "error" to e.message,
                     "connector" to node.connector?.meta
                 ))

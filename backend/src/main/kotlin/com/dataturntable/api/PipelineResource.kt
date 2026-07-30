@@ -25,12 +25,21 @@ import jakarta.ws.rs.core.Response
 import org.eclipse.microprofile.jwt.JsonWebToken
 import java.util.UUID
 
-@Path("/pipelines")
+@Path("/api/internal/v1/pipelines")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
 class PipelineResource {
     private val objectMapper = ObjectMapper()
+
+    private fun allowedModuleTypesForNode(nodeType: String): Set<ModuleType> = when (nodeType) {
+        "IMPORT" -> setOf(ModuleType.IMPORT, ModuleType.DB_LOAD)
+        "EXPORT" -> setOf(ModuleType.EXPORT, ModuleType.DB_SAVE)
+        "PROCESSING" -> setOf(ModuleType.PROCESSING)
+        "MERGE" -> setOf(ModuleType.MERGE)
+        "ALERT" -> setOf(ModuleType.ALERT)
+        else -> emptySet()
+    }
 
     @Inject
     lateinit var pipelineConsumer: PipelineConsumer
@@ -95,6 +104,7 @@ class PipelineResource {
             }
             nodeTypes[nodeId] = nodeType
 
+            val declaredModuleId = nodeMap["moduleId"] as? String
             val moduleVersionId = nodeMap["moduleVersionId"] as? String
                 ?: return "Node $nodeId ($nodeType) requires moduleVersionId"
             val moduleVersionUuid = try {
@@ -109,16 +119,32 @@ class PipelineResource {
             if (module.tenant?.id != tenantId) {
                 return "Node $nodeId references module from another tenant"
             }
-            val expectedType = try { ModuleType.valueOf(nodeType) } catch (_: Exception) { null }
-            if (expectedType != null && module.moduleType != expectedType) {
-                return "Node $nodeId expects $nodeType module, found ${module.moduleType?.name ?: "unknown"}"
+            if (declaredModuleId != null) {
+                val declaredModuleUuid = try {
+                    UUID.fromString(declaredModuleId)
+                } catch (_: Exception) {
+                    return "Node $nodeId has invalid moduleId: $declaredModuleId"
+                }
+                if (module.id != declaredModuleUuid) {
+                    return "Node $nodeId moduleId does not match moduleVersionId"
+                }
+            }
+            val allowedTypes = allowedModuleTypesForNode(nodeType)
+            if (module.moduleType !in allowedTypes) {
+                return "Node $nodeId expects one of ${allowedTypes.joinToString("/") { it.name }}, found ${module.moduleType?.name ?: "unknown"}"
             }
 
-            // IMPORT and EXPORT must have a connector; MERGE/PROCESSING/ALERT must not.
+            // IMPORT and EXPORT usually use connectors. DB-backed variants do not.
             when (nodeType) {
                 "IMPORT", "EXPORT" -> {
+                    val requiresConnector = module.moduleType !in setOf(ModuleType.DB_LOAD, ModuleType.DB_SAVE)
                     val connectorId = nodeMap["connectorId"] as? String
-                        ?: return "Node $nodeId ($nodeType) requires connectorId"
+                    if (requiresConnector && connectorId == null) {
+                        return "Node $nodeId ($nodeType) requires connectorId"
+                    }
+                    if (!requiresConnector && connectorId == null) {
+                        continue
+                    }
                     val connectorUuid = try {
                         UUID.fromString(connectorId)
                     } catch (_: Exception) {
@@ -1210,8 +1236,44 @@ class PipelineResource {
                 } else {
                     null
                 }
-                val moduleLogs = if (withDetails) metrics["moduleLogs"] else null
+                @Suppress("UNCHECKED_CAST")
+                val metricsModuleLogs = if (withDetails) metrics["moduleLogs"] as? List<*> else null
                 val executionLog = if (withDetails) metrics["executionLog"] else null
+
+                // Fall back to DB node logs when metrics don't contain moduleLogs
+                // (e.g. failed runs, or RUNNING runs where node logs are committed progressively)
+                val moduleLogs: Any? = if (withDetails) {
+                    if (metricsModuleLogs != null && metricsModuleLogs.isNotEmpty()) {
+                        metricsModuleLogs
+                    } else {
+                        val runId = it.id
+                        if (runId != null) {
+                            val dbLogs = PipelineRunNodeLog.findByRunId(runId)
+                            val metricsLogsByNodeId = (metricsModuleLogs ?: emptyList<Any>())
+                                .filterIsInstance<Map<*, *>>()
+                                .associateBy { m -> m["nodeId"]?.toString() ?: "" }
+                            if (dbLogs.isNotEmpty()) {
+                                dbLogs.map { log ->
+                                    val metricsEntry = metricsLogsByNodeId[log.nodeId]
+                                    mapOf(
+                                        "nodeId" to log.nodeId,
+                                        "stage" to log.nodeType,
+                                        "moduleName" to log.moduleName,
+                                        "success" to log.success,
+                                        "stdout" to log.stdout,
+                                        "stderr" to log.stderr,
+                                        "error" to log.errorMessage,
+                                        "durationMs" to log.durationMs,
+                                        "executedAt" to log.executedAt,
+                                        "result" to metricsEntry?.get("result"),
+                                        "order" to metricsEntry?.get("order"),
+                                        "connector" to metricsEntry?.get("connector")
+                                    )
+                                }
+                            } else null
+                        } else null
+                    }
+                } else null
 
                 mapOf(
                     "id" to it.id,

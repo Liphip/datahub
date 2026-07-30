@@ -10,6 +10,8 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
 import jakarta.transaction.Transactional
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.*
 
 @ApplicationScoped
@@ -19,6 +21,22 @@ class ModuleService {
     lateinit var tenantService: TenantService
     
     private val objectMapper = ObjectMapper()
+
+    private fun contentFingerprint(
+        code: String,
+        requirements: String,
+        config: Map<String, Any>,
+        versionTag: String?
+    ): String {
+        val normalized = listOf(
+            code.trim(),
+            requirements.trim(),
+            objectMapper.writeValueAsString(config),
+            versionTag?.trim().orEmpty()
+        ).joinToString("\n---\n")
+        val digest = MessageDigest.getInstance("SHA-256").digest(normalized.toByteArray(StandardCharsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
     
     fun getModules(tenantId: UUID): List<CodeModuleDto> {
         return CodeModule.findByTenantId(tenantId).map { toDto(it) }
@@ -87,6 +105,7 @@ class ModuleService {
             this.module = module
             this.version = nextVersion
             this.versionTag = request.versionTag
+            this.contentFingerprint = contentFingerprint(request.code, request.requirements, request.config, request.versionTag)
             this.code = request.code
             this.requirements = request.requirements
             this.config = objectMapper.writeValueAsString(request.config)
@@ -116,6 +135,8 @@ class ModuleService {
             moduleType = module.moduleType ?: ModuleType.PROCESSING,
             isActive = module.isActive,
             createdAt = module.createdAt,
+            latestVersionId = module.getLatestVersion()?.id?.toString(),
+            defaultVersionId = module.resolveDefaultVersion()?.id?.toString(),
             versions = versions
         )
     }
@@ -130,6 +151,7 @@ class ModuleService {
             moduleId = version.module?.id.toString(),
             version = version.version,
             versionTag = version.versionTag,
+            contentFingerprint = version.contentFingerprint,
             code = version.code ?: "",
             requirements = version.requirements ?: "",
             config = config,

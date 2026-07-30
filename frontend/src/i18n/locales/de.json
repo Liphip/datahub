@@ -214,13 +214,17 @@
     "failedToCreateModule": "Modul konnte nicht erstellt werden",
     "failedToDeleteModule": "Modul konnte nicht gelöscht werden",
     "import": "Import",
+    "db_load": "DB-Laden",
     "processing": "Verarbeitung",
     "export": "Export",
+    "db_save": "DB-Speichern",
     "alert": "Alarm",
     "importDescription": "IMPORT-Module empfangen oder holen Daten von externen Quellen.",
+    "db_loadDescription": "DB_LOAD-Module lesen Zeilen aus der plattformverwalteten Datenbank.",
     "processingDescription": "PROCESSING-Module transformieren, filtern oder anreichern Daten.",
     "alertDescription": "ALERT-Module werten Bedingungen aus und versenden Alarme.",
-    "exportDescription": "EXPORT-Module senden Daten an externe Systeme."
+    "exportDescription": "EXPORT-Module senden Daten an externe Systeme.",
+    "db_saveDescription": "DB_SAVE-Module schreiben Zeilen in die plattformverwaltete Datenbank."
   },
   "pipelines": {
     "title": "Pipelines",

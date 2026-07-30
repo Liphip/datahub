@@ -6,10 +6,15 @@ configs:
 
 volumes:
   pgdata:
+  pipeline-pgdata:
+  monitoring-pgdata:
+  dashboard-pgdata:
   kafka-data:
   redis-data:
   mosquitto-data:
   mosquitto-logs:
+  grafana-data:
+  dashboard-grafana-data:
 
 networks:
   dataturntable:
@@ -24,6 +29,54 @@ services:
       POSTGRES_DB: dataturntable
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      - dataturntable
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  pipeline-postgresql:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: pipeline_data
+      POSTGRES_PASSWORD: pipeline_data
+      POSTGRES_DB: pipeline_data
+    volumes:
+      - pipeline-pgdata:/var/lib/postgresql/data
+    networks:
+      - dataturntable
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  monitoring-postgresql:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: monitoring
+      POSTGRES_PASSWORD: monitoring
+      POSTGRES_DB: monitoring
+    volumes:
+      - monitoring-pgdata:/var/lib/postgresql/data
+    networks:
+      - dataturntable
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  dashboard-postgresql:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: dashboard
+      POSTGRES_PASSWORD: dashboard
+      POSTGRES_DB: dashboard
+    volumes:
+      - dashboard-pgdata:/var/lib/postgresql/data
     networks:
       - dataturntable
     deploy:
@@ -85,14 +138,32 @@ services:
     deploy:
       replicas: 1
 
-  backend:
+  control-api:
     image: dataturntable/backend:latest
     environment:
+      QUARKUS_PROFILE: prod,control-api
+      DATATURNTABLE_RUNTIME_ROLE: control-api
       DB_HOST: postgresql
       DB_PORT: 5432
       DB_NAME: dataturntable
       DB_USER: dataturntable
       DB_PASSWORD: dataturntable
+      DATATURNTABLE_PIPELINE_DATA_JDBC_URL: jdbc:postgresql://pipeline-postgresql:5432/pipeline_data
+      DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME: pipeline_data
+      DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD: pipeline_data
+      DATATURNTABLE_GRAFANA_DASHBOARD_ENABLED: "true"
+      DATATURNTABLE_GRAFANA_DASHBOARD_BASE_URL: http://dashboard-grafana:3000
+      DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_USER: admin
+      DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_PASSWORD: admin
+      DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_HOST: pipeline-postgresql
+      DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_PORT: 5432
+      DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_DATABASE: pipeline_data
+      DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_USER: pipeline_data
+      DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_PASSWORD: pipeline_data
+      DATATURNTABLE_GRAFANA_MONITORING_ENABLED: "true"
+      DATATURNTABLE_GRAFANA_MONITORING_BASE_URL: http://grafana:3000
+      DATATURNTABLE_GRAFANA_MONITORING_ADMIN_USER: admin
+      DATATURNTABLE_GRAFANA_MONITORING_ADMIN_PASSWORD: admin
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       REDIS_HOSTS: redis://redis:6379
     ports:
@@ -103,7 +174,82 @@ services:
     networks:
       - dataturntable
     deploy:
-      replicas: 3
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+
+  public-api:
+    image: dataturntable/backend:latest
+    environment:
+      QUARKUS_PROFILE: prod,public-api
+      DATATURNTABLE_RUNTIME_ROLE: public-api
+      DB_HOST: postgresql
+      DB_PORT: 5432
+      DB_NAME: dataturntable
+      DB_USER: dataturntable
+      DB_PASSWORD: dataturntable
+      DATATURNTABLE_PIPELINE_DATA_JDBC_URL: jdbc:postgresql://pipeline-postgresql:5432/pipeline_data
+      DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME: pipeline_data
+      DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD: pipeline_data
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      REDIS_HOSTS: redis://redis:6379
+    networks:
+      - dataturntable
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+
+  ingest-edge:
+    image: dataturntable/backend:latest
+    environment:
+      QUARKUS_PROFILE: prod,ingest-edge
+      DATATURNTABLE_RUNTIME_ROLE: ingest-edge
+      DB_HOST: postgresql
+      DB_PORT: 5432
+      DB_NAME: dataturntable
+      DB_USER: dataturntable
+      DB_PASSWORD: dataturntable
+      DATATURNTABLE_PIPELINE_DATA_JDBC_URL: jdbc:postgresql://pipeline-postgresql:5432/pipeline_data
+      DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME: pipeline_data
+      DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD: pipeline_data
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      REDIS_HOSTS: redis://redis:6379
+    networks:
+      - dataturntable
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+
+  pipeline-executor:
+    image: dataturntable/backend:latest
+    environment:
+      QUARKUS_PROFILE: prod,pipeline-executor
+      DATATURNTABLE_RUNTIME_ROLE: pipeline-executor
+      DB_HOST: postgresql
+      DB_PORT: 5432
+      DB_NAME: dataturntable
+      DB_USER: dataturntable
+      DB_PASSWORD: dataturntable
+      DATATURNTABLE_PIPELINE_DATA_JDBC_URL: jdbc:postgresql://pipeline-postgresql:5432/pipeline_data
+      DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME: pipeline_data
+      DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD: pipeline_data
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      REDIS_HOSTS: redis://redis:6379
+    networks:
+      - dataturntable
+    deploy:
+      replicas: 2
       update_config:
         parallelism: 1
         delay: 10s
@@ -131,6 +277,54 @@ services:
       - dataturntable
     deploy:
       replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+
+  dashboard-grafana:
+    image: grafana/grafana:11.1.4
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/dashboard/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_DATABASE_TYPE: postgres
+      GF_DATABASE_HOST: dashboard-postgresql:5432
+      GF_DATABASE_NAME: dashboard
+      GF_DATABASE_USER: dashboard
+      GF_DATABASE_PASSWORD: dashboard
+    volumes:
+      - dashboard-grafana-data:/var/lib/grafana
+    networks:
+      - dataturntable
+    deploy:
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+
+  grafana:
+    image: grafana/grafana:11.1.4
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DATABASE_TYPE: postgres
+      GF_DATABASE_HOST: monitoring-postgresql:5432
+      GF_DATABASE_NAME: monitoring
+      GF_DATABASE_USER: monitoring
+      GF_DATABASE_PASSWORD: monitoring
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - dataturntable
+    deploy:
+      replicas: 1
       update_config:
         parallelism: 1
         delay: 10s

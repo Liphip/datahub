@@ -1,6 +1,9 @@
 package com.dataturntable.connectors.polling
 
+import com.dataturntable.config.RuntimeRoleConfig
 import com.dataturntable.connectors.Connector
+import com.dataturntable.connectors.ConnectorLeaseService
+import com.dataturntable.connectors.ConnectorMetrics
 import com.dataturntable.connectors.ConnectorRuntimeService
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineRun
@@ -17,6 +20,7 @@ import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
+import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.jboss.logging.Logger
 import java.time.Instant
 import java.util.UUID
@@ -53,12 +57,25 @@ class ConnectorPollingService {
     @Inject
     lateinit var pollExecutor: PollTransactionExecutor
 
+    @Inject
+    lateinit var connectorMetrics: ConnectorMetrics
+
     @PersistenceContext
     lateinit var em: EntityManager
+
+    @Inject
+    lateinit var runtimeRoleConfig: RuntimeRoleConfig
+
+    @Inject
+    lateinit var connectorLeaseService: ConnectorLeaseService
+
+    @ConfigProperty(name = "dataturntable.connectors.lease.reconcile-interval-seconds", defaultValue = "20")
+    var leaseReconcileIntervalSeconds: Long = 20
 
     private val scheduler: ScheduledExecutorService = Executors.newScheduledThreadPool(4)
     private val scheduledTasks = ConcurrentHashMap<UUID, ScheduledFuture<*>>()
     private val connectorIntervals = ConcurrentHashMap<UUID, Int>()
+    private var reconcileTask: ScheduledFuture<*>? = null
 
     // ── Poll run tracking (populated by executePoll wrapper) ─────────────────
     private val lastRunTimes    = ConcurrentHashMap<UUID, Instant>()
@@ -92,12 +109,26 @@ class ConnectorPollingService {
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     fun onStart(@Observes event: StartupEvent) {
+        if (!runtimeRoleConfig.ownsIngestRuntime()) {
+            LOG.infof("ConnectorPollingService startup skipped for runtime role %s", runtimeRoleConfig.role)
+            return
+        }
         LOG.info("ConnectorPollingService starting — scheduling poll connectors")
         scheduleAll()
+        reconcileTask?.cancel(false)
+        reconcileTask = scheduler.scheduleAtFixedRate(
+            { scheduleAll() },
+            leaseReconcileIntervalSeconds.coerceAtLeast(5),
+            leaseReconcileIntervalSeconds.coerceAtLeast(5),
+            TimeUnit.SECONDS
+        )
     }
 
     fun onStop(@Observes event: ShutdownEvent) {
+        if (!runtimeRoleConfig.ownsIngestRuntime()) return
         LOG.info("ConnectorPollingService shutting down")
+        reconcileTask?.cancel(false)
+        scheduledTasks.keys.toList().forEach { cancelConnector(it) }
         scheduler.shutdown()
         try { scheduler.awaitTermination(5, TimeUnit.SECONDS) } catch (_: InterruptedException) {}
     }
@@ -119,6 +150,8 @@ class ConnectorPollingService {
                 !connector.isActive ||
                 !connector.pollingEnabled) {
                 cancelConnector(connectorId)
+            } else if (!connectorLeaseService.tryAcquireOrRenew(connectorId)) {
+                cancelConnector(connectorId, releaseLease = false)
             } else {
                 scheduleConnector(connector)
             }
@@ -130,9 +163,13 @@ class ConnectorPollingService {
     /**
      * Cancel polling for a connector that was deleted or deactivated.
      */
-    fun cancelConnector(connectorId: UUID) {
+    fun cancelConnector(connectorId: UUID, releaseLease: Boolean = true) {
         scheduledTasks.remove(connectorId)?.cancel(false)
+        connectorIntervals.remove(connectorId)
         LOG.infof("Cancelled polling for connector %s", connectorId)
+        if (releaseLease) {
+            connectorLeaseService.release(connectorId)
+        }
     }
 
     // ── Internal ──────────────────────────────────────────────────────────────
@@ -146,16 +183,24 @@ class ConnectorPollingService {
             Connector::class.java
         ).setParameter("dir", Connector.Direction.INPUT).resultList
 
+        val ownedConnectorIds = mutableSetOf<UUID>()
         for (connector in connectors) {
             if (connector.connectorType !in POLLABLE_TYPES) continue
             try {
+                val connectorId = connector.id ?: continue
+                if (!connectorLeaseService.tryAcquireOrRenew(connectorId)) {
+                    cancelConnector(connectorId, releaseLease = false)
+                    continue
+                }
+                ownedConnectorIds += connectorId
                 scheduleConnector(connector)
             } catch (e: Exception) {
                 LOG.errorf("Failed to schedule connector %s: %s", connector.id, e.message)
             }
         }
+        scheduledTasks.keys.filter { it !in ownedConnectorIds }.forEach { cancelConnector(it) }
         LOG.infof("ConnectorPollingService: scheduled %d poll connector(s)",
-            connectors.count { it.connectorType in POLLABLE_TYPES })
+            ownedConnectorIds.size)
     }
 
     private fun scheduleConnector(connector: Connector) {
@@ -183,10 +228,12 @@ class ConnectorPollingService {
             lastRunTimes[connectorId] = Instant.now()
             lastRunSuccesses[connectorId] = true
             lastRunErrors.remove(connectorId)
+            connectorMetrics.pollCounter("success").increment()
         } catch (e: Exception) {
             lastRunTimes[connectorId] = Instant.now()
             lastRunSuccesses[connectorId] = false
             lastRunErrors[connectorId] = e.message ?: "Unknown error"
+            connectorMetrics.pollCounter("failure").increment()
             LOG.errorf("Poll execution failed for connector %s: %s", connectorId, e.message)
         }
     }

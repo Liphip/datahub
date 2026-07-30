@@ -48,10 +48,12 @@ export interface CodeModule {
   tenantId?: string;
   name: string;
   description?: string;
-  moduleType: 'IMPORT' | 'PROCESSING' | 'MERGE' | 'ALERT' | 'EXPORT';
+  moduleType: 'IMPORT' | 'DB_LOAD' | 'PROCESSING' | 'MERGE' | 'ALERT' | 'EXPORT' | 'DB_SAVE';
   isActive: boolean;
   createdAt: string;
   versionCount?: number;
+  latestVersionId?: string;
+  defaultVersionId?: string;
   versions: ModuleVersion[];
 }
 
@@ -152,6 +154,7 @@ export interface ModuleVersion {
   moduleId?: string;
   version: number;
   versionTag?: string;
+  contentFingerprint?: string;
   code: string;
   requirements: string;
   config: Record<string, unknown>;
@@ -168,7 +171,7 @@ export interface Pipeline {
   processingModuleVersionIds: string[];
   exportModuleVersionIds: string[];
   graphDefinition?: {
-    nodes: Array<Record<string, unknown>>;
+    nodes: Array<Record<string, unknown> & { moduleId?: string; moduleVersionId?: string }>;
     edges: Array<Record<string, unknown>>;
   };
   kafkaConsumerGroup?: string;
@@ -471,6 +474,11 @@ export interface DataBlob {
   contentType: string;
   sizeBytes: number;
   createdAt: string;
+}
+
+export interface DataTableRegistrationResult {
+  tableName: string;
+  tableType: 'timeseries' | 'relational';
 }
 
 /** Returned by GET /pipelines/runs/summary/all — one entry per tenant the user belongs to */

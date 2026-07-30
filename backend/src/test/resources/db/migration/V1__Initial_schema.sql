@@ -57,7 +57,8 @@ CREATE TABLE code_modules (
     tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     description VARCHAR(1000),
-    module_type VARCHAR(50) NOT NULL CHECK (module_type IN ('import', 'processing', 'export')),
+    module_type VARCHAR(50) NOT NULL CHECK (module_type IN ('import', 'db_load', 'processing', 'merge', 'export', 'db_save', 'alert')),
+    default_version_id UUID,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
@@ -74,6 +75,7 @@ CREATE TABLE module_versions (
     module_id UUID REFERENCES code_modules(id) ON DELETE CASCADE,
     version INTEGER NOT NULL,
     version_tag VARCHAR(100),
+    content_fingerprint VARCHAR(128) NOT NULL,
     code TEXT NOT NULL,
     requirements TEXT DEFAULT '',
     config TEXT DEFAULT '{}',
@@ -85,6 +87,10 @@ CREATE TABLE module_versions (
 
 CREATE INDEX idx_module_versions_module ON module_versions(module_id);
 CREATE INDEX idx_module_versions_tag ON module_versions(module_id, version_tag);
+CREATE UNIQUE INDEX idx_module_versions_fingerprint ON module_versions(module_id, content_fingerprint);
+ALTER TABLE code_modules
+    ADD CONSTRAINT fk_code_modules_default_version
+    FOREIGN KEY (default_version_id) REFERENCES module_versions(id) ON DELETE SET NULL;
 
 -- Pipelines
 CREATE TABLE pipelines (
@@ -98,6 +104,7 @@ CREATE TABLE pipelines (
     kafka_consumer_group VARCHAR(255) UNIQUE,
     is_active BOOLEAN DEFAULT FALSE,
     config TEXT DEFAULT '{}',
+    graph_definition TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     created_by UUID REFERENCES users(id) ON DELETE SET NULL
@@ -115,12 +122,59 @@ CREATE TABLE pipeline_runs (
     started_at TIMESTAMPTZ DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
     error_message TEXT,
+    retry_of_run_id UUID,
     metrics TEXT DEFAULT '{}',
     UNIQUE(pipeline_id, started_at)
 );
 
 CREATE INDEX idx_pipeline_runs_pipeline ON pipeline_runs(pipeline_id, started_at DESC);
 CREATE INDEX idx_pipeline_runs_status ON pipeline_runs(status);
+CREATE INDEX idx_pipeline_runs_retry_of ON pipeline_runs(retry_of_run_id);
+
+-- Per-node pipeline execution logs
+CREATE TABLE pipeline_run_node_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    run_id UUID NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE,
+    node_id VARCHAR(255) NOT NULL,
+    node_type VARCHAR(64) NOT NULL,
+    module_name VARCHAR(255),
+    success BOOLEAN NOT NULL DEFAULT FALSE,
+    stdout TEXT,
+    stderr TEXT,
+    error_message TEXT,
+    duration_ms BIGINT,
+    executed_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_pipeline_run_node_logs_run_id ON pipeline_run_node_logs(run_id);
+
+-- Registered tenant data tables
+CREATE TABLE data_table_registry (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    table_name VARCHAR(255) NOT NULL,
+    table_type VARCHAR(50) NOT NULL CHECK (table_type IN ('timeseries', 'relational')),
+    schema_def JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(tenant_id, table_name)
+);
+
+CREATE INDEX idx_data_table_registry_tenant ON data_table_registry(tenant_id);
+
+-- Uploaded blobs for tenant data workflows
+CREATE TABLE data_blobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    content_type VARCHAR(255) DEFAULT 'application/octet-stream',
+    size_bytes BIGINT NOT NULL,
+    storage_path TEXT NOT NULL,
+    uploaded_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_data_blobs_tenant_created_at ON data_blobs(tenant_id, created_at DESC);
 
 -- Alert Channels
 CREATE TABLE alert_channels (
@@ -197,3 +251,57 @@ INSERT INTO roles (id, tenant_id, name, description, abilities, is_default, is_s
 ('00000000-0000-0000-0000-000000000002', NULL, 'Viewer', 'Default viewer role', '["module:read", "pipeline:read", "data:read", "alert:read"]', true, true),
 ('00000000-0000-0000-0000-000000000003', NULL, 'Editor', 'Default editor role', '["module:read", "module:write", "pipeline:read", "pipeline:write", "pipeline:execute", "data:read", "data:write", "alert:read"]', false, true),
 ('00000000-0000-0000-0000-000000000004', NULL, 'TenantAdmin', 'Tenant administrator role', '["module:read", "module:write", "module:delete", "pipeline:read", "pipeline:write", "pipeline:execute", "data:read", "data:write", "data:export", "alert:read", "alert:configure", "tenant:users", "tenant:manage"]', false, true);
+
+-- Grafana sync state (dashboard and monitoring tenant/user mirroring)
+CREATE TABLE grafana_sync_states (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    target_instance VARCHAR(32) NOT NULL CHECK (target_instance IN ('DASHBOARD', 'MONITORING')),
+    scope_type VARCHAR(32) NOT NULL CHECK (scope_type IN ('TENANT', 'USER', 'MEMBERSHIP')),
+    scope_id UUID NOT NULL,
+    tenant_id UUID,
+    user_id UUID,
+    membership_id UUID,
+    desired_state TEXT NOT NULL DEFAULT '{}',
+    sync_status VARCHAR(32) NOT NULL DEFAULT 'PENDING' CHECK (sync_status IN ('PENDING', 'SYNCED', 'FAILED')),
+    last_synced_at TIMESTAMPTZ,
+    last_error TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(target_instance, scope_type, scope_id)
+);
+
+CREATE INDEX idx_grafana_sync_states_status ON grafana_sync_states(sync_status, target_instance);
+CREATE INDEX idx_grafana_sync_states_tenant ON grafana_sync_states(tenant_id);
+CREATE INDEX idx_grafana_sync_states_user ON grafana_sync_states(user_id);
+
+-- Connectors (Protocol Interface Definitions)
+CREATE TABLE connectors (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    connector_type VARCHAR(50) NOT NULL CHECK (connector_type IN ('MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'CUSTOM')),
+    direction VARCHAR(20) NOT NULL CHECK (direction IN ('INPUT', 'OUTPUT', 'BOTH')),
+    config TEXT NOT NULL DEFAULT '{}',
+    description VARCHAR(500),
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    UNIQUE(tenant_id, name)
+);
+
+CREATE INDEX idx_connectors_tenant ON connectors(tenant_id);
+CREATE INDEX idx_connectors_type ON connectors(connector_type);
+CREATE INDEX idx_connectors_direction ON connectors(direction);
+
+-- Lease-based runtime ownership for horizontally scaled ingest connectors
+CREATE TABLE connector_runtime_leases (
+    connector_id UUID PRIMARY KEY REFERENCES connectors(id) ON DELETE CASCADE,
+    runtime_role VARCHAR(64) NOT NULL,
+    owner_instance_id VARCHAR(255) NOT NULL,
+    lease_until TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_connector_runtime_leases_owner ON connector_runtime_leases(owner_instance_id);
+CREATE INDEX idx_connector_runtime_leases_lease_until ON connector_runtime_leases(lease_until);

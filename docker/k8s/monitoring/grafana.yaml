@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: grafana-datasources
+  name: monitoring-grafana-datasources
   labels:
     app: dataturntable
     component: monitoring
@@ -26,7 +26,7 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: grafana
+  name: monitoring-grafana
   labels:
     app: dataturntable
     component: monitoring
@@ -43,7 +43,7 @@ spec:
         component: grafana
     spec:
       containers:
-        - name: grafana
+        - name: monitoring-grafana
           image: grafana/grafana:11.1.4
           ports:
             - containerPort: 3000
@@ -55,6 +55,22 @@ spec:
               value: admin
             - name: GF_USERS_ALLOW_SIGN_UP
               value: "false"
+            - name: GF_DATABASE_TYPE
+              value: postgres
+            - name: GF_DATABASE_HOST
+              value: monitoring-postgresql:5432
+            - name: GF_DATABASE_NAME
+              value: monitoring
+            - name: GF_DATABASE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: dataturntable-secrets
+                  key: monitoring-db-user
+            - name: GF_DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: dataturntable-secrets
+                  key: monitoring-db-password
           volumeMounts:
             - name: datasources
               mountPath: /etc/grafana/provisioning/datasources
@@ -70,14 +86,14 @@ spec:
       volumes:
         - name: datasources
           configMap:
-            name: grafana-datasources
+            name: monitoring-grafana-datasources
         - name: data
           emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: grafana
+  name: monitoring-grafana
   labels:
     app: dataturntable
     component: monitoring
@@ -90,3 +106,184 @@ spec:
     - name: http
       port: 3000
       targetPort: 3000
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-grafana-datasources
+  labels:
+    app: dataturntable
+    component: dashboard
+data:
+  datasource.yml: |
+    apiVersion: 1
+    datasources:
+      - name: tenant-pipeline-data
+        uid: tenant-pipeline-data
+        type: postgres
+        access: proxy
+        url: pipeline-postgresql:5432
+        database: pipeline_data
+        user: pipeline_data
+        secureJsonData:
+          password: changeme-pipeline
+        jsonData:
+          sslmode: disable
+          postgresVersion: 1500
+          timescaledb: true
+        editable: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard-grafana
+  labels:
+    app: dataturntable
+    component: dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dataturntable
+      component: dashboard-grafana
+  template:
+    metadata:
+      labels:
+        app: dataturntable
+        component: dashboard-grafana
+    spec:
+      containers:
+        - name: dashboard-grafana
+          image: grafana/grafana:11.1.4
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: admin
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+            - name: GF_SERVER_ROOT_URL
+              value: "%(protocol)s://%(domain)s/dashboard/"
+            - name: GF_SERVER_SERVE_FROM_SUB_PATH
+              value: "true"
+            - name: GF_DATABASE_TYPE
+              value: postgres
+            - name: GF_DATABASE_HOST
+              value: dashboard-postgresql:5432
+            - name: GF_DATABASE_NAME
+              value: dashboard
+            - name: GF_DATABASE_USER
+              value: dashboard
+            - name: GF_DATABASE_PASSWORD
+              value: dashboard
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: data
+              mountPath: /var/lib/grafana
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1
+              memory: 1Gi
+      volumes:
+        - name: datasources
+          configMap:
+            name: dashboard-grafana-datasources
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard-grafana
+  labels:
+    app: dataturntable
+    component: dashboard
+spec:
+  type: ClusterIP
+  selector:
+    app: dataturntable
+    component: dashboard-grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dataturntable-dashboard-postgres
+  labels:
+    app: dataturntable
+    component: dashboard-database
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: standard
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard-postgresql
+  labels:
+    app: dataturntable
+    component: dashboard-database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dataturntable
+      component: dashboard-database
+  template:
+    metadata:
+      labels:
+        app: dataturntable
+        component: dashboard-database
+    spec:
+      containers:
+        - name: dashboard-postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_USER
+              value: dashboard
+            - name: POSTGRES_PASSWORD
+              value: dashboard
+            - name: POSTGRES_DB
+              value: dashboard
+          volumeMounts:
+            - name: dashboard-postgres-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: dashboard-postgres-data
+          persistentVolumeClaim:
+            claimName: dataturntable-dashboard-postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard-postgresql
+  labels:
+    app: dataturntable
+    component: dashboard-database
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+      name: postgres
+  selector:
+    app: dataturntable
+    component: dashboard-database

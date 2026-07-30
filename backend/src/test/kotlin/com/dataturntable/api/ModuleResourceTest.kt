@@ -50,6 +50,41 @@ class ModuleResourceTest {
             .jsonPath()
             .getString("token")
     }
+
+    private fun adminToken(): String = TestAuthHelpers.createAdminToken()
+
+    private fun firstTenantId(token: String): String =
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getList<Map<String, Any>>("")
+            .first()["id"]
+            .toString()
+
+    private fun createModule(token: String, tenantId: String, name: String, moduleType: String = "PROCESSING"): String =
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType(ContentType.JSON)
+            .body(
+                mapOf(
+                    "name" to name,
+                    "moduleType" to moduleType,
+                    "tenantId" to tenantId
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/modules")
+        .then()
+            .statusCode(201)
+            .extract()
+            .jsonPath()
+            .getString("id")
     
     @Test
     fun testListModulesRequiresAuth() {
@@ -143,5 +178,106 @@ class ModuleResourceTest {
         .then()
             .statusCode(403)
             .body("error", equalTo("Forbidden"))
+    }
+
+    @Test
+    fun testCreateVersionDoesNotDuplicateWhenFingerprintIsUnchanged() {
+        val token = adminToken()
+        val tenantId = firstTenantId(token)
+        val moduleId = createModule(token, tenantId, "Fingerprint module ${UUID.randomUUID()}")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType(ContentType.JSON)
+            .body(
+                mapOf(
+                    "code" to "print('same')",
+                    "requirements" to "pandas==2.2.2",
+                    "versionTag" to "stable",
+                    "config" to mapOf("mode" to "append")
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/modules/$moduleId/versions")
+        .then()
+            .statusCode(201)
+            .body("createdNewVersion", equalTo(true))
+            .body("version", equalTo(1))
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType(ContentType.JSON)
+            .body(
+                mapOf(
+                    "code" to "print('same')",
+                    "requirements" to "pandas==2.2.2",
+                    "versionTag" to "stable",
+                    "config" to mapOf("mode" to "append")
+                )
+            )
+        .`when`()
+            .post("/api/internal/v1/modules/$moduleId/versions")
+        .then()
+            .statusCode(200)
+            .body("createdNewVersion", equalTo(false))
+            .body("version", equalTo(1))
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/modules/$moduleId/versions")
+        .then()
+            .statusCode(200)
+            .body("size()", equalTo(1))
+    }
+
+    @Test
+    fun testDefaultVersionCanBePromotedSeparately() {
+        val token = adminToken()
+        val tenantId = firstTenantId(token)
+        val moduleId = createModule(token, tenantId, "Default module ${UUID.randomUUID()}")
+
+        val versionOneId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType(ContentType.JSON)
+            .body(mapOf("code" to "print('v1')", "versionTag" to "v1"))
+        .`when`()
+            .post("/api/internal/v1/modules/$moduleId/versions")
+        .then()
+            .statusCode(201)
+            .extract()
+            .jsonPath()
+            .getString("id")
+
+        val versionTwoId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType(ContentType.JSON)
+            .body(mapOf("code" to "print('v2')", "versionTag" to "v2"))
+        .`when`()
+            .post("/api/internal/v1/modules/$moduleId/versions")
+        .then()
+            .statusCode(201)
+            .extract()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType(ContentType.JSON)
+        .`when`()
+            .post("/api/internal/v1/modules/$moduleId/versions/$versionTwoId/default")
+        .then()
+            .statusCode(200)
+            .body("defaultVersionId", equalTo(versionTwoId))
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/modules/$moduleId")
+        .then()
+            .statusCode(200)
+            .body("defaultVersionId", equalTo(versionTwoId))
+            .body("versions.find { it.id == '%s' }.versionTag".format(versionOneId), equalTo("v1"))
+            .body("versions.find { it.id == '%s' }.versionTag".format(versionTwoId), equalTo("v2"))
     }
 }

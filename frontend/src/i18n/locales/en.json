@@ -214,13 +214,17 @@
     "failedToCreateModule": "Failed to create module",
     "failedToDeleteModule": "Failed to delete module",
     "import": "Import",
+    "db_load": "DB Load",
     "processing": "Processing",
     "export": "Export",
+    "db_save": "DB Save",
     "alert": "Alert",
     "importDescription": "IMPORT modules receive or fetch data from external sources.",
+    "db_loadDescription": "DB_LOAD modules read rows from the platform-managed data database.",
     "processingDescription": "PROCESSING modules transform, filter, or enrich data.",
     "alertDescription": "ALERT modules evaluate conditions and dispatch alerts.",
-    "exportDescription": "EXPORT modules send data to external systems."
+    "exportDescription": "EXPORT modules send data to external systems.",
+    "db_saveDescription": "DB_SAVE modules persist rows into the platform-managed data database."
   },
   "pipelines": {
     "title": "Pipelines",

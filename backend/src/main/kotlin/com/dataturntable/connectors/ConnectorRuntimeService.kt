@@ -53,6 +53,9 @@ class ConnectorRuntimeService {
     @Inject
     lateinit var webSocketConnectionManager: WebSocketConnectionManager
 
+    @Inject
+    lateinit var connectorMetrics: ConnectorMetrics
+
     // ── Public API ───────────────────────────────────────────────────────────
 
     /**
@@ -60,19 +63,46 @@ class ConnectorRuntimeService {
      * Returns null if the connector is push-based (data was already injected as inputData).
      */
     fun fetchFromConnector(connector: Connector, decryptedConfig: Map<String, Any?>): Any? {
+        val startedAt = System.nanoTime()
         if (connector.direction != Direction.INPUT) {
             LOG.warnf("fetchFromConnector called on OUTPUT connector %s — skipping", connector.id)
+            connectorMetrics.recordOperation(
+                connector.connectorType?.name,
+                connector.direction?.name,
+                "fetch",
+                "skipped",
+                startedAt
+            )
             return null
         }
-        return when (connector.connectorType) {
-            ConnectorType.REST     -> fetchRestInput(decryptedConfig)
-            ConnectorType.FILE     -> fetchFileInput(decryptedConfig)
-            // Push-based connectors: data was already delivered by the ingest trigger
-            ConnectorType.MQTT,
-            ConnectorType.WEBSOCKET,
-            ConnectorType.UDP      -> null
-            ConnectorType.CUSTOM   -> null
-            null                   -> null
+        return try {
+            val result = when (connector.connectorType) {
+                ConnectorType.REST     -> fetchRestInput(decryptedConfig)
+                ConnectorType.FILE     -> fetchFileInput(decryptedConfig)
+                // Push-based connectors: data was already delivered by the ingest trigger
+                ConnectorType.MQTT,
+                ConnectorType.WEBSOCKET,
+                ConnectorType.UDP      -> null
+                ConnectorType.CUSTOM   -> null
+                null                   -> null
+            }
+            connectorMetrics.recordOperation(
+                connector.connectorType?.name,
+                connector.direction?.name,
+                "fetch",
+                if (result == null) "skipped" else "success",
+                startedAt
+            )
+            result
+        } catch (e: Exception) {
+            connectorMetrics.recordOperation(
+                connector.connectorType?.name,
+                connector.direction?.name,
+                "fetch",
+                "failure",
+                startedAt
+            )
+            throw e
         }
     }
 
@@ -81,18 +111,44 @@ class ConnectorRuntimeService {
      * Called after the EXPORT module has run and produced its result.
      */
     fun deliverViaConnector(connector: Connector, decryptedConfig: Map<String, Any?>, data: Any?) {
+        val startedAt = System.nanoTime()
         if (connector.direction != Direction.OUTPUT) {
             LOG.warnf("deliverViaConnector called on INPUT connector %s — skipping", connector.id)
+            connectorMetrics.recordOperation(
+                connector.connectorType?.name,
+                connector.direction?.name,
+                "deliver",
+                "skipped",
+                startedAt
+            )
             return
         }
-        when (connector.connectorType) {
-            ConnectorType.REST      -> deliverRestOutput(decryptedConfig, data)
-            ConnectorType.FILE      -> deliverFileOutput(decryptedConfig, data)
-            ConnectorType.MQTT      -> deliverMqttOutput(decryptedConfig, data, connector)
-            ConnectorType.WEBSOCKET -> deliverWebSocketOutput(decryptedConfig, data, connector)
-            ConnectorType.UDP       -> deliverUdpOutput(decryptedConfig, data)
-            ConnectorType.CUSTOM    -> LOG.infof("CUSTOM connector %s — no-op deliver", connector.id)
-            null                    -> Unit
+        try {
+            when (connector.connectorType) {
+                ConnectorType.REST      -> deliverRestOutput(decryptedConfig, data)
+                ConnectorType.FILE      -> deliverFileOutput(decryptedConfig, data)
+                ConnectorType.MQTT      -> deliverMqttOutput(decryptedConfig, data, connector)
+                ConnectorType.WEBSOCKET -> deliverWebSocketOutput(decryptedConfig, data, connector)
+                ConnectorType.UDP       -> deliverUdpOutput(decryptedConfig, data)
+                ConnectorType.CUSTOM    -> LOG.infof("CUSTOM connector %s — no-op deliver", connector.id)
+                null                    -> Unit
+            }
+            connectorMetrics.recordOperation(
+                connector.connectorType?.name,
+                connector.direction?.name,
+                "deliver",
+                if (connector.connectorType == ConnectorType.CUSTOM || connector.connectorType == null) "skipped" else "success",
+                startedAt
+            )
+        } catch (e: Exception) {
+            connectorMetrics.recordOperation(
+                connector.connectorType?.name,
+                connector.direction?.name,
+                "deliver",
+                "failure",
+                startedAt
+            )
+            throw e
         }
     }
 

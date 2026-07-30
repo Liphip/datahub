@@ -2,6 +2,7 @@ package com.dataturntable.api
 
 import com.dataturntable.auth.User
 import com.dataturntable.security.SecurityUtils
+import com.dataturntable.service.GrafanaSyncService
 import io.quarkus.security.Authenticated
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
@@ -14,7 +15,7 @@ import org.eclipse.microprofile.jwt.JsonWebToken
 import org.mindrot.jbcrypt.BCrypt
 import java.util.UUID
 
-@Path("/auth-users")
+@Path("/api/internal/v1/auth-users")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
@@ -24,6 +25,9 @@ class AuthUserResource {
 
     @PersistenceContext
     lateinit var em: EntityManager
+
+    @Inject
+    lateinit var grafanaSyncService: GrafanaSyncService
 
     private fun getTenantIdFromToken(): String? {
         val tid = jwt.getClaim("tenantId") as? String
@@ -135,6 +139,7 @@ class AuthUserResource {
             this.updatedAt = java.time.Instant.now()
         }
         user.persist()
+        grafanaSyncService.queueUserSync(user)
 
         return Response.status(201).entity(mapOf("id" to user.id, "email" to user.email)).build()
     }
@@ -216,6 +221,7 @@ class AuthUserResource {
         request["isActive"]?.let { user.isActive = it as Boolean }
         user.updatedAt = java.time.Instant.now()
         user.persist()
+        grafanaSyncService.queueUserSync(user)
 
         return Response.ok(mapOf("id" to user.id, "email" to user.email)).build()
     }
@@ -252,7 +258,21 @@ class AuthUserResource {
 
         val membershipToRemove = user.memberships.firstOrNull { it.tenant?.id == tenantUuid }
             ?: return Response.status(404).entity(mapOf("error" to "User not found")).build()
+        val removedMembershipId = membershipToRemove.id
+        val removedTenantId = membershipToRemove.tenant?.id
+        val removedTenantName = membershipToRemove.tenant?.name
+        val removedUserId = membershipToRemove.authUser?.id
+        val removedUserEmail = membershipToRemove.authUser?.email
         membershipToRemove.delete()
+        if (removedMembershipId != null) {
+            grafanaSyncService.queueMembershipDeletion(
+                removedMembershipId,
+                removedTenantId,
+                removedUserId,
+                removedTenantName,
+                removedUserEmail
+            )
+        }
 
         val remainingMemberships = em.createQuery(
             "SELECT COUNT(m) FROM Membership m WHERE m.authUser.id = :userId",
@@ -262,7 +282,10 @@ class AuthUserResource {
             .singleResult
 
         if (remainingMemberships == 0L) {
+            grafanaSyncService.queueUserDeletion(userId, user.email, user.firstName, user.lastName)
             user.delete()
+        } else {
+            grafanaSyncService.queueUserSync(user)
         }
         return Response.noContent().build()
     }
