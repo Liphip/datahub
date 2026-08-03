@@ -30,6 +30,8 @@ quarkus:
     migrate-at-start: true
     baseline-on-migrate: true
   
+  # FIXME: Unsupported Quarkus Kafka namespace
+  # Details: `mvn test` reports quarkus.kafka.bootstrap.servers as unrecognized, so this value is ignored. Use the Kafka client configuration namespace supported by the pinned Quarkus version.
   kafka:
     bootstrap:
       servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
@@ -44,6 +46,8 @@ quarkus:
     binder:
       http-server:
         enabled: true
+    # WARNING: Unrecognized Micrometer distribution settings
+    # Details: `mvn test` reports every key below as unrecognized. Confirm the Micrometer property names for Quarkus 3.32.2; ignored settings do not publish the intended histogram buckets or bounds.
     # Publish histogram buckets so Grafana can compute histogram_quantile()
     distribution:
       percentiles-histogram:
@@ -95,6 +99,8 @@ mp:
         key:
           location: publicKey.pem
       generation:
+        # WARNING: JWT signing key is bundled with the application resources
+        # Details: privateKey.pem is tracked under src/main/resources and copied into the runtime artifact/image, so every deployment shares the same signing material. Load an environment-specific key from a secret mount or managed key service and keep only non-sensitive public test material in the repository.
         key:
           location: privateKey.pem
 
@@ -120,6 +126,8 @@ dataturntable:
     dashboard:
       enabled: ${DATATURNTABLE_GRAFANA_DASHBOARD_ENABLED:false}
       base-url: ${DATATURNTABLE_GRAFANA_DASHBOARD_BASE_URL:http://dashboard-grafana:3000}
+      # WARNING: Production-capable defaults include Grafana admin credentials
+      # Details: When dashboard provisioning is enabled without environment variables, it authenticates as admin/admin. Require these values from the deployment secret or fail startup to prevent accidental insecure deployments.
       admin-user: ${DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_USER:admin}
       admin-password: ${DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_PASSWORD:admin}
       datasource:

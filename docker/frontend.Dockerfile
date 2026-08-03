@@ -6,6 +6,8 @@ WORKDIR /app
 # Copy package files
 COPY frontend/package*.json ./
 
+# TODO: Use the lockfile-enforcing npm ci command
+# Details: package-lock.json is copied into this image, but npm install may update the dependency resolution during builds. npm ci produces repeatable, fail-fast frontend images from the committed lockfile.
 # Install dependencies
 RUN npm install
 

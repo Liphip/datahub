@@ -23,6 +23,8 @@ spec:
     spec:
       containers:
         - name: control-api
+          # TODO: Pin deployable images to immutable versions or digests
+          # Details: `latest` plus `imagePullPolicy: Always` makes rollbacks and incident reproduction non-deterministic. Apply the release version/digest consistently to every backend deployment.
           image: dataturntable/backend:latest
           imagePullPolicy: Always
           ports:
@@ -466,6 +468,8 @@ spec:
     spec:
       containers:
         - name: pipeline-executor
+          # BUG: Pipeline modules cannot start Docker containers in this pod
+          # Details: DockerService invokes the Docker CLI, but this deployment has no Docker socket/daemon or Kubernetes-native runner. Module execution will fail in Kubernetes; replace the Docker dependency with Jobs/Pods or provide a deliberately secured remote runner.
           image: dataturntable/backend:latest
           imagePullPolicy: Always
           ports:

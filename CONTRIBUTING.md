@@ -90,6 +90,8 @@ frontend/
 
 ## Testing
 
+<!-- TODO: Add a CI workflow for the documented checks
+     Details: The repository contains no GitHub Actions workflow, so Maven compilation/tests, frontend type-check/build/tests, and manifest rendering are not automatically enforced for pull requests. Add a reproducible CI matrix and make its required checks visible here. -->
 ### Backend Tests
 
 Run unit tests:

@@ -433,6 +433,8 @@ class DataResource {
             }
             Response.ok(mapOf("tables" to tables)).build()
         } catch (e: Exception) {
+            // BUG: Table-list failures are reported as an empty successful result
+            // Details: Connection, schema, and registry-query failures become HTTP 200 with no tables, causing clients to treat an outage or misconfiguration as an empty tenant. Return a meaningful error status and log the cause instead.
             Response.ok(mapOf("tables" to emptyList<Map<*, *>>())).build()
         }
     }
@@ -646,6 +648,8 @@ class DataResource {
 
         return try {
             val rows = em.createNativeQuery(
+                // TODO: Paginate tenant blob listings
+                // Details: This query returns every blob metadata row for a tenant. As uploads accumulate it increases response size and query latency; add validated limit/cursor parameters and return pagination metadata.
                 "SELECT id, name, content_type, size_bytes, created_at FROM data_blobs WHERE tenant_id = :tid ORDER BY created_at DESC"
             ).setParameter("tid", tenantUuid).resultList
             val blobs = rows.map { row ->
@@ -665,6 +669,8 @@ class DataResource {
     fun uploadBlob(
         @PathParam("tenantId") tenantId: String,
         @FormParam("name") name: String?,
+        // FIXME: Stream blob transfers and enforce tenant quotas
+        // Details: Multipart binding to ByteArray and download readBytes() materialize entire files in heap with no size limit. Large or concurrent transfers can exhaust memory; use streaming I/O, configured per-file/tenant limits, and a durable object store for production.
         @FormParam("file") fileBytes: ByteArray?,
         @FormParam("contentType") contentType: String?
     ): Response {
@@ -679,6 +685,8 @@ class DataResource {
             val dir = File("$blobDir/$tenantId").also { it.mkdirs() }
             val blobId = UUID.randomUUID()
             val storagePath = "${dir.absolutePath}/$blobId-$fileName"
+            // BUG: Upload can orphan a file when metadata persistence fails
+            // Details: The filesystem write precedes the database insert, but the catch block does not delete the new file if the insert or transaction fails. Use a temporary object plus compensation/cleanup, or persist an upload state that a reconciler can recover.
             File(storagePath).writeBytes(fileBytes)
             val resolvedContentType = contentType?.takeIf { it.isNotBlank() } ?: "application/octet-stream"
 
@@ -748,6 +756,8 @@ class DataResource {
             ).setParameter("id", blobUuid).setParameter("tid", tenantUuid).resultList
             if (rows.isEmpty()) return Response.status(404).entity(mapOf("error" to "Blob not found")).build()
             val path = rows[0]?.toString()
+            // BUG: Blob metadata is removed even if file deletion fails
+            // Details: File.delete() returns false on I/O failure, but the database row is deleted regardless, orphaning storage and losing retry information. Check the result and keep or mark the record for retry when deletion fails.
             if (!path.isNullOrBlank()) File(path).delete()
             em.createNativeQuery("DELETE FROM data_blobs WHERE id = :id").setParameter("id", blobUuid).executeUpdate()
             Response.noContent().build()
@@ -816,6 +826,8 @@ class DataResource {
         val safeTable = qualifiedTableName(tenantId, tableName)
         val timestampType = if (isH2(connection)) "TIMESTAMP WITH TIME ZONE" else "TIMESTAMPTZ"
         val colDefs = columns.joinToString(", ") { col ->
+            // BUG: Relational column names are silently rewritten
+            // Details: A requested name such as `device-id` becomes `deviceid` in the physical table while the registry stores the original schema. Reject invalid or duplicate names with 400 instead, using the existing column-name validation helper.
             val colName = col["name"]?.replace(Regex("[^a-zA-Z0-9_]"), "") ?: return@joinToString ""
             val colType = when (col["type"]?.uppercase()) {
                 "INTEGER" -> "INTEGER"

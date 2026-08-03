@@ -5,6 +5,8 @@ import io.restassured.RestAssured
 import org.junit.jupiter.api.Test
 
 @QuarkusTest
+// BUG: Test omits the connector API base path
+// Details: The request to /connectors never reaches ConnectorResource, whose route begins /api/internal/v1/connectors. Use the actual route before asserting its tenant-id validation behavior.
 class ConnectorResourceUnitTest {
 
     @Test

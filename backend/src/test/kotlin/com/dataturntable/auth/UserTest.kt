@@ -10,6 +10,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
 
 @QuarkusTest
+// FIXME: Keep bidirectional test relationships synchronized
+// Details: These tests persist Membership.authUser but never add the membership to User.memberships. User.getAllAbilities reads that initialized collection, so role abilities are absent until the entity is reloaded or both sides are updated.
 class UserTest {
     
     @Test
@@ -103,6 +105,8 @@ class UserTest {
         val abilities = user.getAllAbilities()
         assertTrue(abilities.contains("module:read"))
         assertTrue(abilities.contains("pipeline:execute"))
+        // BUG: Assertion requires an ability that the fixture never grants
+        // Details: The user has pipeline:execute and the role has module:read; neither grants data:write. Add it to the fixture only if it is part of this test's intended contract.
         assertTrue(abilities.contains("data:write"))
     }
     

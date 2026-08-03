@@ -432,6 +432,8 @@ services:
         condition: on-failure
 
   pipeline-executor:
+    # BUG: HA pipeline executor has no Docker runtime access
+    # Details: DockerService requires a Docker daemon to execute module containers, while this service declares no socket mount or remote daemon. The HA deployment therefore cannot execute modules until a runner integration is supplied.
     image: dataturntable/backend:latest
     environment:
       <<: *backend_common

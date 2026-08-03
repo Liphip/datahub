@@ -177,6 +177,8 @@
             <artifactId>quarkus-test-h2</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- FIXME: Duplicate H2 test dependencies
+             Details: quarkus-jdbc-h2 and quarkus-test-h2 are each declared twice. Keep one declaration of each so dependency updates and effective-POM inspection remain unambiguous. -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-jdbc-h2</artifactId>

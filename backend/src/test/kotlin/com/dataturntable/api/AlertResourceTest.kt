@@ -14,6 +14,8 @@ import org.junit.jupiter.api.Test
 import org.mindrot.jbcrypt.BCrypt
 
 @QuarkusTest
+// FIXME: Alert endpoint contract is out of date
+// Details: AlertResource is intentionally exposed at /api/v1/alerts for the public API, but this test class calls /api/internal/v1/alerts and consequently receives 404 responses. Update these request paths or deliberately add an internal route.
 class AlertResourceTest {
 
     @PersistenceContext

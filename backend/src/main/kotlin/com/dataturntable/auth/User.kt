@@ -111,6 +111,8 @@ open class User : PanacheBase() {
     fun hasAbility(ability: String): Boolean {
         if (isSuperAdmin()) return true
         if (abilities?.contains("*") == true) return true
+        // BUG: Permission checks use substring matching
+        // Details: A stored value such as `report:read` also matches a request for `read`. Parse the serialized ability list once and compare exact tokens, as is already done for role abilities below.
         if (abilities?.contains(ability) == true) return true
         
         val roleAbilities = loadMemberships().map { it.role }.filterNotNull().flatMap { it.getAbilitiesList() }

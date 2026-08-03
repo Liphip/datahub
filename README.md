@@ -307,6 +307,8 @@ docker stack deploy -c docker/docker-stack.app.yml dataturntable
 
 ### Docker Swarm HA Stack
 
+<!-- TODO: Convert the HA-section links to repository-relative Markdown targets
+     Details: The links below embed A:\Dev\Datahub paths, which are invalid for repository browsers, clones, and the rendered documentation site. Use paths relative to this README so every deployment artifact remains navigable. -->
 For a quorum-oriented Swarm topology with replicated PostgreSQL, KRaft Kafka, clustered EMQX, and the split backend roles, use:
 
 ```bash

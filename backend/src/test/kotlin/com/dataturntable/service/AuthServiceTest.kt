@@ -30,6 +30,8 @@ class AuthServiceTest {
     @BeforeEach
     @Transactional
     fun cleanup() {
+        // BUG: Cleanup violates membership foreign keys
+        // Details: This bulk delete removes users before their memberships. The suite currently fails with an H2 referential-integrity violation; delete Membership records before users, roles, and tenants.
         em.createQuery("DELETE FROM User").executeUpdate()
         em.createQuery("DELETE FROM Role").executeUpdate()
         em.createQuery("DELETE FROM Tenant").executeUpdate()

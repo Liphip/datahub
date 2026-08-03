@@ -180,6 +180,8 @@ class AlertResource {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseUuid(tenantId, "tenantId")
         requireTenantAccess(currentUser, tenantUuid.toString(), "alert:read")?.let { return it }
+        // TODO: Paginate and order alert channel and rule listings
+        // Details: Both list endpoints return every tenant record without a stable order, while history is bounded. Add validated limit/cursor parameters and deterministic ordering before tenant alert configuration grows large.
         val channels = em.createQuery(
             "SELECT c FROM AlertChannel c WHERE c.tenant.id = :tenantId",
             AlertChannel::class.java
@@ -414,6 +416,8 @@ class AlertResource {
             AlertHistory::class.java
         )
             .setParameter("tenantId", tenantUuid)
+            // FIXME: Validate and cap the history limit
+            // Details: A negative limit can fail at the persistence layer and an arbitrarily large positive value can load an unbounded tenant history. Match the bounded limit handling used by the other list endpoints and return 400 for invalid input.
             .setMaxResults(limit ?: 100)
             .resultList
         return Response.ok(history.map { toHistoryDto(it) }).build()

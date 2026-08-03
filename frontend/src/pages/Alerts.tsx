@@ -78,6 +78,8 @@ export default function Alerts() {
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
+    // FIXME: Prevent stale toast timers from clearing newer messages
+    // Details: Calling showToast twice within 3.5 seconds leaves both timers active, so the first timer can hide the second notification early. Store and clear the previous timeout, and clear it on unmount.
     setTimeout(() => setToast(null), 3500);
   };
 

@@ -71,6 +71,8 @@ open class Role : PanacheBase() {
     
     fun hasAbility(ability: String): Boolean {
         if (abilities?.contains("*") == true) return true
+        // BUG: Role permission checks use substring matching
+        // Details: This has the same false-positive risk as User.hasAbility: an ability token may contain the requested text without being that permission. Reuse one exact-token parser for direct and role permissions.
         return abilities?.contains(ability) == true
     }
     

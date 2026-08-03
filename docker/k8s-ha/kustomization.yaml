@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - ../k8s
 
+# TODO: Migrate from deprecated patchesStrategicMerge
+# Details: `kubectl kustomize docker/k8s-ha` warns that this transformer is deprecated. Convert the overlay to the current `patches` syntax before a Kustomize upgrade removes support.
 patchesStrategicMerge:
   - backend-ha-env.yaml
-

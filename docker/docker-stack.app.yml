@@ -22,6 +22,8 @@ networks:
 
 services:
   postgresql:
+    # TODO: Pin production stack images to immutable releases
+    # Details: This stack uses floating database, application, and documentation tags. Use one version or digest per release across all services so deployments, rollbacks, and incident investigations are reproducible.
     image: timescale/timescaledb:latest-pg16
     environment:
       POSTGRES_USER: dataturntable
@@ -232,6 +234,8 @@ services:
         condition: on-failure
 
   pipeline-executor:
+    # BUG: Pipeline executor has no Docker runtime access
+    # Details: DockerService runs module containers through the Docker CLI, but this Swarm service has neither a mounted Docker socket nor a configured remote daemon. Provision a controlled runner or use Swarm-native task execution before enabling pipelines.
     image: dataturntable/backend:latest
     environment:
       QUARKUS_PROFILE: prod,pipeline-executor

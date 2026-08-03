@@ -27,6 +27,8 @@ vi.mock('../../stores/auth', () => ({
   })),
 }))
 
+// BUG: Login tests do not initialize the i18n provider
+// Details: The component renders translation keys (for example auth.emailAddress) because the suite never imports or initializes src/i18n. Assertions for English labels therefore fail; initialize a deterministic test language or mock useTranslation.
 describe('Login Page', () => {
   beforeEach(() => {
     vi.clearAllMocks()

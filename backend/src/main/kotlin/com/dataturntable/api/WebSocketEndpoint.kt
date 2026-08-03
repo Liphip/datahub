@@ -7,6 +7,8 @@ import jakarta.websocket.server.PathParam
 import jakarta.websocket.server.ServerEndpoint
 import org.jboss.logging.Logger
 
+// BUG: WebSocket ingestion accepts unauthenticated connections
+// Details: The endpoint registers any socket and later accepts messages for every active pipeline identified by its UUID. Authenticate the handshake and verify tenant/pipeline ingest permission before registering or processing a session.
 @ServerEndpoint("/api/ingest/v1/ws/{pipelineId}")
 @ApplicationScoped
 class WebSocketEndpoint {

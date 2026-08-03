@@ -377,6 +377,8 @@ export default function Data() {
 
   const handleDownloadBlob = (blobId: string) => {
     if (!tenantId) return;
+    // BUG: New-tab downloads omit the required Authorization header
+    // Details: DataResource.downloadBlob is authenticated, but window.open() only navigates to a URL and cannot use Axios's bearer-token interceptor. Download through the authenticated API client and create an object URL, or introduce a short-lived server-issued download token.
     const url = api.getDataBlobUrl(tenantId, blobId);
     window.open(url, '_blank');
   };

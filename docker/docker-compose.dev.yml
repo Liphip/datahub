@@ -156,6 +156,8 @@ services:
         condition: service_healthy
 
   pipeline-postgresql:
+    # TODO: Pin the development database image
+    # Details: The floating `latest-pg16` tag can change schema, extension, or behavior between runs. Pin a tested TimescaleDB version and upgrade it intentionally.
     image: timescale/timescaledb:latest-pg16
     container_name: dataturntable-pipeline-postgres
     environment:

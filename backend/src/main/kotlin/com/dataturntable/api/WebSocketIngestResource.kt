@@ -32,6 +32,8 @@ class WebSocketIngestResource {
     
     private val objectMapper = ObjectMapper()
     
+    // BUG: Concurrent session map contains non-thread-safe mutable sets
+    // Details: WebSocket callbacks can register, unregister, and broadcast concurrently. ConcurrentHashMap protects only the map; mutation or iteration of each MutableSet can lose sessions or throw. Use a concurrent set and remove empty entries atomically.
     private val sessions = ConcurrentHashMap<String, MutableSet<Session>>()
     
     @Transactional
@@ -82,6 +84,8 @@ class WebSocketIngestResource {
             
             LOG.debugf("WebSocket message queued for pipeline %s", pipelineId)
         } catch (e: Exception) {
+            // BUG: Failed ingestion can still commit a newly created pipeline run
+            // Details: The exception is swallowed after `run.persist()` and `em.flush()`, so the transactional method can commit a run even when publishing/processing failed. Mark the transaction rollback-only or record a terminal FAILED status with the cause.
             LOG.errorf("Failed to process WebSocket message: %s", e.message)
         }
     }
