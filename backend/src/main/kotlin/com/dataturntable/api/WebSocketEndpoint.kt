@@ -11,6 +11,9 @@ import org.jboss.logging.Logger
 // Details: The endpoint registers any socket and later accepts messages for every active pipeline identified by its UUID. Authenticate the handshake and verify tenant/pipeline ingest permission before registering or processing a session.
 @ServerEndpoint("/api/ingest/v1/ws/{pipelineId}")
 @ApplicationScoped
+/**
+ * Defines the class `WebSocketEndpoint`, the contract implemented by this source unit.
+ */
 class WebSocketEndpoint {
     
     private val LOG = Logger.getLogger(WebSocketEndpoint::class.java)
@@ -19,6 +22,9 @@ class WebSocketEndpoint {
     lateinit var webSocketIngest: WebSocketIngestResource
     
     @OnOpen
+    /**
+     * Implements `onOpen` for this source unit.
+     */
     fun onOpen(session: Session, @PathParam("pipelineId") pipelineId: String) {
         LOG.infof("WebSocket connection opened for pipeline: %s", pipelineId)
         session.maxTextMessageBufferSize = 1024 * 1024
@@ -26,18 +32,27 @@ class WebSocketEndpoint {
     }
     
     @OnMessage
+    /**
+     * Implements `onMessage` for this source unit.
+     */
     fun onMessage(session: Session, message: String, @PathParam("pipelineId") pipelineId: String) {
         LOG.debugf("WebSocket message received for pipeline %s: %s", pipelineId, message.take(200))
         webSocketIngest.handleWebSocketMessage(session, pipelineId, message)
     }
     
     @OnClose
+    /**
+     * Implements `onClose` for this source unit.
+     */
     fun onClose(session: Session, closeReason: CloseReason, @PathParam("pipelineId") pipelineId: String) {
         LOG.infof("WebSocket connection closed for pipeline: %s", pipelineId)
         webSocketIngest.unregisterSession(pipelineId, session)
     }
     
     @OnError
+    /**
+     * Implements `onError` for this source unit.
+     */
     fun onError(session: Session, error: Throwable, @PathParam("pipelineId") pipelineId: String) {
         LOG.errorf(error, "WebSocket error for pipeline: %s", pipelineId)
         webSocketIngest.unregisterSession(pipelineId, session)

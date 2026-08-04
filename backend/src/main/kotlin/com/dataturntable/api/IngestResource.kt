@@ -19,6 +19,9 @@ import java.util.UUID
 @Path("/api/ingest/v1")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+/**
+ * Defines the class `IngestResource`, the contract implemented by this source unit.
+ */
 class IngestResource {
     
     @Inject
@@ -35,6 +38,9 @@ class IngestResource {
     @POST
     @Path("/ingest/{pipelineId}")
     @Transactional
+    /**
+     * Implements `ingest` for this source unit.
+     */
     fun ingest(
         @PathParam("pipelineId") pipelineId: String,
         @HeaderParam("X-API-Key") apiKey: String?,
@@ -209,6 +215,9 @@ class IngestResource {
 
     @GET
     @Path("/health")
+    /**
+     * Implements `health` for this source unit.
+     */
     fun health(): Response {
         return Response.ok(mapOf(
             "status" to "healthy",
@@ -218,6 +227,9 @@ class IngestResource {
     
     @GET
     @Path("/ping")
+    /**
+     * Implements `ping` for this source unit.
+     */
     fun ping(): Response {
         return Response.ok("pong").build()
     }

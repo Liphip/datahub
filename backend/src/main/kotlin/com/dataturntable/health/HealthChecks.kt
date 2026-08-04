@@ -24,6 +24,9 @@ import io.quarkus.runtime.StartupEvent
 import jakarta.enterprise.event.Observes
 
 @ApplicationScoped
+/**
+ * Defines the class `DatabaseHealthCheck`, the contract implemented by this source unit.
+ */
 class DatabaseHealthCheck : HealthCheck {
 
     private val LOG = Logger.getLogger(DatabaseHealthCheck::class.java)
@@ -68,6 +71,9 @@ class DatabaseHealthCheck : HealthCheck {
 }
 
 @ApplicationScoped
+/**
+ * Defines the class `KafkaHealthCheck`, the contract implemented by this source unit.
+ */
 class KafkaHealthCheck : HealthCheck {
 
     private val LOG = Logger.getLogger(KafkaHealthCheck::class.java)
@@ -106,6 +112,9 @@ class KafkaHealthCheck : HealthCheck {
 }
 
 @ApplicationScoped
+/**
+ * Defines the class `RedisHealthCheck`, the contract implemented by this source unit.
+ */
 class RedisHealthCheck : HealthCheck {
 
     private val LOG = Logger.getLogger(RedisHealthCheck::class.java)
@@ -144,6 +153,9 @@ class RedisHealthCheck : HealthCheck {
 }
 
 @ApplicationScoped
+/**
+ * Defines the class `ApplicationStartupHealthCheck`, the contract implemented by this source unit.
+ */
 class ApplicationStartupHealthCheck : HealthCheck {
 
     private val LOG = Logger.getLogger(ApplicationStartupHealthCheck::class.java)
@@ -171,17 +183,26 @@ class ApplicationStartupHealthCheck : HealthCheck {
         }
     }
 
+    /**
+     * Implements `markStarted` for this source unit.
+     */
     fun markStarted() {
         started.set(true)
         startedAt.compareAndSet(null, Instant.now())
     }
 
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     fun onStart(@Observes event: StartupEvent) {
         markStarted()
     }
 }
 
 @ApplicationScoped
+/**
+ * Defines the class `LivenessHealthCheck`, the contract implemented by this source unit.
+ */
 class LivenessHealthCheck : HealthCheck {
 
     private val LOG = Logger.getLogger(LivenessHealthCheck::class.java)
@@ -214,6 +235,9 @@ class LivenessHealthCheck : HealthCheck {
 }
 
 @ApplicationScoped
+/**
+ * Defines the class `ObservabilityHealthCheck`, the contract implemented by this source unit.
+ */
 class ObservabilityHealthCheck : HealthCheck {
 
     @Inject
@@ -236,6 +260,9 @@ class ObservabilityHealthCheck : HealthCheck {
             .build()
 }
 
+/**
+ * Implements `checkSocket` for this source unit.
+ */
 private fun checkSocket(name: String, endpoint: String): HealthCheckResponse {
     val (host, port) = parseHostPort(endpoint)
     val startedAt = System.nanoTime()
@@ -251,6 +278,9 @@ private fun checkSocket(name: String, endpoint: String): HealthCheckResponse {
         .build()
 }
 
+/**
+ * Parses external or persisted input into the required representation.
+ */
 private fun parseRedisEndpoint(value: String): String? {
     val trimmed = value.trim()
     if (trimmed.isBlank()) return null
@@ -262,6 +292,9 @@ private fun parseRedisEndpoint(value: String): String? {
     }
 }
 
+/**
+ * Parses external or persisted input into the required representation.
+ */
 private fun parseHostPort(endpoint: String): Pair<String, Int> {
     val trimmed = endpoint.trim()
     val host = trimmed.substringBeforeLast(":")

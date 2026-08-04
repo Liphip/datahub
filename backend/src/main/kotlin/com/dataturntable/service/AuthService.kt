@@ -18,6 +18,9 @@ import java.util.HashSet
 import java.util.UUID
 
 @ApplicationScoped
+/**
+ * Defines the class `AuthService`, the contract implemented by this source unit.
+ */
 class AuthService {
     
     @Inject
@@ -32,6 +35,9 @@ class AuthService {
     private val secureRandom = SecureRandom()
     
     @Transactional
+    /**
+     * Implements `login` for this source unit.
+     */
     fun login(request: LoginRequest): AuthResponse? {
         val user = findUserByEmail(request.email, request.tenantId)
         
@@ -58,6 +64,9 @@ class AuthService {
     }
 
     @Transactional
+    /**
+     * Implements `switchTenant` for this source unit.
+     */
     fun switchTenant(userId: UUID, tenantId: String): AuthResponse {
         val tenantUuid = parseUuid(tenantId) ?: throw IllegalArgumentException("Invalid tenantId")
         val user = em.find(User::class.java, userId) ?: throw SecurityException("Unauthorized")
@@ -73,6 +82,9 @@ class AuthService {
     }
 
     @Transactional
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getTenantContexts(userId: UUID): List<TenantContextDto> {
         val memberships = em.createQuery(
             "SELECT m FROM Membership m JOIN FETCH m.tenant t LEFT JOIN FETCH m.role r WHERE m.authUser.id = :userId",
@@ -92,6 +104,9 @@ class AuthService {
         }
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     private fun findUserByEmail(email: String, tenantId: String?): User? {
         val query = if (tenantId != null) {
             // Find a user with the given email that has a membership in the requested tenant
@@ -109,6 +124,9 @@ class AuthService {
     }
     
     @Transactional
+    /**
+     * Updates the requested state.
+     */
     fun setup(request: SetupRequest): SetupResponse {
         val userCount = em.createQuery("SELECT count(u) FROM User u").singleResult as Long
         if (userCount > 0) {
@@ -178,12 +196,18 @@ class AuthService {
         )
     }
 
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     private fun hashPasswordForStorage(password: String): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         val hash = digest.digest(password.toByteArray())
         return java.util.Base64.getEncoder().encodeToString(hash)
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun normalizeClientPasswordHash(passwordHash: String): List<String> {
         val normalized = mutableSetOf(passwordHash)
         if (passwordHash.length == 64 && passwordHash.matches(Regex("^[0-9a-fA-F]{64}$"))) {
@@ -198,6 +222,9 @@ class AuthService {
         return normalized.toList()
     }
     
+    /**
+     * Implements `generateJwtToken` for this source unit.
+     */
     private fun generateJwtToken(user: User, tenantContextId: UUID? = null): String {
         val groups = HashSet<String>()
         if (user.isSuperAdmin()) groups.add("superadmin")
@@ -225,6 +252,9 @@ class AuthService {
         return jwtBuilder.sign()
     }
     
+    /**
+     * Implements `generateRandomPassword` for this source unit.
+     */
     private fun generateRandomPassword(length: Int): String {
         val upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         val lower = "abcdefghijklmnopqrstuvwxyz"
@@ -245,6 +275,9 @@ class AuthService {
         return password.toString().toList().shuffled(secureRandom).joinToString("")
     }
     
+    /**
+     * Converts a value into the representation required by its caller.
+     */
     private fun toUserDto(user: User, tenantContextId: UUID? = null): UserDto {
          val contextTenant = tenantContextId?.let { em.find(Tenant::class.java, it) }
          val primaryTenant = contextTenant ?: user.getPrimaryTenant()
@@ -260,11 +293,17 @@ class AuthService {
          )
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getCurrentUser(email: String): UserDto? {
         val user = User.findByEmail(email) ?: return null
         return toUserDto(user)
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getUserFromJwt(): UserDto? {
         val subject = jwt.subject ?: return null
         val userId = try {
@@ -277,6 +316,9 @@ class AuthService {
         return toUserDto(user, tenantIdFromJwt)
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseUuid(value: String?): UUID? {
         if (value.isNullOrBlank()) return null
         return try {

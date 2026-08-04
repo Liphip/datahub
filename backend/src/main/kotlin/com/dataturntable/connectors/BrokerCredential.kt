@@ -7,6 +7,9 @@ import java.util.UUID
 
 @Entity
 @Table(name = "broker_credentials")
+/**
+ * Defines the class `BrokerCredential`, the contract implemented by this source unit.
+ */
 class BrokerCredential : PanacheEntityBase() {
 
     @Id

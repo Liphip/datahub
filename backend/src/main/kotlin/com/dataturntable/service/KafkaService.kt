@@ -15,6 +15,9 @@ import org.eclipse.microprofile.reactive.messaging.Incoming
 import java.util.concurrent.ConcurrentHashMap
 
 @ApplicationScoped
+/**
+ * Defines the class `KafkaService`, the contract implemented by this source unit.
+ */
 class KafkaService {
     
     @ConfigProperty(name = "dataturntable.kafka.topics.prefix", defaultValue = "dataturntable")
@@ -27,8 +30,14 @@ class KafkaService {
     private val objectMapper = ObjectMapper()
     private val activeConsumers = ConcurrentHashMap<String, Boolean>()
 
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     fun isKafkaAvailable(): Boolean = commandEmitter != null
     
+    /**
+     * Creates or persists the requested state.
+     */
     fun createPipelineTopics(pipelineId: String, consumerGroup: String) {
         val topics = listOf(
             "$topicPrefix.pipelines.$pipelineId.import",
@@ -44,6 +53,9 @@ class KafkaService {
         }
     }
     
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun deletePipelineTopics(pipelineId: String) {
         val topics = listOf(
             "$topicPrefix.pipelines.$pipelineId.import",
@@ -57,6 +69,9 @@ class KafkaService {
         }
     }
     
+    /**
+     * Implements `triggerPipeline` for this source unit.
+     */
     fun triggerPipeline(pipelineId: String, runId: String, triggerType: TriggerType) {
         if (commandEmitter == null) {
             println("Kafka not available, skipping pipeline trigger for: $pipelineId")
@@ -79,29 +94,59 @@ class KafkaService {
         commandEmitter?.send(Message.of(message, Metadata.of(metadata)))
     }
     
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     fun startPipelineConsumers(pipeline: Pipeline) {
         val consumerGroup = pipeline.kafkaConsumerGroup ?: return
         activeConsumers[consumerGroup] = true
         println("Starting consumers for pipeline: ${pipeline.id} with group: $consumerGroup")
     }
     
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun stopPipelineConsumers(pipeline: Pipeline) {
         val consumerGroup = pipeline.kafkaConsumerGroup ?: return
         activeConsumers.remove(consumerGroup)
         println("Stopping consumers for pipeline: ${pipeline.id} with group: $consumerGroup")
     }
     
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     fun isConsumerActive(consumerGroup: String): Boolean {
         return activeConsumers.containsKey(consumerGroup)
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getImportTopic(pipelineId: String): String = "$topicPrefix.pipelines.$pipelineId.import"
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getProcessingTopic(pipelineId: String): String = "$topicPrefix.pipelines.$pipelineId.processing"
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getExportTopic(pipelineId: String): String = "$topicPrefix.pipelines.$pipelineId.export"
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getAlertsTopic(pipelineId: String): String = "$topicPrefix.pipelines.$pipelineId.alerts"
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getPipelineInputTopic(): String = "$topicPrefix.pipelines.input"
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getPipelineOutputTopic(): String = "$topicPrefix.pipelines.output"
     
+    /**
+     * Delivers or routes the named data to its configured destination.
+     */
     fun sendToPipelineSpecificInput(pipelineId: String, data: Any) {
         val topic = getPipelineInputTopic()
         
@@ -122,6 +167,9 @@ class KafkaService {
         }
     }
     
+    /**
+     * Delivers or routes the named data to its configured destination.
+     */
     fun sendToPipelineInput(pipelineId: String, data: Any) {
         sendToPipelineSpecificInput(pipelineId, data)
     }

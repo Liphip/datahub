@@ -168,7 +168,13 @@ export default function ModuleEditor() {
     requirements !== loadedRequirementsSnapshot ||
     configText !== loadedConfigSnapshot;
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
+    /**
+     * Implements `fetchModule` for this source unit.
+     */
     const fetchModule = async () => {
       if (!id) return;
       
@@ -210,11 +216,17 @@ export default function ModuleEditor() {
     fetchModule();
   }, [id]);
 
+  /**
+   * Implements `showToast` for this source unit.
+   */
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleSave = async () => {
     if (!id || !tenantId || !canWriteModules) return;
     
@@ -265,6 +277,9 @@ export default function ModuleEditor() {
     );
   }
 
+  /**
+   * Implements `defaultModuleConfig` for this source unit.
+   */
   function defaultModuleConfig(moduleType: CodeModule['moduleType']) {
     if (moduleType === 'DB_LOAD') {
       return JSON.stringify(
@@ -298,6 +313,9 @@ export default function ModuleEditor() {
     return '{}';
   }
 
+  /**
+   * Parses external or persisted input into the required representation.
+   */
   function parseConfigText():
     | { ok: true; value: Record<string, unknown> }
     | { ok: false; error: string } {
@@ -312,12 +330,18 @@ export default function ModuleEditor() {
     }
   }
 
+  /**
+   * Implements `refreshModule` for this source unit.
+   */
   const refreshModule = async () => {
     if (!id) return;
     const data = await api.getModule(id);
     setModule(data);
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleSetDefaultVersion = async (versionId: string) => {
     if (!id || !canWriteModules) return;
     try {
@@ -330,6 +354,9 @@ export default function ModuleEditor() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleToggleVersionActive = async (versionId: string, isActive: boolean) => {
     if (!id || !canWriteModules) return;
     try {
@@ -342,6 +369,9 @@ export default function ModuleEditor() {
     }
   };
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   const loadVersionIntoEditor = (versionId: string, skipDirtyGuard = false) => {
     const selectedVersion = module.versions.find((version) => version.id === versionId);
     if (!selectedVersion) return;

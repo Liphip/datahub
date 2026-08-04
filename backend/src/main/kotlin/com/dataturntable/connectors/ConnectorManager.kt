@@ -7,6 +7,9 @@ import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
 
 @ApplicationScoped
+/**
+ * Defines the class `ConnectorManager`, the contract implemented by this source unit.
+ */
 class ConnectorManager {
     
     @Inject
@@ -18,6 +21,9 @@ class ConnectorManager {
     @Inject
     lateinit var wsConnector: WebSocketConnector
     
+    /**
+     * Creates or persists the requested state.
+     */
     fun createInputConnector(type: String, config: Map<String, Any>): InputConnector {
         return when (type.lowercase()) {
             "mqtt" -> mqttConnector.connectAsInput(config)
@@ -27,6 +33,9 @@ class ConnectorManager {
         }
     }
     
+    /**
+     * Creates or persists the requested state.
+     */
     fun createOutputConnector(type: String, config: Map<String, Any>): OutputConnector {
         return when (type.lowercase()) {
             "mqtt" -> mqttConnector.connectAsOutput(config)
@@ -36,7 +45,13 @@ class ConnectorManager {
         }
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getSupportedInputConnectors(): List<String> = listOf("mqtt", "http", "rest", "websocket", "ws")
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getSupportedOutputConnectors(): List<String> = listOf("mqtt", "http", "rest", "websocket", "ws")
 }

@@ -28,6 +28,12 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Developers:
+      - Architecture and Runtime: developer/architecture.md
+      - Source-code Reference: developer/source-reference.md
+      - Source Function Reference: developer/source-function-reference.md
+      - Configuration Reference: developer/configuration-reference.md
+      - Documentation Gaps: developer/documentation-gaps.md
   - English:
       - Getting Started: en/getting-started.md
       - Beginner Guide: en/beginner-guide.md

@@ -16,6 +16,9 @@ import java.time.OffsetDateTime
 import java.util.UUID
 import java.util.Optional
 
+/**
+ * Defines the class `PipelineDataExecutionOutput`, the contract implemented by this source unit.
+ */
 data class PipelineDataExecutionOutput(
     val result: Any?,
     val stdout: String,
@@ -24,6 +27,9 @@ data class PipelineDataExecutionOutput(
 )
 
 @ApplicationScoped
+/**
+ * Defines the class `PipelineDataService`, the contract implemented by this source unit.
+ */
 class PipelineDataService(
     @ConfigProperty(name = "dataturntable.pipeline-data.jdbc.url", defaultValue = "")
     private val configuredJdbcUrl: Optional<String>,
@@ -41,6 +47,9 @@ class PipelineDataService(
     private val objectMapper = ObjectMapper()
     private val identifierRegex = Regex("^[A-Za-z_][A-Za-z0-9_]*$")
 
+    /**
+     * Processes the named request, event, or operation.
+     */
     fun execute(
         moduleVersion: ModuleVersion,
         moduleType: ModuleType,
@@ -79,6 +88,9 @@ class PipelineDataService(
         }
     }
 
+    /**
+     * Processes the named request, event, or operation.
+     */
     private fun executeLoad(
         connection: Connection,
         schema: String,
@@ -135,6 +147,9 @@ class PipelineDataService(
         }
     }
 
+    /**
+     * Processes the named request, event, or operation.
+     */
     private fun executeSave(
         connection: Connection,
         schema: String,
@@ -177,12 +192,18 @@ class PipelineDataService(
         }
     }
 
+    /**
+     * Implements `ensureSchemaExists` for this source unit.
+     */
     private fun ensureSchemaExists(connection: Connection, schema: String) {
         connection.createStatement().use { stmt ->
             stmt.execute("""CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}""")
         }
     }
 
+    /**
+     * Implements `ensureTableExists` for this source unit.
+     */
     private fun ensureTableExists(
         connection: Connection,
         schema: String,
@@ -211,6 +232,9 @@ class PipelineDataService(
         }
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun normalizeRows(inputData: Any?): List<Map<String, Any?>> =
         when (inputData) {
             null -> emptyList()
@@ -224,6 +248,9 @@ class PipelineDataService(
             else -> throw IllegalArgumentException("DB_SAVE input must be an object or list of objects")
         }
 
+    /**
+     * Implements `asMap` for this source unit.
+     */
     private fun asMap(value: Any?): Map<String, Any?> =
         when (value) {
             is Map<*, *> -> value.entries.associate { it.key.toString() to it.value }
@@ -235,6 +262,9 @@ class PipelineDataService(
             else -> emptyMap()
         }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseConfig(raw: String?): Map<String, Any?> =
         if (raw.isNullOrBlank()) emptyMap()
         else try {
@@ -243,6 +273,9 @@ class PipelineDataService(
             emptyMap()
         }
 
+    /**
+     * Implements `resolveSchema` for this source unit.
+     */
     private fun resolveSchema(config: Map<String, Any?>, tenantId: UUID): String {
         val configured = config["schema"]?.toString()?.trim()
         return if (!configured.isNullOrBlank()) {
@@ -252,6 +285,9 @@ class PipelineDataService(
         }
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun requireIdentifier(value: String?, field: String, allowFallback: Boolean = false): String {
         val candidate = value?.trim().orEmpty()
         if (candidate.isBlank() && allowFallback) return "created_at"
@@ -259,8 +295,14 @@ class PipelineDataService(
         return candidate
     }
 
+    /**
+     * Implements `quoteIdentifier` for this source unit.
+     */
     private fun quoteIdentifier(value: String): String = "\"$value\""
 
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     private fun connection(): Connection {
         val url = configuredJdbcUrl.orElse("").ifBlank { defaultJdbcUrl }
         val user = configuredUsername.orElse("").ifBlank { defaultUsername }
@@ -268,6 +310,9 @@ class PipelineDataService(
         return DriverManager.getConnection(url, user, password)
     }
 
+    /**
+     * Implements `inferSqlType` for this source unit.
+     */
     private fun inferSqlType(value: Any?): String =
         when (value) {
             null -> "TEXT"
@@ -279,6 +324,9 @@ class PipelineDataService(
             else -> "TEXT"
         }
 
+    /**
+     * Implements `mapExplicitType` for this source unit.
+     */
     private fun mapExplicitType(value: String?): String =
         when (value?.trim()?.uppercase()) {
             "TEXT", "VARCHAR", "VARCHAR(255)" -> "TEXT"
@@ -290,6 +338,9 @@ class PipelineDataService(
             else -> "TEXT"
         }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun normalizeValue(value: Any?): Any? =
         when (value) {
             is Instant -> Timestamp.from(value)
@@ -298,6 +349,9 @@ class PipelineDataService(
             else -> value
         }
 
+    /**
+     * Implements `bindValue` for this source unit.
+     */
     private fun bindValue(statement: PreparedStatement, index: Int, value: Any?) {
         when (value) {
             null -> statement.setNull(index, Types.NULL)

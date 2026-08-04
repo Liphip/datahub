@@ -7,16 +7,25 @@ import jakarta.persistence.*
 import java.time.Instant
 import java.util.UUID
 
+/**
+ * Defines the enum class `AlertSeverity`, the contract implemented by this source unit.
+ */
 enum class AlertSeverity {
     INFO, WARNING, CRITICAL, ERROR
 }
 
+/**
+ * Defines the enum class `AlertStatus`, the contract implemented by this source unit.
+ */
 enum class AlertStatus {
     PENDING, SENT, FAILED, RETRY
 }
 
 @Entity
 @Table(name = "alert_history")
+/**
+ * Defines the class `AlertHistory`, the contract implemented by this source unit.
+ */
 open class AlertHistory : PanacheBase() {
     
     @Id
@@ -63,6 +72,9 @@ open class AlertHistory : PanacheBase() {
                 .resultList
                 .firstOrNull()
 
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findRecentByTenant(tenantId: UUID, limit: Int = 100): List<AlertHistory> =
             getEntityManager()
                 .createQuery(

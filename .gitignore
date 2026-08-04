@@ -7,3 +7,7 @@ reset_docker.sh
 reset_docker.ps1
 .vscode/
 scripts/
+!scripts/
+scripts/*
+!scripts/add-inline-source-documentation.ps1
+!scripts/generate-source-function-reference.ps1

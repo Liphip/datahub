@@ -10,6 +10,9 @@ import java.util.UUID
 
 @Entity
 @Table(name = "module_versions")
+/**
+ * Defines the class `ModuleVersion`, the contract implemented by this source unit.
+ */
 open class ModuleVersion : PanacheBase() {
     
     @Id
@@ -52,15 +55,27 @@ open class ModuleVersion : PanacheBase() {
         override fun findById(id: UUID): ModuleVersion? =
             find("id = ?1", id).firstResult()
 
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByModuleId(moduleId: UUID): List<ModuleVersion> =
             list("module.id = ?1 ORDER BY version DESC", moduleId)
 
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByModuleAndVersion(moduleId: UUID, version: Int): ModuleVersion? =
             find("module.id = ?1 AND version = ?2", moduleId, version).firstResult()
 
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByModuleAndTag(moduleId: UUID, tag: String): ModuleVersion? =
             find("module.id = ?1 AND versionTag = ?2", moduleId, tag).firstResult()
         
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun getNextVersion(moduleId: UUID): Int {
             val query = getEntityManager().createQuery("SELECT m FROM ModuleVersion m WHERE m.module.id = :mid ORDER BY m.version DESC", ModuleVersion::class.java)
             query.setParameter("mid", moduleId)

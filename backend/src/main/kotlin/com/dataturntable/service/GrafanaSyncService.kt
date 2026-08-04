@@ -16,6 +16,9 @@ import java.time.Instant
 import java.util.UUID
 
 @ApplicationScoped
+/**
+ * Defines the class `GrafanaSyncService`, the contract implemented by this source unit.
+ */
 class GrafanaSyncService {
 
     @PersistenceContext
@@ -23,6 +26,9 @@ class GrafanaSyncService {
 
     private val objectMapper = ObjectMapper()
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun listStates(status: GrafanaSyncStatus?, target: GrafanaTargetInstance?): List<GrafanaSyncState> {
         val conditions = mutableListOf<String>()
         if (status != null) conditions += "g.syncStatus = :status"
@@ -41,6 +47,9 @@ class GrafanaSyncService {
         return query.resultList
     }
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun listPendingStates(limit: Int = 50, target: GrafanaTargetInstance? = null): List<GrafanaSyncState> {
         val conditions = mutableListOf("g.syncStatus = :status")
         if (target != null) conditions += "g.targetInstance = :target"
@@ -57,6 +66,9 @@ class GrafanaSyncService {
     }
 
     @Transactional
+    /**
+     * Implements `reconcileAll` for this source unit.
+     */
     fun reconcileAll(): Map<String, Int> {
         val tenants = em.createQuery("SELECT t FROM Tenant t", Tenant::class.java).resultList
         val users = em.createQuery("SELECT u FROM User u", User::class.java).resultList
@@ -74,6 +86,9 @@ class GrafanaSyncService {
     }
 
     @Transactional
+    /**
+     * Implements `queueTenantSync` for this source unit.
+     */
     fun queueTenantSync(tenant: Tenant) {
         val tenantId = tenant.id ?: return
         upsertState(
@@ -88,6 +103,9 @@ class GrafanaSyncService {
     }
 
     @Transactional
+    /**
+     * Implements `queueTenantDeletion` for this source unit.
+     */
     fun queueTenantDeletion(tenantId: UUID, tenantName: String? = null) {
         upsertState(
             target = GrafanaTargetInstance.DASHBOARD,
@@ -108,6 +126,9 @@ class GrafanaSyncService {
     }
 
     @Transactional
+    /**
+     * Implements `queueUserSync` for this source unit.
+     */
     fun queueUserSync(user: User) {
         val userId = user.id ?: return
         upsertState(
@@ -131,6 +152,9 @@ class GrafanaSyncService {
     }
 
     @Transactional
+    /**
+     * Implements `queueUserDeletion` for this source unit.
+     */
     fun queueUserDeletion(
         userId: UUID,
         email: String? = null,
@@ -149,6 +173,9 @@ class GrafanaSyncService {
     }
 
     @Transactional
+    /**
+     * Implements `queueMembershipSync` for this source unit.
+     */
     fun queueMembershipSync(membership: Membership) {
         val membershipId = membership.id ?: return
         val tenantId = membership.tenant?.id ?: return
@@ -165,6 +192,9 @@ class GrafanaSyncService {
     }
 
     @Transactional
+    /**
+     * Implements `queueMembershipDeletion` for this source unit.
+     */
     fun queueMembershipDeletion(
         membershipId: UUID,
         tenantId: UUID?,
@@ -191,6 +221,9 @@ class GrafanaSyncService {
     }
 
     @Transactional
+    /**
+     * Implements `markSynced` for this source unit.
+     */
     fun markSynced(id: UUID): GrafanaSyncState? {
         val state = GrafanaSyncState.findById(id) ?: return null
         state.syncStatus = GrafanaSyncStatus.SYNCED
@@ -202,6 +235,9 @@ class GrafanaSyncService {
     }
 
     @Transactional
+    /**
+     * Implements `markFailed` for this source unit.
+     */
     fun markFailed(id: UUID, error: String?): GrafanaSyncState? {
         val state = GrafanaSyncState.findById(id) ?: return null
         state.syncStatus = GrafanaSyncStatus.FAILED
@@ -211,6 +247,9 @@ class GrafanaSyncService {
         return state
     }
 
+    /**
+     * Implements `upsertState` for this source unit.
+     */
     private fun upsertState(
         target: GrafanaTargetInstance,
         scopeType: GrafanaSyncScopeType,
@@ -239,6 +278,9 @@ class GrafanaSyncService {
         }
     }
 
+    /**
+     * Implements `buildTenantDesiredState` for this source unit.
+     */
     private fun buildTenantDesiredState(tenant: Tenant): Map<String, Any?> =
         mapOf(
             "tenantId" to tenant.id?.toString(),
@@ -253,6 +295,9 @@ class GrafanaSyncService {
             )
         )
 
+    /**
+     * Implements `buildDashboardUserDesiredState` for this source unit.
+     */
     private fun buildDashboardUserDesiredState(user: User): Map<String, Any?> =
         mapOf(
             "userId" to user.id?.toString(),
@@ -263,6 +308,9 @@ class GrafanaSyncService {
             "dashboardGrafanaAdmin" to user.isSuperAdmin()
         )
 
+    /**
+     * Implements `buildMonitoringUserDesiredState` for this source unit.
+     */
     private fun buildMonitoringUserDesiredState(user: User): Map<String, Any?> =
         mapOf(
             "userId" to user.id?.toString(),
@@ -272,6 +320,9 @@ class GrafanaSyncService {
             "monitoringGrafanaAdmin" to user.isSuperAdmin()
         )
 
+    /**
+     * Implements `buildMembershipDesiredState` for this source unit.
+     */
     private fun buildMembershipDesiredState(membership: Membership): Map<String, Any?> {
         val user = membership.authUser
         val tenant = membership.tenant
@@ -288,6 +339,9 @@ class GrafanaSyncService {
         )
     }
 
+    /**
+     * Implements `resolveGrafanaRole` for this source unit.
+     */
     private fun resolveGrafanaRole(user: User?, membership: Membership): String {
         if (user?.isSuperAdmin() == true) return "Admin"
         val roleName = membership.role?.name?.trim()?.lowercase().orEmpty()
@@ -305,6 +359,9 @@ class GrafanaSyncService {
         }
     }
 
+    /**
+     * Implements `slugify` for this source unit.
+     */
     private fun slugify(value: String): String =
         value.trim()
             .lowercase()

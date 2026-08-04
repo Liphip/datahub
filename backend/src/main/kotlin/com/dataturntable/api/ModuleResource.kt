@@ -23,6 +23,9 @@ import java.util.UUID
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
+/**
+ * Defines the class `ModuleResource`, the contract implemented by this source unit.
+ */
 class ModuleResource {
 
     @Inject
@@ -31,12 +34,18 @@ class ModuleResource {
     @PersistenceContext
     lateinit var em: EntityManager
 
+    /**
+     * Implements `currentUser` for this source unit.
+     */
     private fun currentUser(): User? {
         val subject = jwt.subject ?: return null
         val userId = try { UUID.fromString(subject) } catch (_: Exception) { return null }
         return em.find(User::class.java, userId)
     }
 
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     private fun canonicalJson(value: Any?): String {
         return when (value) {
             null -> "null"
@@ -49,6 +58,9 @@ class ModuleResource {
         }
     }
 
+    /**
+     * Implements `contentFingerprint` for this source unit.
+     */
     private fun contentFingerprint(
         code: String,
         requirements: String,
@@ -65,6 +77,9 @@ class ModuleResource {
         return digest.joinToString("") { "%02x".format(it) }
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseModuleType(value: String): ModuleType? {
         return try {
             ModuleType.valueOf(value.uppercase())
@@ -73,6 +88,9 @@ class ModuleResource {
         }
     }
 
+    /**
+     * Implements `versionToMap` for this source unit.
+     */
     private fun versionToMap(version: ModuleVersion): Map<String, Any?> {
         return mapOf(
             "id" to version.id,
@@ -88,6 +106,9 @@ class ModuleResource {
         )
     }
 
+    /**
+     * Implements `moduleToMap` for this source unit.
+     */
     private fun moduleToMap(module: CodeModule, includeVersions: Boolean = false): Map<String, Any?> {
         val base = mutableMapOf<String, Any?>(
             "id" to module.id,
@@ -114,6 +135,9 @@ class ModuleResource {
     }
     
     @GET
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun list(@QueryParam("tenantId") tenantId: String, @QueryParam("type") type: String?): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = try {
@@ -155,6 +179,9 @@ class ModuleResource {
     
     @POST
     @Transactional
+    /**
+     * Creates or persists the requested state.
+     */
     fun create(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantId = tenantIdQuery ?: (request["tenantId"] as? String)
@@ -198,6 +225,9 @@ class ModuleResource {
     
     @GET
     @Path("/{id}")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun get(@PathParam("id") id: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val moduleId = try {
@@ -224,6 +254,9 @@ class ModuleResource {
     @PATCH
     @Path("/{id}")
     @Transactional
+    /**
+     * Updates the requested state.
+     */
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val moduleId = try {
@@ -253,6 +286,9 @@ class ModuleResource {
     @DELETE
     @Path("/{id}")
     @Transactional
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun delete(@PathParam("id") id: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val moduleId = try {
@@ -279,6 +315,9 @@ class ModuleResource {
     
     @GET
     @Path("/{id}/versions")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getVersions(@PathParam("id") id: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val moduleId = try {
@@ -308,6 +347,9 @@ class ModuleResource {
     @POST
     @Path("/{id}/versions")
     @Transactional
+    /**
+     * Creates or persists the requested state.
+     */
     fun createVersion(@PathParam("id") id: String, request: Map<String, Any>): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val moduleId = try {
@@ -379,6 +421,9 @@ class ModuleResource {
     @PATCH
     @Path("/{id}/versions/{versionId}")
     @Transactional
+    /**
+     * Updates the requested state.
+     */
     fun updateVersion(@PathParam("id") id: String, @PathParam("versionId") versionId: String, request: Map<String, Any>): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val moduleId = try {
@@ -432,6 +477,9 @@ class ModuleResource {
     @POST
     @Path("/{id}/versions/{versionId}/default")
     @Transactional
+    /**
+     * Updates the requested state.
+     */
     fun setDefaultVersion(@PathParam("id") id: String, @PathParam("versionId") versionId: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val moduleId = try {

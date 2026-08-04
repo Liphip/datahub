@@ -33,6 +33,9 @@ import kotlin.math.ceil
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
+/**
+ * Defines the class `DataResource`, the contract implemented by this source unit.
+ */
 class DataResource {
 
     @Inject
@@ -67,12 +70,18 @@ class DataResource {
     private val columnNameRegex = Regex("^[A-Za-z_][A-Za-z0-9_]*$")
     private val tagFieldRegex = Regex("^[A-Za-z0-9_.-]+$")
 
+    /**
+     * Implements `currentUser` for this source unit.
+     */
     private fun currentUser(): User? {
         val subject = jwt.subject ?: return null
         val userId = try { UUID.fromString(subject) } catch (_: Exception) { return null }
         return em.find(User::class.java, userId)
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun requireTenantAccess(user: User, tenantId: String, ability: String): Response? {
         if (!SecurityUtils.canAccessTenant(user, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
@@ -83,6 +92,9 @@ class DataResource {
         return null
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseTenantUuid(tenantId: String): UUID {
         return try {
             UUID.fromString(tenantId)
@@ -93,6 +105,9 @@ class DataResource {
         }
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun requireValidTableName(table: String?): String {
         val resolved = sanitizeTableName(table ?: "measurements")
         if (resolved.isBlank()) {
@@ -104,17 +119,29 @@ class DataResource {
         return resolved
     }
 
+    /**
+     * Implements `tenantSchemaName` for this source unit.
+     */
     private fun tenantSchemaName(tenantId: String): String = "tenant_${tenantId.replace("-", "_")}"
 
+    /**
+     * Implements `qualifiedTableName` for this source unit.
+     */
     private fun qualifiedTableName(tenantId: String, tableName: String): String =
         "\"${tenantSchemaName(tenantId)}\".\"$tableName\""
 
+    /**
+     * Implements `ensureTenantSchemaExists` for this source unit.
+     */
     private fun ensureTenantSchemaExists(tenantId: String) {
         pipelineConnection().use { connection ->
             ensureTenantSchemaExists(connection, tenantId)
         }
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun requireValidColumnName(name: String?, field: String, defaultValue: String): String {
         val resolved = (name ?: defaultValue).trim()
         if (!columnNameRegex.matches(resolved)) {
@@ -123,6 +150,9 @@ class DataResource {
         return resolved
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun requireValidTagField(tagField: String?): String {
         val resolved = (tagField ?: "location").trim()
         if (!tagFieldRegex.matches(resolved)) {
@@ -131,6 +161,9 @@ class DataResource {
         return resolved
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun normalizeTopTags(topTags: Int?): Int {
         val resolved = topTags ?: 8
         if (resolved !in 1..25) {
@@ -139,6 +172,9 @@ class DataResource {
         return resolved
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseIsoInstant(value: String?, field: String): Instant? {
         if (value.isNullOrBlank()) return null
         return try {
@@ -150,6 +186,9 @@ class DataResource {
         }
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun normalizeLimit(limit: Int?): Int {
         val resolved = limit ?: 100
         if (resolved <= 0 || resolved > 10000) {
@@ -160,6 +199,9 @@ class DataResource {
     
     @GET
     @Path("/{tenantId}/query")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun queryData(
         @PathParam("tenantId") tenantId: String,
         @QueryParam("table") table: String?,
@@ -221,6 +263,9 @@ class DataResource {
 
     @GET
     @Path("/{tenantId}/summary")
+    /**
+     * Implements `summarizeData` for this source unit.
+     */
     fun summarizeData(
         @PathParam("tenantId") tenantId: String,
         @QueryParam("table") table: String?,
@@ -352,6 +397,9 @@ class DataResource {
     
     @POST
     @Path("/{tenantId}/insert")
+    /**
+     * Creates or persists the requested state.
+     */
     fun insertData(
         @PathParam("tenantId") tenantId: String,
         @QueryParam("table") table: String?,
@@ -390,6 +438,9 @@ class DataResource {
     
     @GET
     @Path("/{tenantId}/tables")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun listTables(@PathParam("tenantId") tenantId: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseTenantUuid(tenantId)
@@ -441,6 +492,9 @@ class DataResource {
     
     @DELETE
     @Path("/{tenantId}/tables/{table}")
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun deleteTable(
         @PathParam("tenantId") tenantId: String,
         @PathParam("table") table: String
@@ -475,6 +529,9 @@ class DataResource {
         }
     }
     
+    /**
+     * Implements `ensureTableExists` for this source unit.
+     */
     private fun ensureTableExists(connection: Connection, tenantId: String, tableName: String) {
         ensureTenantSchemaExists(connection, tenantId)
         val schema = tenantSchemaName(tenantId)
@@ -525,6 +582,9 @@ class DataResource {
         }
     }
     
+    /**
+     * Creates or persists the requested state.
+     */
     private fun insertDataIntoTable(connection: Connection, tenantId: String, tableName: String, data: List<Map<String, Any>>) {
         val tableFullName = qualifiedTableName(tenantId, tableName)
 
@@ -569,6 +629,9 @@ class DataResource {
         }
     }
 
+    /**
+     * Converts a value into the representation required by its caller.
+     */
     private fun toInstant(value: Any?): Instant? {
         return when (value) {
             null -> null
@@ -586,6 +649,9 @@ class DataResource {
         }
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseTags(rawTags: Any?): Map<String, Any?> {
         if (rawTags == null) return emptyMap()
         return try {
@@ -607,6 +673,9 @@ class DataResource {
         }
     }
 
+    /**
+     * Implements `downsampleSeries` for this source unit.
+     */
     private fun downsampleSeries(points: List<Pair<Instant, Double>>, targetPoints: Int): List<Map<String, Any>> {
         if (points.isEmpty()) return emptyList()
         if (points.size <= targetPoints) {
@@ -624,6 +693,9 @@ class DataResource {
         }
     }
 
+    /**
+     * Implements `formatValue` for this source unit.
+     */
     private fun formatValue(value: Any?): Double? {
         return when (value) {
             null -> null
@@ -633,6 +705,9 @@ class DataResource {
         }
     }
     
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun sanitizeTableName(table: String): String {
         return table.replace(Regex("[^a-zA-Z0-9_]"), "")
     }
@@ -641,6 +716,9 @@ class DataResource {
 
     @GET
     @Path("/{tenantId}/blobs")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun listBlobs(@PathParam("tenantId") tenantId: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseTenantUuid(tenantId)
@@ -666,6 +744,9 @@ class DataResource {
     @Path("/{tenantId}/blobs")
     @Consumes(MediaType.MULTIPART_FORM_DATA)
     @Transactional
+    /**
+     * Implements `uploadBlob` for this source unit.
+     */
     fun uploadBlob(
         @PathParam("tenantId") tenantId: String,
         @FormParam("name") name: String?,
@@ -709,6 +790,9 @@ class DataResource {
 
     @GET
     @Path("/{tenantId}/blobs/{blobId}/download")
+    /**
+     * Implements `downloadBlob` for this source unit.
+     */
     fun downloadBlob(
         @PathParam("tenantId") tenantId: String,
         @PathParam("blobId") blobId: String
@@ -741,6 +825,9 @@ class DataResource {
     @DELETE
     @Path("/{tenantId}/blobs/{blobId}")
     @Transactional
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun deleteBlob(
         @PathParam("tenantId") tenantId: String,
         @PathParam("blobId") blobId: String
@@ -772,6 +859,9 @@ class DataResource {
     @Path("/{tenantId}/tables/register")
     @Consumes(MediaType.APPLICATION_JSON)
     @Transactional
+    /**
+     * Creates or persists the requested state.
+     */
     fun registerTable(
         @PathParam("tenantId") tenantId: String,
         request: Map<String, Any>
@@ -821,6 +911,9 @@ class DataResource {
         }
     }
 
+    /**
+     * Implements `ensureRelationalTableExists` for this source unit.
+     */
     private fun ensureRelationalTableExists(connection: Connection, tenantId: String, tableName: String, columns: List<Map<String, String>>) {
         ensureTenantSchemaExists(connection, tenantId)
         val safeTable = qualifiedTableName(tenantId, tableName)
@@ -847,12 +940,18 @@ class DataResource {
         }
     }
 
+    /**
+     * Implements `ensureTenantSchemaExists` for this source unit.
+     */
     private fun ensureTenantSchemaExists(connection: Connection, tenantId: String) {
         connection.createStatement().use { statement ->
             statement.execute("""CREATE SCHEMA IF NOT EXISTS "${tenantSchemaName(tenantId)}"""")
         }
     }
 
+    /**
+     * Implements `pipelineConnection` for this source unit.
+     */
     private fun pipelineConnection(): Connection {
         val url = configuredJdbcUrl.orElse("").ifBlank { defaultJdbcUrl }
         val username = configuredJdbcUsername.orElse("").ifBlank { defaultJdbcUsername }
@@ -860,9 +959,15 @@ class DataResource {
         return DriverManager.getConnection(url, username, password)
     }
 
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     private fun isH2(connection: Connection): Boolean =
         runCatching { connection.metaData.databaseProductName.contains("H2", ignoreCase = true) }.getOrDefault(false)
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun normalizeJdbcValue(value: Any?): Any? =
         when (value) {
             is Clob -> value.characterStream.use { it.readText() }

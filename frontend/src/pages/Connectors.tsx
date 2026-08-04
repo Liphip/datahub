@@ -7,8 +7,14 @@ import type { Connector, BrokerCredential, ConnectorImpactSummary, ConnectorRefe
 
 const connectorTypes = ['MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'CUSTOM'] as const;
 const directions = ['INPUT', 'OUTPUT'] as const;
+/**
+ * Defines the type `ConnectorType`, the contract implemented by this source unit.
+ */
 type ConnectorType = typeof connectorTypes[number];
 
+/**
+ * Defines the type `ConnectorConfigField`, the contract implemented by this source unit.
+ */
 type ConnectorConfigField = {
   key: string;
   label: string;
@@ -54,6 +60,9 @@ const connectorConfigSchema: Record<ConnectorType, ConnectorConfigField[]> = {
   ],
 };
 
+/**
+ * Initializes, connects, or acquires the named runtime resource.
+ */
 const initialConfigByType = (type: ConnectorType, existing?: Record<string, unknown>) => {
   const fields = connectorConfigSchema[type] || [];
   return fields.reduce<Record<string, string>>((acc, field) => {
@@ -74,6 +83,9 @@ export default function Connectors() {
   const navigate = useNavigate();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const abilities = user?.abilities || [];
+  /**
+   * Evaluates the named capability or state predicate.
+   */
   const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
   const canManageTenant = hasAbility('manage:tenant');
   const canReadConnectors = canManageTenant || hasAbility('read:connector') || hasAbility('write:connector') || hasAbility('delete:connector');
@@ -150,6 +162,9 @@ export default function Connectors() {
 
   const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
 
+  /**
+   * Implements `showToast` for this source unit.
+   */
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
@@ -165,6 +180,9 @@ export default function Connectors() {
     return 'UNKNOWN';
   };
 
+  /**
+   * Implements `statusDot` for this source unit.
+   */
   const statusDot = (agg: 'OK' | 'WARN' | 'ERROR' | 'UNKNOWN') => {
     const colors = { OK: 'bg-green-500', WARN: 'bg-amber-400', ERROR: 'bg-red-500', UNKNOWN: 'bg-gray-300' };
     const titles = { OK: 'Healthy', WARN: 'Warning', ERROR: 'Error', UNKNOWN: 'Status unknown' };
@@ -176,6 +194,9 @@ export default function Connectors() {
     );
   };
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   const loadStatuses = async (tid: string) => {
     try {
       const data = await api.getConnectorStatuses(tid);
@@ -185,6 +206,9 @@ export default function Connectors() {
     }
   };
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   const loadModalStatus = async (connectorId: string) => {
     setLoadingModalStatus(true);
     try {
@@ -197,6 +221,9 @@ export default function Connectors() {
     }
   };
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   const loadConnectors = async (tid: string) => {
     const type = filterType === 'ALL' ? undefined : filterType;
     const direction = filterDirection === 'ALL' ? undefined : filterDirection;
@@ -208,6 +235,9 @@ export default function Connectors() {
     setConnectors(data);
   };
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   const loadBrokerCredentials = async (tid: string) => {
     if (!canReadBrokerUsers) {
       setBrokerCredentials([]);
@@ -217,7 +247,13 @@ export default function Connectors() {
     setBrokerCredentials(data);
   };
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
+    /**
+     * Implements `fetchConnectors` for this source unit.
+     */
     const fetchConnectors = async () => {
       if (!tenantId) {
         setLoading(false);
@@ -249,12 +285,18 @@ export default function Connectors() {
   }, [tenantId, filterType, filterDirection, filterActive, filterQuery, canReadConnectors, canManageBrokerUsers, canReadBrokerUsers]);
 
   // Periodically refresh connector statuses (every 15s)
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     if (!tenantId || !canReadConnectors) return;
     const interval = setInterval(() => loadStatuses(tenantId), 15000);
     return () => clearInterval(interval);
   }, [tenantId, canReadConnectors]);
 
+  /**
+   * Implements `openCreateBrokerCredential` for this source unit.
+   */
   const openCreateBrokerCredential = () => {
     setEditingBrokerCredential(null);
     setBrokerForm({
@@ -267,6 +309,9 @@ export default function Connectors() {
     setShowBrokerModal(true);
   };
 
+  /**
+   * Implements `openEditBrokerCredential` for this source unit.
+   */
   const openEditBrokerCredential = (credential: BrokerCredential) => {
     setEditingBrokerCredential(credential);
     setBrokerForm({
@@ -279,6 +324,9 @@ export default function Connectors() {
     setShowBrokerModal(true);
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleSaveBrokerCredential = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!tenantId || !canManageBrokerUsers) return;
@@ -326,6 +374,9 @@ export default function Connectors() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleDeleteBrokerCredential = async (id: string) => {
     if (!tenantId) return;
     const activeReferences = brokerCredentials.find((credential) => credential.id === id)?.referenceCount || 0;
@@ -346,6 +397,9 @@ export default function Connectors() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleRotateBrokerCredentialPassword = async (credential: BrokerCredential) => {
     setRotatingBrokerCredentialId(credential.id);
     try {
@@ -360,6 +414,9 @@ export default function Connectors() {
     }
   };
 
+  /**
+   * Implements `applyMqttPreset` for this source unit.
+   */
   const applyMqttPreset = (mode: 'internal' | 'external') => {
     const broker = mode === 'internal'
       ? (mqttDefaults?.internalBrokerUrl || 'mqtt://mosquitto:1883')
@@ -393,6 +450,9 @@ export default function Connectors() {
     return config;
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canWriteConnectors) {
@@ -473,6 +533,9 @@ export default function Connectors() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleDelete = async (id: string) => {
     if (!canDeleteConnectors) {
       showToast('You do not have permission to delete connectors', 'error');
@@ -501,6 +564,9 @@ export default function Connectors() {
     }
   };
 
+  /**
+   * Implements `performToggleConnection` for this source unit.
+   */
   const performToggleConnection = async (connector: Connector, options?: { forceDisconnect?: boolean }) => {
     setTogglingId(connector.id);
     try {
@@ -527,6 +593,9 @@ export default function Connectors() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleToggleConnection = async (connector: Connector) => {
     if (!canWriteConnectors) {
       showToast('You do not have permission to change connector state', 'error');
@@ -552,6 +621,9 @@ export default function Connectors() {
     await performToggleConnection(connector);
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleTestConnection = async (connector: Connector) => {
     setTestingId(connector.id);
     try {
@@ -574,6 +646,9 @@ export default function Connectors() {
     }
   };
 
+  /**
+   * Implements `openCloneModal` for this source unit.
+   */
   const openCloneModal = (connector: Connector) => {
     setCloneSource(connector);
     setCloneForm({
@@ -585,6 +660,9 @@ export default function Connectors() {
     setShowCloneModal(true);
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleCloneConnector = async () => {
     const connector = cloneSource;
     if (!connector) return;
@@ -614,6 +692,9 @@ export default function Connectors() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleViewUsage = async (connector: Connector) => {
     setLoadingUsageId(connector.id);
     try {
@@ -650,6 +731,9 @@ export default function Connectors() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleEdit = (connector: Connector) => {
     if (!canWriteConnectors) return;
     setEditingConnector(connector);
@@ -667,6 +751,9 @@ export default function Connectors() {
     setShowModal(true);
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleOpenCreate = () => {
     if (!canWriteConnectors) return;
     setEditingConnector(null);
@@ -682,6 +769,9 @@ export default function Connectors() {
     setShowModal(true);
   };
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   const getTypeColor = (type: string) => {
     switch (type) {
       case 'MQTT': return 'bg-blue-100 text-blue-800';
@@ -693,6 +783,9 @@ export default function Connectors() {
     }
   };
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   const getDirectionColor = (direction: string) => {
     switch (direction) {
       case 'INPUT': return 'bg-green-100 text-green-800';

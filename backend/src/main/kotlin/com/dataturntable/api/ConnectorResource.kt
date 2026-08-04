@@ -32,6 +32,9 @@ import java.util.UUID
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
+/**
+ * Defines the class `ConnectorResource`, the contract implemented by this source unit.
+ */
 class ConnectorResource {
     
     @Inject
@@ -72,12 +75,18 @@ class ConnectorResource {
 
     private val objectMapper = ObjectMapper()
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     private fun getCurrentUser(): User? {
         val subject = jwt.subject ?: return null
         val userId = try { UUID.fromString(subject) } catch (_: Exception) { return null }
         return em.find(User::class.java, userId)
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     private fun getTenantIdFromToken(): String? {
         val tid = jwt.getClaim("tenantId") as? String
         return if (tid.isNullOrBlank()) null else tid
@@ -108,6 +117,9 @@ class ConnectorResource {
         }
     }
 
+    /**
+     * Implements `maskConnectorConfig` for this source unit.
+     */
     private fun maskConnectorConfig(rawConfig: Map<*, *>): Map<String, Any?> {
         val sensitiveFragments = listOf("password", "secret", "token", "apikey", "api_key", "key")
         val result = mutableMapOf<String, Any?>()
@@ -131,6 +143,9 @@ class ConnectorResource {
         return result
     }
 
+    /**
+     * Implements `stripSensitiveConfig` for this source unit.
+     */
     private fun stripSensitiveConfig(raw: Any?): Any? {
         val sensitiveFragments = listOf("password", "secret", "token", "apikey", "api_key", "key")
         return when (raw) {
@@ -148,6 +163,9 @@ class ConnectorResource {
         }
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseConnectorType(type: String): ConnectorType? {
         return try {
             ConnectorType.valueOf(type.uppercase())
@@ -156,6 +174,9 @@ class ConnectorResource {
         }
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseDirection(direction: String): Direction? {
         return try {
             Direction.valueOf(direction.uppercase())
@@ -164,6 +185,9 @@ class ConnectorResource {
         }
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseUuid(value: String): UUID? {
         return try {
             UUID.fromString(value)
@@ -172,18 +196,27 @@ class ConnectorResource {
         }
     }
 
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     private fun canReadConnector(currentUser: User?, tenantId: String): Boolean {
         if (currentUser == null) return false
         if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) return false
         return SecurityUtils.hasAbility(currentUser, "read:connector")
     }
 
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     private fun canWriteConnector(currentUser: User?, tenantId: String): Boolean {
         if (currentUser == null) return false
         if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) return false
         return SecurityUtils.hasAbility(currentUser, "write:connector")
     }
 
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     private fun connectorToMap(connector: Connector, pipelineReferenceCount: Int? = null): Map<String, Any?> {
         val decrypted = EncryptionUtils.decrypt(connector.config ?: "{}")
         val configValue = try {
@@ -207,18 +240,27 @@ class ConnectorResource {
         )
     }
 
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     private fun canManageBrokerCredentials(currentUser: User?, tenantId: String): Boolean {
         if (currentUser == null) return false
         if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) return false
         return currentUser.isSuperAdmin() || SecurityUtils.hasAbility(currentUser, "manage:tenant")
     }
 
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     private fun canReadBrokerCredentials(currentUser: User?, tenantId: String): Boolean {
         if (currentUser == null) return false
         if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) return false
         return SecurityUtils.hasAbility(currentUser, "read:connector")
     }
 
+    /**
+     * Implements `mqttTopicMatches` for this source unit.
+     */
     private fun mqttTopicMatches(pattern: String, topic: String): Boolean {
         val regex = pattern
             .replace("+", "[^/]+")
@@ -226,6 +268,9 @@ class ConnectorResource {
         return Regex("^$regex$").matches(topic)
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun validateMqttCredentialBinding(
         tenantUuid: UUID,
         configMap: Map<*, *>
@@ -262,6 +307,9 @@ class ConnectorResource {
         return null
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun sanitizeMqttConfig(configMap: Map<*, *>): Map<String, Any?> {
         val normalized = configMap.entries.associate { (k, v) ->
             (k?.toString() ?: "") to v
@@ -274,6 +322,9 @@ class ConnectorResource {
         return normalized.filterKeys { it.isNotBlank() }
     }
 
+    /**
+     * Implements `extractBrokerCredentialId` for this source unit.
+     */
     private fun extractBrokerCredentialId(connector: Connector): UUID? {
         val configRaw = try {
             EncryptionUtils.decrypt(connector.config ?: "{}")
@@ -289,10 +340,16 @@ class ConnectorResource {
         return configuredId?.let { parseUuid(it) }
     }
 
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     private fun connectorUsesBrokerCredential(connector: Connector, credentialId: UUID): Boolean {
         return extractBrokerCredentialId(connector) == credentialId
     }
 
+    /**
+     * Implements `brokerCredentialReferenceCounts` for this source unit.
+     */
     private fun brokerCredentialReferenceCounts(tenantUuid: UUID): Map<UUID, Int> {
         val mqttConnectors = em.createQuery(
             "SELECT c FROM Connector c WHERE c.tenant.id = :tenantId AND c.connectorType = :connectorType",
@@ -310,6 +367,9 @@ class ConnectorResource {
         return counts
     }
 
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     private fun connectorReferenceCounts(tenantUuid: UUID): Map<UUID, Int> {
         val pipelines = em.createQuery(
             "SELECT p FROM Pipeline p WHERE p.tenant.id = :tenantId",
@@ -336,6 +396,9 @@ class ConnectorResource {
         return counts
     }
 
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     private fun connectorReferenceSummaries(tenantUuid: UUID, connectorId: UUID): List<Map<String, Any?>> {
         val pipelines = em.createQuery(
             "SELECT p FROM Pipeline p WHERE p.tenant.id = :tenantId",
@@ -371,6 +434,9 @@ class ConnectorResource {
         return references
     }
 
+    /**
+     * Implements `brokerCredentialToMap` for this source unit.
+     */
     private fun brokerCredentialToMap(credential: BrokerCredential): Map<String, Any?> {
         val topics = try {
             objectMapper.readValue(credential.allowedTopics, List::class.java)
@@ -389,6 +455,9 @@ class ConnectorResource {
         )
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun normalizeTopics(raw: Any?): List<String> {
         return when (raw) {
             is List<*> -> raw.mapNotNull { it?.toString()?.trim() }.filter { it.isNotBlank() }.distinct()
@@ -397,6 +466,9 @@ class ConnectorResource {
         }
     }
 
+    /**
+     * Implements `generateCredentialPassword` for this source unit.
+     */
     private fun generateCredentialPassword(length: Int = 24): String {
         val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%&*"
         val random = java.security.SecureRandom()
@@ -407,6 +479,9 @@ class ConnectorResource {
     
     @GET
     @Path("/mqtt/defaults")
+    /**
+     * Implements `mqttDefaults` for this source unit.
+     */
     fun mqttDefaults(): Response {
         val currentUser = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         if (!SecurityUtils.hasAbility(currentUser, "read:connector")) {
@@ -426,6 +501,9 @@ class ConnectorResource {
 
     @GET
     @Path("/mqtt/credentials")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun listMqttCredentials(@QueryParam("tenantId") tenantId: String?): Response {
         val tid = tenantId ?: getTenantIdFromToken()
             ?: return Response.status(400).entity(mapOf("error" to "tenantId is required")).build()
@@ -455,6 +533,9 @@ class ConnectorResource {
     @POST
     @Path("/mqtt/credentials")
     @Transactional
+    /**
+     * Creates or persists the requested state.
+     */
     fun createMqttCredential(@QueryParam("tenantId") tenantId: String?, request: Map<String, Any>): Response {
         val tid = tenantId ?: (request["tenantId"] as? String) ?: getTenantIdFromToken()
             ?: return Response.status(400).entity(mapOf("error" to "tenantId is required")).build()
@@ -516,6 +597,9 @@ class ConnectorResource {
     @PATCH
     @Path("/mqtt/credentials/{id}")
     @Transactional
+    /**
+     * Updates the requested state.
+     */
     fun updateMqttCredential(@PathParam("id") id: String, request: Map<String, Any>): Response {
         val credentialId = parseUuid(id)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid credential id")).build()
@@ -546,6 +630,9 @@ class ConnectorResource {
     @Path("/mqtt/credentials/{id}/rotate-password")
     @Consumes(MediaType.WILDCARD)
     @Transactional
+    /**
+     * Implements `rotateMqttCredentialPassword` for this source unit.
+     */
     fun rotateMqttCredentialPassword(@PathParam("id") id: String, request: Map<String, Any>?): Response {
         val credentialId = parseUuid(id)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid credential id")).build()
@@ -570,6 +657,9 @@ class ConnectorResource {
     @DELETE
     @Path("/mqtt/credentials/{id}")
     @Transactional
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun deleteMqttCredential(@PathParam("id") id: String): Response {
         val credentialId = parseUuid(id)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid credential id")).build()
@@ -610,6 +700,9 @@ class ConnectorResource {
     }
 
     @GET
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun list(
         @QueryParam("tenantId") tenantId: String?,
         @QueryParam("type") type: String?,
@@ -675,6 +768,9 @@ class ConnectorResource {
     
     @POST
     @Transactional
+    /**
+     * Creates or persists the requested state.
+     */
     fun create(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
         val tenantId = tenantIdQuery ?: (request["tenantId"] as? String) ?: getTenantIdFromToken()
         val name = request["name"] as? String ?: return Response.status(400)
@@ -773,6 +869,9 @@ class ConnectorResource {
     
     @GET
     @Path("/{id}")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun get(@PathParam("id") id: String): Response {
         val connectorId = parseUuid(id)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
@@ -797,6 +896,9 @@ class ConnectorResource {
 
     @GET
     @Path("/{id}/references")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getReferences(@PathParam("id") id: String): Response {
         val connectorId = parseUuid(id)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
@@ -822,6 +924,9 @@ class ConnectorResource {
 
     @GET
     @Path("/{id}/impact")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getImpact(
         @PathParam("id") id: String,
         @QueryParam("sinceHours") sinceHours: Int?,
@@ -960,6 +1065,9 @@ class ConnectorResource {
     @Path("/{id}/clone")
     @Consumes(MediaType.WILDCARD)
     @Transactional
+    /**
+     * Implements `cloneConnector` for this source unit.
+     */
     fun cloneConnector(@PathParam("id") id: String, request: Map<String, Any>?): Response {
         val connectorId = parseUuid(id)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
@@ -1031,6 +1139,9 @@ class ConnectorResource {
     @Path("/{id}/connect")
     @Consumes(MediaType.WILDCARD)
     @Transactional
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     fun connect(@PathParam("id") id: String): Response {
         val connectorId = parseUuid(id)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
@@ -1063,6 +1174,9 @@ class ConnectorResource {
     @Path("/{id}/disconnect")
     @Consumes(MediaType.WILDCARD)
     @Transactional
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun disconnect(@PathParam("id") id: String, @QueryParam("force") force: Boolean?): Response {
         val connectorId = parseUuid(id)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
@@ -1123,6 +1237,9 @@ class ConnectorResource {
     @POST
     @Path("/{id}/test")
     @Consumes(MediaType.WILDCARD)
+    /**
+     * Implements `testConnection` for this source unit.
+     */
     fun testConnection(@PathParam("id") id: String): Response {
         val connectorId = parseUuid(id)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
@@ -1241,6 +1358,9 @@ class ConnectorResource {
     @PATCH
     @Path("/{id}")
     @Transactional
+    /**
+     * Updates the requested state.
+     */
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
         val connectorId = parseUuid(id)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
@@ -1337,6 +1457,9 @@ class ConnectorResource {
     @DELETE
     @Path("/{id}")
     @Transactional
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun delete(@PathParam("id") id: String): Response {
         val connectorId = parseUuid(id)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()

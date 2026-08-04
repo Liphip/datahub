@@ -5,6 +5,9 @@ import org.eclipse.microprofile.config.inject.ConfigProperty
 import java.util.Optional
 
 @ApplicationScoped
+/**
+ * Defines the class `GrafanaInstanceConfig`, the contract implemented by this source unit.
+ */
 class GrafanaInstanceConfig(
     @ConfigProperty(name = "dataturntable.grafana.dashboard.enabled", defaultValue = "false")
     private val dashboardEnabled: Boolean,
@@ -36,6 +39,9 @@ class GrafanaInstanceConfig(
     private val monitoringAdminPassword: String,
 ) {
 
+    /**
+     * Defines the class `Target`, the contract implemented by this source unit.
+     */
     data class Target(
         val enabled: Boolean,
         val baseUrl: String,
@@ -43,10 +49,16 @@ class GrafanaInstanceConfig(
         val adminPassword: String,
         val datasource: DatasourceTarget? = null,
     ) {
+        /**
+         * Evaluates the named capability or state predicate.
+         */
         fun isConfigured(): Boolean =
             enabled && baseUrl.isNotBlank() && adminUser.isNotBlank() && adminPassword.isNotBlank()
     }
 
+    /**
+     * Defines the class `DatasourceTarget`, the contract implemented by this source unit.
+     */
     data class DatasourceTarget(
         val host: String,
         val port: Int,
@@ -55,10 +67,16 @@ class GrafanaInstanceConfig(
         val password: String,
         val sslMode: String,
     ) {
+        /**
+         * Evaluates the named capability or state predicate.
+         */
         fun isConfigured(): Boolean =
             host.isNotBlank() && port > 0 && database.isNotBlank() && user.isNotBlank() && password.isNotBlank()
     }
 
+    /**
+     * Implements `forTarget` for this source unit.
+     */
     fun forTarget(target: GrafanaTargetInstance): Target =
         when (target) {
             GrafanaTargetInstance.DASHBOARD -> Target(

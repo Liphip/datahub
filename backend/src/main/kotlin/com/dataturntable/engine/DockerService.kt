@@ -15,6 +15,9 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
+/**
+ * Defines the class `ModuleExecutionOutput`, the contract implemented by this source unit.
+ */
 data class ModuleExecutionOutput(
     val result: Any?,
     val stdout: String,
@@ -23,6 +26,9 @@ data class ModuleExecutionOutput(
     val durationMs: Long
 )
 
+/**
+ * Defines the class `ModuleExecutionException`, the contract implemented by this source unit.
+ */
 class ModuleExecutionException(
     message: String,
     val stdout: String = "",
@@ -31,6 +37,9 @@ class ModuleExecutionException(
     cause: Throwable? = null
 ) : RuntimeException(message, cause)
 
+/**
+ * Defines the class `RawContainerResult`, the contract implemented by this source unit.
+ */
 private data class RawContainerResult(
     val stdout: String,
     val stderr: String,
@@ -39,6 +48,9 @@ private data class RawContainerResult(
 )
 
 @ApplicationScoped
+/**
+ * Defines the class `DockerService`, the contract implemented by this source unit.
+ */
 class DockerService {
 
     private val LOG = Logger.getLogger(DockerService::class.java)
@@ -70,6 +82,9 @@ class DockerService {
     @ConfigProperty(name = "dataturntable.docker.timeout-seconds", defaultValue = "300")
     var timeoutSeconds: Int = 300
     
+    /**
+     * Processes the named request, event, or operation.
+     */
     fun executeModule(
         moduleVersion: ModuleVersion,
         inputData: Any?,
@@ -186,6 +201,9 @@ class DockerService {
     }
 
     /** Build the env map passed to warm container jobs (no MODULE_CODE — script is in job.code). */
+    /**
+     * Implements `buildEnvMap` for this source unit.
+     */
     private fun buildEnvMap(
         inputData: Any?,
         moduleType: ModuleType,
@@ -228,6 +246,9 @@ class DockerService {
         }
     }
     
+    /**
+     * Processes the named request, event, or operation.
+     */
     private fun runContainer(
         containerName: String,
         code: String,
@@ -313,6 +334,9 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
             val stdoutBuilder = StringBuilder()
             val stderrBuilder = StringBuilder()
 
+            /**
+             * Initializes, connects, or acquires the named runtime resource.
+             */
             fun startCollector(reader: BufferedReader, sink: StringBuilder): Thread {
                 val thread = Thread {
                     var line: String? = reader.readLine()
@@ -368,6 +392,9 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
         }
     }
     
+    /**
+     * Implements `buildModuleScript` for this source unit.
+     */
     private fun buildModuleScript(code: String, moduleType: ModuleType): String {
         // Shared runtime helpers injected into every module container.
         // KEY DESIGN PRINCIPLE:
@@ -544,6 +571,9 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
         return java.util.Base64.getEncoder().encodeToString(script.toByteArray())
     }
     
+    /**
+     * Implements `cleanupContainer` for this source unit.
+     */
     private fun cleanupContainer(containerName: String) {
         try {
             val process = ProcessBuilder("docker", "rm", "-f", containerName)
@@ -555,6 +585,9 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
         }
     }
     
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun stopAllContainers() {
         LOG.info("Stopping all DataTurntable containers")
         

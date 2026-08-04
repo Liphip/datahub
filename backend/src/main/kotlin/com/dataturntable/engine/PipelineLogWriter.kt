@@ -20,6 +20,9 @@ import java.util.UUID
  * in their own transaction.
  */
 @ApplicationScoped
+/**
+ * Defines the class `PipelineLogWriter`, the contract implemented by this source unit.
+ */
 class PipelineLogWriter {
 
     private val LOG = Logger.getLogger(PipelineLogWriter::class.java)
@@ -30,6 +33,9 @@ class PipelineLogWriter {
     // ── Run lifecycle ────────────────────────────────────────────────────────
 
     @Transactional(Transactional.TxType.REQUIRES_NEW)
+    /**
+     * Implements `markRunning` for this source unit.
+     */
     fun markRunning(runId: UUID) {
         val run = em.find(PipelineRun::class.java, runId) ?: return
         if (run.status == PipelineRunStatus.CANCELLED) return
@@ -39,6 +45,9 @@ class PipelineLogWriter {
     }
 
     @Transactional(Transactional.TxType.REQUIRES_NEW)
+    /**
+     * Implements `markSuccess` for this source unit.
+     */
     fun markSuccess(runId: UUID, metrics: String?) {
         val run = em.find(PipelineRun::class.java, runId) ?: return
         run.status = PipelineRunStatus.SUCCESS
@@ -48,6 +57,9 @@ class PipelineLogWriter {
     }
 
     @Transactional(Transactional.TxType.REQUIRES_NEW)
+    /**
+     * Implements `markFailed` for this source unit.
+     */
     fun markFailed(runId: UUID, errorMessage: String?, metrics: String?) {
         val run = em.find(PipelineRun::class.java, runId) ?: return
         run.status = PipelineRunStatus.FAILED
@@ -58,12 +70,18 @@ class PipelineLogWriter {
     }
 
     @Transactional(Transactional.TxType.REQUIRES_NEW)
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     fun isCancelled(runId: UUID): Boolean {
         val run = em.find(PipelineRun::class.java, runId) ?: return false
         return run.status == PipelineRunStatus.CANCELLED
     }
 
     @Transactional(Transactional.TxType.REQUIRES_NEW)
+    /**
+     * Updates the requested state.
+     */
     fun setRetryOfRunId(runId: UUID, retryOfRunId: UUID) {
         val run = em.find(PipelineRun::class.java, runId) ?: return
         if (run.retryOfRunId == null) {
@@ -75,6 +93,9 @@ class PipelineLogWriter {
     // ── Node logs ────────────────────────────────────────────────────────────
 
     @Transactional(Transactional.TxType.REQUIRES_NEW)
+    /**
+     * Creates or persists the requested state.
+     */
     fun persistNodeLog(
         runId: UUID,
         nodeId: String,

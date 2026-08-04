@@ -16,6 +16,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 @ApplicationScoped
+/**
+ * Defines the class `MonitoringMetricsUpdater`, the contract implemented by this source unit.
+ */
 class MonitoringMetricsUpdater {
 
     private val log = Logger.getLogger(MonitoringMetricsUpdater::class.java)
@@ -43,6 +46,9 @@ class MonitoringMetricsUpdater {
     @Inject
     lateinit var runtimeRoleConfig: RuntimeRoleConfig
 
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     fun onStart(@Observes event: StartupEvent) {
         if (!runtimeRoleConfig.isPublicApi()) {
             log.infof("MonitoringMetricsUpdater startup skipped for runtime role %s", runtimeRoleConfig.role)
@@ -75,10 +81,16 @@ class MonitoringMetricsUpdater {
         scheduler.scheduleAtFixedRate(::refresh, 30, 30, TimeUnit.SECONDS)
     }
 
+    /**
+     * Implements `onStop` for this source unit.
+     */
     fun onStop(@Observes event: ShutdownEvent) {
         scheduler.shutdownNow()
     }
 
+    /**
+     * Implements `refresh` for this source unit.
+     */
     private fun refresh() {
         try {
             val snapshot = snapshotService.collect()
@@ -96,6 +108,9 @@ class MonitoringMetricsUpdater {
         }
     }
 
+    /**
+     * Updates the requested state.
+     */
     private fun update(snapshot: MonitoringSnapshot) {
         pipelineStatesGauge.register(
             snapshot.pipelineStates.map { (status, count) ->
@@ -136,6 +151,9 @@ class MonitoringMetricsUpdater {
         staleRunning.set(snapshot.staleRunningCount)
     }
 
+    /**
+     * Implements `tagsFromCompositeKey` for this source unit.
+     */
     private fun tagsFromCompositeKey(key: String): Tags {
         val pairs = key.split(",")
             .mapNotNull { segment ->

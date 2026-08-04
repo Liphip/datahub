@@ -6,10 +6,16 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import kotlin.random.Random
 
+/**
+ * Defines the object `EncryptionUtils`, the contract implemented by this source unit.
+ */
 object EncryptionUtils {
     private const val AES = "AES"
     private const val AES_CBC = "AES/CBC/PKCS5Padding"
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     private fun getKey(): ByteArray? {
         val raw = System.getenv("CONNECTOR_CONFIG_KEY") ?: System.getProperty("connector.config.key")
         if (raw == null || raw.isBlank()) return null
@@ -38,6 +44,9 @@ object EncryptionUtils {
         }
     }
 
+    /**
+     * Implements `encrypt` for this source unit.
+     */
     fun encrypt(plain: String): String {
         val key = getKey() ?: return plain
         val iv = ByteArray(16)
@@ -52,6 +61,9 @@ object EncryptionUtils {
         return Base64.getEncoder().encodeToString(combo)
     }
 
+    /**
+     * Implements `decrypt` for this source unit.
+     */
     fun decrypt(cipherText: String): String {
         val key = getKey() ?: return cipherText
         return try {

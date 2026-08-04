@@ -11,6 +11,9 @@ import java.util.UUID
 
 @Entity
 @Table(name = "alert_rules")
+/**
+ * Defines the class `AlertRule`, the contract implemented by this source unit.
+ */
 open class AlertRule : PanacheBase() {
     
     @Id
@@ -62,6 +65,9 @@ open class AlertRule : PanacheBase() {
         override fun findById(id: UUID): AlertRule? =
             find("id = ?1", id).firstResult()
 
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByTenantId(tenantId: UUID): List<AlertRule> =
             list("tenant.id = ?1", tenantId)
 

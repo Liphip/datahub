@@ -18,6 +18,9 @@ import java.util.concurrent.TimeUnit
  * they return (and cache internally via Micrometer) the right Timer instance.
  */
 @ApplicationScoped
+/**
+ * Defines the class `PipelineMetrics`, the contract implemented by this source unit.
+ */
 class PipelineMetrics {
 
     @Inject
@@ -39,6 +42,9 @@ class PipelineMetrics {
             .maximumExpectedValue(Duration.ofMinutes(5))
             .register(registry)
 
+    /**
+     * Implements `pipelineCounter` for this source unit.
+     */
     fun pipelineCounter(status: String, pipeline: String): Counter =
         Counter.builder("dt_pipeline_runs_total")
             .description("Total pipeline run completions")
@@ -62,6 +68,9 @@ class PipelineMetrics {
             .maximumExpectedValue(Duration.ofMinutes(2))
             .register(registry)
 
+    /**
+     * Implements `moduleCounter` for this source unit.
+     */
     fun moduleCounter(stage: String, status: String): Counter =
         Counter.builder("dt_module_executions_total")
             .description("Total module execution completions")
@@ -71,6 +80,9 @@ class PipelineMetrics {
 
     // ── Container pool counters ──────────────────────────────────────────────
 
+    /**
+     * Implements `poolAcquireCounter` for this source unit.
+     */
     fun poolAcquireCounter(result: String): Counter =
         Counter.builder("dt_warm_pool_acquire_total")
             .description("Warm container pool acquire outcomes")

@@ -14,6 +14,9 @@ import org.eclipse.microprofile.jwt.JsonWebToken
 @Path("/api/internal/v1/auth")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+/**
+ * Defines the class `AuthResource`, the contract implemented by this source unit.
+ */
 class AuthResource {
     
     @Inject
@@ -24,6 +27,9 @@ class AuthResource {
     
     @POST
     @Path("/login")
+    /**
+     * Implements `login` for this source unit.
+     */
     fun login(@Valid request: LoginRequest): Response {
         return try {
             val response = authService.login(request)
@@ -35,6 +41,9 @@ class AuthResource {
     
     @POST
     @Path("/register")
+    /**
+     * Creates or persists the requested state.
+     */
     fun register(@Valid request: SetupRequest): Response {
         return try {
             val setupResponse = authService.setup(request)
@@ -63,6 +72,9 @@ class AuthResource {
 
     @POST
     @Path("/setup")
+    /**
+     * Updates the requested state.
+     */
     fun setup(@Valid request: SetupRequest): Response {
         return try {
             val response = authService.setup(request)
@@ -77,6 +89,9 @@ class AuthResource {
     @GET
     @Path("/me")
     @Authenticated
+    /**
+     * Implements `me` for this source unit.
+     */
     fun me(): Response {
         val user = authService.getUserFromJwt()
         return if (user != null) {
@@ -89,6 +104,9 @@ class AuthResource {
     @GET
     @Path("/tenants")
     @Authenticated
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun listTenantContexts(): Response {
         val subject = jwt.subject ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val userId = try {
@@ -104,6 +122,9 @@ class AuthResource {
     @POST
     @Path("/switch-tenant")
     @Authenticated
+    /**
+     * Implements `switchTenant` for this source unit.
+     */
     fun switchTenant(request: Map<String, String>): Response {
         val subject = jwt.subject ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val userId = try {

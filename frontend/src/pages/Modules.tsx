@@ -39,17 +39,29 @@ export default function Modules() {
 
   const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
 
+  /**
+   * Implements `showToast` for this source unit.
+   */
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
   };
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   const loadModules = async (tid: string, type?: string) => {
     const data = await api.getModules(tid, type === 'all' || !type ? undefined : type);
     setModules(data);
   };
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
+    /**
+     * Implements `fetch` for this source unit.
+     */
     const fetch = async () => {
       if (!tenantId) { setLoading(false); return; }
       try {
@@ -69,6 +81,9 @@ export default function Modules() {
     fetch();
   }, [tenantId, filter, t]);
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleCreateModule = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!tenantId || !newModuleName) return;
@@ -85,6 +100,9 @@ export default function Modules() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleDeleteModule = async (id: string, e: React.MouseEvent) => {
     e.preventDefault();
     setDeletingId(id);

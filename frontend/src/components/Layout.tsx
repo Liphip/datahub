@@ -4,12 +4,18 @@ import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import { languages } from '../i18n';
 
+/**
+ * Defines the interface `LayoutProps`, the contract implemented by this source unit.
+ */
 interface LayoutProps {
   children: React.ReactNode;
 }
 
 // ── Nav item definitions ───────────────────────────────────────────────────────
 
+/**
+ * Defines the interface `NavItem`, the contract implemented by this source unit.
+ */
 interface NavItem {
   key: string;
   href: string;
@@ -107,6 +113,9 @@ const navItems: NavItem[] = [
 
 // ── Sidebar inner content (extracted to avoid React remount issue) ─────────────
 
+/**
+ * Defines the interface `SidebarProps`, the contract implemented by this source unit.
+ */
 interface SidebarProps {
   visibleNav: NavItem[];
   currentPath: string;
@@ -125,6 +134,9 @@ interface SidebarProps {
   onNavClick?: () => void;
 }
 
+/**
+ * Implements `SidebarInner` for this source unit.
+ */
 function SidebarInner({
   visibleNav,
   currentPath,
@@ -144,6 +156,9 @@ function SidebarInner({
 }: SidebarProps) {
   const currentTenant = tenantContexts.find((c) => c.tenantId === selectedTenantId);
 
+  /**
+   * Evaluates the named capability or state predicate.
+   */
   const isActive = (href: string, exact = false) =>
     exact ? currentPath === href : currentPath.startsWith(href);
 
@@ -310,6 +325,9 @@ export default function Layout({ children }: LayoutProps) {
   );
   const visibleNav = navItems.filter((item) => !item.adminOnly || canManageTenants);
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     const isDark = theme === 'dark';
     document.documentElement.classList.toggle('dark', isDark);
@@ -318,15 +336,24 @@ export default function Layout({ children }: LayoutProps) {
   }, [theme]);
 
   // Close mobile sidebar on route change
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     setSidebarOpen(false);
   }, [location.pathname]);
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleTenantSwitch = async (tenantId: string) => {
     if (!tenantId || tenantId === selectedTenantId) return;
     try {

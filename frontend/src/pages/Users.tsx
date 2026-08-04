@@ -4,6 +4,9 @@ import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { Membership, Role, User } from '../types';
 
+/**
+ * Defines the interface `EditState`, the contract implemented by this source unit.
+ */
 interface EditState {
   membershipId: string;
   roleId: string;
@@ -75,17 +78,26 @@ export default function Users() {
 
   const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
   const abilities = user?.abilities || [];
+  /**
+   * Evaluates the named capability or state predicate.
+   */
   const hasAbility = (ability: string) => user?.superadmin || abilities.includes('*') || abilities.includes(ability);
   const canReadUsers = hasAbility('read:user');
   const canWriteUsers = hasAbility('write:user');
   const canManageTenant = hasAbility('manage:tenant');
   const canInviteUsers = canWriteUsers && canManageTenant;
 
+  /**
+   * Implements `showToast` for this source unit.
+   */
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
   };
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   const loadData = async (tid: string) => {
     if (!canReadUsers && !canManageTenant) {
       setUsers([]);
@@ -117,7 +129,13 @@ export default function Users() {
     return rolesData;
   };
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     const init = async () => {
       if (!tenantId) { setLoading(false); return; }
       try {
@@ -133,7 +151,13 @@ export default function Users() {
     init();
   }, [tenantId, canReadUsers, canManageTenant, t]);
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   const getMembershipForUser = (userId: string) => memberships.find((m) => m.authUserId === userId);
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   const getRoleForMembership = (m?: Membership) => roles.find((r) => r.id === m?.roleId);
   const parseAbilities = (memberAbilities: Membership['abilities']): string[] => {
     if (!memberAbilities) return [];
@@ -141,6 +165,9 @@ export default function Users() {
     try { const p = JSON.parse(memberAbilities as string); return Array.isArray(p) ? p : []; } catch { return []; }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleInviteUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canInviteUsers) {
@@ -170,6 +197,9 @@ export default function Users() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleSaveRoleEdit = async () => {
     if (!canManageTenant) {
       showToast(t('users.permissionUpdateMemberships'), 'error');
@@ -189,6 +219,9 @@ export default function Users() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleDeleteMembership = async (membershipId: string) => {
     if (!canManageTenant) {
       showToast(t('users.permissionRemoveMemberships'), 'error');
@@ -208,6 +241,9 @@ export default function Users() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleToggleUserActive = async (target: User) => {
     if (!canWriteUsers) {
       showToast(t('users.permissionUpdateUsers'), 'error');
@@ -226,6 +262,9 @@ export default function Users() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleReload = async () => {
     if (!tenantId) return;
     setLoading(true);
@@ -239,6 +278,9 @@ export default function Users() {
   };
 
   // Role CRUD
+  /**
+   * Implements `openCreateRole` for this source unit.
+   */
   const openCreateRole = () => {
     setEditingRole(null);
     setRoleModalName('');
@@ -248,6 +290,9 @@ export default function Users() {
     setShowRoleModal(true);
   };
 
+  /**
+   * Implements `openEditRole` for this source unit.
+   */
   const openEditRole = (role: Role) => {
     setEditingRole(role);
     setRoleModalName(role.name);
@@ -257,12 +302,18 @@ export default function Users() {
     setShowRoleModal(true);
   };
 
+  /**
+   * Converts a value into the representation required by its caller.
+   */
   const toggleAbility = (ability: string) => {
     setRoleModalAbilities((prev) =>
       prev.includes(ability) ? prev.filter((a) => a !== ability) : [...prev, ability]
     );
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleSaveRole = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canManageTenant) {
@@ -295,6 +346,9 @@ export default function Users() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleDeleteRole = async (roleId: string) => {
     if (!canManageTenant) {
       showToast(t('users.permissionUpdateMemberships'), 'error');
@@ -314,6 +368,9 @@ export default function Users() {
     }
   };
 
+  /**
+   * Implements `tableUsers` for this source unit.
+   */
   const tableUsers = (canReadUsers ? users : memberships.map((m) => ({
     id: m.authUserId,
     email: m.authUserEmail || `user:${m.authUserId.slice(0, 8)}`,

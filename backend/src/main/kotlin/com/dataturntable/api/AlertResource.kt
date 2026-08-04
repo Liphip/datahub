@@ -24,6 +24,14 @@ import java.util.UUID
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
+/**
+ * Tenant-scoped management API for alert channels, rules, and delivery history.
+ *
+ * Each handler resolves the JWT subject to a persisted user and verifies both
+ * tenant membership and the required alert ability before reading or mutating
+ * state. JSON-valued entity fields are decoded for API responses and serialized
+ * before persistence so clients can use structured condition/configuration data.
+ */
 class AlertResource {
 
     private val objectMapper = ObjectMapper()
@@ -34,12 +42,20 @@ class AlertResource {
     @PersistenceContext
     lateinit var em: EntityManager
 
+    /** Resolves the authenticated JWT subject to its persisted user, or `null` for an invalid subject. */
+    /**
+     * Implements `currentUser` for this source unit.
+     */
     private fun currentUser(): User? {
         val subject = jwt.subject ?: return null
         val userId = try { UUID.fromString(subject) } catch (_: Exception) { return null }
         return em.find(User::class.java, userId)
     }
 
+    /** Returns a forbidden response unless [user] can access [tenantId] and has [ability]. */
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun requireTenantAccess(user: User, tenantId: String, ability: String): Response? {
         if (!SecurityUtils.canAccessTenant(user, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
@@ -50,6 +66,10 @@ class AlertResource {
         return null
     }
 
+    /** Converts a case-insensitive external channel type to the persisted enum. */
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseChannelType(value: String): AlertChannelType? {
         return try {
             AlertChannelType.valueOf(value.uppercase())
@@ -58,6 +78,10 @@ class AlertResource {
         }
     }
 
+    /** Parses a required UUID and reports a client-facing bad-request error naming [field] on failure. */
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseUuid(value: String, field: String): UUID {
         return try {
             UUID.fromString(value)
@@ -68,6 +92,10 @@ class AlertResource {
         }
     }
 
+    /** Decodes a persisted JSON value, retaining the original string if legacy/invalid JSON cannot be decoded. */
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseJsonValue(raw: String?): Any {
         if (raw.isNullOrBlank()) return emptyMap<String, Any>()
         return try {
@@ -77,6 +105,10 @@ class AlertResource {
         }
     }
 
+    /** Serializes a request value for JSON-backed persistence, using an empty object for `null`. */
+    /**
+     * Converts a value into the representation required by its caller.
+     */
     private fun serializeJsonValue(value: Any?): String {
         if (value == null) return "{}"
         return try {
@@ -86,6 +118,10 @@ class AlertResource {
         }
     }
 
+    /** Accepts either a JSON string or a map and returns a condition object suitable for validation. */
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseConditionMap(raw: Any?): Map<String, Any>? {
         if (raw == null) return null
         return when (raw) {
@@ -103,6 +139,10 @@ class AlertResource {
         }
     }
 
+    /** Validates recursive `all`/`any` condition groups or a leaf containing non-blank `field` and `operator`. */
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     private fun isValidConditionMap(condition: Map<String, Any>): Boolean {
         if (condition.isEmpty()) return false
 
@@ -131,6 +171,10 @@ class AlertResource {
         return !field.isNullOrBlank() && !operator.isNullOrBlank()
     }
 
+    /** Maps an alert channel entity to its public response representation. */
+    /**
+     * Converts a value into the representation required by its caller.
+     */
     private fun toChannelDto(channel: AlertChannel): Map<String, Any?> {
         return mapOf(
             "id" to channel.id,
@@ -144,6 +188,10 @@ class AlertResource {
         )
     }
 
+    /** Maps an alert rule entity to its public response representation. */
+    /**
+     * Converts a value into the representation required by its caller.
+     */
     private fun toRuleDto(rule: AlertRule): Map<String, Any?> {
         return mapOf(
             "id" to rule.id,
@@ -159,6 +207,10 @@ class AlertResource {
         )
     }
 
+    /** Maps an alert delivery record to its public response representation. */
+    /**
+     * Converts a value into the representation required by its caller.
+     */
     private fun toHistoryDto(history: AlertHistory): Map<String, Any?> {
         return mapOf(
             "id" to history.id,
@@ -176,6 +228,10 @@ class AlertResource {
     
     @GET
     @Path("/channels")
+    /** Lists all alert channels in a tenant after enforcing `alert:read`. */
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun listChannels(@QueryParam("tenantId") tenantId: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseUuid(tenantId, "tenantId")
@@ -194,6 +250,10 @@ class AlertResource {
     @POST
     @Path("/channels")
     @Transactional
+    /** Creates an active alert channel in the requested tenant after enforcing `alert:configure`. */
+    /**
+     * Creates or persists the requested state.
+     */
     fun createChannel(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantId = tenantIdQuery ?: (request["tenantId"] as? String)
@@ -225,6 +285,10 @@ class AlertResource {
     @PATCH
     @Path("/channels/{id}")
     @Transactional
+    /** Applies supplied channel fields and records a new update timestamp. */
+    /**
+     * Updates the requested state.
+     */
     fun updateChannel(@PathParam("id") id: String, request: Map<String, Any>): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val channel = em.find(AlertChannel::class.java, parseUuid(id, "channel id"))
@@ -255,6 +319,10 @@ class AlertResource {
     @DELETE
     @Path("/channels/{id}")
     @Transactional
+    /** Deletes one configured channel after tenant and `alert:configure` authorization. */
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun deleteChannel(@PathParam("id") id: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val channel = em.find(AlertChannel::class.java, parseUuid(id, "channel id"))
@@ -271,6 +339,10 @@ class AlertResource {
     
     @GET
     @Path("/rules")
+    /** Lists a tenant's alert rules after enforcing `alert:read`. */
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun listRules(@QueryParam("tenantId") tenantId: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseUuid(tenantId, "tenantId")
@@ -287,6 +359,10 @@ class AlertResource {
     @POST
     @Path("/rules")
     @Transactional
+    /** Creates a rule with a valid condition tree and references to existing pipeline/channel entities. */
+    /**
+     * Creates or persists the requested state.
+     */
     fun createRule(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantId = tenantIdQuery ?: (request["tenantId"] as? String)
@@ -342,6 +418,10 @@ class AlertResource {
     @PATCH
     @Path("/rules/{id}")
     @Transactional
+    /** Updates a rule's supplied fields, validating any replacement condition or related entity reference. */
+    /**
+     * Updates the requested state.
+     */
     fun updateRule(@PathParam("id") id: String, request: Map<String, Any>): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val rule = em.find(AlertRule::class.java, parseUuid(id, "rule id"))
@@ -391,6 +471,10 @@ class AlertResource {
     @DELETE
     @Path("/rules/{id}")
     @Transactional
+    /** Deletes one alert rule after tenant and `alert:configure` authorization. */
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun deleteRule(@PathParam("id") id: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val rule = em.find(AlertRule::class.java, parseUuid(id, "rule id"))
@@ -407,6 +491,10 @@ class AlertResource {
     
     @GET
     @Path("/history")
+    /** Returns a bounded, tenant-authorized recent alert delivery history. */
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getHistory(@QueryParam("tenantId") tenantId: String, @QueryParam("limit") limit: Int?): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseUuid(tenantId, "tenantId")

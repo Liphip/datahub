@@ -19,6 +19,9 @@ import java.util.UUID
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
+/**
+ * Defines the class `AuthUserResource`, the contract implemented by this source unit.
+ */
 class AuthUserResource {
     @Inject
     lateinit var jwt: JsonWebToken
@@ -29,11 +32,17 @@ class AuthUserResource {
     @Inject
     lateinit var grafanaSyncService: GrafanaSyncService
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     private fun getTenantIdFromToken(): String? {
         val tid = jwt.getClaim("tenantId") as? String
         return if (tid.isNullOrBlank()) null else tid
     }
 
+    /**
+     * Implements `currentUser` for this source unit.
+     */
     private fun currentUser(): User? {
         return try {
             jwt.subject?.let { em.find(User::class.java, UUID.fromString(it)) }
@@ -42,23 +51,38 @@ class AuthUserResource {
         }
     }
 
+    /**
+     * Implements `resolveTenantIdOrBadRequest` for this source unit.
+     */
     private fun resolveTenantIdOrBadRequest(tenantIdQuery: String?): String? {
         return tenantIdQuery ?: getTenantIdFromToken()
     }
 
+    /**
+     * Implements `userHasMembershipInTenant` for this source unit.
+     */
     private fun userHasMembershipInTenant(user: User, tenantId: UUID): Boolean {
         return user.memberships.any { membership -> membership.tenant?.id == tenantId }
     }
 
+    /**
+     * Implements `extractPasswordHash` for this source unit.
+     */
     private fun extractPasswordHash(request: Map<String, Any>): String? {
         return (request["passwordHash"] as? String)?.takeIf { it.isNotBlank() }
             ?: (request["password"] as? String)?.takeIf { it.isNotBlank() }
     }
 
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     private fun hashForStorage(passwordHash: String): String {
         return BCrypt.hashpw(passwordHash, BCrypt.gensalt())
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseUuid(value: String, field: String): UUID {
         return try {
             UUID.fromString(value)
@@ -68,6 +92,9 @@ class AuthUserResource {
     }
 
     @GET
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun list(@QueryParam("tenantId") tenantId: String?): Response {
         val resolvedTenantId = resolveTenantIdOrBadRequest(tenantId)
             ?: return Response.status(400).entity(mapOf("error" to "tenantId is required")).build()
@@ -106,6 +133,9 @@ class AuthUserResource {
 
     @POST
     @Transactional
+    /**
+     * Creates or persists the requested state.
+     */
     fun create(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
         val currentUser = currentUser()
         val tenantId = resolveTenantIdOrBadRequest(tenantIdQuery)
@@ -146,6 +176,9 @@ class AuthUserResource {
 
     @GET
     @Path("/{id}")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun get(@PathParam("id") id: String, @QueryParam("tenantId") tenantIdQuery: String?): Response {
         val userId = try {
             parseUuid(id, "user id")
@@ -187,6 +220,9 @@ class AuthUserResource {
     @PATCH
     @Path("/{id}")
     @Transactional
+    /**
+     * Updates the requested state.
+     */
     fun update(@PathParam("id") id: String, @QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
         val userId = try {
             parseUuid(id, "user id")
@@ -229,6 +265,9 @@ class AuthUserResource {
     @DELETE
     @Path("/{id}")
     @Transactional
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun delete(@PathParam("id") id: String, @QueryParam("tenantId") tenantIdQuery: String?): Response {
         val userId = try {
             parseUuid(id, "user id")

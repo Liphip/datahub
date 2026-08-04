@@ -39,6 +39,9 @@ import java.time.Duration
  *   CUSTOM → delegated to registered plugin; no-op stub here
  */
 @ApplicationScoped
+/**
+ * Defines the class `ConnectorRuntimeService`, the contract implemented by this source unit.
+ */
 class ConnectorRuntimeService {
 
     private val LOG = Logger.getLogger(ConnectorRuntimeService::class.java)
@@ -171,6 +174,9 @@ class ConnectorRuntimeService {
 
     // ── REST ─────────────────────────────────────────────────────────────────
 
+    /**
+     * Implements `fetchRestInput` for this source unit.
+     */
     private fun fetchRestInput(config: Map<String, Any?>): Any? {
         val baseUrl = config["baseUrl"]?.toString()?.trimEnd('/') ?: run {
             LOG.warn("REST INPUT connector missing baseUrl — skipping fetch")
@@ -197,6 +203,9 @@ class ConnectorRuntimeService {
         }
     }
 
+    /**
+     * Implements `deliverRestOutput` for this source unit.
+     */
     private fun deliverRestOutput(config: Map<String, Any?>, data: Any?) {
         val baseUrl = config["baseUrl"]?.toString()?.trimEnd('/') ?: run {
             LOG.warn("REST OUTPUT connector missing baseUrl — skipping deliver")
@@ -233,6 +242,9 @@ class ConnectorRuntimeService {
         }
     }
 
+    /**
+     * Implements `applyRestHeaders` for this source unit.
+     */
     private fun applyRestHeaders(builder: HttpRequest.Builder, config: Map<String, Any?>) {
         val authToken = config["authToken"]?.toString()
         if (!authToken.isNullOrBlank()) {
@@ -250,6 +262,9 @@ class ConnectorRuntimeService {
 
     // ── FILE ─────────────────────────────────────────────────────────────────
 
+    /**
+     * Implements `fetchFileInput` for this source unit.
+     */
     private fun fetchFileInput(config: Map<String, Any?>): Any? {
         val path = config["path"]?.toString() ?: return null
         return try {
@@ -261,6 +276,9 @@ class ConnectorRuntimeService {
         }
     }
 
+    /**
+     * Implements `deliverFileOutput` for this source unit.
+     */
     private fun deliverFileOutput(config: Map<String, Any?>, data: Any?) {
         val path = config["path"]?.toString() ?: return
         val body = if (data != null) objectMapper.writeValueAsString(data) else "{}"
@@ -275,6 +293,9 @@ class ConnectorRuntimeService {
 
     // ── MQTT ─────────────────────────────────────────────────────────────────
 
+    /**
+     * Implements `deliverMqttOutput` for this source unit.
+     */
     private fun deliverMqttOutput(config: Map<String, Any?>, data: Any?, connector: Connector) {
         val payloadJson = if (data != null) objectMapper.writeValueAsString(data) else "{}"
         val topicOverride = config["mqttTopic"]?.toString()?.trim()
@@ -289,6 +310,9 @@ class ConnectorRuntimeService {
 
     // ── WebSocket ─────────────────────────────────────────────────────────────
 
+    /**
+     * Implements `deliverWebSocketOutput` for this source unit.
+     */
     private fun deliverWebSocketOutput(config: Map<String, Any?>, data: Any?, connector: Connector) {
         val payloadJson = if (data != null) objectMapper.writeValueAsString(data) else "{}"
         webSocketConnectionManager.send(
@@ -300,6 +324,9 @@ class ConnectorRuntimeService {
 
     // ── UDP ───────────────────────────────────────────────────────────────────
 
+    /**
+     * Implements `deliverUdpOutput` for this source unit.
+     */
     private fun deliverUdpOutput(config: Map<String, Any?>, data: Any?) {
         val host = config["host"]?.toString() ?: return
         val port = config["port"]?.toString()?.toIntOrNull() ?: return
@@ -318,6 +345,9 @@ class ConnectorRuntimeService {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseResponseBody(body: String): Any? {
         if (body.isBlank()) return null
         return try {

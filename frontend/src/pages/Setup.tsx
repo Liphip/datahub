@@ -14,6 +14,9 @@ export default function Setup() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');

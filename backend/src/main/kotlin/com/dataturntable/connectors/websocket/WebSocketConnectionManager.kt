@@ -47,6 +47,9 @@ import java.util.concurrent.TimeUnit
  *         and closes. Reuses an existing INPUT connection if one exists for the same URL.
  */
 @ApplicationScoped
+/**
+ * Defines the class `WebSocketConnectionManager`, the contract implemented by this source unit.
+ */
 class WebSocketConnectionManager {
 
     private val LOG = Logger.getLogger(WebSocketConnectionManager::class.java)
@@ -84,12 +87,18 @@ class WebSocketConnectionManager {
 
     // ── Status info ───────────────────────────────────────────────────────────
 
+    /**
+     * Defines the class `WebSocketClientInfo`, the contract implemented by this source unit.
+     */
     data class WebSocketClientInfo(
         val connected: Boolean,
         val lastMessageAt: Instant?,
         val lastError: String?,
     )
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getClientInfo(connectorId: UUID): WebSocketClientInfo {
         val ws = connections[connectorId]
         return WebSocketClientInfo(
@@ -101,6 +110,9 @@ class WebSocketConnectionManager {
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     fun onStart(@Observes event: StartupEvent) {
         if (!runtimeRoleConfig.ownsIngestRuntime()) {
             LOG.infof("WebSocketConnectionManager startup skipped for runtime role %s", runtimeRoleConfig.role)
@@ -117,6 +129,9 @@ class WebSocketConnectionManager {
         )
     }
 
+    /**
+     * Implements `onStop` for this source unit.
+     */
     fun onStop(@Observes event: ShutdownEvent) {
         if (!runtimeRoleConfig.ownsIngestRuntime()) return
         LOG.info("WebSocketConnectionManager shutting down")
@@ -132,6 +147,9 @@ class WebSocketConnectionManager {
 
     // ── Public API ────────────────────────────────────────────────────────────
 
+    /**
+     * Implements `refreshAll` for this source unit.
+     */
     fun refreshAll() {
         try {
             val connectorIds = wsMessageRouter.findAllActiveWebSocketInputConnectors()
@@ -155,6 +173,9 @@ class WebSocketConnectionManager {
         }
     }
 
+    /**
+     * Implements `refreshConnector` for this source unit.
+     */
     fun refreshConnector(connectorId: UUID) {
         try {
             val (connector, _) = wsMessageRouter.resolveConnectorConfig(connectorId) ?: run {
@@ -171,6 +192,9 @@ class WebSocketConnectionManager {
         }
     }
 
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun disconnectConnector(connectorId: UUID, releaseLease: Boolean = true) {
         connections.remove(connectorId)?.let { ws ->
             try { ws.sendClose(WebSocket.NORMAL_CLOSURE, "disconnected").get(2, TimeUnit.SECONDS) } catch (_: Exception) {}
@@ -242,6 +266,9 @@ class WebSocketConnectionManager {
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     private fun connectConnector(connectorId: UUID) {
         val (connector, config) = wsMessageRouter.resolveConnectorConfig(connectorId) ?: return
         val url = buildWsUrl(config)
@@ -322,6 +349,9 @@ class WebSocketConnectionManager {
         }
     }
 
+    /**
+     * Implements `buildWsUrl` for this source unit.
+     */
     private fun buildWsUrl(config: Map<String, Any?>): String? {
         val url = config["url"]?.toString()?.trim() ?: return null
         if (url.isBlank()) return null
@@ -346,6 +376,9 @@ class WebSocketMessageRouter {
     lateinit var em: EntityManager
 
     @Transactional
+    /**
+     * Delivers or routes the named data to its configured destination.
+     */
     fun routeMessage(connectorId: UUID, payloadStr: String) {
         val pipelines = findPipelinesUsingConnector(connectorId)
         if (pipelines.isEmpty()) return
@@ -378,6 +411,9 @@ class WebSocketMessageRouter {
     }
 
     @Transactional
+    /**
+     * Implements `resolveConnectorConfig` for this source unit.
+     */
     fun resolveConnectorConfig(connectorId: UUID): Pair<Connector, Map<String, Any?>>? {
         val connector = em.find(Connector::class.java, connectorId) ?: return null
         val raw = try { EncryptionUtils.decrypt(connector.config) } catch (_: Exception) { connector.config }
@@ -389,6 +425,9 @@ class WebSocketMessageRouter {
     }
 
     @Transactional
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun findAllActiveWebSocketInputConnectors(): List<UUID> {
         return em.createQuery(
             "SELECT c.id FROM Connector c WHERE c.connectorType = :type AND c.direction = :dir AND c.isActive = true",
@@ -399,6 +438,9 @@ class WebSocketMessageRouter {
             .resultList
     }
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     private fun findPipelinesUsingConnector(connectorId: UUID): List<UUID> {
         val activePipelines = em.createQuery(
             "SELECT p FROM Pipeline p WHERE p.isActive = true",

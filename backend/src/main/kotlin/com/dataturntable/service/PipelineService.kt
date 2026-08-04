@@ -15,6 +15,9 @@ import jakarta.transaction.Transactional
 import java.util.*
 
 @ApplicationScoped
+/**
+ * Defines the class `PipelineService`, the contract implemented by this source unit.
+ */
 class PipelineService {
     
     @Inject
@@ -22,16 +25,25 @@ class PipelineService {
     
     private val objectMapper = ObjectMapper()
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getPipelines(tenantId: UUID): List<PipelineDto> {
         return Pipeline.findByTenantId(tenantId).map { toDto(it) }
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getPipeline(id: UUID): PipelineDto? {
         val pipeline = Pipeline.findById(id) ?: return null
         return toDto(pipeline)
     }
     
     @Transactional
+    /**
+     * Creates or persists the requested state.
+     */
     fun createPipeline(tenantId: UUID, request: CreatePipelineRequest, user: User): PipelineDto {
         val tenant = Tenant.findById(tenantId)
             ?: throw IllegalArgumentException("Tenant not found")
@@ -60,6 +72,9 @@ class PipelineService {
     }
     
     @Transactional
+    /**
+     * Updates the requested state.
+     */
     fun updatePipeline(id: UUID, request: UpdatePipelineRequest): PipelineDto? {
         val pipeline = Pipeline.findById(id) ?: return null
         
@@ -91,6 +106,9 @@ class PipelineService {
     }
     
     @Transactional
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun deletePipeline(id: UUID): Boolean {
         val pipeline = Pipeline.findById(id) ?: return false
         
@@ -102,6 +120,9 @@ class PipelineService {
     }
     
     @Transactional
+    /**
+     * Implements `triggerPipeline` for this source unit.
+     */
     fun triggerPipeline(id: UUID, triggerType: TriggerType): PipelineRunDto? {
         val pipeline = Pipeline.findById(id) ?: return null
         
@@ -118,10 +139,16 @@ class PipelineService {
         return toRunDto(run)
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getRuns(pipelineId: UUID): List<PipelineRunDto> {
         return PipelineRun.findByPipelineId(pipelineId).map { toRunDto(it) }
     }
     
+    /**
+     * Converts a value into the representation required by its caller.
+     */
     fun toDto(pipeline: Pipeline): PipelineDto {
         val runs = pipeline.runs.take(10).map { toRunDto(it) }
         
@@ -143,6 +170,9 @@ class PipelineService {
         )
     }
     
+    /**
+     * Converts a value into the representation required by its caller.
+     */
     fun toRunDto(run: PipelineRun): PipelineRunDto {
         return PipelineRunDto(
             id = run.id.toString(),

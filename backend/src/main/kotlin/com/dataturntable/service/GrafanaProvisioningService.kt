@@ -25,6 +25,9 @@ import java.time.Instant
 import java.util.Base64
 
 @ApplicationScoped
+/**
+ * Defines the class `GrafanaProvisioningService`, the contract implemented by this source unit.
+ */
 class GrafanaProvisioningService {
 
     private val log = Logger.getLogger(GrafanaProvisioningService::class.java)
@@ -40,6 +43,9 @@ class GrafanaProvisioningService {
     @PersistenceContext
     lateinit var em: EntityManager
 
+    /**
+     * Defines the class `ApplySummary`, the contract implemented by this source unit.
+     */
     data class ApplySummary(
         val processed: Int,
         val synced: Int,
@@ -48,6 +54,9 @@ class GrafanaProvisioningService {
     )
 
     @Transactional
+    /**
+     * Implements `applyPending` for this source unit.
+     */
     fun applyPending(limit: Int = 50, target: GrafanaTargetInstance? = null): ApplySummary {
         val conditions = mutableListOf("g.syncStatus = :status")
         if (target != null) conditions += "g.targetInstance = :target"
@@ -97,6 +106,9 @@ class GrafanaProvisioningService {
         )
     }
 
+    /**
+     * Implements `applyState` for this source unit.
+     */
     private fun applyState(state: GrafanaSyncState, config: GrafanaInstanceConfig.Target) {
         val desired = objectMapper.readTree(state.desiredState ?: "{}")
         when (state.scopeType) {
@@ -106,6 +118,9 @@ class GrafanaProvisioningService {
         }
     }
 
+    /**
+     * Implements `applyTenantState` for this source unit.
+     */
     private fun applyTenantState(state: GrafanaSyncState, desired: JsonNode, config: GrafanaInstanceConfig.Target) {
         if (state.targetInstance != GrafanaTargetInstance.DASHBOARD) return
         if (desired.path("deleted").asBoolean(false)) {
@@ -127,6 +142,9 @@ class GrafanaProvisioningService {
         ensureTenantDatasource(config, orgId, desired)
     }
 
+    /**
+     * Implements `applyUserState` for this source unit.
+     */
     private fun applyUserState(state: GrafanaSyncState, desired: JsonNode, config: GrafanaInstanceConfig.Target) {
         val email = desired.path("email").asText("")
         if (email.isBlank()) return
@@ -154,6 +172,9 @@ class GrafanaProvisioningService {
         }
     }
 
+    /**
+     * Implements `applyMembershipState` for this source unit.
+     */
     private fun applyMembershipState(state: GrafanaSyncState, desired: JsonNode, config: GrafanaInstanceConfig.Target) {
         if (state.targetInstance != GrafanaTargetInstance.DASHBOARD) return
         val email = desired.path("userEmail").asText("")
@@ -176,6 +197,9 @@ class GrafanaProvisioningService {
         ensureUserInOrg(config, orgId, user.path("id").asInt(), role)
     }
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     private fun findOrgIdByName(config: GrafanaInstanceConfig.Target, orgName: String): Int? {
         val encodedName = URLEncoder.encode(orgName, StandardCharsets.UTF_8)
         val response = send(config, "GET", "/api/orgs/name/$encodedName", null)
@@ -186,6 +210,9 @@ class GrafanaProvisioningService {
         }
     }
 
+    /**
+     * Creates or persists the requested state.
+     */
     private fun createOrg(config: GrafanaInstanceConfig.Target, orgName: String): Int {
         val payload = mapOf("name" to orgName)
         val response = send(config, "POST", "/api/orgs", payload)
@@ -195,6 +222,9 @@ class GrafanaProvisioningService {
         return objectMapper.readTree(response.body()).path("orgId").asInt()
     }
 
+    /**
+     * Implements `ensureTenantDatasource` for this source unit.
+     */
     private fun ensureTenantDatasource(config: GrafanaInstanceConfig.Target, orgId: Int, desired: JsonNode) {
         val datasourceConfig = config.datasource ?: return
         val datasourceName = desired.path("dashboardGrafana").path("datasourceName").asText("").ifBlank {
@@ -241,6 +271,9 @@ class GrafanaProvisioningService {
         }
     }
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     private fun findDatasourceByName(config: GrafanaInstanceConfig.Target, orgId: Int, datasourceName: String): JsonNode? {
         val encodedName = URLEncoder.encode(datasourceName, StandardCharsets.UTF_8)
         val response = send(config, "GET", "/api/datasources/name/$encodedName", null, mapOf("X-Grafana-Org-Id" to orgId.toString()))
@@ -251,6 +284,9 @@ class GrafanaProvisioningService {
         }
     }
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     private fun findUserByEmail(config: GrafanaInstanceConfig.Target, email: String): JsonNode? {
         val encodedEmail = URLEncoder.encode(email, StandardCharsets.UTF_8)
         val response = send(config, "GET", "/api/users/lookup?loginOrEmail=$encodedEmail", null)
@@ -261,6 +297,9 @@ class GrafanaProvisioningService {
         }
     }
 
+    /**
+     * Implements `ensureGrafanaUser` for this source unit.
+     */
     private fun ensureGrafanaUser(config: GrafanaInstanceConfig.Target, desired: JsonNode): JsonNode {
         val email = desired.path("email").asText("").trim()
         if (email.isBlank()) throw IllegalStateException("Missing user email for Grafana sync")
@@ -283,6 +322,9 @@ class GrafanaProvisioningService {
             ?: throw IllegalStateException("Grafana user $email was not found after provisioning")
     }
 
+    /**
+     * Implements `ensureGrafanaAdmin` for this source unit.
+     */
     private fun ensureGrafanaAdmin(config: GrafanaInstanceConfig.Target, userId: Int, isAdmin: Boolean) {
         val payload = mapOf("isGrafanaAdmin" to isAdmin)
         val response = send(config, "PUT", "/api/admin/users/$userId/permissions", payload)
@@ -291,6 +333,9 @@ class GrafanaProvisioningService {
         }
     }
 
+    /**
+     * Implements `ensureUserInOrg` for this source unit.
+     */
     private fun ensureUserInOrg(config: GrafanaInstanceConfig.Target, orgId: Int, userId: Int, role: String) {
         val payload = mapOf("userId" to userId, "role" to role)
         val addResponse = send(config, "POST", "/api/orgs/$orgId/users", payload)
@@ -308,6 +353,9 @@ class GrafanaProvisioningService {
         }
     }
 
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     private fun removeUserFromOrg(config: GrafanaInstanceConfig.Target, orgId: Int, userId: Int) {
         val response = send(config, "DELETE", "/api/orgs/$orgId/users/$userId", null)
         if (response.statusCode() !in 200..299 && response.statusCode() != 404) {
@@ -315,6 +363,9 @@ class GrafanaProvisioningService {
         }
     }
 
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     private fun deleteOrg(config: GrafanaInstanceConfig.Target, orgId: Int) {
         val response = send(config, "DELETE", "/api/orgs/$orgId", null)
         if (response.statusCode() !in 200..299 && response.statusCode() != 404) {
@@ -322,6 +373,9 @@ class GrafanaProvisioningService {
         }
     }
 
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     private fun deleteUser(config: GrafanaInstanceConfig.Target, userId: Int) {
         val response = send(config, "DELETE", "/api/admin/users/$userId", null)
         if (response.statusCode() !in 200..299 && response.statusCode() != 404) {
@@ -329,6 +383,9 @@ class GrafanaProvisioningService {
         }
     }
 
+    /**
+     * Updates the requested state.
+     */
     private fun updateUserOrgRole(config: GrafanaInstanceConfig.Target, orgId: Int, userId: Int, role: String) {
         val payload = mapOf("role" to role)
         val response = send(config, "PATCH", "/api/orgs/$orgId/users/$userId", payload)
@@ -337,6 +394,9 @@ class GrafanaProvisioningService {
         }
     }
 
+    /**
+     * Delivers or routes the named data to its configured destination.
+     */
     private fun send(
         config: GrafanaInstanceConfig.Target,
         method: String,
@@ -363,6 +423,9 @@ class GrafanaProvisioningService {
         return httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString())
     }
 
+    /**
+     * Implements `buildDisplayName` for this source unit.
+     */
     private fun buildDisplayName(desired: JsonNode, email: String): String {
         val firstName = desired.path("firstName").asText("").trim()
         val lastName = desired.path("lastName").asText("").trim()
@@ -370,6 +433,9 @@ class GrafanaProvisioningService {
         return fullName.ifBlank { email.substringBefore('@').ifBlank { email } }
     }
 
+    /**
+     * Implements `generateProvisioningPassword` for this source unit.
+     */
     private fun generateProvisioningPassword(): String {
         val randomBytes = ByteArray(24)
         secureRandom.nextBytes(randomBytes)
@@ -377,6 +443,9 @@ class GrafanaProvisioningService {
         return "Dt!${token}9a"
     }
 
+    /**
+     * Implements `basicAuth` for this source unit.
+     */
     private fun basicAuth(user: String, password: String): String {
         val token = Base64.getEncoder().encodeToString("$user:$password".toByteArray(StandardCharsets.UTF_8))
         return "Basic $token"

@@ -1,3 +1,6 @@
+/**
+ * Defines the interface `User`, the contract implemented by this source unit.
+ */
 export interface User {
   id: string;
   email: string;
@@ -10,6 +13,9 @@ export interface User {
   superadmin: boolean;
 }
 
+/**
+ * Defines the interface `Membership`, the contract implemented by this source unit.
+ */
 export interface Membership {
   id: string;
   authUserId: string;
@@ -21,17 +27,26 @@ export interface Membership {
   abilities?: string[] | string;
 }
 
+/**
+ * Defines the interface `AuthResponse`, the contract implemented by this source unit.
+ */
 export interface AuthResponse {
   token: string;
   user: User;
 }
 
+/**
+ * Defines the interface `TenantContext`, the contract implemented by this source unit.
+ */
 export interface TenantContext {
   tenantId: string;
   tenantName: string;
   roleName?: string;
 }
 
+/**
+ * Defines the interface `Tenant`, the contract implemented by this source unit.
+ */
 export interface Tenant {
   id: string;
   name: string;
@@ -43,6 +58,9 @@ export interface Tenant {
   children?: Tenant[];
 }
 
+/**
+ * Defines the interface `CodeModule`, the contract implemented by this source unit.
+ */
 export interface CodeModule {
   id: string;
   tenantId?: string;
@@ -57,6 +75,9 @@ export interface CodeModule {
   versions: ModuleVersion[];
 }
 
+/**
+ * Defines the interface `TenantLineageDefaultsConfig`, the contract implemented by this source unit.
+ */
 export interface TenantLineageDefaultsConfig {
   safeScopePolicy: 'AUTO' | 'RUN' | 'PIPELINE';
   defaultFetchMode: 'SUMMARY' | 'DETAILS';
@@ -64,6 +85,9 @@ export interface TenantLineageDefaultsConfig {
   maxDepthCap: number;
 }
 
+/**
+ * Defines the interface `TenantLineageDefaultsHistoryEntry`, the contract implemented by this source unit.
+ */
 export interface TenantLineageDefaultsHistoryEntry {
   changedAt: string;
   changedByUserId?: string;
@@ -72,6 +96,9 @@ export interface TenantLineageDefaultsHistoryEntry {
   defaults: TenantLineageDefaultsConfig;
 }
 
+/**
+ * Defines the interface `TenantLineageDefaults`, the contract implemented by this source unit.
+ */
 export interface TenantLineageDefaults {
   version?: string;
   safeScopePolicy: 'AUTO' | 'RUN' | 'PIPELINE';
@@ -81,6 +108,9 @@ export interface TenantLineageDefaults {
   history?: TenantLineageDefaultsHistoryEntry[];
 }
 
+/**
+ * Defines the interface `TenantLineageDefaultsDiagnostics`, the contract implemented by this source unit.
+ */
 export interface TenantLineageDefaultsDiagnostics {
   tenantId: string;
   get200Count: number;
@@ -123,6 +153,9 @@ export interface TenantLineageDefaultsDiagnostics {
   };
 }
 
+/**
+ * Defines the interface `TenantLineageDiagnosticsPolicy`, the contract implemented by this source unit.
+ */
 export interface TenantLineageDiagnosticsPolicy {
   version?: string;
   conflictWatchRate: number;
@@ -134,6 +167,9 @@ export interface TenantLineageDiagnosticsPolicy {
   history?: TenantLineageDiagnosticsPolicyHistoryEntry[];
 }
 
+/**
+ * Defines the interface `TenantLineageDiagnosticsPolicyHistoryEntry`, the contract implemented by this source unit.
+ */
 export interface TenantLineageDiagnosticsPolicyHistoryEntry {
   changedAt: string;
   changedByUserId?: string;
@@ -142,6 +178,9 @@ export interface TenantLineageDiagnosticsPolicyHistoryEntry {
   policy: Omit<TenantLineageDiagnosticsPolicy, 'version' | 'history'>;
 }
 
+/**
+ * Defines the interface `TenantLineageDiagnosticsResetHistoryEntry`, the contract implemented by this source unit.
+ */
 export interface TenantLineageDiagnosticsResetHistoryEntry {
   resetAt: string;
   resetByUserId?: string;
@@ -149,6 +188,9 @@ export interface TenantLineageDiagnosticsResetHistoryEntry {
   reason?: string;
 }
 
+/**
+ * Defines the interface `ModuleVersion`, the contract implemented by this source unit.
+ */
 export interface ModuleVersion {
   id: string;
   moduleId?: string;
@@ -162,6 +204,9 @@ export interface ModuleVersion {
   createdAt: string;
 }
 
+/**
+ * Defines the interface `Pipeline`, the contract implemented by this source unit.
+ */
 export interface Pipeline {
   id: string;
   tenantId?: string;
@@ -186,6 +231,9 @@ export interface Pipeline {
   runs: PipelineRun[];
 }
 
+/**
+ * Defines the interface `PipelineRun`, the contract implemented by this source unit.
+ */
 export interface PipelineRun {
   id: string;
   pipelineId?: string;
@@ -229,11 +277,17 @@ export interface PipelineRun {
   metrics: Record<string, unknown>;
 }
 
+/**
+ * Defines the interface `TenantPipelineRun`, the contract implemented by this source unit.
+ */
 export interface TenantPipelineRun extends PipelineRun {
   pipelineId: string;
   pipelineName: string;
 }
 
+/**
+ * Defines the interface `PipelineRunSummary`, the contract implemented by this source unit.
+ */
 export interface PipelineRunSummary {
   pipelineId?: string;
   pipelineName?: string;
@@ -255,6 +309,9 @@ export interface PipelineRunSummary {
   }[];
 }
 
+/**
+ * Defines the interface `PipelineRunLineage`, the contract implemented by this source unit.
+ */
 export interface PipelineRunLineage {
   run: PipelineRun;
   ancestors: PipelineRun[];
@@ -295,6 +352,9 @@ export interface PipelineRunLineage {
   nextRecommendedDepth?: number;
 }
 
+/**
+ * Defines the interface `AlertChannel`, the contract implemented by this source unit.
+ */
 export interface AlertChannel {
   id: string;
   tenantId?: string;
@@ -306,6 +366,9 @@ export interface AlertChannel {
   createdAt: string;
 }
 
+/**
+ * Defines the interface `AlertRule`, the contract implemented by this source unit.
+ */
 export interface AlertRule {
   id: string;
   tenantId?: string;
@@ -319,6 +382,9 @@ export interface AlertRule {
   createdAt?: string;
 }
 
+/**
+ * Defines the interface `AlertHistory`, the contract implemented by this source unit.
+ */
 export interface AlertHistory {
   id: string;
   tenantId?: string;
@@ -332,6 +398,9 @@ export interface AlertHistory {
   status: 'PENDING' | 'SENT' | 'FAILED' | 'RETRY';
 }
 
+/**
+ * Defines the interface `DataSummaryResponse`, the contract implemented by this source unit.
+ */
 export interface DataSummaryResponse {
   summary: {
     rowCount: number;
@@ -355,6 +424,9 @@ export interface DataSummaryResponse {
   };
 }
 
+/**
+ * Defines the interface `Connector`, the contract implemented by this source unit.
+ */
 export interface Connector {
   id: string;
   tenantId?: string;
@@ -370,6 +442,9 @@ export interface Connector {
   createdAt: string;
 }
 
+/**
+ * Defines the interface `StatusCheck`, the contract implemented by this source unit.
+ */
 export interface StatusCheck {
   name: string;
   status: 'OK' | 'WARN' | 'ERROR' | 'UNKNOWN';
@@ -377,6 +452,9 @@ export interface StatusCheck {
   detail?: string;
 }
 
+/**
+ * Defines the interface `ConnectorStatus`, the contract implemented by this source unit.
+ */
 export interface ConnectorStatus {
   connectorId: string;
   connectorType: string;
@@ -384,6 +462,9 @@ export interface ConnectorStatus {
   checks: StatusCheck[];
 }
 
+/**
+ * Defines the interface `ConnectorReference`, the contract implemented by this source unit.
+ */
 export interface ConnectorReference {
   pipelineId: string;
   pipelineName: string;
@@ -392,6 +473,9 @@ export interface ConnectorReference {
   nodeType: string;
 }
 
+/**
+ * Defines the interface `ConnectorReferenceSummary`, the contract implemented by this source unit.
+ */
 export interface ConnectorReferenceSummary {
   connectorId: string;
   connectorName: string;
@@ -399,6 +483,9 @@ export interface ConnectorReferenceSummary {
   references: ConnectorReference[];
 }
 
+/**
+ * Defines the interface `ConnectorImpactSummary`, the contract implemented by this source unit.
+ */
 export interface ConnectorImpactSummary {
   connectorId: string;
   connectorName: string;
@@ -433,6 +520,9 @@ export interface ConnectorImpactSummary {
   }>;
 }
 
+/**
+ * Defines the interface `BrokerCredential`, the contract implemented by this source unit.
+ */
 export interface BrokerCredential {
   id: string;
   tenantId: string;
@@ -445,6 +535,9 @@ export interface BrokerCredential {
   updatedAt: string;
 }
 
+/**
+ * Defines the interface `Role`, the contract implemented by this source unit.
+ */
 export interface Role {
   id: string;
   tenantId?: string;
@@ -456,6 +549,9 @@ export interface Role {
   createdAt: string;
 }
 
+/**
+ * Defines the interface `ModuleLog`, the contract implemented by this source unit.
+ */
 export interface ModuleLog {
   nodeId?: string;
   stage: string;
@@ -468,6 +564,9 @@ export interface ModuleLog {
   executedAt?: string;
 }
 
+/**
+ * Defines the interface `DataBlob`, the contract implemented by this source unit.
+ */
 export interface DataBlob {
   id: string;
   name: string;
@@ -476,12 +575,18 @@ export interface DataBlob {
   createdAt: string;
 }
 
+/**
+ * Defines the interface `DataTableRegistrationResult`, the contract implemented by this source unit.
+ */
 export interface DataTableRegistrationResult {
   tableName: string;
   tableType: 'timeseries' | 'relational';
 }
 
 /** Returned by GET /pipelines/runs/summary/all — one entry per tenant the user belongs to */
+/**
+ * Defines the interface `TenantRunSummary`, the contract implemented by this source unit.
+ */
 export interface TenantRunSummary {
   tenantId: string;
   tenantName: string;

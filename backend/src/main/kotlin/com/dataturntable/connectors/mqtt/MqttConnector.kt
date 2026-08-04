@@ -6,19 +6,31 @@ import jakarta.enterprise.context.ApplicationScoped
 import org.jboss.logging.Logger
 
 @ApplicationScoped
+/**
+ * Defines the class `MqttConnector`, the contract implemented by this source unit.
+ */
 class MqttConnector {
     
     private val LOG = Logger.getLogger(MqttConnector::class.java)
     
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     fun connectAsInput(config: Map<String, Any>): MqttInputConnector {
         return MqttInputConnector(config)
     }
     
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     fun connectAsOutput(config: Map<String, Any>): MqttOutputConnector {
         return MqttOutputConnector(config)
     }
 }
 
+/**
+ * Defines the class `MqttInputConnector`, the contract implemented by this source unit.
+ */
 class MqttInputConnector(
     private val config: Map<String, Any>
 ) : InputConnector {
@@ -53,6 +65,9 @@ class MqttInputConnector(
     override fun isConnected(): Boolean = connected
 }
 
+/**
+ * Defines the class `MqttOutputConnector`, the contract implemented by this source unit.
+ */
 class MqttOutputConnector(
     private val config: Map<String, Any>
 ) : OutputConnector {

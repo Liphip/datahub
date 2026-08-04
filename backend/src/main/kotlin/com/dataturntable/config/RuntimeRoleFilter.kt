@@ -10,6 +10,9 @@ import jakarta.ws.rs.ext.Provider
 
 @Provider
 @Priority(Priorities.AUTHORIZATION)
+/**
+ * Defines the class `RuntimeRoleFilter`, the contract implemented by this source unit.
+ */
 class RuntimeRoleFilter : ContainerRequestFilter {
 
     @Inject

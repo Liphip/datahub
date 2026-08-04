@@ -15,6 +15,9 @@ import java.util.UUID
  * WebSocketConnectionManager, and ConnectorPollingService — no DB access needed.
  */
 @ApplicationScoped
+/**
+ * Defines the class `ConnectorStatusService`, the contract implemented by this source unit.
+ */
 class ConnectorStatusService {
 
     @Inject
@@ -26,6 +29,9 @@ class ConnectorStatusService {
     @Inject
     lateinit var pollingService: ConnectorPollingService
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getStatus(connector: Connector): ConnectorStatusDto {
         val checks = mutableListOf<StatusCheckDto>()
         val id = connector.id ?: return ConnectorStatusDto("unknown", connector.connectorType?.name ?: "UNKNOWN", connector.direction?.name ?: "UNKNOWN", listOf(StatusCheckDto("Configuration", "UNKNOWN", "Connector ID not set", null)))
@@ -50,6 +56,9 @@ class ConnectorStatusService {
 
     // ── Per-type builders ─────────────────────────────────────────────────────
 
+    /**
+     * Implements `buildMqttChecks` for this source unit.
+     */
     private fun buildMqttChecks(connector: Connector, id: UUID, checks: MutableList<StatusCheckDto>) {
         if (!connector.isActive) {
             checks += warn("Connector", "Inactive — click Connect to activate")
@@ -78,6 +87,9 @@ class ConnectorStatusService {
         }
     }
 
+    /**
+     * Implements `buildWebSocketChecks` for this source unit.
+     */
     private fun buildWebSocketChecks(connector: Connector, id: UUID, checks: MutableList<StatusCheckDto>) {
         if (!connector.isActive) {
             checks += warn("Connector", "Inactive — click Connect to activate")
@@ -99,6 +111,9 @@ class ConnectorStatusService {
         }
     }
 
+    /**
+     * Implements `buildRestChecks` for this source unit.
+     */
     private fun buildRestChecks(connector: Connector, id: UUID, checks: MutableList<StatusCheckDto>) {
         if (!connector.isActive) {
             checks += warn("Connector", "Inactive — click Connect to activate")
@@ -121,6 +136,9 @@ class ConnectorStatusService {
         }
     }
 
+    /**
+     * Implements `buildFileChecks` for this source unit.
+     */
     private fun buildFileChecks(connector: Connector, id: UUID, checks: MutableList<StatusCheckDto>) {
         if (!connector.isActive) {
             checks += warn("Connector", "Inactive — click Connect to activate")
@@ -143,6 +161,9 @@ class ConnectorStatusService {
         }
     }
 
+    /**
+     * Implements `buildUdpChecks` for this source unit.
+     */
     private fun buildUdpChecks(connector: Connector, checks: MutableList<StatusCheckDto>) {
         // UDP uses no persistent connection manager yet
         checks += if (connector.isActive) ok("UDP endpoint", "Configured")
@@ -151,16 +172,34 @@ class ConnectorStatusService {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    /**
+     * Implements `ok` for this source unit.
+     */
     private fun ok(name: String, message: String)      = StatusCheckDto(name, "OK",      message, null)
+    /**
+     * Implements `warn` for this source unit.
+     */
     private fun warn(name: String, message: String)    = StatusCheckDto(name, "WARN",    message, null)
+    /**
+     * Implements `error` for this source unit.
+     */
     private fun error(name: String, message: String)   = StatusCheckDto(name, "ERROR",   message, null)
+    /**
+     * Implements `unknown` for this source unit.
+     */
     private fun unknown(name: String, message: String) = StatusCheckDto(name, "UNKNOWN", message, null)
 
+    /**
+     * Implements `formatInstant` for this source unit.
+     */
     private fun formatInstant(instant: java.time.Instant): String =
         java.time.ZonedDateTime.ofInstant(instant, java.time.ZoneId.systemDefault())
             .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
 }
 
+/**
+ * Defines the class `ConnectorStatusDto`, the contract implemented by this source unit.
+ */
 data class ConnectorStatusDto(
     val connectorId:   String,
     val connectorType: String,
@@ -168,6 +207,9 @@ data class ConnectorStatusDto(
     val checks:        List<StatusCheckDto>,
 )
 
+/**
+ * Defines the class `StatusCheckDto`, the contract implemented by this source unit.
+ */
 data class StatusCheckDto(
     val name:    String,
     val status:  String,   // "OK" | "WARN" | "ERROR" | "UNKNOWN"

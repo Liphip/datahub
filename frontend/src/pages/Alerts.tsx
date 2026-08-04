@@ -4,7 +4,13 @@ import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { AlertChannel, AlertHistory } from '../types';
 
+/**
+ * Defines the type `AlertChannelType`, the contract implemented by this source unit.
+ */
 type AlertChannelType = AlertChannel['channelType'];
+/**
+ * Defines the type `ChannelConfigField`, the contract implemented by this source unit.
+ */
 type ChannelConfigField = {
   key: string;
   labelKey: string;
@@ -41,6 +47,9 @@ const channelConfigSchema: Record<AlertChannelType, ChannelConfigField[]> = {
   ],
 };
 
+/**
+ * Initializes, connects, or acquires the named runtime resource.
+ */
 const initialChannelConfig = (type: AlertChannelType, existing?: Record<string, unknown>) => {
   const fields = channelConfigSchema[type] || [];
   return fields.reduce<Record<string, string>>((acc, field) => {
@@ -54,6 +63,9 @@ export default function Alerts() {
   const { t } = useTranslation();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const abilities = user?.abilities || [];
+  /**
+   * Evaluates the named capability or state predicate.
+   */
   const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
   const canReadAlerts = hasAbility('alert:read') || hasAbility('alert:configure');
   const canConfigureAlerts = hasAbility('alert:configure');
@@ -76,6 +88,9 @@ export default function Alerts() {
 
   const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
 
+  /**
+   * Implements `showToast` for this source unit.
+   */
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     // FIXME: Prevent stale toast timers from clearing newer messages
@@ -83,7 +98,13 @@ export default function Alerts() {
     setTimeout(() => setToast(null), 3500);
   };
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
+    /**
+     * Implements `fetchData` for this source unit.
+     */
     const fetchData = async () => {
       if (!tenantId) {
         setLoading(false);
@@ -116,6 +137,9 @@ export default function Alerts() {
     fetchData();
   }, [tenantId, canReadAlerts, t]);
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleCreateChannel = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canConfigureAlerts) {
@@ -172,6 +196,9 @@ export default function Alerts() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleDeleteChannel = async (id: string) => {
     if (!canConfigureAlerts) {
       showToast(t('alerts.permissionDeleteChannels'), 'error');
@@ -192,6 +219,9 @@ export default function Alerts() {
     }
   };
 
+  /**
+   * Implements `openEditChannel` for this source unit.
+   */
   const openEditChannel = (channel: AlertChannel) => {
     if (!canConfigureAlerts) return;
     setEditingChannel(channel);
@@ -201,6 +231,9 @@ export default function Alerts() {
     setShowChannelModal(true);
   };
 
+  /**
+   * Implements `openCreateChannel` for this source unit.
+   */
   const openCreateChannel = () => {
     setEditingChannel(null);
     setNewChannelName('');
@@ -209,6 +242,9 @@ export default function Alerts() {
     setShowChannelModal(true);
   };
 
+  /**
+   * Implements `copyChannelId` for this source unit.
+   */
   const copyChannelId = async (id: string) => {
     try {
       await navigator.clipboard.writeText(id);

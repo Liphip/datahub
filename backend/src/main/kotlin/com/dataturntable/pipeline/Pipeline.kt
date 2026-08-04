@@ -11,6 +11,9 @@ import java.util.UUID
 
 @Entity
 @Table(name = "pipelines")
+/**
+ * Defines the class `Pipeline`, the contract implemented by this source unit.
+ */
 open class Pipeline : PanacheBase() {
     
     @Id
@@ -70,12 +73,18 @@ open class Pipeline : PanacheBase() {
                 .resultList
                 .firstOrNull()
         
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByTenantId(tenantId: UUID): List<Pipeline> =
             getEntityManager()
                 .createQuery("SELECT p FROM Pipeline p WHERE p.tenant.id = :tenantId", Pipeline::class.java)
                 .setParameter("tenantId", tenantId)
                 .resultList
         
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findActiveByTenant(tenantId: UUID): List<Pipeline> =
             getEntityManager()
                 .createQuery(
@@ -85,6 +94,9 @@ open class Pipeline : PanacheBase() {
                 .setParameter("tenantId", tenantId)
                 .resultList
         
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByConsumerGroup(group: String): Pipeline? =
             getEntityManager()
                 .createQuery("SELECT p FROM Pipeline p WHERE p.kafkaConsumerGroup = :group", Pipeline::class.java)
@@ -93,12 +105,18 @@ open class Pipeline : PanacheBase() {
                 .firstOrNull()
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getProcessingVersions(): List<ModuleVersion> {
         return processingModuleVersionIds.mapNotNull { id ->
             ModuleVersion.findById(id)
         }
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getExportVersions(): List<ModuleVersion> {
         return exportModuleVersionIds.mapNotNull { id ->
             ModuleVersion.findById(id)

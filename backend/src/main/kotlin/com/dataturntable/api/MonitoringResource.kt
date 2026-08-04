@@ -22,6 +22,9 @@ import java.util.UUID
  */
 @Path("/api/v1/monitoring")
 @Produces(MediaType.APPLICATION_JSON)
+/**
+ * Defines the class `MonitoringResource`, the contract implemented by this source unit.
+ */
 class MonitoringResource {
 
     @PersistenceContext
@@ -179,6 +182,9 @@ class MonitoringResource {
 
     @GET
     @Path("/summary")
+    /**
+     * Implements `summary` for this source unit.
+     */
     fun summary(): Response =
         Response.ok(monitoringSnapshotService.collect()).build()
 

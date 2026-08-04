@@ -4,16 +4,25 @@ import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { DataBlob, DataSummaryResponse } from '../types';
 
+/**
+ * Defines the type `DataTable`, the contract implemented by this source unit.
+ */
 type DataTable = {
   rawName: string;
   name: string;
   type: string;
 };
 
+/**
+ * Defines the type `ColumnDef`, the contract implemented by this source unit.
+ */
 type ColumnDef = { name: string; colType: string };
 
 const RELATIONAL_COLUMN_TYPES = ['TEXT', 'INTEGER', 'FLOAT', 'BOOLEAN', 'JSONB', 'TIMESTAMPTZ'];
 
+/**
+ * Converts a value into the representation required by its caller.
+ */
 function toCsvValue(value: unknown): string {
   const text = typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value ?? '');
   if (!/[",\n]/.test(text)) {
@@ -22,11 +31,17 @@ function toCsvValue(value: unknown): string {
   return `"${text.replace(/"/g, '""')}"`;
 }
 
+/**
+ * Implements `formatMetric` for this source unit.
+ */
 function formatMetric(value?: number | null, digits = 2): string {
   if (value === undefined || value === null || Number.isNaN(value)) return '-';
   return value.toLocaleString(undefined, { maximumFractionDigits: digits });
 }
 
+/**
+ * Implements `DataLineChart` for this source unit.
+ */
 function DataLineChart({ series }: { series: Array<{ time: string; value: number }> }) {
   const points = useMemo(() => {
     if (series.length === 0) return '';
@@ -66,6 +81,9 @@ function DataLineChart({ series }: { series: Array<{ time: string; value: number
   );
 }
 
+/**
+ * Implements `DataBarChart` for this source unit.
+ */
 function DataBarChart({ bars }: { bars: Array<{ label: string; count: number; avgValue: number }> }) {
   const maxCount = Math.max(...bars.map((entry) => entry.count), 1);
 
@@ -99,6 +117,9 @@ export default function Data() {
   const { t } = useTranslation();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const abilities = user?.abilities || [];
+  /**
+   * Evaluates the named capability or state predicate.
+   */
   const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
   const canReadData = hasAbility('data:read') || hasAbility('data:write');
   const canWriteData = hasAbility('data:write');
@@ -139,13 +160,22 @@ export default function Data() {
   const [deletingBlobId, setDeletingBlobId] = useState<string | null>(null);
   const [confirmDeleteBlobId, setConfirmDeleteBlobId] = useState<string | null>(null);
 
+  /**
+   * Implements `showToast` for this source unit.
+   */
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
   };
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   const getShortTableName = (rawName: string) => rawName;
 
+  /**
+   * Implements `fetchTables` for this source unit.
+   */
   const fetchTables = async (tenant: string) => {
     const result = await api.listTables(tenant);
     const nextTables = result.tables.map((table) => ({
@@ -167,6 +197,9 @@ export default function Data() {
     }
   };
 
+  /**
+   * Implements `fetchSummary` for this source unit.
+   */
   const fetchSummary = async (tenant: string, table: string) => {
     setSummaryLoading(true);
     try {
@@ -183,6 +216,9 @@ export default function Data() {
     }
   };
 
+  /**
+   * Implements `fetchBlobs` for this source unit.
+   */
   const fetchBlobs = async (tenant: string) => {
     setBlobsLoading(true);
     try {
@@ -196,7 +232,13 @@ export default function Data() {
     }
   };
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     const load = async () => {
       if (!tenantId) { setLoading(false); return; }
       if (!canReadData) {
@@ -217,6 +259,9 @@ export default function Data() {
     load();
   }, [tenantId, canReadData, t]);
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     if (activeTab === 'files' && tenantId && canReadData) {
       fetchBlobs(tenantId);
@@ -226,6 +271,9 @@ export default function Data() {
   const selectedTableInfo = tables.find((t) => t.name === selectedTable);
   const isTimeSeries = !selectedTableInfo || selectedTableInfo.type === 'timeseries';
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleQuery = async () => {
     if (!canReadData) { showToast(t('data.permissionQuery'), 'error'); return; }
     if (!tenantId || !selectedTable) return;
@@ -250,6 +298,9 @@ export default function Data() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleCreateTable = async () => {
     if (!canWriteData) { showToast(t('data.permissionCreateTable'), 'error'); return; }
     if (!tenantId || !newTableName.trim()) return;
@@ -295,6 +346,9 @@ export default function Data() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleDeleteTable = async () => {
     if (!canWriteData) { showToast(t('data.permissionDeleteTable'), 'error'); return; }
     if (!tenantId || !selectedTable) return;
@@ -315,6 +369,9 @@ export default function Data() {
     }
   };
 
+  /**
+   * Implements `exportJson` for this source unit.
+   */
   const exportJson = () => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -325,6 +382,9 @@ export default function Data() {
     URL.revokeObjectURL(url);
   };
 
+  /**
+   * Implements `exportCsv` for this source unit.
+   */
   const exportCsv = () => {
     if (data.length === 0) return;
     const rows = data as Record<string, unknown>[];
@@ -342,6 +402,9 @@ export default function Data() {
     URL.revokeObjectURL(url);
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!canWriteData) { showToast(t('data.permissionCreateTable'), 'error'); return; }
     if (!tenantId || !e.target.files?.[0]) return;
@@ -359,6 +422,9 @@ export default function Data() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleDeleteBlob = async (blobId: string) => {
     if (!canWriteData) { showToast(t('data.permissionDeleteTable'), 'error'); return; }
     if (!tenantId) return;
@@ -375,6 +441,9 @@ export default function Data() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleDownloadBlob = (blobId: string) => {
     if (!tenantId) return;
     // BUG: New-tab downloads omit the required Authorization header

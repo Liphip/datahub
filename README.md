@@ -307,8 +307,6 @@ docker stack deploy -c docker/docker-stack.app.yml dataturntable
 
 ### Docker Swarm HA Stack
 
-<!-- TODO: Convert the HA-section links to repository-relative Markdown targets
-     Details: The links below embed A:\Dev\Datahub paths, which are invalid for repository browsers, clones, and the rendered documentation site. Use paths relative to this README so every deployment artifact remains navigable. -->
 For a quorum-oriented Swarm topology with replicated PostgreSQL, KRaft Kafka, clustered EMQX, and the split backend roles, use:
 
 ```bash
@@ -316,7 +314,7 @@ docker network create --driver overlay --attachable dataturntable
 docker stack deploy -c docker/docker-stack.ha.yml dataturntable-ha
 ```
 
-The HA stack file is in [docker/docker-stack.ha.yml](A:\Dev\Datahub\dataturntable-git\docker\docker-stack.ha.yml). The Kubernetes Helm values below are the stronger reference for the full HA infra plane, including Redis replication/Sentinel.
+The HA stack file is in [docker/docker-stack.ha.yml](docker/docker-stack.ha.yml). The Kubernetes Helm values below are the stronger reference for the full HA infra plane, including Redis replication/Sentinel.
 
 ### Kubernetes
 
@@ -345,20 +343,20 @@ helm install dataturntable ./docker/helm/dataturntable
 
 Production HA infrastructure Helm values are included in:
 
-- [docker/helm/ha-values/app-postgresql-ha.yaml](A:\Dev\Datahub\dataturntable-git\docker\helm\ha-values\app-postgresql-ha.yaml)
-- [docker/helm/ha-values/pipeline-postgresql-ha.yaml](A:\Dev\Datahub\dataturntable-git\docker\helm\ha-values\pipeline-postgresql-ha.yaml)
-- [docker/helm/ha-values/monitoring-postgresql-ha.yaml](A:\Dev\Datahub\dataturntable-git\docker\helm\ha-values\monitoring-postgresql-ha.yaml)
-- [docker/helm/ha-values/kafka-ha.yaml](A:\Dev\Datahub\dataturntable-git\docker\helm\ha-values\kafka-ha.yaml)
-- [docker/helm/ha-values/redis-ha.yaml](A:\Dev\Datahub\dataturntable-git\docker\helm\ha-values\redis-ha.yaml)
-- [docker/helm/ha-values/mqtt-ha.yaml](A:\Dev\Datahub\dataturntable-git\docker\helm\ha-values\mqtt-ha.yaml)
+- [docker/helm/ha-values/app-postgresql-ha.yaml](docker/helm/ha-values/app-postgresql-ha.yaml)
+- [docker/helm/ha-values/pipeline-postgresql-ha.yaml](docker/helm/ha-values/pipeline-postgresql-ha.yaml)
+- [docker/helm/ha-values/monitoring-postgresql-ha.yaml](docker/helm/ha-values/monitoring-postgresql-ha.yaml)
+- [docker/helm/ha-values/kafka-ha.yaml](docker/helm/ha-values/kafka-ha.yaml)
+- [docker/helm/ha-values/redis-ha.yaml](docker/helm/ha-values/redis-ha.yaml)
+- [docker/helm/ha-values/mqtt-ha.yaml](docker/helm/ha-values/mqtt-ha.yaml)
 
-Installation notes and expected service names are documented in [docker/helm/README.md](A:\Dev\Datahub\dataturntable-git\docker\helm\README.md).
+Installation notes and expected service names are documented in [docker/helm/README.md](docker/helm/README.md).
 
 A Kubernetes application overlay that points the backend roles at those HA service names is included in:
 
-- [docker/k8s-ha/kustomization.yaml](A:\Dev\Datahub\dataturntable-git\docker\k8s-ha\kustomization.yaml)
-- [docker/k8s-ha/backend-ha-env.yaml](A:\Dev\Datahub\dataturntable-git\docker\k8s-ha\backend-ha-env.yaml)
-- [docker/k8s-ha/README.md](A:\Dev\Datahub\dataturntable-git\docker\k8s-ha\README.md)
+- [docker/k8s-ha/kustomization.yaml](docker/k8s-ha/kustomization.yaml)
+- [docker/k8s-ha/backend-ha-env.yaml](docker/k8s-ha/backend-ha-env.yaml)
+- [docker/k8s-ha/README.md](docker/k8s-ha/README.md)
 ## Development
 
 ### Running Tests
@@ -382,6 +380,11 @@ npm test
 
 - [Architecture & Implementation Plan](docs/development/plan.md)
 - [Development Setup](docs/development/setup.md)
+- [Architecture and Runtime Guide](docs/development/architecture.md)
+- [Source-code Reference](docs/development/source-reference.md)
+- [Source Function Reference](docs/development/source-function-reference.md)
+- [Configuration Reference](docs/development/configuration-reference.md)
+- [Documentation Gaps and FIXMEs](docs/development/documentation-gaps.md)
 - [API Reference](docs/api/README.md)
 - [Requirements Specification](docs/specification/requirements-specification.md)
 - [Functional Specification](docs/specification/functional-specification.md)

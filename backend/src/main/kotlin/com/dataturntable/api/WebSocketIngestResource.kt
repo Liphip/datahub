@@ -17,6 +17,9 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 @ApplicationScoped
+/**
+ * Defines the class `WebSocketIngestResource`, the contract implemented by this source unit.
+ */
 class WebSocketIngestResource {
     
     private val LOG = Logger.getLogger(WebSocketIngestResource::class.java)
@@ -37,6 +40,9 @@ class WebSocketIngestResource {
     private val sessions = ConcurrentHashMap<String, MutableSet<Session>>()
     
     @Transactional
+    /**
+     * Processes the named request, event, or operation.
+     */
     fun handleWebSocketMessage(session: Session, pipelineId: String, message: String) {
         val pipelineUuid = try {
             UUID.fromString(pipelineId)
@@ -90,16 +96,25 @@ class WebSocketIngestResource {
         }
     }
     
+    /**
+     * Creates or persists the requested state.
+     */
     fun registerSession(pipelineId: String, session: Session) {
         sessions.getOrPut(pipelineId) { mutableSetOf() }.add(session)
         LOG.infof("WebSocket session registered for pipeline %s", pipelineId)
     }
     
+    /**
+     * Implements `unregisterSession` for this source unit.
+     */
     fun unregisterSession(pipelineId: String, session: Session) {
         sessions[pipelineId]?.remove(session)
         LOG.infof("WebSocket session unregistered for pipeline %s", pipelineId)
     }
     
+    /**
+     * Implements `broadcastToPipeline` for this source unit.
+     */
     fun broadcastToPipeline(pipelineId: String, message: Map<String, Any>) {
         sessions[pipelineId]?.forEach { session ->
             try {

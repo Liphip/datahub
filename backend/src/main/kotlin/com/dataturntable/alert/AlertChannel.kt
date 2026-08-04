@@ -9,12 +9,18 @@ import jakarta.persistence.*
 import java.time.Instant
 import java.util.UUID
 
+/**
+ * Defines the enum class `AlertChannelType`, the contract implemented by this source unit.
+ */
 enum class AlertChannelType {
     MQTT, WEBHOOK, REST, EMAIL, SLACK
 }
 
 @Entity
 @Table(name = "alert_channels")
+/**
+ * Defines the class `AlertChannel`, the contract implemented by this source unit.
+ */
 open class AlertChannel : PanacheBase() {
     
     @Id
@@ -55,6 +61,9 @@ open class AlertChannel : PanacheBase() {
         override fun findById(id: UUID): AlertChannel? =
             find("id = ?1", id).firstResult()
 
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByTenantId(tenantId: UUID): List<AlertChannel> =
             list("tenant.id = ?1", tenantId)
 

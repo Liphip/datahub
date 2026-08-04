@@ -25,6 +25,9 @@ import java.util.UUID
  * a proper JTA transaction is created for each message.
  */
 @ApplicationScoped
+/**
+ * Defines the class `MqttMessageRouter`, the contract implemented by this source unit.
+ */
 class MqttMessageRouter {
 
     private val LOG = Logger.getLogger(MqttMessageRouter::class.java)
@@ -36,6 +39,9 @@ class MqttMessageRouter {
     @PersistenceContext
     lateinit var em: EntityManager
 
+    /**
+     * Defines the class `RouteEntry`, the contract implemented by this source unit.
+     */
     data class RouteEntry(val pipelineId: UUID, val topicPattern: String)
 
     /**
@@ -184,6 +190,9 @@ class MqttMessageRouter {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseJsonMap(raw: String?): Map<String, Any?>? {
         if (raw.isNullOrBlank()) return null
         return try {

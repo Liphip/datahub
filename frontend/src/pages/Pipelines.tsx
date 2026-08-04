@@ -5,27 +5,78 @@ import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { Pipeline, PipelineRun, PipelineRunLineage, PipelineRunSummary, TenantLineageDefaults, TenantLineageDefaultsConfig, TenantLineageDefaultsDiagnostics, TenantPipelineRun } from '../types';
 
+/**
+ * Defines the type `RunMap`, the contract implemented by this source unit.
+ */
 type RunMap = Record<string, PipelineRun[]>;
+/**
+ * Defines the type `PipelineRunDetailFilter`, the contract implemented by this source unit.
+ */
 type PipelineRunDetailFilter = {
   startedFrom?: string;
   startedTo?: string;
   runStatus?: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED';
   label?: string;
 };
+/**
+ * Defines the type `HealthFilter`, the contract implemented by this source unit.
+ */
 type HealthFilter = 'ALL' | 'PROBLEMATIC' | 'RUNNING' | 'FAILED' | 'HEALTHY';
+/**
+ * Defines the type `SortMode`, the contract implemented by this source unit.
+ */
 type SortMode = 'RECENT_RUN' | 'NAME';
+/**
+ * Defines the type `SinceHoursFilter`, the contract implemented by this source unit.
+ */
 type SinceHoursFilter = 1 | 24 | 168 | null;
+/**
+ * Defines the type `BucketSortMode`, the contract implemented by this source unit.
+ */
 type BucketSortMode = 'NEWEST' | 'FAILED_FIRST';
+/**
+ * Defines the type `BucketRunStatusFilter`, the contract implemented by this source unit.
+ */
 type BucketRunStatusFilter = 'ALL' | 'RUNNING' | 'PENDING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+/**
+ * Defines the type `LineageDirection`, the contract implemented by this source unit.
+ */
 type LineageDirection = 'both' | 'ancestors' | 'descendants';
+/**
+ * Defines the type `LineageStatusFilter`, the contract implemented by this source unit.
+ */
 type LineageStatusFilter = 'ALL' | 'INFLIGHT' | 'TERMINAL' | 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+/**
+ * Defines the type `LineageFetchMode`, the contract implemented by this source unit.
+ */
 type LineageFetchMode = 'SUMMARY' | 'DETAILS';
+/**
+ * Defines the type `LineageSafeScopePolicy`, the contract implemented by this source unit.
+ */
 type LineageSafeScopePolicy = 'AUTO' | 'RUN' | 'PIPELINE';
+/**
+ * Defines the type `LineagePerfSample`, the contract implemented by this source unit.
+ */
 type LineagePerfSample = { totalMs: number; payloadBytes: number; measuredAt?: string };
+/**
+ * Defines the type `LineageSafeScope`, the contract implemented by this source unit.
+ */
 type LineageSafeScope = 'RUN' | 'PIPELINE';
+/**
+ * Defines the type `LineageSafeDefault`, the contract implemented by this source unit.
+ */
 type LineageSafeDefault = { scope: LineageSafeScope; targetId: string; mode: LineageFetchMode; depth: number; updatedAt: string; reason?: string; expiresAt?: string };
+/**
+ * Defines the type `TenantLineageDefaultsField`, the contract implemented by this source unit.
+ */
 type TenantLineageDefaultsField = 'safeScopePolicy' | 'defaultFetchMode' | 'defaultDepth' | 'maxDepthCap';
+/**
+ * Defines the type `TenantLineageMergeChoice`, the contract implemented by this source unit.
+ */
 type TenantLineageMergeChoice = Record<TenantLineageDefaultsField, 'MINE' | 'LATEST'>;
+/**
+ * Defines the type `TenantLineageDefaultsConflict`, the contract implemented by this source unit.
+ */
 type TenantLineageDefaultsConflict = {
   pipelineId: string;
   runId: string;
@@ -33,9 +84,18 @@ type TenantLineageDefaultsConflict = {
   latest: TenantLineageDefaults;
   mergeChoice: TenantLineageMergeChoice;
 };
+/**
+ * Defines the type `TenantDefaultsConflictTelemetry`, the contract implemented by this source unit.
+ */
 type TenantDefaultsConflictTelemetry = Record<string, { count: number; lastConflictAt?: string }>;
+/**
+ * Defines the type `TenantDefaultsPollStatus`, the contract implemented by this source unit.
+ */
 type TenantDefaultsPollStatus = 'IDLE' | 'FRESH' | 'STALE' | 'OFFLINE';
 
+/**
+ * Defines the type `TriagePreset`, the contract implemented by this source unit.
+ */
 type TriagePreset = {
   name: string;
   query: string;
@@ -149,12 +209,18 @@ export default function Pipelines() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [expandedPipelineId, setExpandedPipelineId] = useState<string | null>(null);
   const [selectedRunIdByPipeline, setSelectedRunIdByPipeline] = useState<Record<string, string>>({});
+  /**
+   * Initializes, connects, or acquires the named runtime resource.
+   */
   const initialHealth = (() => {
     const raw = (searchParams.get('health') || '').toUpperCase();
     return (['ALL', 'PROBLEMATIC', 'RUNNING', 'FAILED', 'HEALTHY'] as const).includes(raw as HealthFilter)
       ? (raw as HealthFilter)
       : 'ALL';
   })();
+  /**
+   * Initializes, connects, or acquires the named runtime resource.
+   */
   const initialSinceHours = (() => {
     const raw = Number(searchParams.get('sinceHours'));
     return raw === 1 || raw === 24 || raw === 168 ? (raw as 1 | 24 | 168) : null;
@@ -162,10 +228,16 @@ export default function Pipelines() {
   const [healthFilter, setHealthFilter] = useState<HealthFilter>(initialHealth);
   const [sinceHoursFilter, setSinceHoursFilter] = useState<SinceHoursFilter>(initialSinceHours);
   const [sortMode, setSortMode] = useState<SortMode>('RECENT_RUN');
+  /**
+   * Initializes, connects, or acquires the named runtime resource.
+   */
   const initialBucketSort = (() => {
     const raw = (searchParams.get('bucketSort') || '').toUpperCase();
     return raw === 'FAILED_FIRST' ? 'FAILED_FIRST' : 'NEWEST';
   })();
+  /**
+   * Initializes, connects, or acquires the named runtime resource.
+   */
   const initialBucketStatus = (() => {
     const raw = (searchParams.get('bucketStatus') || '').toUpperCase();
     return (['ALL', 'RUNNING', 'PENDING', 'SUCCESS', 'FAILED', 'CANCELLED'] as const).includes(raw as BucketRunStatusFilter)
@@ -231,17 +303,26 @@ export default function Pipelines() {
 
   const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
   const abilities = user?.abilities || [];
+  /**
+   * Evaluates the named capability or state predicate.
+   */
   const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
   const canReadPipelines = hasAbility('pipeline:read') || hasAbility('pipeline:write') || hasAbility('pipeline:execute') || hasAbility('manage:tenant');
   const canWritePipelines = hasAbility('pipeline:write') || hasAbility('manage:tenant');
   const canExecutePipelines = hasAbility('pipeline:execute') || canWritePipelines;
   const canManageTenantSettings = hasAbility('manage:tenant');
 
+  /**
+   * Implements `showToast` for this source unit.
+   */
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
   };
 
+  /**
+   * Implements `trackTenantDefaultsConflict` for this source unit.
+   */
   const trackTenantDefaultsConflict = (tid: string) => {
     setTenantDefaultsConflictTelemetry((prev) => {
       const current = prev[tid] ?? { count: 0 };
@@ -255,6 +336,9 @@ export default function Pipelines() {
     });
   };
 
+  /**
+   * Implements `clearTenantDefaultsConflictTelemetry` for this source unit.
+   */
   const clearTenantDefaultsConflictTelemetry = (tid: string) => {
     setTenantDefaultsConflictTelemetry((prev) => {
       const next = { ...prev };
@@ -263,6 +347,9 @@ export default function Pipelines() {
     });
   };
 
+  /**
+   * Implements `refreshTenantDefaultsDiagnostics` for this source unit.
+   */
   const refreshTenantDefaultsDiagnostics = async (tid: string) => {
     setLoadingTenantDefaultsDiagnostics(true);
     try {
@@ -275,6 +362,9 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Implements `resetTenantDefaultsDiagnostics` for this source unit.
+   */
   const resetTenantDefaultsDiagnostics = async (tid: string) => {
     if (resettingTenantDefaultsDiagnostics) return;
     setResettingTenantDefaultsDiagnostics(true);
@@ -292,6 +382,9 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Implements `copyTenantDefaultsDiagnostics` for this source unit.
+   */
   const copyTenantDefaultsDiagnostics = async (pipelineId: string, runId: string) => {
     if (!tenantId) return;
     const telemetry = tenantDefaultsConflictTelemetry[tenantId];
@@ -342,6 +435,9 @@ export default function Pipelines() {
     return { pipelineId, runId, pending, latest, mergeChoice };
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const runTenantDefaultsPollCheck = async () => {
     if (!tenantId) return;
     try {
@@ -378,6 +474,9 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Implements `formatApproxBytes` for this source unit.
+   */
   const formatApproxBytes = (bytes?: number) => {
     if (!bytes || bytes <= 0) return '0 B';
     if (bytes < 1024) return `${bytes} B`;
@@ -387,6 +486,9 @@ export default function Pipelines() {
     return `${mb.toFixed(mb >= 100 ? 0 : 1)} MB`;
   };
 
+  /**
+   * Implements `median` for this source unit.
+   */
   const median = (values: number[]) => {
     if (values.length === 0) return 0;
     const sorted = [...values].sort((a, b) => a - b);
@@ -394,20 +496,32 @@ export default function Pipelines() {
     return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
   };
 
+  /**
+   * Creates or persists the requested state.
+   */
   const addHoursIso = (baseIso: string, hours: number) => {
     const baseMs = Date.parse(baseIso);
     const safeBase = Number.isFinite(baseMs) ? baseMs : Date.now();
     return new Date(safeBase + hours * 60 * 60 * 1000).toISOString();
   };
 
+  /**
+   * Evaluates the named capability or state predicate.
+   */
   const isSafeDefaultExpired = (safe?: LineageSafeDefault) => {
     if (!safe?.expiresAt) return false;
     const expiresAtMs = Date.parse(safe.expiresAt);
     return Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() : false;
   };
 
+  /**
+   * Implements `safeDefaultKey` for this source unit.
+   */
   const safeDefaultKey = (scope: LineageSafeScope, targetId: string) => `${scope}:${targetId}`;
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   const getActiveSafeDefault = (pipelineId: string, runId: string) => {
     const runScoped = lineageSafeDefaultsByRunId[safeDefaultKey('RUN', runId)];
     if (runScoped && !isSafeDefaultExpired(runScoped)) return runScoped;
@@ -416,20 +530,35 @@ export default function Pipelines() {
     return undefined;
   };
 
+  /**
+   * Creates or persists the requested state.
+   */
   const persistTriagePresets = (presets: TriagePreset[]) => {
     localStorage.setItem(TRIAGE_PRESETS_KEY, JSON.stringify(presets));
     setTriagePresets(presets);
   };
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     localStorage.setItem(LINEAGE_SAFE_DEFAULTS_KEY, JSON.stringify(lineageSafeDefaultsByRunId));
   }, [lineageSafeDefaultsByRunId]);
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     localStorage.setItem(TENANT_DEFAULTS_CONFLICT_TELEMETRY_KEY, JSON.stringify(tenantDefaultsConflictTelemetry));
   }, [tenantDefaultsConflictTelemetry]);
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     const loadTenantLineageDefaults = async () => {
       if (!tenantId || !canReadPipelines) {
         setTenantLineageDefaults(DEFAULT_TENANT_LINEAGE_DEFAULTS);
@@ -478,6 +607,9 @@ export default function Pipelines() {
     void loadTenantLineageDefaults();
   }, [tenantId, canReadPipelines]);
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     setTenantDefaultsConflict(null);
     setTenantDefaultsDiagnostics(null);
@@ -489,6 +621,9 @@ export default function Pipelines() {
     setTenantDefaultsPollPausedUntil(0);
   }, [tenantId]);
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     if (!tenantId || !canManageTenantSettings) return;
     const now = Date.now();
@@ -509,6 +644,9 @@ export default function Pipelines() {
     tenantDefaultsPollCheckedAt,
   ]);
 
+  /**
+   * Implements `checkTenantDefaultsNow` for this source unit.
+   */
   const checkTenantDefaultsNow = async () => {
     if (!tenantId || checkingTenantDefaultsNow) return;
     if (Date.now() < tenantDefaultsPollCooldownUntil) return;
@@ -518,6 +656,9 @@ export default function Pipelines() {
     setCheckingTenantDefaultsNow(false);
   };
 
+  /**
+   * Implements `refreshBucketRuns` for this source unit.
+   */
   const refreshBucketRuns = async (tid: string, fromDate: Date, toDate: Date, silent = false) => {
     if (!silent) setLoadingBucketRuns(true);
     try {
@@ -537,6 +678,9 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   const loadPipelines = async (tid: string, filter: HealthFilter = healthFilter) => {
     const data = await api.getPipelines(tid, {
       includeRunSummary: true,
@@ -549,6 +693,9 @@ export default function Pipelines() {
     return data;
   };
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   const loadPipelineSummary = async (pipelineId: string, sinceHours?: 1 | 24 | 168) => {
     const window = sinceHours ?? summaryWindowByPipeline[pipelineId] ?? 24;
     const summary = await api.getPipelineRunSummaryByPipeline(pipelineId, window);
@@ -556,6 +703,9 @@ export default function Pipelines() {
     setSummaryWindowByPipeline((prev) => ({ ...prev, [pipelineId]: window }));
   };
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   const loadDetailedPipelineRuns = async (pipelineId: string, filter?: PipelineRunDetailFilter) => {
     const runs = await api.getPipelineRuns(pipelineId, {
       limit: 24,
@@ -567,6 +717,9 @@ export default function Pipelines() {
     setDetailedRunsMap((prev) => ({ ...prev, [pipelineId]: runs }));
   };
 
+  /**
+   * Implements `bucketRangeForSummary` for this source unit.
+   */
   const bucketRangeForSummary = (summary: PipelineRunSummary, index: number) => {
     const bucket = summary.trendBuckets[index];
     const start = new Date(bucket.bucketStart);
@@ -574,7 +727,13 @@ export default function Pipelines() {
     return { start, end, bucket };
   };
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
+    /**
+     * Implements `fetchAll` for this source unit.
+     */
     const fetchAll = async () => {
       if (!tenantId) { setLoading(false); return; }
       if (!canReadPipelines) {
@@ -618,6 +777,9 @@ export default function Pipelines() {
     fetchAll();
   }, [tenantId, canReadPipelines, healthFilter, sinceHoursFilter, bucketStartParam, bucketSeconds, bucketStatusFilter, bucketPipelineIdFilter]);
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     if (!focusPipelineIdParam || !canReadPipelines) return;
     const signature = `${focusPipelineIdParam}:${focusRunIdParam || ''}`;
@@ -626,6 +788,9 @@ export default function Pipelines() {
     if (!pipelineExists) return;
 
     handledFocusRef.current = signature;
+    /**
+     * Implements `applyFocus` for this source unit.
+     */
     const applyFocus = async () => {
       setExpandedPipelineId(focusPipelineIdParam);
       try {
@@ -649,6 +814,9 @@ export default function Pipelines() {
     void applyFocus();
   }, [focusPipelineIdParam, focusRunIdParam, canReadPipelines, pipelines, runsMap]);
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     try {
       const parsed = JSON.parse(localStorage.getItem(TRIAGE_PRESETS_KEY) || '[]') as TriagePreset[];
@@ -658,6 +826,9 @@ export default function Pipelines() {
     }
   }, []);
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     if (!autoRefreshBucket || !tenantId || !bucketStart || !bucketEnd) return;
 
@@ -673,6 +844,9 @@ export default function Pipelines() {
     return () => window.clearInterval(intervalId);
   }, [autoRefreshBucket, tenantId, bucketStartParam, bucketSeconds, bucketStatusFilter, bucketPipelineIdFilter]);
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     if (!bucketStart || !bucketEnd || !bucketLastRefreshedAt) return;
 
@@ -684,9 +858,15 @@ export default function Pipelines() {
     return () => window.clearInterval(intervalId);
   }, [bucketStartParam, bucketSeconds, bucketLastRefreshedAt]);
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     if (!bucketStart || !bucketEnd) return;
 
+    /**
+     * Implements `onKeyDown` for this source unit.
+     */
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       const tagName = target?.tagName?.toLowerCase();
@@ -724,6 +904,9 @@ export default function Pipelines() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [bucketStartParam, bucketSeconds, searchParams.toString(), triagePresets, triagePresetTagFilter, triagePresetSortMode]);
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     if (!tenantId || pipelines.length === 0) return;
 
@@ -749,6 +932,9 @@ export default function Pipelines() {
     return () => window.clearInterval(intervalId);
   }, [tenantId, pipelines, runsMap]);
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleCreatePipeline = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!tenantId || !newPipelineName || !canWritePipelines) return;
@@ -766,6 +952,9 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleRunPipeline = async (pipelineId: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -795,6 +984,9 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleDeletePipeline = async (pipelineId: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -820,6 +1012,9 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleCancelRun = async (pipelineId: string, runId: string) => {
     if (!canExecutePipelines) {
       showToast('You need pipeline execute permission to cancel runs', 'error');
@@ -840,6 +1035,9 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleRetryRun = async (pipelineId: string, runId: string) => {
     if (!canExecutePipelines) {
       showToast('You need pipeline execute permission to retry runs', 'error');
@@ -860,6 +1058,9 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleRefreshRun = async (pipelineId: string, runId: string) => {
     if (!canReadPipelines) {
       showToast('You need pipeline read permission to refresh runs', 'error');
@@ -1003,6 +1204,9 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     if (!canReadPipelines || !focusPipelineIdParam) return;
     const selectedRunId = selectedRunIdByPipeline[focusPipelineIdParam];
@@ -1052,6 +1256,9 @@ export default function Pipelines() {
     CANCELLED: 'bg-gray-300',
   };
 
+  /**
+   * Implements `graphNodeCount` for this source unit.
+   */
   const graphNodeCount = (p: Pipeline) =>
     (p.graphDefinition?.nodes?.length ?? 0) ||
     (1 + (p.processingModuleVersionIds?.length ?? 0) + (p.exportModuleVersionIds?.length ?? 0));
@@ -1074,6 +1281,9 @@ export default function Pipelines() {
     return null;
   };
 
+  /**
+   * Implements `formatRunTime` for this source unit.
+   */
   const formatRunTime = (value?: string) => {
     if (!value) return '-';
     return new Date(value).toLocaleString();
@@ -1087,6 +1297,9 @@ export default function Pipelines() {
     return runsMap[pipeline.id]?.[0]?.startedAt ?? pipeline.latestRunStartedAt;
   };
 
+  /**
+   * Evaluates the named capability or state predicate.
+   */
   const isProblematic = (status?: PipelineRun['status']) => {
     return status === 'FAILED' || status === 'RUNNING' || status === 'PENDING';
   };
@@ -1130,6 +1343,9 @@ export default function Pipelines() {
         ? 'aging'
         : 'stale';
 
+  /**
+   * Implements `statusPriority` for this source unit.
+   */
   const statusPriority = (status: TenantPipelineRun['status']) => {
     if (status === 'FAILED') return 0;
     if (status === 'RUNNING' || status === 'PENDING') return 1;
@@ -1156,6 +1372,9 @@ export default function Pipelines() {
     ? bucketRuns.find((run) => run.pipelineId === bucketPipelineIdFilter)?.pipelineName
     : null;
 
+  /**
+   * Implements `applyHealthFilter` for this source unit.
+   */
   const applyHealthFilter = (filter: HealthFilter) => {
     setHealthFilter(filter);
     const next = new URLSearchParams(searchParams);
@@ -1167,6 +1386,9 @@ export default function Pipelines() {
     setSearchParams(next, { replace: true });
   };
 
+  /**
+   * Implements `applySinceHoursFilter` for this source unit.
+   */
   const applySinceHoursFilter = (hours: SinceHoursFilter) => {
     setSinceHoursFilter(hours);
     const next = new URLSearchParams(searchParams);
@@ -1178,6 +1400,9 @@ export default function Pipelines() {
     setSearchParams(next, { replace: true });
   };
 
+  /**
+   * Implements `clearBucketFilter` for this source unit.
+   */
   const clearBucketFilter = () => {
     const next = new URLSearchParams(searchParams);
     next.delete('bucketStart');
@@ -1189,6 +1414,9 @@ export default function Pipelines() {
     setSearchParams(next, { replace: true });
   };
 
+  /**
+   * Implements `clearAllTriageFilters` for this source unit.
+   */
   const clearAllTriageFilters = () => {
     setHealthFilter('ALL');
     setSinceHoursFilter(null);
@@ -1209,6 +1437,9 @@ export default function Pipelines() {
     setSearchParams(next, { replace: true });
   };
 
+  /**
+   * Implements `copyTriageLink` for this source unit.
+   */
   const copyTriageLink = async () => {
     try {
       const url = `${window.location.origin}${window.location.pathname}?${searchParams.toString()}`;
@@ -1219,6 +1450,9 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Implements `copyLineageLink` for this source unit.
+   */
   const copyLineageLink = async (pipelineId: string, runId: string) => {
     try {
       const depth = lineageDepthByRunId[runId] ?? 20;
@@ -1251,11 +1485,17 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Implements `resetLineageView` for this source unit.
+   */
   const resetLineageView = async (pipelineId: string, runId: string) => {
     const defaultDepth = lineageByRunId[runId]?.defaultDepth ?? 20;
     await handleLoadRunLineage(pipelineId, runId, defaultDepth, 'both', 'ALL', 'SUMMARY', 'AUTO');
   };
 
+  /**
+   * Creates or persists the requested state.
+   */
   const saveTenantLineageDefaultsFromCurrent = async (pipelineId: string, runId: string) => {
     if (!tenantId) return;
     if (!canManageTenantSettings) {
@@ -1313,6 +1553,9 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Implements `resolveTenantDefaultsConflictUseLatest` for this source unit.
+   */
   const resolveTenantDefaultsConflictUseLatest = () => {
     if (!tenantDefaultsConflict) return;
     setTenantLineageDefaults(tenantDefaultsConflict.latest);
@@ -1330,6 +1573,9 @@ export default function Pipelines() {
     showToast('Loaded latest tenant defaults', 'success');
   };
 
+  /**
+   * Implements `resolveTenantDefaultsConflictReapplyMine` for this source unit.
+   */
   const resolveTenantDefaultsConflictReapplyMine = async () => {
     if (!tenantId || !tenantDefaultsConflict) return;
     setSavingTenantLineageDefaults(true);
@@ -1370,6 +1616,9 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Implements `resolveTenantDefaultsConflictSaveMerged` for this source unit.
+   */
   const resolveTenantDefaultsConflictSaveMerged = async () => {
     if (!tenantId || !tenantDefaultsConflict) return;
     const merged: TenantLineageDefaultsConfig = {
@@ -1424,6 +1673,9 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Implements `forgetSafeDefault` for this source unit.
+   */
   const forgetSafeDefault = (scope: LineageSafeScope, targetId: string) => {
     const key = safeDefaultKey(scope, targetId);
     setLineageSafeDefaultsByRunId((prev) => {
@@ -1435,11 +1687,17 @@ export default function Pipelines() {
     showToast(`Safe defaults removed for ${scope.toLowerCase()} scope`, 'success');
   };
 
+  /**
+   * Implements `clearAllSafeDefaults` for this source unit.
+   */
   const clearAllSafeDefaults = () => {
     setLineageSafeDefaultsByRunId({});
     showToast('All lineage safe defaults cleared', 'success');
   };
 
+  /**
+   * Implements `refreshSafeDefaultTtl` for this source unit.
+   */
   const refreshSafeDefaultTtl = (scope: LineageSafeScope, targetId: string) => {
     const key = safeDefaultKey(scope, targetId);
     setLineageSafeDefaultsByRunId((prev) => {
@@ -1512,12 +1770,18 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleManualBucketRefresh = async () => {
     if (!tenantId || !bucketStart || !bucketEnd) return;
     await refreshBucketRuns(tenantId, bucketStart, bucketEnd);
     showToast('Bucket runs refreshed', 'success');
   };
 
+  /**
+   * Implements `applyBucketSortMode` for this source unit.
+   */
   const applyBucketSortMode = (mode: BucketSortMode) => {
     setBucketSortMode(mode);
     const next = new URLSearchParams(searchParams);
@@ -1529,6 +1793,9 @@ export default function Pipelines() {
     setSearchParams(next, { replace: true });
   };
 
+  /**
+   * Implements `applyBucketStatusFilter` for this source unit.
+   */
   const applyBucketStatusFilter = (status: BucketRunStatusFilter) => {
     setBucketStatusFilter(status);
     const next = new URLSearchParams(searchParams);
@@ -1540,6 +1807,9 @@ export default function Pipelines() {
     setSearchParams(next, { replace: true });
   };
 
+  /**
+   * Implements `applyBucketPipelineQuery` for this source unit.
+   */
   const applyBucketPipelineQuery = (query: string) => {
     setBucketPipelineQuery(query);
     const next = new URLSearchParams(searchParams);
@@ -1551,6 +1821,9 @@ export default function Pipelines() {
     setSearchParams(next, { replace: true });
   };
 
+  /**
+   * Implements `applyBucketPipelineIdFilter` for this source unit.
+   */
   const applyBucketPipelineIdFilter = (pipelineId: string | null) => {
     setBucketPipelineIdFilter(pipelineId);
     const next = new URLSearchParams(searchParams);
@@ -1562,11 +1835,26 @@ export default function Pipelines() {
     setSearchParams(next, { replace: true });
   };
 
+  /**
+   * Implements `clearBucketStatusFilter` for this source unit.
+   */
   const clearBucketStatusFilter = () => applyBucketStatusFilter('ALL');
+  /**
+   * Implements `clearBucketPipelineQuery` for this source unit.
+   */
   const clearBucketPipelineQuery = () => applyBucketPipelineQuery('');
+  /**
+   * Implements `clearBucketPipelineIdFilter` for this source unit.
+   */
   const clearBucketPipelineIdFilter = () => applyBucketPipelineIdFilter(null);
+  /**
+   * Implements `clearBucketSort` for this source unit.
+   */
   const clearBucketSort = () => applyBucketSortMode('NEWEST');
 
+  /**
+   * Creates or persists the requested state.
+   */
   const saveCurrentTriagePreset = () => {
     const name = triagePresetName.trim();
     if (!name) {
@@ -1591,6 +1879,9 @@ export default function Pipelines() {
     showToast('Triage preset saved', 'success');
   };
 
+  /**
+   * Implements `applyTriagePreset` for this source unit.
+   */
   const applyTriagePreset = (preset: TriagePreset) => {
     const params = new URLSearchParams(preset.query);
     const health = ((params.get('health') || 'ALL').toUpperCase() as HealthFilter);
@@ -1620,12 +1911,18 @@ export default function Pipelines() {
     showToast(`Applied preset: ${preset.name}`, 'success');
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const executeDeleteTriagePreset = (name: string) => {
     const next = triagePresets.filter((p) => p.name !== name);
     persistTriagePresets(next);
     showToast('Preset removed', 'success');
   };
 
+  /**
+   * Removes, stops, or releases the requested state.
+   */
   const deleteTriagePreset = (name: string) => {
     if (confirmPresetActions) {
       setPendingPresetAction({ type: 'delete', name });
@@ -1634,6 +1931,9 @@ export default function Pipelines() {
     executeDeleteTriagePreset(name);
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const executeResetPresetUsage = (name: string) => {
     const next = triagePresets.map((preset) =>
       preset.name === name
@@ -1644,6 +1944,9 @@ export default function Pipelines() {
     showToast('Preset usage reset', 'success');
   };
 
+  /**
+   * Implements `resetPresetUsage` for this source unit.
+   */
   const resetPresetUsage = (name: string) => {
     if (confirmPresetActions) {
       setPendingPresetAction({ type: 'resetOne', name });
@@ -1652,6 +1955,9 @@ export default function Pipelines() {
     executeResetPresetUsage(name);
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const executeResetAllPresetUsage = () => {
     const next = triagePresets.map((preset) => ({
       ...preset,
@@ -1662,6 +1968,9 @@ export default function Pipelines() {
     showToast('All preset usage stats reset', 'success');
   };
 
+  /**
+   * Implements `resetAllPresetUsage` for this source unit.
+   */
   const resetAllPresetUsage = () => {
     if (confirmPresetActions) {
       setPendingPresetAction({ type: 'resetAll' });
@@ -1670,11 +1979,17 @@ export default function Pipelines() {
     executeResetAllPresetUsage();
   };
 
+  /**
+   * Updates the requested state.
+   */
   const setPresetConfirmPreference = (enabled: boolean) => {
     setConfirmPresetActions(enabled);
     localStorage.setItem('pipelines.presets.confirm', enabled ? 'true' : 'false');
   };
 
+  /**
+   * Implements `confirmPendingPresetAction` for this source unit.
+   */
   const confirmPendingPresetAction = () => {
     if (!pendingPresetAction) return;
     if (pendingPresetAction.type === 'delete' && pendingPresetAction.name) {
@@ -1695,6 +2010,9 @@ export default function Pipelines() {
         ? `Reset usage stats for "${pendingPresetAction.name}"?`
         : 'Reset usage stats for all presets?';
 
+  /**
+   * Implements `duplicateTriagePreset` for this source unit.
+   */
   const duplicateTriagePreset = (name: string) => {
     const original = triagePresets.find((p) => p.name === name);
     if (!original) return;
@@ -1712,11 +2030,17 @@ export default function Pipelines() {
     showToast('Preset duplicated', 'success');
   };
 
+  /**
+   * Initializes, connects, or acquires the named runtime resource.
+   */
   const startRenameTriagePreset = (name: string) => {
     setEditingPresetName(name);
     setEditingPresetNextName(name);
   };
 
+  /**
+   * Implements `confirmRenameTriagePreset` for this source unit.
+   */
   const confirmRenameTriagePreset = () => {
     if (!editingPresetName) return;
     const nextName = editingPresetNextName.trim();
@@ -1742,11 +2066,17 @@ export default function Pipelines() {
     showToast('Preset renamed', 'success');
   };
 
+  /**
+   * Evaluates the named capability or state predicate.
+   */
   const cancelRenameTriagePreset = () => {
     setEditingPresetName(null);
     setEditingPresetNextName('');
   };
 
+  /**
+   * Converts a value into the representation required by its caller.
+   */
   const toggleFavoritePreset = (name: string) => {
     const next = triagePresets.map((preset) =>
       preset.name === name
@@ -1756,6 +2086,9 @@ export default function Pipelines() {
     persistTriagePresets(next);
   };
 
+  /**
+   * Implements `moveFavoritePreset` for this source unit.
+   */
   const moveFavoritePreset = (name: string, direction: 'up' | 'down') => {
     const favorites = triagePresets.filter((p) => p.favorite);
     const others = triagePresets.filter((p) => !p.favorite);
@@ -1793,6 +2126,9 @@ export default function Pipelines() {
     return 0;
   });
 
+  /**
+   * Implements `formatPresetLastUsed` for this source unit.
+   */
   const formatPresetLastUsed = (value?: string) => {
     if (!value) return 'never';
     const ms = Date.now() - new Date(value).getTime();
@@ -1806,6 +2142,9 @@ export default function Pipelines() {
     return `${days}d ago`;
   };
 
+  /**
+   * Implements `exportTriagePresets` for this source unit.
+   */
   const exportTriagePresets = () => {
     if (triagePresets.length === 0) {
       showToast('No presets to export', 'error');
@@ -1831,10 +2170,16 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Implements `triggerImportTriagePresets` for this source unit.
+   */
   const triggerImportTriagePresets = () => {
     importPresetInputRef.current?.click();
   };
 
+  /**
+   * Implements `importTriagePresets` for this source unit.
+   */
   const importTriagePresets = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -1877,6 +2222,9 @@ export default function Pipelines() {
     }
   };
 
+  /**
+   * Converts a value into the representation required by its caller.
+   */
   const toggleShortcutHints = () => {
     setShowShortcutHints((prev) => {
       const next = !prev;

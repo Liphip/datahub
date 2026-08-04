@@ -20,6 +20,9 @@ import java.util.UUID
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
+/**
+ * Defines the class `GrafanaSyncResource`, the contract implemented by this source unit.
+ */
 class GrafanaSyncResource {
 
     @Inject
@@ -34,6 +37,9 @@ class GrafanaSyncResource {
     @PersistenceContext
     lateinit var em: EntityManager
 
+    /**
+     * Implements `currentUser` for this source unit.
+     */
     private fun currentUser(): User? =
         try {
             jwt.subject?.let { em.find(User::class.java, UUID.fromString(it)) }
@@ -41,6 +47,9 @@ class GrafanaSyncResource {
             null
         }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun requireGrafanaAdmin(): Response? {
         val user = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         if (!user.isSuperAdmin() && !user.hasAbility("manage:tenant")) {
@@ -51,6 +60,9 @@ class GrafanaSyncResource {
 
     @GET
     @Path("/sync-states")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun listSyncStates(
         @QueryParam("status") status: String?,
         @QueryParam("target") target: String?,
@@ -94,6 +106,9 @@ class GrafanaSyncResource {
     @POST
     @Path("/reconcile")
     @Transactional
+    /**
+     * Implements `reconcile` for this source unit.
+     */
     fun reconcile(): Response {
         requireGrafanaAdmin()?.let { return it }
         return Response.ok(grafanaSyncService.reconcileAll()).build()
@@ -102,6 +117,9 @@ class GrafanaSyncResource {
     @POST
     @Path("/apply-pending")
     @Transactional
+    /**
+     * Implements `applyPending` for this source unit.
+     */
     fun applyPending(
         @QueryParam("limit") limit: Int?,
         @QueryParam("target") target: String?,
@@ -128,6 +146,9 @@ class GrafanaSyncResource {
     @POST
     @Path("/sync-states/{id}/mark-synced")
     @Transactional
+    /**
+     * Implements `markSynced` for this source unit.
+     */
     fun markSynced(@PathParam("id") id: String): Response {
         requireGrafanaAdmin()?.let { return it }
         val stateId = try {
@@ -143,6 +164,9 @@ class GrafanaSyncResource {
     @POST
     @Path("/sync-states/{id}/mark-failed")
     @Transactional
+    /**
+     * Implements `markFailed` for this source unit.
+     */
     fun markFailed(@PathParam("id") id: String, request: Map<String, Any>?): Response {
         requireGrafanaAdmin()?.let { return it }
         val stateId = try {

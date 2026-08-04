@@ -34,6 +34,9 @@ import java.util.concurrent.TimeUnit
  *   (same broker URL as INPUT connectors when the broker is shared)
  */
 @ApplicationScoped
+/**
+ * Defines the class `MqttConnectionManager`, the contract implemented by this source unit.
+ */
 class MqttConnectionManager {
 
     private val LOG = Logger.getLogger(MqttConnectionManager::class.java)
@@ -74,6 +77,9 @@ class MqttConnectionManager {
 
     // ── Status info ───────────────────────────────────────────────────────────
 
+    /**
+     * Defines the class `MqttClientInfo`, the contract implemented by this source unit.
+     */
     data class MqttClientInfo(
         val connected: Boolean,
         val subscribedTopics: List<String>,
@@ -81,6 +87,9 @@ class MqttConnectionManager {
         val lastError: String?,
     )
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getClientInfo(connectorId: UUID): MqttClientInfo {
         val client = clients[connectorId]
         return MqttClientInfo(
@@ -93,6 +102,9 @@ class MqttConnectionManager {
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     fun onStart(@Observes event: StartupEvent) {
         if (!runtimeRoleConfig.ownsIngestRuntime()) {
             LOG.infof("MqttConnectionManager startup skipped for runtime role %s", runtimeRoleConfig.role)
@@ -109,6 +121,9 @@ class MqttConnectionManager {
         )
     }
 
+    /**
+     * Implements `onStop` for this source unit.
+     */
     fun onStop(@Observes event: ShutdownEvent) {
         if (!runtimeRoleConfig.ownsIngestRuntime()) return
         LOG.info("MqttConnectionManager shutting down — disconnecting all MQTT clients")
@@ -236,6 +251,9 @@ class MqttConnectionManager {
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     private fun connectAndSubscribe(connectorId: UUID) {
         val (connector, config) = messageRouter.resolveConnectorConfig(connectorId) ?: return
         val brokerUrl = normalizeBrokerUrl(config["broker"]?.toString())
@@ -289,12 +307,18 @@ class MqttConnectionManager {
         }
     }
 
+    /**
+     * Implements `subscribeTopics` for this source unit.
+     */
     private fun subscribeTopics(connectorId: UUID, client: MqttClient, topics: List<String>) {
         if (topics.isEmpty()) return
         client.subscribe(topics.toTypedArray(), IntArray(topics.size) { 1 })
         LOG.debugf("MQTT connector %s subscribed to topics: %s", connectorId, topics)
     }
 
+    /**
+     * Implements `buildCallback` for this source unit.
+     */
     private fun buildCallback(
         connectorId: UUID,
         client: MqttClient,
@@ -340,6 +364,9 @@ class MqttConnectionManager {
         }
     }
 
+    /**
+     * Implements `buildConnectOptions` for this source unit.
+     */
     private fun buildConnectOptions(config: Map<String, Any?>): MqttConnectOptions {
         return MqttConnectOptions().apply {
             isCleanSession = true
@@ -389,6 +416,9 @@ class MqttConnectionManager {
     }
 
     /** Extract the numeric port from a host:port string (ignores trailing path / query). */
+    /**
+     * Implements `extractPort` for this source unit.
+     */
     private fun extractPort(hostAndRest: String): Int? =
         hostAndRest.substringAfterLast(":", "").substringBefore("/").trim().toIntOrNull()
 

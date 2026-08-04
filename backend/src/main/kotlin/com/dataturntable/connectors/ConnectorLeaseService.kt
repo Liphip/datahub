@@ -12,6 +12,9 @@ import java.util.Optional
 import java.util.UUID
 
 @ApplicationScoped
+/**
+ * Defines the class `ConnectorLeaseService`, the contract implemented by this source unit.
+ */
 class ConnectorLeaseService {
 
     private val log = Logger.getLogger(ConnectorLeaseService::class.java)
@@ -32,9 +35,15 @@ class ConnectorLeaseService {
         configuredInstanceId.orElseGet { "ingest-${UUID.randomUUID()}" }
     }
 
+    /**
+     * Implements `currentInstanceId` for this source unit.
+     */
     fun currentInstanceId(): String = instanceId
 
     @Transactional
+    /**
+     * Implements `tryAcquireOrRenew` for this source unit.
+     */
     fun tryAcquireOrRenew(connectorId: UUID): Boolean {
         val now = Instant.now()
         val leaseUntil = now.plusSeconds(leaseTtlSeconds.coerceAtLeast(10))
@@ -62,6 +71,9 @@ class ConnectorLeaseService {
     }
 
     @Transactional
+    /**
+     * Implements `release` for this source unit.
+     */
     fun release(connectorId: UUID) {
         try {
             em.createNativeQuery(
@@ -76,6 +88,9 @@ class ConnectorLeaseService {
     }
 
     @Transactional
+    /**
+     * Implements `releaseAllOwned` for this source unit.
+     */
     fun releaseAllOwned() {
         try {
             val count = em.createNativeQuery(

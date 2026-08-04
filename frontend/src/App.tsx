@@ -4,23 +4,38 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './stores/auth';
 import { API_STATUS_EVENT } from './services/api';
 
+/**
+ * Defines the class `ErrorBoundary`, the contract implemented by this source unit.
+ */
 class ErrorBoundary extends Component<
   { children: ReactNode },
   { hasError: boolean; error: Error | null }
 > {
+  /**
+   * Implements `constructor` for this source unit.
+   */
   constructor(props: { children: ReactNode }) {
     super(props);
     this.state = { hasError: false, error: null };
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   static getDerivedStateFromError(error: Error) {
     return { hasError: true, error };
   }
 
+  /**
+   * Implements `componentDidCatch` for this source unit.
+   */
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('ErrorBoundary caught:', error, info.componentStack);
   }
 
+  /**
+   * Implements `render` for this source unit.
+   */
   render() {
     if (this.state.hasError) {
       return (
@@ -59,6 +74,9 @@ import Data from './pages/Data';
 import RunDetail from './pages/RunDetail';
 import Layout from './components/Layout';
 
+/**
+ * Implements `ProtectedRoute` for this source unit.
+ */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuthStore();
 
@@ -77,11 +95,20 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * Implements `App` for this source unit.
+ */
 function App() {
   const [apiAvailable, setApiAvailable] = useState(true);
   const [apiStatusMessage, setApiStatusMessage] = useState('');
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
+    /**
+     * Implements `onStatus` for this source unit.
+     */
     const onStatus = (event: Event) => {
       const detail = (event as CustomEvent<{ available: boolean; message?: string }>).detail;
       if (!detail) return;
@@ -89,11 +116,17 @@ function App() {
       setApiStatusMessage(detail.message || 'API connection issue detected');
     };
 
+    /**
+     * Implements `onOffline` for this source unit.
+     */
     const onOffline = () => {
       setApiAvailable(false);
       setApiStatusMessage('Network offline. Reconnect to continue syncing data.');
     };
 
+    /**
+     * Implements `onOnline` for this source unit.
+     */
     const onOnline = () => {
       setApiAvailable(true);
       setApiStatusMessage('');

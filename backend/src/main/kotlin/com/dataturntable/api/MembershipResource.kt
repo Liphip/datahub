@@ -21,6 +21,9 @@ import java.util.UUID
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
+/**
+ * Defines the class `MembershipResource`, the contract implemented by this source unit.
+ */
 class MembershipResource {
 
     @Inject
@@ -32,12 +35,18 @@ class MembershipResource {
     @Inject
     lateinit var grafanaSyncService: GrafanaSyncService
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     private fun getCurrentUser(): User? {
         val subject = jwt.subject ?: return null
         val userId = try { UUID.fromString(subject) } catch (_: Exception) { return null }
         return em.find(User::class.java, userId)
     }
 
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     private fun isRootTenantAdmin(userId: UUID): Boolean {
         val memberships = em.createQuery(
             "SELECT m FROM Membership m WHERE m.authUser.id = :userId",
@@ -51,11 +60,17 @@ class MembershipResource {
         }
     }
 
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     private fun isRoleAssignableToTenant(role: Role, tenant: Tenant): Boolean {
         val roleTenantId = role.tenant?.id
         return roleTenantId == null || roleTenantId == tenant.id
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseTenantUuid(tenantId: String): UUID {
         return try {
             UUID.fromString(tenantId)
@@ -64,6 +79,9 @@ class MembershipResource {
         }
     }
 
+    /**
+     * Converts a value into the representation required by its caller.
+     */
     private fun toMembershipDto(membership: Membership): Map<String, Any?> {
         return mapOf(
             "id" to membership.id,
@@ -78,6 +96,9 @@ class MembershipResource {
     }
 
     @GET
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun list(@PathParam("tenantId") tenantId: String): Response {
         val currentUser = getCurrentUser()
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
@@ -104,6 +125,9 @@ class MembershipResource {
 
     @POST
     @Transactional
+    /**
+     * Creates or persists the requested state.
+     */
     fun create(@PathParam("tenantId") tenantId: String, request: Map<String, Any>): Response {
         val currentUser = getCurrentUser()
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
@@ -165,6 +189,9 @@ class MembershipResource {
     @DELETE
     @Path("/{id}")
     @Transactional
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun delete(@PathParam("tenantId") tenantId: String, @PathParam("id") id: String): Response {
         val currentUser = getCurrentUser()
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
@@ -201,6 +228,9 @@ class MembershipResource {
     @PATCH
     @Path("/{id}")
     @Transactional
+    /**
+     * Updates the requested state.
+     */
     fun update(@PathParam("tenantId") tenantId: String, @PathParam("id") id: String, request: Map<String, Any>): Response {
         val currentUser = getCurrentUser()
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {

@@ -8,6 +8,9 @@ import jakarta.persistence.*
 import java.time.Instant
 import java.util.UUID
 
+/**
+ * Defines the enum class `ModuleType`, the contract implemented by this source unit.
+ */
 enum class ModuleType {
     /** Receives raw data from a connector and parses/transforms it. Platform fetches — no network I/O in module. */
     IMPORT,
@@ -27,6 +30,9 @@ enum class ModuleType {
 
 @Entity
 @Table(name = "code_modules")
+/**
+ * Defines the class `CodeModule`, the contract implemented by this source unit.
+ */
 open class CodeModule : PanacheBase() {
     
     @Id
@@ -72,22 +78,40 @@ open class CodeModule : PanacheBase() {
         override fun findById(id: UUID): CodeModule? =
             find("id = ?1", id).firstResult()
 
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByTenantId(tenantId: UUID): List<CodeModule> =
             list("tenant.id = ?1", tenantId)
 
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByTenantAndType(tenantId: UUID, type: ModuleType): List<CodeModule> =
             list("tenant.id = ?1 AND moduleType = ?2", tenantId, type)
 
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByTenantAndName(tenantId: UUID, name: String, type: ModuleType): CodeModule? =
             find("tenant.id = ?1 AND name = ?2 AND moduleType = ?3", tenantId, name, type).firstResult()
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getLatestVersion(): ModuleVersion? = 
         versions.firstOrNull()
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getActiveVersion(): ModuleVersion? = 
         versions.firstOrNull { it.isActive }
 
+    /**
+     * Implements `resolveDefaultVersion` for this source unit.
+     */
     fun resolveDefaultVersion(): ModuleVersion? =
         defaultVersion ?: getActiveVersion() ?: getLatestVersion()
 }

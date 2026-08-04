@@ -43,6 +43,9 @@ import java.util.concurrent.TimeUnit
  *  3. Create a PipelineRun for each and trigger via Kafka with the fetched data
  */
 @ApplicationScoped
+/**
+ * Defines the class `ConnectorPollingService`, the contract implemented by this source unit.
+ */
 class ConnectorPollingService {
 
     private val LOG = Logger.getLogger(ConnectorPollingService::class.java)
@@ -87,6 +90,9 @@ class ConnectorPollingService {
 
     // ── Status info ───────────────────────────────────────────────────────────
 
+    /**
+     * Defines the class `PollingInfo`, the contract implemented by this source unit.
+     */
     data class PollingInfo(
         val scheduled: Boolean,
         val intervalSeconds: Int?,
@@ -95,6 +101,9 @@ class ConnectorPollingService {
         val lastRunError: String?,
     )
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getPollingInfo(connectorId: UUID): PollingInfo {
         val task = scheduledTasks[connectorId]
         return PollingInfo(
@@ -108,6 +117,9 @@ class ConnectorPollingService {
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     fun onStart(@Observes event: StartupEvent) {
         if (!runtimeRoleConfig.ownsIngestRuntime()) {
             LOG.infof("ConnectorPollingService startup skipped for runtime role %s", runtimeRoleConfig.role)
@@ -124,6 +136,9 @@ class ConnectorPollingService {
         )
     }
 
+    /**
+     * Implements `onStop` for this source unit.
+     */
     fun onStop(@Observes event: ShutdownEvent) {
         if (!runtimeRoleConfig.ownsIngestRuntime()) return
         LOG.info("ConnectorPollingService shutting down")
@@ -174,6 +189,9 @@ class ConnectorPollingService {
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
+    /**
+     * Implements `scheduleAll` for this source unit.
+     */
     private fun scheduleAll() {
         val connectors = em.createQuery(
             """SELECT c FROM Connector c
@@ -203,6 +221,9 @@ class ConnectorPollingService {
             ownedConnectorIds.size)
     }
 
+    /**
+     * Implements `scheduleConnector` for this source unit.
+     */
     private fun scheduleConnector(connector: Connector) {
         val connectorId = connector.id ?: return
         val intervalSec = connector.pollingIntervalSeconds.coerceAtLeast(5).toLong()
@@ -222,6 +243,9 @@ class ConnectorPollingService {
             connectorId, connector.name, intervalSec)
     }
 
+    /**
+     * Processes the named request, event, or operation.
+     */
     private fun executePoll(connectorId: UUID) {
         try {
             pollExecutor.executePoll(connectorId)
@@ -259,6 +283,9 @@ class PollTransactionExecutor {
     lateinit var em: EntityManager
 
     @Transactional
+    /**
+     * Processes the named request, event, or operation.
+     */
     fun executePoll(connectorId: UUID) {
         val connector = em.find(Connector::class.java, connectorId) ?: return
         if (!connector.isActive || !connector.pollingEnabled) return
@@ -312,6 +339,9 @@ class PollTransactionExecutor {
         }
     }
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     private fun findPipelinesUsingConnector(connectorId: UUID): List<UUID> {
         val activePipelines = em.createQuery(
             "SELECT p FROM Pipeline p WHERE p.isActive = true",

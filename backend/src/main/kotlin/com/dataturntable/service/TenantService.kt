@@ -11,6 +11,9 @@ import jakarta.transaction.Transactional
 import java.util.*
 
 @ApplicationScoped
+/**
+ * Defines the class `TenantService`, the contract implemented by this source unit.
+ */
 class TenantService {
     
     @Inject
@@ -19,6 +22,9 @@ class TenantService {
     private val objectMapper = ObjectMapper()
     
     @Transactional
+    /**
+     * Creates or persists the requested state.
+     */
     fun createTenant(request: CreateTenantRequest, parentId: UUID?, user: User): Tenant {
         val parent = if (parentId != null) {
             Tenant.findById(parentId) ?: throw IllegalArgumentException("Parent tenant not found")
@@ -40,6 +46,9 @@ class TenantService {
         return tenant
     }
     
+    /**
+     * Creates or persists the requested state.
+     */
     fun createDefaultRoles(tenant: Tenant) {
         val viewerRole = Role().apply {
             this.tenant = tenant
@@ -67,21 +76,36 @@ class TenantService {
         adminRole.persist()
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getTenant(id: UUID): Tenant? = Tenant.findById(id)
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getTenantTree(): List<TenantDto> {
         val rootTenants = Tenant.findRootTenants()
         return rootTenants.map { toDto(it, true) }
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getTenantChildren(parentId: UUID): List<Tenant> = Tenant.findByParentId(parentId)
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getTenantWithChildren(id: UUID): Tenant? {
         val tenant = Tenant.findById(id) ?: return null
         return tenant
     }
     
     @Transactional
+    /**
+     * Updates the requested state.
+     */
     fun updateTenant(id: UUID, request: UpdateTenantRequest): Tenant? {
         val tenant = Tenant.findById(id) ?: return null
         
@@ -96,12 +120,18 @@ class TenantService {
     }
     
     @Transactional
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun deleteTenant(id: UUID): Boolean {
         val tenant = Tenant.findById(id) ?: return false
         tenant.delete()
         return true
     }
     
+    /**
+     * Converts a value into the representation required by its caller.
+     */
     fun toDto(tenant: Tenant, includeChildren: Boolean = false): TenantDto {
         val settings = try {
             objectMapper.readValue(tenant.settings, Map::class.java) as? Map<String, Any> ?: emptyMap()

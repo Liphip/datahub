@@ -4,6 +4,9 @@ import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { Tenant } from '../types';
 
+/**
+ * Defines the interface `TenantWithChildren`, the contract implemented by this source unit.
+ */
 interface TenantWithChildren extends Tenant {
   children?: TenantWithChildren[];
 }
@@ -29,6 +32,9 @@ export default function Tenants() {
   const [expandedTenantIds, setExpandedTenantIds] = useState<Record<string, boolean>>({});
   const [switchingTenantId, setSwitchingTenantId] = useState<string | null>(null);
 
+  /**
+   * Implements `showToast` for this source unit.
+   */
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
@@ -40,6 +46,9 @@ export default function Tenants() {
   const flattenTenants = (nodes: TenantWithChildren[]): TenantWithChildren[] =>
     nodes.flatMap((node) => [node, ...flattenTenants((node.children || []) as TenantWithChildren[])]);
 
+  /**
+   * Implements `fetchTenants` for this source unit.
+   */
   const fetchTenants = async (query?: string) => {
     try {
       const tree = await api.getTenantsRecursive(query);
@@ -60,10 +69,16 @@ export default function Tenants() {
     }
   };
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     fetchTenants();
   }, []);
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     const timer = window.setTimeout(() => {
       fetchTenants(searchQuery.trim() || undefined);
@@ -78,6 +93,9 @@ export default function Tenants() {
     ]);
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleCreateTenant = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTenantName) return;
@@ -99,12 +117,18 @@ export default function Tenants() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleEditTenant = (tenant: TenantWithChildren) => {
     setEditingTenant(tenant);
     setNewTenantName(tenant.name);
     setShowEditModal(true);
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleUpdateTenant = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingTenant || !newTenantName) return;
@@ -125,6 +149,9 @@ export default function Tenants() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleDeleteTenant = async (tenantId: string) => {
     const flatten = (nodes: TenantWithChildren[]): TenantWithChildren[] =>
       nodes.flatMap((n) => [n, ...(n.children ? flatten(n.children) : [])]);
@@ -153,6 +180,9 @@ export default function Tenants() {
     }
   };
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleSwitchTenant = async (tenantId: string) => {
     if (tenantId === selectedTenantId) return;
     setSwitchingTenantId(tenantId);
@@ -166,6 +196,9 @@ export default function Tenants() {
     }
   };
 
+  /**
+   * Implements `openCreateModal` for this source unit.
+   */
   const openCreateModal = (parentId?: string) => {
     setNewTenantParentId(parentId || '');
     setNewTenantName('');
@@ -180,6 +213,9 @@ export default function Tenants() {
     || selectedTenantId
     || 'None';
 
+  /**
+   * Implements `renderTenantTree` for this source unit.
+   */
   const renderTenantTree = (tenant: TenantWithChildren, depth: number = 0) => {
     const hasChildren = tenant.children && tenant.children.length > 0;
     const isExpanded = expandedTenantIds[tenant.id] ?? true;

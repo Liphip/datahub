@@ -16,6 +16,9 @@ import java.util.UUID
  * refreshConnector() / refreshAll() after connector CRUD operations.
  */
 @ApplicationScoped
+/**
+ * Defines the class `MqttIngestService`, the contract implemented by this source unit.
+ */
 class MqttIngestService {
 
     private val LOG = Logger.getLogger(MqttIngestService::class.java)

@@ -12,20 +12,32 @@ import org.mindrot.jbcrypt.BCrypt
 import java.util.UUID
 
 @ApplicationScoped
+/**
+ * Defines the class `UserService`, the contract implemented by this source unit.
+ */
 class UserService {
     
     private val objectMapper = ObjectMapper()
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getUsersByTenant(tenantId: UUID): List<UserDto> {
         return User.findByTenantId(tenantId).map { toDto(it) }
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getUser(id: UUID): UserDto? {
         val user = User.findById(id) ?: return null
         return toDto(user)
     }
     
     @Transactional
+    /**
+     * Creates or persists the requested state.
+     */
     fun createUser(
         tenantId: UUID,
         email: String,
@@ -69,6 +81,9 @@ class UserService {
     }
     
     @Transactional
+    /**
+     * Updates the requested state.
+     */
     fun updateUser(
         id: UUID,
         firstName: String?,
@@ -111,6 +126,9 @@ class UserService {
     }
     
     @Transactional
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun deleteUser(id: UUID): Boolean {
         val user = User.findById(id) ?: return false
         // Delete memberships first
@@ -120,6 +138,9 @@ class UserService {
     }
     
     @Transactional
+    /**
+     * Implements `changePassword` for this source unit.
+     */
     fun changePassword(id: UUID, oldPassword: String, newPassword: String): Boolean {
         val user = User.findById(id) ?: return false
         
@@ -134,6 +155,9 @@ class UserService {
         return true
     }
     
+    /**
+     * Converts a value into the representation required by its caller.
+     */
     fun toDto(user: User): UserDto {
          return UserDto(
              id = user.id.toString(),

@@ -12,18 +12,39 @@ import {
   useEdgesState,
   Handle,
   Position,
+  /**
+   * Defines the type `NodeProps`, the contract implemented by this source unit.
+   */
   type NodeProps,
+  /**
+   * Defines the type `Connection`, the contract implemented by this source unit.
+   */
   type Connection,
+  /**
+   * Defines the type `Node`, the contract implemented by this source unit.
+   */
   type Node,
+  /**
+   * Defines the type `Edge`, the contract implemented by this source unit.
+   */
   type Edge,
+  /**
+   * Defines the type `NodeTypes`, the contract implemented by this source unit.
+   */
   type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+/**
+ * Defines the type `NodeType`, the contract implemented by this source unit.
+ */
 type NodeType = 'IMPORT' | 'PROCESSING' | 'MERGE' | 'ALERT' | 'EXPORT';
 
+/**
+ * Defines the interface `PipelineNodeData`, the contract implemented by this source unit.
+ */
 interface PipelineNodeData extends Record<string, unknown> {
   nodeType: NodeType;
   label: string;
@@ -34,13 +55,22 @@ interface PipelineNodeData extends Record<string, unknown> {
   mqttTopic?: string;
 }
 
+/**
+ * Defines the type `ModuleVersionOption`, the contract implemented by this source unit.
+ */
 type ModuleVersionOption = ModuleVersion & {
   moduleName: string;
   moduleType: CodeModule['moduleType'];
 };
 
+/**
+ * Defines the type `ModuleOption`, the contract implemented by this source unit.
+ */
 type ModuleOption = Pick<CodeModule, 'id' | 'name' | 'moduleType' | 'defaultVersionId'>;
 
+/**
+ * Defines the type `DagNodeType`, the contract implemented by this source unit.
+ */
 type DagNodeType = Node<PipelineNodeData, 'dagNode'>;
 
 // ─── Node colour map ──────────────────────────────────────────────────────────
@@ -63,6 +93,9 @@ const NODE_ICON: Record<NodeType, string> = {
 
 // ─── Custom DAG node ──────────────────────────────────────────────────────────
 
+/**
+ * Implements `DagNode` for this source unit.
+ */
 function DagNode({ data, selected }: NodeProps<DagNodeType>) {
   const d = data as PipelineNodeData;
   const colors = NODE_COLORS[d.nodeType] ?? 'border-gray-400 bg-gray-50';
@@ -123,10 +156,16 @@ const nodeTypes: NodeTypes = { dagNode: memo(DagNode) };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * Implements `makeNodeId` for this source unit.
+ */
 function makeNodeId() {
   return `n-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+/**
+ * Implements `graphToFlow` for this source unit.
+ */
 function graphToFlow(
   graph: Pipeline['graphDefinition'],
 ): { nodes: DagNodeType[]; edges: Edge[] } {
@@ -157,6 +196,9 @@ function graphToFlow(
   return { nodes, edges };
 }
 
+/**
+ * Implements `flowToGraph` for this source unit.
+ */
 function flowToGraph(
   nodes: DagNodeType[],
   edges: Edge[],
@@ -202,6 +244,9 @@ export default function PipelineEditor() {
 
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
   // Keep pipelineIdRef in sync so polling closures are never stale
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => { pipelineIdRef.current = pipeline?.id; }, [pipeline?.id]);
   const [moduleVersionOptions, setModuleVersionOptions] = useState<ModuleVersionOption[]>([]);
   const [moduleOptions, setModuleOptions] = useState<ModuleOption[]>([]);
@@ -226,6 +271,9 @@ export default function PipelineEditor() {
 
   const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
 
+  /**
+   * Implements `showToast` for this source unit.
+   */
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3500);
@@ -233,7 +281,13 @@ export default function PipelineEditor() {
 
   // ── Load data ──────────────────────────────────────────────────────────────
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
+    /**
+     * Implements `fetchData` for this source unit.
+     */
     const fetchData = async () => {
       if (!id || !tenantId) { setLoading(false); return; }
       try {
@@ -309,6 +363,9 @@ export default function PipelineEditor() {
 
   // ── Add node ───────────────────────────────────────────────────────────────
 
+  /**
+   * Creates or persists the requested state.
+   */
   const addNode = (nodeType: NodeType) => {
     const newId = makeNodeId();
     const xOffset = nodes.length * 40;
@@ -327,6 +384,9 @@ export default function PipelineEditor() {
     setSelectedNodeId(newId);
   };
 
+  /**
+   * Removes, stops, or releases the requested state.
+   */
   const deleteSelectedNode = () => {
     if (!selectedNodeId) return;
     setNodes((nds: DagNodeType[]) => nds.filter((n: DagNodeType) => n.id !== selectedNodeId));
@@ -341,6 +401,9 @@ export default function PipelineEditor() {
     [nodes, selectedNodeId],
   );
 
+  /**
+   * Updates the requested state.
+   */
   const updateSelectedNodeData = (patch: Partial<PipelineNodeData>) => {
     if (!selectedNodeId) return;
     setNodes((nds: DagNodeType[]) =>
@@ -354,6 +417,9 @@ export default function PipelineEditor() {
 
   // ── Save ───────────────────────────────────────────────────────────────────
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleSave = async () => {
     if (!tenantId || !name || !canWritePipelines) return;
     setSaving(true);
@@ -379,6 +445,9 @@ export default function PipelineEditor() {
 
   // ── Trigger (manual run) ───────────────────────────────────────────────────
 
+  /**
+   * Processes the named request, event, or operation.
+   */
   const handleTrigger = async () => {
     if (!pipeline || !canExecutePipelines) return;
     setTriggering(true);
@@ -396,6 +465,9 @@ export default function PipelineEditor() {
     }
   };
 
+  /**
+   * Implements `pollRunStatus` for this source unit.
+   */
   const pollRunStatus = (runId: string) => {
     const timer = setTimeout(async () => {
       const pid = pipelineIdRef.current;
@@ -418,11 +490,17 @@ export default function PipelineEditor() {
     setRunPollingTimer(timer);
   };
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     return () => { if (runPollingTimer) clearTimeout(runPollingTimer); };
   }, [runPollingTimer]);
 
   // ── Background poll for externally-triggered runs (e.g. MQTT) ──────────────
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     if (!id || id === 'new' || !pipeline) return;
     const interval = setInterval(async () => {
@@ -597,6 +675,9 @@ export default function PipelineEditor() {
 
 // ─── Node config side panel ───────────────────────────────────────────────────
 
+/**
+ * Implements `NodeConfigPanel` for this source unit.
+ */
 function NodeConfigPanel({
   nodeId,
   data,
@@ -812,6 +893,9 @@ const STATUS_TEXT: Record<string, string> = {
   CANCELLED: 'text-gray-500',
 };
 
+/**
+ * Implements `fmtDuration` for this source unit.
+ */
 function fmtDuration(ms?: number | null) {
   if (ms == null) return '';
   if (ms < 1000) return `${ms}ms`;
@@ -819,6 +903,9 @@ function fmtDuration(ms?: number | null) {
   return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
 }
 
+/**
+ * Processes the named request, event, or operation.
+ */
 function RunLogPanel({
   latestRun,
   recentRuns,

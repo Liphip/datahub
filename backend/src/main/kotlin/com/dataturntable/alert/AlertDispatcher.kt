@@ -18,8 +18,14 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 
 @ApplicationScoped
+/**
+ * Defines the class `AlertDispatcher`, the contract implemented by this source unit.
+ */
 class AlertDispatcher {
 
+    /**
+     * Defines the class `AlertEvaluationReport`, the contract implemented by this source unit.
+     */
     data class AlertEvaluationReport(
         val evaluatedRules: Int,
         val matchedRules: Int,
@@ -38,6 +44,9 @@ class AlertDispatcher {
     lateinit var em: EntityManager
 
     @Transactional
+    /**
+     * Processes the named request, event, or operation.
+     */
     fun evaluateRulesForPipeline(pipeline: Pipeline, payload: Map<String, Any>?): AlertEvaluationReport {
         val pipelineId = pipeline.id ?: return AlertEvaluationReport(0, 0, 0, 0)
         val tenantId = pipeline.tenant?.id ?: return AlertEvaluationReport(0, 0, 0, 0)
@@ -78,12 +87,18 @@ class AlertDispatcher {
         )
     }
 
+    /**
+     * Implements `matchesCondition` for this source unit.
+     */
     fun matchesCondition(conditionRaw: String?, payload: Map<String, Any>?): Boolean {
         val condition = parseCondition(conditionRaw)
         return evaluateConditionMap(condition, payload ?: emptyMap())
     }
     
     @Transactional
+    /**
+     * Delivers or routes the named data to its configured destination.
+     */
     fun dispatchAlert(alert: AlertHistory) {
         if (!alertsEnabled) {
             LOG.infof("Alerts disabled, skipping dispatch for alert: %s", alert.title)
@@ -124,6 +139,9 @@ class AlertDispatcher {
         }
     }
     
+    /**
+     * Delivers or routes the named data to its configured destination.
+     */
     private fun dispatchWebhookAlert(channel: AlertChannel, alert: AlertHistory) {
         val config = parseConfig(channel.config)
         val url = config["url"]?.toString() 
@@ -144,6 +162,9 @@ class AlertDispatcher {
         }
     }
     
+    /**
+     * Delivers or routes the named data to its configured destination.
+     */
     private fun dispatchRestAlert(channel: AlertChannel, alert: AlertHistory) {
         val config = parseConfig(channel.config)
         val url = config["url"]?.toString()
@@ -171,6 +192,9 @@ class AlertDispatcher {
         }
     }
     
+    /**
+     * Delivers or routes the named data to its configured destination.
+     */
     private fun dispatchMqttAlert(channel: AlertChannel, alert: AlertHistory) {
         val config = parseConfig(channel.config)
         val topic = config["topic"]?.toString()
@@ -179,6 +203,9 @@ class AlertDispatcher {
         LOG.infof("Would publish to MQTT topic %s: %s", topic, alert.title)
     }
     
+    /**
+     * Delivers or routes the named data to its configured destination.
+     */
     private fun dispatchEmailAlert(channel: AlertChannel, alert: AlertHistory) {
         val config = parseConfig(channel.config)
         val to = config["to"]?.toString()
@@ -190,6 +217,9 @@ class AlertDispatcher {
         LOG.infof("Would send email to %s: %s", to, subject)
     }
     
+    /**
+     * Delivers or routes the named data to its configured destination.
+     */
     private fun dispatchSlackAlert(channel: AlertChannel, alert: AlertHistory) {
         val config = parseConfig(channel.config)
         val webhookUrl = config["url"]?.toString()
@@ -229,6 +259,9 @@ class AlertDispatcher {
         }
     }
     
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseConfig(config: String?): Map<String, Any> {
         return try {
             if (config.isNullOrBlank()) {
@@ -242,6 +275,9 @@ class AlertDispatcher {
         }
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseCondition(conditionRaw: String?): Map<String, Any> {
         if (conditionRaw.isNullOrBlank()) return emptyMap()
         return try {
@@ -252,6 +288,9 @@ class AlertDispatcher {
         }
     }
 
+    /**
+     * Processes the named request, event, or operation.
+     */
     private fun evaluateConditionMap(condition: Map<String, Any>, payload: Map<String, Any>): Boolean {
         if (condition.isEmpty()) return false
 
@@ -291,6 +330,9 @@ class AlertDispatcher {
         }
     }
 
+    /**
+     * Implements `resolvePayloadValue` for this source unit.
+     */
     private fun resolvePayloadValue(payload: Map<String, Any>, fieldPath: String): Any? {
         val segments = fieldPath.split('.')
         var current: Any? = payload
@@ -300,6 +342,9 @@ class AlertDispatcher {
         return current
     }
 
+    /**
+     * Implements `compareValues` for this source unit.
+     */
     private fun compareValues(actual: Any?, expected: Any?): Int {
         if (actual == null && expected == null) return 0
         if (actual == null) return -1
@@ -314,6 +359,9 @@ class AlertDispatcher {
         return actual.toString().compareTo(expected.toString(), ignoreCase = true)
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseSeverity(raw: String): AlertSeverity {
         return try {
             AlertSeverity.valueOf(raw.uppercase())
@@ -322,6 +370,9 @@ class AlertDispatcher {
         }
     }
 
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     private fun isInCooldown(rule: AlertRule): Boolean {
         if (rule.cooldownSeconds <= 0) return false
         val latest = em.createQuery(
@@ -338,6 +389,9 @@ class AlertDispatcher {
         return elapsed < rule.cooldownSeconds
     }
     
+    /**
+     * Implements `buildAlertPayload` for this source unit.
+     */
     private fun buildAlertPayload(alert: AlertHistory): Map<String, Any> {
         return mapOf(
             "id" to (alert.id?.toString() ?: ""),
@@ -350,6 +404,9 @@ class AlertDispatcher {
         )
     }
     
+    /**
+     * Implements `buildAlertEmailBody` for this source unit.
+     */
     private fun buildAlertEmailBody(alert: AlertHistory): String {
         return buildString {
             appendLine("Alert: ${alert.title}")
@@ -435,6 +492,9 @@ class AlertDispatcher {
 
     /** Dispatch an alert directly to a channel (no rule required). */
     @Transactional
+    /**
+     * Delivers or routes the named data to its configured destination.
+     */
     fun dispatchAlertToChannel(channel: AlertChannel, alert: AlertHistory) {
         if (!alertsEnabled) return
         try {
@@ -457,6 +517,9 @@ class AlertDispatcher {
         }
     }
 
+    /**
+     * Creates or persists the requested state.
+     */
     fun createAlertFromRule(
         rule: AlertRule,
         pipeline: Pipeline,

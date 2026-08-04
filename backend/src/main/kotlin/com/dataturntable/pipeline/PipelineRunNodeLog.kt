@@ -15,6 +15,9 @@ import java.util.UUID
 @Table(name = "pipeline_run_node_logs", indexes = [
     Index(name = "idx_prnl_run_id", columnList = "run_id"),
 ])
+/**
+ * Defines the class `PipelineRunNodeLog`, the contract implemented by this source unit.
+ */
 open class PipelineRunNodeLog : PanacheBase() {
 
     @Id
@@ -56,6 +59,9 @@ open class PipelineRunNodeLog : PanacheBase() {
     var executedAt: Instant = Instant.now()
 
     companion object : PanacheCompanionBase<PipelineRunNodeLog, UUID> {
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByRunId(runId: UUID): List<PipelineRunNodeLog> =
             list("run.id = ?1 ORDER BY executedAt ASC", runId)
     }

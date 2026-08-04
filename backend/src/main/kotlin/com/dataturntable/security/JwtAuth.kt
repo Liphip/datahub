@@ -4,8 +4,14 @@ import com.dataturntable.auth.User
 import com.dataturntable.dto.UserDto
 import java.util.UUID
 
+/**
+ * Defines the object `SecurityUtils`, the contract implemented by this source unit.
+ */
 object SecurityUtils {
     
+    /**
+     * Converts a value into the representation required by its caller.
+     */
     fun toUserDto(user: User): UserDto {
          val primaryTenant = user.getPrimaryTenant()
           return UserDto(
@@ -20,11 +26,17 @@ object SecurityUtils {
           )
     }
     
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     fun hasAbility(user: User?, ability: String): Boolean {
         if (user == null) return false
         return user.hasAbility(ability)
     }
     
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     fun canAccessTenant(user: User?, tenantId: String): Boolean {
         if (user == null) return false
         if (user.isSuperAdmin()) return true

@@ -11,6 +11,9 @@ import java.util.UUID
 
 @Entity
 @Table(name = "users")
+/**
+ * Defines the class `User`, the contract implemented by this source unit.
+ */
 open class User : PanacheBase() {
     
     @Id
@@ -58,6 +61,9 @@ open class User : PanacheBase() {
                 .resultList
                 .firstOrNull()
         
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByTenantId(tenantId: UUID): List<User> =
             getEntityManager().createQuery(
                 "SELECT DISTINCT u FROM User u JOIN u.memberships m WHERE m.tenant.id = :tenantId",
@@ -66,6 +72,9 @@ open class User : PanacheBase() {
                 .setParameter("tenantId", tenantId)
                 .resultList
         
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByEmail(email: String): User? =
             getEntityManager()
                 .createQuery("SELECT u FROM User u WHERE u.email = :email", User::class.java)
@@ -73,6 +82,9 @@ open class User : PanacheBase() {
                 .resultList
                 .firstOrNull()
         
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByTenantAndEmail(tenantId: UUID, email: String): User? =
             getEntityManager().createQuery(
                 "SELECT u FROM User u JOIN u.memberships m WHERE u.email = :email AND m.tenant.id = :tenantId",
@@ -84,22 +96,37 @@ open class User : PanacheBase() {
                 .firstOrNull()
         
         @JvmStatic
+        /**
+         * Implements `countUsers` for this source unit.
+         */
         fun countUsers(): Long =
             getEntityManager().createQuery("SELECT COUNT(u) FROM User u", java.lang.Long::class.java).singleResult.toLong()
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun loadMemberships(): List<Membership> {
         return memberships.toList()
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getPrimaryTenant(): Tenant? {
         return loadMemberships().firstOrNull()?.tenant
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getMembershipForTenant(tenantId: UUID): Membership? {
         return loadMemberships().firstOrNull { it.tenant?.id == tenantId }
     }
     
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     fun isSuperAdmin(): Boolean {
         // Superadmin is defined as having TenantAdmin role in the root tenant
         if (isSuperadmin) return true // backward compatibility
@@ -108,6 +135,9 @@ open class User : PanacheBase() {
         }
     }
     
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     fun hasAbility(ability: String): Boolean {
         if (isSuperAdmin()) return true
         if (abilities?.contains("*") == true) return true
@@ -121,6 +151,9 @@ open class User : PanacheBase() {
         return abilities?.contains(ability) == true
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getAllAbilities(): Set<String> {
         val result = mutableSetOf<String>()
         if (isSuperAdmin() || abilities?.contains("*") == true) {
@@ -148,6 +181,9 @@ open class User : PanacheBase() {
         return result
     }
     
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     fun canAccessTenant(tenantId: UUID): Boolean {
         if (isSuperAdmin()) return true
         // Access is granted if the user has a membership for the tenant or any ancestor

@@ -15,6 +15,9 @@ import java.security.MessageDigest
 import java.util.*
 
 @ApplicationScoped
+/**
+ * Defines the class `ModuleService`, the contract implemented by this source unit.
+ */
 class ModuleService {
     
     @Inject
@@ -22,6 +25,9 @@ class ModuleService {
     
     private val objectMapper = ObjectMapper()
 
+    /**
+     * Implements `contentFingerprint` for this source unit.
+     */
     private fun contentFingerprint(
         code: String,
         requirements: String,
@@ -38,20 +44,32 @@ class ModuleService {
         return digest.joinToString("") { "%02x".format(it) }
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getModules(tenantId: UUID): List<CodeModuleDto> {
         return CodeModule.findByTenantId(tenantId).map { toDto(it) }
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getModulesByType(tenantId: UUID, type: ModuleType): List<CodeModuleDto> {
         return CodeModule.findByTenantAndType(tenantId, type).map { toDto(it) }
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getModule(id: UUID): CodeModuleDto? {
         val module = CodeModule.findById(id) ?: return null
         return toDto(module)
     }
     
     @Transactional
+    /**
+     * Creates or persists the requested state.
+     */
     fun createModule(tenantId: UUID, request: CreateModuleRequest, user: User): CodeModuleDto {
         val tenant = Tenant.findById(tenantId)
             ?: throw IllegalArgumentException("Tenant not found")
@@ -74,27 +92,42 @@ class ModuleService {
     }
     
     @Transactional
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun deleteModule(id: UUID): Boolean {
         val module = CodeModule.findById(id) ?: return false
         module.delete()
         return true
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getVersions(moduleId: UUID): List<ModuleVersionDto> {
         return ModuleVersion.findByModuleId(moduleId).map { toVersionDto(it) }
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getVersion(moduleId: UUID, version: Int): ModuleVersionDto? {
         val version = ModuleVersion.findByModuleAndVersion(moduleId, version) ?: return null
         return toVersionDto(version)
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getVersionByTag(moduleId: UUID, tag: String): ModuleVersionDto? {
         val version = ModuleVersion.findByModuleAndTag(moduleId, tag) ?: return null
         return toVersionDto(version)
     }
     
     @Transactional
+    /**
+     * Creates or persists the requested state.
+     */
     fun createVersion(moduleId: UUID, request: CreateModuleVersionRequest, user: User): ModuleVersionDto {
         val module = CodeModule.findById(moduleId)
             ?: throw IllegalArgumentException("Module not found")
@@ -117,6 +150,9 @@ class ModuleService {
     }
     
     @Transactional
+    /**
+     * Implements `tagVersion` for this source unit.
+     */
     fun tagVersion(moduleId: UUID, version: Int, tag: String): ModuleVersionDto? {
         val version = ModuleVersion.findByModuleAndVersion(moduleId, version) ?: return null
         version.versionTag = tag
@@ -124,6 +160,9 @@ class ModuleService {
         return toVersionDto(version)
     }
     
+    /**
+     * Converts a value into the representation required by its caller.
+     */
     fun toDto(module: CodeModule): CodeModuleDto {
         val versions = module.versions.map { toVersionDto(it) }
         
@@ -141,6 +180,9 @@ class ModuleService {
         )
     }
     
+    /**
+     * Converts a value into the representation required by its caller.
+     */
     fun toVersionDto(version: ModuleVersion): ModuleVersionDto {
         val config = try {
             objectMapper.readValue(version.config, Map::class.java) as? Map<String, Any> ?: emptyMap()

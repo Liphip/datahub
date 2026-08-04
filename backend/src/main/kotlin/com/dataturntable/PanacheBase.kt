@@ -13,6 +13,9 @@ import io.quarkus.hibernate.orm.panache.kotlin.PanacheEntityBase as KotlinPanach
  * explicit override when inheriting from both. This class resolves that ambiguity
  * once so individual entity classes don't have to.
  */
+/**
+ * Defines the class `PanacheBase`, the contract implemented by this source unit.
+ */
 abstract class PanacheBase : JavaPanacheEntityBase(), KotlinPanacheEntityBase {
     override fun persist(): Unit = super<JavaPanacheEntityBase>.persist()
     override fun persistAndFlush(): Unit = super<JavaPanacheEntityBase>.persistAndFlush()

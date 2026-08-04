@@ -29,9 +29,15 @@ import java.util.UUID
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
+/**
+ * Defines the class `PipelineResource`, the contract implemented by this source unit.
+ */
 class PipelineResource {
     private val objectMapper = ObjectMapper()
 
+    /**
+     * Implements `allowedModuleTypesForNode` for this source unit.
+     */
     private fun allowedModuleTypesForNode(nodeType: String): Set<ModuleType> = when (nodeType) {
         "IMPORT" -> setOf(ModuleType.IMPORT, ModuleType.DB_LOAD)
         "EXPORT" -> setOf(ModuleType.EXPORT, ModuleType.DB_SAVE)
@@ -56,12 +62,18 @@ class PipelineResource {
     @PersistenceContext
     lateinit var em: EntityManager
 
+    /**
+     * Implements `currentUser` for this source unit.
+     */
     private fun currentUser(): User? {
         val subject = jwt.subject ?: return null
         val userId = try { UUID.fromString(subject) } catch (_: Exception) { return null }
         return em.find(User::class.java, userId)
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseUuid(value: String, field: String): UUID {
         return try {
             UUID.fromString(value)
@@ -70,6 +82,9 @@ class PipelineResource {
         }
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseInstant(value: String, field: String): java.time.Instant {
         return try {
             java.time.Instant.parse(value)
@@ -78,6 +93,9 @@ class PipelineResource {
         }
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseGraphDefinition(graphDefinition: String?): Any? {
         if (graphDefinition.isNullOrBlank()) return null
         return try {
@@ -87,6 +105,9 @@ class PipelineResource {
         }
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun validateGraphDefinition(tenantId: UUID, graphDefinition: Any?): String? {
         if (graphDefinition !is Map<*, *>) return null
         val nodes = graphDefinition["nodes"] as? List<*> ?: return null
@@ -235,6 +256,9 @@ class PipelineResource {
         return null
     }
 
+    /**
+     * Implements `pipelineToMap` for this source unit.
+     */
     private fun pipelineToMap(p: Pipeline): Map<String, Any?> {
         return mapOf(
             "id" to p.id,
@@ -252,6 +276,9 @@ class PipelineResource {
         )
     }
 
+    /**
+     * Implements `latestRunSummary` for this source unit.
+     */
     private fun latestRunSummary(pipelineId: UUID): Map<String, Any?> {
         val run = em.createQuery(
             "SELECT r FROM PipelineRun r WHERE r.pipeline.id = :pipelineId ORDER BY r.startedAt DESC",
@@ -274,6 +301,9 @@ class PipelineResource {
         }
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun requireTenantAccess(
         user: User,
         tenantId: String,
@@ -292,6 +322,9 @@ class PipelineResource {
     
     @GET
     @Path("/runs")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getTenantRuns(
         @QueryParam("tenantId") tenantId: String,
         @QueryParam("from") from: String?,
@@ -382,6 +415,9 @@ class PipelineResource {
 
     @GET
     @Path("/runs/summary")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getRunSummary(
         @QueryParam("tenantId") tenantId: String,
         @QueryParam("limit") limit: Int?,
@@ -580,6 +616,9 @@ class PipelineResource {
 
     @GET
     @Path("/{id}/runs/summary")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getPipelineRunSummary(
         @PathParam("id") id: String,
         @QueryParam("sinceHours") sinceHours: Int?
@@ -681,6 +720,9 @@ class PipelineResource {
     }
 
     @GET
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun list(
         @QueryParam("tenantId") tenantId: String,
         @QueryParam("includeRunSummary") includeRunSummary: String?,
@@ -729,6 +771,9 @@ class PipelineResource {
             java.time.Instant.now().minus(java.time.Duration.ofHours(it.toLong()))
         }
 
+        /**
+         * Defines the class `PipelineListEntry`, the contract implemented by this source unit.
+         */
         data class PipelineListEntry(
             val base: Map<String, Any?>,
             val summary: Map<String, Any?>
@@ -789,6 +834,9 @@ class PipelineResource {
     
     @POST
     @Transactional
+    /**
+     * Creates or persists the requested state.
+     */
     fun create(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantId = tenantIdQuery ?: request["tenantId"] as? String
@@ -840,6 +888,9 @@ class PipelineResource {
 
     @GET
     @Path("/{id}")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun get(@PathParam("id") id: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
@@ -861,6 +912,9 @@ class PipelineResource {
     @DELETE
     @Path("/{id}")
     @Transactional
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun delete(@PathParam("id") id: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
@@ -886,6 +940,9 @@ class PipelineResource {
     @PATCH
     @Path("/{id}")
     @Transactional
+    /**
+     * Updates the requested state.
+     */
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
@@ -968,6 +1025,9 @@ class PipelineResource {
         }
     }
 
+    /**
+     * Implements `enqueuePipelineRun` for this source unit.
+     */
     private fun enqueuePipelineRun(
         pipeline: Pipeline,
         triggerType: TriggerType,
@@ -1009,6 +1069,9 @@ class PipelineResource {
     @POST
     @Path("/{id}/run")
     @Transactional
+    /**
+     * Implements `trigger` for this source unit.
+     */
     fun trigger(@PathParam("id") id: String, @QueryParam("triggerType") triggerType: String?): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
@@ -1045,6 +1108,9 @@ class PipelineResource {
     @POST
     @Path("/{id}/runs/{runId}/retry")
     @Transactional
+    /**
+     * Implements `retryRun` for this source unit.
+     */
     fun retryRun(@PathParam("id") id: String, @PathParam("runId") runId: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
@@ -1094,6 +1160,9 @@ class PipelineResource {
     @POST
     @Path("/{id}/runs/{runId}/cancel")
     @Transactional
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     fun cancelRun(@PathParam("id") id: String, @PathParam("runId") runId: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val pipelineId = try {
@@ -1141,6 +1210,9 @@ class PipelineResource {
     
     @GET
     @Path("/{id}/runs")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getRuns(
         @PathParam("id") id: String,
         @QueryParam("limit") limit: Int?,
@@ -1296,6 +1368,9 @@ class PipelineResource {
 
     @GET
     @Path("/{id}/runs/{runId}")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getRun(
         @PathParam("id") id: String,
         @PathParam("runId") runId: String,
@@ -1402,6 +1477,9 @@ class PipelineResource {
 
     @GET
     @Path("/{id}/runs/{runId}/logs")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getRunLogs(
         @PathParam("id") id: String,
         @PathParam("runId") runId: String
@@ -1442,6 +1520,9 @@ class PipelineResource {
 
     @GET
     @Path("/{id}/runs/{runId}/lineage")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getRunLineage(
         @PathParam("id") id: String,
         @PathParam("runId") runId: String,
@@ -1539,8 +1620,14 @@ class PipelineResource {
         val withDetails = includeDetails == true
         val lineageStartedNs = System.nanoTime()
 
+        /**
+         * Implements `includeByStatus` for this source unit.
+         */
         fun includeByStatus(status: PipelineRunStatus): Boolean = statusFilter?.contains(status) ?: true
 
+        /**
+         * Processes the named request, event, or operation.
+         */
         fun runSummary(item: PipelineRun, lineageDepth: Int? = null): Map<String, Any?> {
             val metrics = if (withDetails) {
                 try {

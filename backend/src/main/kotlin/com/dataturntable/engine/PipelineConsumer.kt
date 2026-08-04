@@ -23,6 +23,9 @@ import org.jboss.logging.Logger
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
+/**
+ * Defines the class `PipelineTriggerMessage`, the contract implemented by this source unit.
+ */
 data class PipelineTriggerMessage(
     val runId: String,
     val pipelineId: String,
@@ -30,6 +33,9 @@ data class PipelineTriggerMessage(
     val data: Any? = null
 )
 
+/**
+ * Defines the class `PipelineEvent`, the contract implemented by this source unit.
+ */
 data class PipelineEvent(
     val runId: String,
     val pipelineId: String,
@@ -40,17 +46,26 @@ data class PipelineEvent(
 )
 
 @ApplicationScoped
+/**
+ * Defines the class `PipelineConsumer`, the contract implemented by this source unit.
+ */
 class PipelineConsumer {
 
     private val LOG = Logger.getLogger(PipelineConsumer::class.java)
     private val objectMapper = ObjectMapper()
 
+    /**
+     * Implements `trimLog` for this source unit.
+     */
     private fun trimLog(value: String, maxLength: Int = 8000): String {
         if (value.length <= maxLength) return value
         return value.take(maxLength) + "\n...<truncated>"
     }
 
     /** Strip the platform result sentinel line so only user print() output is shown in logs. */
+    /**
+     * Implements `userOutput` for this source unit.
+     */
     private fun userOutput(stdout: String): String =
         stdout.lines().filter { !it.trim().startsWith("__RESULT__:") }.joinToString("\n").trim()
 
@@ -93,6 +108,9 @@ class PipelineConsumer {
         val connector: Connector
     )
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseJsonMap(raw: String?): Map<String, Any?> {
         if (raw.isNullOrBlank()) return emptyMap()
         return try {
@@ -102,6 +120,9 @@ class PipelineConsumer {
         }
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseUuid(value: String?): UUID? {
         if (value.isNullOrBlank()) return null
         return try {
@@ -111,6 +132,9 @@ class PipelineConsumer {
         }
     }
 
+    /**
+     * Implements `resolveConnectorsByNodeId` for this source unit.
+     */
     private fun resolveConnectorsByNodeId(pipeline: Pipeline): Map<String, ResolvedConnector> {
         val tenantId = pipeline.tenant?.id ?: return emptyMap()
         val graph = parseJsonMap(pipeline.graphDefinition)
@@ -400,6 +424,9 @@ class PipelineConsumer {
         }
     }
 
+    /**
+     * Processes the named request, event, or operation.
+     */
     private fun executePipeline(pipeline: Pipeline, runUuid: UUID?, runId: String, inputData: Map<String, Any>?): Map<String, Any?> {
         val results = mutableMapOf<String, Any?>()
         val moduleLogs = mutableListOf<Map<String, Any?>>()
@@ -407,6 +434,9 @@ class PipelineConsumer {
         val connectorsByNodeId = resolveConnectorsByNodeId(pipeline)
         val pipelineId = pipeline.id.toString()
 
+        /**
+         * Defines the class `GraphNode`, the contract implemented by this source unit.
+         */
         data class GraphNode(
             val id: String,
             val type: ModuleType,

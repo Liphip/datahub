@@ -3,6 +3,9 @@ package com.dataturntable.dto
 import com.dataturntable.pipeline.TriggerType
 import java.time.Instant
 
+/**
+ * Defines the class `PipelineDto`, the contract implemented by this source unit.
+ */
 data class PipelineDto(
     val id: String?,
     val tenantId: String?,
@@ -18,6 +21,9 @@ data class PipelineDto(
     val runs: List<PipelineRunDto> = emptyList()
 )
 
+/**
+ * Defines the class `CreatePipelineRequest`, the contract implemented by this source unit.
+ */
 data class CreatePipelineRequest(
     val name: String,
     val description: String? = null,
@@ -27,6 +33,9 @@ data class CreatePipelineRequest(
     val config: Map<String, Any> = emptyMap()
 )
 
+/**
+ * Defines the class `UpdatePipelineRequest`, the contract implemented by this source unit.
+ */
 data class UpdatePipelineRequest(
     val name: String? = null,
     val description: String? = null,
@@ -37,6 +46,9 @@ data class UpdatePipelineRequest(
     val config: Map<String, Any>? = null
 )
 
+/**
+ * Defines the class `PipelineRunDto`, the contract implemented by this source unit.
+ */
 data class PipelineRunDto(
     val id: String?,
     val pipelineId: String?,
@@ -48,6 +60,9 @@ data class PipelineRunDto(
     val metrics: Map<String, Any> = emptyMap()
 )
 
+/**
+ * Defines the class `TriggerPipelineRequest`, the contract implemented by this source unit.
+ */
 data class TriggerPipelineRequest(
     val triggerType: TriggerType = TriggerType.MANUAL
 )

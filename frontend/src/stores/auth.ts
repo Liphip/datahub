@@ -3,6 +3,9 @@ import { persist } from 'zustand/middleware';
 import type { User, TenantContext } from '../types';
 import api from '../services/api';
 
+/**
+ * Defines the interface `AuthState`, the contract implemented by this source unit.
+ */
 interface AuthState {
   user: User | null;
   token: string | null;
@@ -18,6 +21,9 @@ interface AuthState {
 }
 
 export const useAuthStore = create<AuthState>()(
+  /**
+   * Creates or persists the requested state.
+   */
   persist(
     (set) => ({
       user: null,

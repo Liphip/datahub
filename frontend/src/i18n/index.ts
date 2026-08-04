@@ -10,6 +10,9 @@ export const languages = [
   { code: 'de', name: 'German', nativeName: 'Deutsch' },
 ] as const;
 
+/**
+ * Defines the type `LanguageCode`, the contract implemented by this source unit.
+ */
 export type LanguageCode = (typeof languages)[number]['code'];
 
 i18n

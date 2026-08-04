@@ -22,8 +22,14 @@ import java.util.concurrent.atomic.AtomicLong
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
+/**
+ * Defines the class `TenantResource`, the contract implemented by this source unit.
+ */
 class TenantResource {
     companion object {
+        /**
+         * Defines the class `LineageDefaultsDiagnostics`, the contract implemented by this source unit.
+         */
         private data class LineageDefaultsDiagnostics(
             val get200Count: AtomicLong = AtomicLong(0),
             val get304Count: AtomicLong = AtomicLong(0),
@@ -57,12 +63,18 @@ class TenantResource {
     @Inject
     lateinit var grafanaSyncService: GrafanaSyncService
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     private fun getCurrentUser(): User? {
         val subject = jwt.subject ?: return null
         val userId = try { UUID.fromString(subject) } catch (_: Exception) { return null }
         return em.find(User::class.java, userId)
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun requireTenantManager(): Pair<User?, Response?> {
         val user = getCurrentUser()
             ?: return Pair(null, Response.status(401).entity(mapOf("error" to "Unauthorized")).build())
@@ -72,11 +84,17 @@ class TenantResource {
         return Pair(user, null)
     }
 
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     private fun canManageTenant(user: User, tenantId: UUID): Boolean {
         if (user.isSuperAdmin()) return true
         return user.hasAbility("manage:tenant") && user.canAccessTenant(tenantId)
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseUuid(value: String, field: String): UUID {
         return try {
             UUID.fromString(value)
@@ -85,6 +103,9 @@ class TenantResource {
         }
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseSettings(settingsRaw: String?): MutableMap<String, Any?> {
         if (settingsRaw.isNullOrBlank()) return mutableMapOf()
         return try {
@@ -95,6 +116,9 @@ class TenantResource {
         }
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun normalizeLineageDefaults(raw: Map<String, Any?>?): Map<String, Any?> {
         val safeScopePolicy = when ((raw?.get("safeScopePolicy") as? String)?.trim()?.uppercase()) {
             "RUN" -> "RUN"
@@ -115,6 +139,9 @@ class TenantResource {
         )
     }
 
+    /**
+     * Implements `extractLineageDefaults` for this source unit.
+     */
     private fun extractLineageDefaults(settingsRaw: String?): Map<String, Any?> {
         val settings = parseSettings(settingsRaw)
         @Suppress("UNCHECKED_CAST")
@@ -122,6 +149,9 @@ class TenantResource {
         return normalizeLineageDefaults(lineageDefaultsRaw)
     }
 
+    /**
+     * Validates or normalizes input before the caller continues.
+     */
     private fun normalizeLineageDiagnosticsPolicy(raw: Map<String, Any?>?): Map<String, Any> {
         val conflictWatchRate = ((raw?.get("conflictWatchRate") as? Number)?.toDouble() ?: 0.35).coerceIn(0.0, 1.0)
         val requestedHotRate = ((raw?.get("conflictHotRate") as? Number)?.toDouble() ?: 0.50).coerceIn(0.0, 1.0)
@@ -140,6 +170,9 @@ class TenantResource {
         )
     }
 
+    /**
+     * Implements `extractLineageDiagnosticsPolicy` for this source unit.
+     */
     private fun extractLineageDiagnosticsPolicy(settingsRaw: String?): Map<String, Any> {
         val settings = parseSettings(settingsRaw)
         @Suppress("UNCHECKED_CAST")
@@ -147,6 +180,9 @@ class TenantResource {
         return normalizeLineageDiagnosticsPolicy(policyRaw)
     }
 
+    /**
+     * Implements `extractLineageDiagnosticsPolicyHistory` for this source unit.
+     */
     private fun extractLineageDiagnosticsPolicyHistory(settingsRaw: String?): List<Map<String, Any?>> {
         val settings = parseSettings(settingsRaw)
         @Suppress("UNCHECKED_CAST")
@@ -166,6 +202,9 @@ class TenantResource {
         }
     }
 
+    /**
+     * Implements `lineageDiagnosticsPolicyChangedFields` for this source unit.
+     */
     private fun lineageDiagnosticsPolicyChangedFields(previous: Map<String, Any>, next: Map<String, Any>): List<String> {
         val fields = listOf(
             "conflictWatchRate",
@@ -178,6 +217,9 @@ class TenantResource {
         return fields.filter { key -> previous[key] != next[key] }
     }
 
+    /**
+     * Implements `buildLineageDiagnosticsPolicyResponse` for this source unit.
+     */
     private fun buildLineageDiagnosticsPolicyResponse(settingsRaw: String?, version: String?): Map<String, Any?> {
         val policy = extractLineageDiagnosticsPolicy(settingsRaw)
         val history = extractLineageDiagnosticsPolicyHistory(settingsRaw)
@@ -187,6 +229,9 @@ class TenantResource {
         )
     }
 
+    /**
+     * Implements `extractLineageDiagnosticsResetHistory` for this source unit.
+     */
     private fun extractLineageDiagnosticsResetHistory(settingsRaw: String?): List<Map<String, Any?>> {
         val settings = parseSettings(settingsRaw)
         @Suppress("UNCHECKED_CAST")
@@ -203,6 +248,9 @@ class TenantResource {
         }
     }
 
+    /**
+     * Implements `extractLineageDiagnosticsCounters` for this source unit.
+     */
     private fun extractLineageDiagnosticsCounters(settingsRaw: String?): Map<String, Any?>? {
         val settings = parseSettings(settingsRaw)
         @Suppress("UNCHECKED_CAST")
@@ -210,6 +258,9 @@ class TenantResource {
         return countersRaw
     }
 
+    /**
+     * Implements `storeLineageDiagnosticsCounters` for this source unit.
+     */
     private fun storeLineageDiagnosticsCounters(tenant: Tenant, diagnostics: LineageDefaultsDiagnostics) {
         val settings = parseSettings(tenant.settings)
         val counters = mapOf(
@@ -225,6 +276,9 @@ class TenantResource {
         tenant.settings = objectMapper.writeValueAsString(settings)
     }
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     private fun loadLineageDiagnosticsCountersFromSettings(tenant: Tenant) {
         val tenantId = tenant.id ?: return
         val countersRaw = extractLineageDiagnosticsCounters(tenant.settings) ?: return
@@ -238,11 +292,17 @@ class TenantResource {
         (countersRaw["lastUpdatedEpochMs"] as? Number)?.let { diagnostics.lastUpdatedEpochMs.set(it.toLong()) }
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseDiagnosticsReset(request: Map<String, Any>): String? {
         val reason = request["reason"] as? String
         return reason?.trim()?.takeIf { it.isNotBlank() }
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseDiagnosticsPolicyPatch(request: Map<String, Any>): Map<String, Any> {
         val patch = mutableMapOf<String, Any>()
 
@@ -303,6 +363,9 @@ class TenantResource {
         return patch
     }
 
+    /**
+     * Implements `extractLineageDefaultsHistory` for this source unit.
+     */
     private fun extractLineageDefaultsHistory(settingsRaw: String?): List<Map<String, Any?>> {
         val settings = parseSettings(settingsRaw)
         @Suppress("UNCHECKED_CAST")
@@ -322,11 +385,17 @@ class TenantResource {
         }
     }
 
+    /**
+     * Implements `lineageDefaultsChangedFields` for this source unit.
+     */
     private fun lineageDefaultsChangedFields(previous: Map<String, Any?>, next: Map<String, Any?>): List<String> {
         val fields = listOf("safeScopePolicy", "defaultFetchMode", "defaultDepth", "maxDepthCap")
         return fields.filter { key -> previous[key] != next[key] }
     }
 
+    /**
+     * Implements `buildLineageDefaultsResponse` for this source unit.
+     */
     private fun buildLineageDefaultsResponse(settingsRaw: String?, version: String?): Map<String, Any?> {
         val defaults = extractLineageDefaults(settingsRaw)
         val history = extractLineageDefaultsHistory(settingsRaw)
@@ -336,11 +405,20 @@ class TenantResource {
         )
     }
 
+    /**
+     * Implements `lineageDefaultsEtag` for this source unit.
+     */
     private fun lineageDefaultsEtag(version: String): String = "W/\"$version\""
 
+    /**
+     * Implements `lineageDefaultsDiagnostics` for this source unit.
+     */
     private fun lineageDefaultsDiagnostics(tenantId: UUID): LineageDefaultsDiagnostics =
         lineageDefaultsDiagnosticsByTenant.computeIfAbsent(tenantId) { LineageDefaultsDiagnostics() }
 
+    /**
+     * Implements `markLineageDefaultsDiagnostics` for this source unit.
+     */
     private fun markLineageDefaultsDiagnostics(tenantId: UUID, action: String) {
         val diagnostics = lineageDefaultsDiagnostics(tenantId)
         val now = System.currentTimeMillis()
@@ -363,6 +441,9 @@ class TenantResource {
             }
         }
         val cutoff24h = now - (24L * 60L * 60L * 1000L)
+        /**
+         * Implements `prune` for this source unit.
+         */
         fun prune(queue: ConcurrentLinkedQueue<Long>) {
             while (true) {
                 val head = queue.peek() ?: break
@@ -377,6 +458,9 @@ class TenantResource {
         diagnostics.lastUpdatedEpochMs.set(now)
     }
 
+    /**
+     * Implements `resetLineageDefaultsDiagnostics` for this source unit.
+     */
     private fun resetLineageDefaultsDiagnostics(tenantId: UUID, tenant: Tenant? = null) {
         val diagnostics = lineageDefaultsDiagnostics(tenantId)
         val now = System.currentTimeMillis()
@@ -394,6 +478,9 @@ class TenantResource {
         tenant?.let { storeLineageDiagnosticsCounters(it, diagnostics) }
     }
 
+    /**
+     * Implements `lineageDefaultsDiagnosticsSnapshot` for this source unit.
+     */
     private fun lineageDefaultsDiagnosticsSnapshot(tenant: Tenant): Map<String, Any?> {
         val tenantId = tenant.id ?: return mapOf("error" to "Tenant not found")
         loadLineageDiagnosticsCountersFromSettings(tenant)
@@ -413,10 +500,16 @@ class TenantResource {
         val lastResetAt = diagnostics.lastResetEpochMs.get().takeIf { it > 0 }?.let { java.time.Instant.ofEpochMilli(it).toString() }
         val resetHistory = extractLineageDiagnosticsResetHistory(tenant.settings)
 
+        /**
+         * Implements `countSince` for this source unit.
+         */
         fun countSince(queue: ConcurrentLinkedQueue<Long>, sinceEpochMs: Long): Long {
             return queue.count { it >= sinceEpochMs }.toLong()
         }
 
+        /**
+         * Defines the class `WindowSnapshot`, the contract implemented by this source unit.
+         */
         data class WindowSnapshot(
             val get200Count: Long,
             val get304Count: Long,
@@ -427,6 +520,9 @@ class TenantResource {
             val patchConflictRate: Double
         )
 
+        /**
+         * Implements `windowSnapshot` for this source unit.
+         */
         fun windowSnapshot(hours: Long): WindowSnapshot {
             val since = now - (hours * 60L * 60L * 1000L)
             val wGet200 = countSince(diagnostics.get200Events, since)
@@ -446,6 +542,9 @@ class TenantResource {
             )
         }
 
+        /**
+         * Converts a value into the representation required by its caller.
+         */
         fun toWindowMap(snapshot: WindowSnapshot): Map<String, Any> = mapOf(
             "get200Count" to snapshot.get200Count,
             "get304Count" to snapshot.get304Count,
@@ -456,6 +555,9 @@ class TenantResource {
             "patchConflictRate" to snapshot.patchConflictRate
         )
 
+        /**
+         * Implements `advisorySnapshot` for this source unit.
+         */
         fun advisorySnapshot(h1: WindowSnapshot, h24: WindowSnapshot): Map<String, Any> {
             val reasons = mutableListOf<String>()
             val recommendedActions = linkedSetOf<String>()
@@ -536,6 +638,9 @@ class TenantResource {
         )
     }
 
+    /**
+     * Converts a value into the representation required by its caller.
+     */
     private fun toTenantMap(tenant: Tenant, children: List<Map<String, Any?>>? = null): Map<String, Any?> {
         val quota = try {
             if (tenant.quota.isNullOrBlank()) emptyMap()
@@ -556,11 +661,17 @@ class TenantResource {
         return base
     }
 
+    /**
+     * Implements `buildTenantForest` for this source unit.
+     */
     private fun buildTenantForest(tenants: List<Tenant>, query: String?): List<Map<String, Any?>> {
         val nodesByParentId = tenants.groupBy { it.parent?.id }
         val visibleIds = tenants.mapNotNull { it.id }.toSet()
         val normalizedQuery = query?.trim()?.lowercase()
 
+        /**
+         * Implements `buildNode` for this source unit.
+         */
         fun buildNode(tenant: Tenant): Map<String, Any?>? {
             val children = (nodesByParentId[tenant.id] ?: emptyList()).mapNotNull { buildNode(it) }
             val matchesSelf = normalizedQuery.isNullOrBlank() || tenant.name?.lowercase()?.contains(normalizedQuery) == true
@@ -579,6 +690,9 @@ class TenantResource {
         return roots.mapNotNull { buildNode(it) }
     }
 
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     private fun getVisibleTenantsForUser(user: User): List<Tenant> {
         val allTenants = em.createQuery("SELECT t FROM Tenant t", Tenant::class.java).resultList
         if (user.isSuperAdmin()) return allTenants
@@ -588,6 +702,9 @@ class TenantResource {
     }
     
     @GET
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun list(@QueryParam("recursive") recursive: String?, @QueryParam("query") query: String?): Response {
         val (currentUser, denial) = requireTenantManager()
         denial?.let { return it }
@@ -614,6 +731,9 @@ class TenantResource {
     
     @POST
     @Transactional
+    /**
+     * Creates or persists the requested state.
+     */
     fun create(request: Map<String, Any>): Response {
         val (currentUser, denial) = requireTenantManager()
         denial?.let { return it }
@@ -659,6 +779,9 @@ class TenantResource {
     
     @GET
     @Path("/{id}")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun get(@PathParam("id") id: String): Response {
         val (currentUser, denial) = requireTenantManager()
         denial?.let { return it }
@@ -683,6 +806,9 @@ class TenantResource {
     @PATCH
     @Path("/{id}")
     @Transactional
+    /**
+     * Updates the requested state.
+     */
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
         val (currentUser, denial) = requireTenantManager()
         denial?.let { return it }
@@ -713,6 +839,9 @@ class TenantResource {
     @DELETE
     @Path("/{id}")
     @Transactional
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun delete(@PathParam("id") id: String): Response {
         val (currentUser, denial) = requireTenantManager()
         denial?.let { return it }
@@ -747,6 +876,9 @@ class TenantResource {
     
     @GET
     @Path("/{id}/children")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getChildren(@PathParam("id") id: String): Response {
         val (currentUser, denial) = requireTenantManager()
         denial?.let { return it }
@@ -774,6 +906,9 @@ class TenantResource {
 
     @GET
     @Path("/{id}/lineage-defaults")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getLineageDefaults(
         @PathParam("id") id: String,
         @HeaderParam("If-None-Match") ifNoneMatch: String?
@@ -810,6 +945,9 @@ class TenantResource {
 
     @GET
     @Path("/{id}/lineage-defaults/diagnostics")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getLineageDefaultsDiagnostics(@PathParam("id") id: String): Response {
         val (currentUser, denial) = requireTenantManager()
         denial?.let { return it }
@@ -832,6 +970,9 @@ class TenantResource {
     @POST
     @Path("/{id}/lineage-defaults/diagnostics/reset")
     @Transactional
+    /**
+     * Implements `resetTenantLineageDefaultsDiagnostics` for this source unit.
+     */
     fun resetTenantLineageDefaultsDiagnostics(@PathParam("id") id: String, request: Map<String, Any>?): Response {
         val (currentUser, denial) = requireTenantManager()
         denial?.let { return it }
@@ -871,6 +1012,9 @@ class TenantResource {
 
     @GET
     @Path("/{id}/lineage-defaults/diagnostics-policy")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getLineageDefaultsDiagnosticsPolicy(@PathParam("id") id: String): Response {
         val (currentUser, denial) = requireTenantManager()
         denial?.let { return it }
@@ -893,6 +1037,9 @@ class TenantResource {
     @PATCH
     @Path("/{id}/lineage-defaults/diagnostics-policy")
     @Transactional
+    /**
+     * Updates the requested state.
+     */
     fun updateLineageDefaultsDiagnosticsPolicy(@PathParam("id") id: String, request: Map<String, Any>): Response {
         val (currentUser, denial) = requireTenantManager()
         denial?.let { return it }
@@ -958,6 +1105,9 @@ class TenantResource {
     @PATCH
     @Path("/{id}/lineage-defaults")
     @Transactional
+    /**
+     * Updates the requested state.
+     */
     fun updateLineageDefaults(@PathParam("id") id: String, request: Map<String, Any>): Response {
         val (currentUser, denial) = requireTenantManager()
         denial?.let { return it }

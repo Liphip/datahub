@@ -6,16 +6,25 @@ import jakarta.persistence.*
 import java.time.Instant
 import java.util.UUID
 
+/**
+ * Defines the enum class `PipelineRunStatus`, the contract implemented by this source unit.
+ */
 enum class PipelineRunStatus {
     PENDING, RUNNING, SUCCESS, FAILED, CANCELLED
 }
 
+/**
+ * Defines the enum class `TriggerType`, the contract implemented by this source unit.
+ */
 enum class TriggerType {
     MANUAL, SCHEDULED, EVENT, DATA
 }
 
 @Entity
 @Table(name = "pipeline_runs")
+/**
+ * Defines the class `PipelineRun`, the contract implemented by this source unit.
+ */
 open class PipelineRun : PanacheBase() {
     
     @Id
@@ -53,29 +62,47 @@ open class PipelineRun : PanacheBase() {
         override fun findById(id: UUID): PipelineRun? =
             find("id = ?1", id).firstResult()
 
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByPipelineId(pipelineId: UUID): List<PipelineRun> =
             list("pipeline.id = ?1 ORDER BY startedAt DESC", pipelineId)
 
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findRunningByPipeline(pipelineId: UUID): PipelineRun? =
             find("pipeline.id = ?1 AND status = ?2", pipelineId, PipelineRunStatus.RUNNING).firstResult()
     }
     
+    /**
+     * Implements `markRunning` for this source unit.
+     */
     fun markRunning() {
         status = PipelineRunStatus.RUNNING
         startedAt = Instant.now()
     }
     
+    /**
+     * Implements `markSuccess` for this source unit.
+     */
     fun markSuccess() {
         status = PipelineRunStatus.SUCCESS
         completedAt = Instant.now()
     }
     
+    /**
+     * Implements `markFailed` for this source unit.
+     */
     fun markFailed(error: String?) {
         status = PipelineRunStatus.FAILED
         completedAt = Instant.now()
         errorMessage = error
     }
     
+    /**
+     * Implements `markCancelled` for this source unit.
+     */
     fun markCancelled() {
         status = PipelineRunStatus.CANCELLED
         completedAt = Instant.now()

@@ -6,19 +6,31 @@ import jakarta.enterprise.context.ApplicationScoped
 import org.jboss.logging.Logger
 
 @ApplicationScoped
+/**
+ * Defines the class `HttpConnector`, the contract implemented by this source unit.
+ */
 class HttpConnector {
     
     private val LOG = Logger.getLogger(HttpConnector::class.java)
     
+    /**
+     * Creates or persists the requested state.
+     */
     fun createRestInput(config: Map<String, Any>): HttpInputConnector {
         return HttpInputConnector(config)
     }
     
+    /**
+     * Creates or persists the requested state.
+     */
     fun createRestOutput(config: Map<String, Any>): HttpOutputConnector {
         return HttpOutputConnector(config)
     }
 }
 
+/**
+ * Defines the class `HttpInputConnector`, the contract implemented by this source unit.
+ */
 class HttpInputConnector(
     private val config: Map<String, Any>
 ) : InputConnector {
@@ -47,6 +59,9 @@ class HttpInputConnector(
     override fun isConnected(): Boolean = connected
 }
 
+/**
+ * Defines the class `HttpOutputConnector`, the contract implemented by this source unit.
+ */
 class HttpOutputConnector(
     private val config: Map<String, Any>
 ) : OutputConnector {

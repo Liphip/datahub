@@ -30,6 +30,9 @@ import java.util.concurrent.atomic.AtomicInteger
  *  - Job out: single JSON line {"stdout":"...","stderr":"...","exit_code":0}
  *  - Termination: write "__EXIT__\n" to stdin, or destroy process.
  */
+/**
+ * Defines the class `WarmContainer`, the contract implemented by this source unit.
+ */
 data class WarmContainer(
     val name: String,
     val process: Process,
@@ -41,6 +44,9 @@ data class WarmContainer(
 ) {
     val alive: Boolean get() = process.isAlive
 
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun destroy() {
         runCatching { writer.println("__EXIT__"); writer.flush() }
         runCatching { process.destroyForcibly() }
@@ -60,6 +66,9 @@ data class WarmContainer(
  * pool (or discarded if unhealthy / pool is full). The base pool is always refilled asynchronously.
  */
 @ApplicationScoped
+/**
+ * Defines the class `WarmContainerPool`, the contract implemented by this source unit.
+ */
 class WarmContainerPool {
 
     private val LOG = Logger.getLogger(WarmContainerPool::class.java)
@@ -109,6 +118,9 @@ class WarmContainerPool {
 
     // ── Lifecycle ──────────────────────────────────────────────────────────────
 
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     fun onStart(@Observes ev: StartupEvent) {
         // Register Prometheus gauges for pool monitoring
         meterRegistry.gauge("dt_warm_pool_base_size", basePool) { it.size.toDouble() }
@@ -128,6 +140,9 @@ class WarmContainerPool {
         repeat(basePoolSize) { io.submit { spawnIntoBase() } }
     }
 
+    /**
+     * Implements `onStop` for this source unit.
+     */
     fun onStop(@Observes ev: ShutdownEvent) {
         drainAndDestroy(basePool)
         reqPools.values.forEach { drainAndDestroy(it) }
@@ -250,6 +265,9 @@ class WarmContainerPool {
 
     // ── Internal helpers ───────────────────────────────────────────────────────
 
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     private fun spawnIntoBase() {
         spawningCount.incrementAndGet()
         try {
@@ -261,6 +279,9 @@ class WarmContainerPool {
         }
     }
 
+    /**
+     * Implements `ensureBasePool` for this source unit.
+     */
     private fun ensureBasePool() {
         // Account for containers currently being spawned to avoid over-spawning
         val effective = basePool.size + spawningCount.get()
@@ -268,10 +289,16 @@ class WarmContainerPool {
         if (deficit > 0) repeat(deficit) { io.submit { spawnIntoBase() } }
     }
 
+    /**
+     * Implements `drainAndDestroy` for this source unit.
+     */
     private fun drainAndDestroy(pool: ConcurrentLinkedDeque<WarmContainer>) {
         while (pool.isNotEmpty()) pool.poll()?.destroy()
     }
 
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     fun hash(s: String): String {
         val bytes = MessageDigest.getInstance("SHA-256").digest(s.toByteArray())
         return bytes.take(8).joinToString("") { "%02x".format(it) }

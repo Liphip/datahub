@@ -16,6 +16,18 @@ This directory contains product, API, operations, and user documentation.
 - German: `docs/user/de/benutzerhandbuch.md`
 - User docs index: `docs/user/README.md`
 
+## Developer Documentation
+
+- [Architecture and runtime guide](development/architecture.md)
+- [Source-code reference](development/source-reference.md)
+- [Source function reference](development/source-function-reference.md)
+- [Configuration reference](development/configuration-reference.md)
+- [Documentation gaps and FIXMEs](development/documentation-gaps.md)
+
+The source-code reference maps every production backend and frontend file to its
+implemented responsibility. Public REST contracts remain in `api/README.md` so
+they are documented once, next to request/response examples.
+
 ## Web Docs (`/docs`)
 
 A standalone MkDocs Material documentation service is provided at:

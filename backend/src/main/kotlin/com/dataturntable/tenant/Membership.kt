@@ -9,6 +9,9 @@ import java.util.UUID
 
 @Entity
 @Table(name = "memberships")
+/**
+ * Defines the class `Membership`, the contract implemented by this source unit.
+ */
 class Membership : PanacheBase() {
     
     @Id
@@ -41,18 +44,27 @@ class Membership : PanacheBase() {
                 .resultList
                 .firstOrNull()
         
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByUserId(userId: UUID): List<Membership> =
             getEntityManager()
                 .createQuery("SELECT m FROM Membership m WHERE m.authUser.id = :userId", Membership::class.java)
                 .setParameter("userId", userId)
                 .resultList
         
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByTenantId(tenantId: UUID): List<Membership> =
             getEntityManager()
                 .createQuery("SELECT m FROM Membership m WHERE m.tenant.id = :tenantId", Membership::class.java)
                 .setParameter("tenantId", tenantId)
                 .resultList
         
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByUserAndTenant(userId: UUID, tenantId: UUID): Membership? =
             getEntityManager()
                 .createQuery(

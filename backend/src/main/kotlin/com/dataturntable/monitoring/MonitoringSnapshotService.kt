@@ -14,6 +14,9 @@ import jakarta.transaction.Transactional
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 
+/**
+ * Defines the class `MonitoringSnapshot`, the contract implemented by this source unit.
+ */
 data class MonitoringSnapshot(
     val collectedAt: Instant,
     val pipelineStates: Map<String, Long>,
@@ -26,6 +29,9 @@ data class MonitoringSnapshot(
 )
 
 @ApplicationScoped
+/**
+ * Defines the class `MonitoringSnapshotService`, the contract implemented by this source unit.
+ */
 class MonitoringSnapshotService {
 
     @PersistenceContext
@@ -44,6 +50,9 @@ class MonitoringSnapshotService {
     lateinit var connectorPollingService: ConnectorPollingService
 
     @Transactional
+    /**
+     * Implements `collect` for this source unit.
+     */
     fun collect(now: Instant = Instant.now()): MonitoringSnapshot {
         val since24h = now.minus(24, ChronoUnit.HOURS)
         val staleCutoff = now.minus(30, ChronoUnit.MINUTES)
@@ -135,6 +144,9 @@ class MonitoringSnapshotService {
         )
     }
 
+    /**
+     * Implements `summarizeHealth` for this source unit.
+     */
     private fun summarizeHealth(connector: Connector): String {
         if (!connector.isActive) return "inactive"
         val checks = connectorStatusService.getStatus(connector).checks
@@ -143,6 +155,9 @@ class MonitoringSnapshotService {
         return "healthy"
     }
 
+    /**
+     * Implements `fillStatuses` for this source unit.
+     */
     private fun fillStatuses(rows: List<Array<Any>>): Map<String, Long> {
         val counts = PipelineRunStatus.entries.associate { it.name.lowercase() to 0L }.toMutableMap()
         rows.forEach { row ->
@@ -152,6 +167,9 @@ class MonitoringSnapshotService {
         return counts
     }
 
+    /**
+     * Implements `increment` for this source unit.
+     */
     private fun increment(target: MutableMap<String, Long>, key: String) {
         target[key] = (target[key] ?: 0L) + 1
     }

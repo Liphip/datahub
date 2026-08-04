@@ -7,17 +7,26 @@ import type { Pipeline, PipelineRun, PipelineRunSummary, TenantRunSummary } from
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * Implements `fmt` for this source unit.
+ */
 function fmt(ms?: number | null) {
   if (ms == null) return 'n/a';
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+/**
+ * Implements `fmtRate` for this source unit.
+ */
 function fmtRate(rate?: number | null) {
   if (rate == null) return 'n/a';
   return `${Math.round(rate * 100)}%`;
 }
 
+/**
+ * Implements `rateColor` for this source unit.
+ */
 function rateColor(rate?: number | null) {
   if (rate == null) return 'text-slate-500';
   if (rate >= 0.9) return 'text-emerald-600 dark:text-emerald-400';
@@ -25,6 +34,9 @@ function rateColor(rate?: number | null) {
   return 'text-red-600 dark:text-red-400';
 }
 
+/**
+ * Implements `rateBg` for this source unit.
+ */
 function rateBg(rate?: number | null) {
   if (rate == null) return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300';
   if (rate >= 0.9) return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300';
@@ -50,6 +62,9 @@ const STATUS_BADGE: Record<string, string> = {
 
 // ── Mini sparkline (bar chart) ────────────────────────────────────────────────
 
+/**
+ * Implements `MiniSparkline` for this source unit.
+ */
 function MiniSparkline({
   buckets,
   height = 28,
@@ -87,6 +102,9 @@ function MiniSparkline({
 
 // ── Per-tenant data (backed by TenantRunSummary from the all-tenants endpoint) ─
 
+/**
+ * Defines the interface `TenantStats`, the contract implemented by this source unit.
+ */
 interface TenantStats extends TenantRunSummary {
   roleName?: string;
   loading: boolean;
@@ -98,6 +116,9 @@ interface TenantStats extends TenantRunSummary {
 
 // ── Stat card ─────────────────────────────────────────────────────────────────
 
+/**
+ * Implements `StatCard` for this source unit.
+ */
 function StatCard({
   label,
   value,
@@ -133,6 +154,9 @@ function StatCard({
 
 // ── Section heading ───────────────────────────────────────────────────────────
 
+/**
+ * Implements `SectionHeading` for this source unit.
+ */
 function SectionHeading({
   children,
   action,
@@ -172,6 +196,9 @@ export default function Dashboard() {
   const [tenantStats, setTenantStats] = useState<TenantStats[]>([]);
 
   // ── Initial load: phase 1 then phase 2 sequentially ──────────────────────────
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     if (!tenantId) { setSummaryLoading(false); setRunsLoading(false); return; }
     let cancelled = false;
@@ -179,6 +206,9 @@ export default function Dashboard() {
     setRunsLoading(true);
     setError('');
 
+    /**
+     * Initializes, connects, or acquires the named runtime resource.
+     */
     const init = async () => {
       // Phase 1: summary + pipelines (renders KPIs immediately)
       try {
@@ -219,6 +249,9 @@ export default function Dashboard() {
   }, [tenantId, reliabilityWindow, t]);
 
   // ── Polling: refresh summary every 15s, runs every 60s ───────────────────────
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     if (!tenantId) return;
     let cycle = 0;
@@ -257,6 +290,9 @@ export default function Dashboard() {
   }, [tenantId, reliabilityWindow]);
 
   // ── Fetch all-tenants stats via single endpoint ────────────────────────────
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     if (tenantContexts.length < 2) { setTenantStats([]); return; }
     let cancelled = false;

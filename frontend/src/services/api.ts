@@ -5,17 +5,26 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 const PUBLIC_API_BASE_URL = import.meta.env.VITE_PUBLIC_API_URL || '/api/v1';
 export const API_STATUS_EVENT = 'dataturntable:api-status';
 
+/**
+ * Defines the type `ApiStatusDetail`, the contract implemented by this source unit.
+ */
 type ApiStatusDetail = {
   available: boolean;
   status?: number;
   message?: string;
 };
 
+/**
+ * Delivers or routes the named data to its configured destination.
+ */
 function emitApiStatus(detail: ApiStatusDetail): void {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new CustomEvent<ApiStatusDetail>(API_STATUS_EVENT, { detail }));
 }
 
+/**
+ * Implements `sha256` for this source unit.
+ */
 async function sha256(message: string): Promise<string> {
   const msgBuffer = new TextEncoder().encode(message);
   const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
@@ -27,10 +36,16 @@ async function sha256(message: string): Promise<string> {
   return btoa(binary);
 }
 
+/**
+ * Defines the class `ApiService`, the contract implemented by this source unit.
+ */
 class ApiService {
   private client: AxiosInstance;
   private publicClient: AxiosInstance;
 
+  /**
+   * Implements `constructor` for this source unit.
+   */
   constructor() {
     this.client = axios.create({
       baseURL: API_BASE_URL,
@@ -125,74 +140,116 @@ class ApiService {
   }
 
   // Auth
+  /**
+   * Implements `login` for this source unit.
+   */
   async login(email: string, password: string, tenantId?: string): Promise<AuthResponse> {
     const passwordHash = await sha256(password);
     const response = await this.client.post<AuthResponse>('/auth/login', { email, passwordHash, tenantId });
     return response.data;
   }
 
+  /**
+   * Creates or persists the requested state.
+   */
   async register(email: string, password: string, tenantName?: string, tenantId?: string): Promise<AuthResponse> {
     const passwordHash = await sha256(password);
     const response = await this.client.post<AuthResponse>('/auth/register', { email, passwordHash, tenantName, tenantId });
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getCurrentUser(): Promise<User> {
     const response = await this.client.get<User>('/auth/me');
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getAuthTenants(): Promise<TenantContext[]> {
     const response = await this.client.get<TenantContext[]>('/auth/tenants');
     return response.data;
   }
 
+  /**
+   * Implements `switchTenant` for this source unit.
+   */
   async switchTenant(tenantId: string): Promise<AuthResponse> {
     const response = await this.client.post<AuthResponse>('/auth/switch-tenant', { tenantId });
     return response.data;
   }
 
   // Tenants
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getTenants(): Promise<Tenant[]> {
     const response = await this.client.get<Tenant[]>('/tenants');
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getTenantsRecursive(query?: string): Promise<Tenant[]> {
     const queryParam = query ? `&query=${encodeURIComponent(query)}` : '';
     const response = await this.client.get<Tenant[]>(`/tenants?recursive=true${queryParam}`);
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getTenant(id: string): Promise<Tenant> {
     const response = await this.client.get<Tenant>(`/tenants/${id}`);
     return response.data;
   }
 
+  /**
+   * Creates or persists the requested state.
+   */
   async createTenant(name: string, parentId?: string): Promise<Tenant> {
     const response = await this.client.post<Tenant>('/tenants', { name, parentId });
     return response.data;
   }
 
+  /**
+   * Updates the requested state.
+   */
   async updateTenant(id: string, data: Partial<Tenant>): Promise<Tenant> {
     const response = await this.client.patch<Tenant>(`/tenants/${id}`, data);
     return response.data;
   }
 
+  /**
+   * Removes, stops, or releases the requested state.
+   */
   async deleteTenant(id: string): Promise<void> {
     await this.client.delete(`/tenants/${id}`);
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getTenantChildren(parentId: string): Promise<Tenant[]> {
     const response = await this.client.get<Tenant[]>(`/tenants/${parentId}/children`);
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getTenantLineageDefaults(tenantId: string): Promise<TenantLineageDefaults> {
     const response = await this.client.get<TenantLineageDefaults>(`/tenants/${tenantId}/lineage-defaults`);
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getTenantLineageDefaultsIfChanged(
     tenantId: string,
     etag?: string
@@ -211,6 +268,9 @@ class ApiService {
     };
   }
 
+  /**
+   * Updates the requested state.
+   */
   async updateTenantLineageDefaults(
     tenantId: string,
     data: Partial<TenantLineageDefaults>,
@@ -221,22 +281,34 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getTenantLineageDefaultsDiagnostics(tenantId: string): Promise<TenantLineageDefaultsDiagnostics> {
     const response = await this.client.get<TenantLineageDefaultsDiagnostics>(`/tenants/${tenantId}/lineage-defaults/diagnostics`);
     return response.data;
   }
 
+  /**
+   * Implements `resetTenantLineageDefaultsDiagnostics` for this source unit.
+   */
   async resetTenantLineageDefaultsDiagnostics(tenantId: string, reason?: string): Promise<TenantLineageDefaultsDiagnostics> {
     const payload = reason ? { reason } : {};
     const response = await this.client.post<TenantLineageDefaultsDiagnostics>(`/tenants/${tenantId}/lineage-defaults/diagnostics/reset`, payload);
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getTenantLineageDefaultsDiagnosticsPolicy(tenantId: string): Promise<TenantLineageDiagnosticsPolicy> {
     const response = await this.client.get<TenantLineageDiagnosticsPolicy>(`/tenants/${tenantId}/lineage-defaults/diagnostics-policy`);
     return response.data;
   }
 
+  /**
+   * Updates the requested state.
+   */
   async updateTenantLineageDefaultsDiagnosticsPolicy(
     tenantId: string,
     data: Partial<TenantLineageDiagnosticsPolicy>,
@@ -248,31 +320,49 @@ class ApiService {
   }
 
   // Users
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getUsers(tenantId: string): Promise<User[]> {
     const response = await this.client.get<User[]>(`/auth-users?tenantId=${tenantId}`);
     return response.data;
   }
 
+  /**
+   * Creates or persists the requested state.
+   */
   async createUser(tenantId: string, email: string, password: string, data?: Partial<User>): Promise<User> {
     const passwordHash = await sha256(password);
     const response = await this.client.post<User>(`/auth-users?tenantId=${tenantId}`, { email, passwordHash, ...data });
     return response.data;
   }
 
+  /**
+   * Updates the requested state.
+   */
   async updateUser(id: string, data: Partial<User>): Promise<User> {
     const response = await this.client.patch<User>(`/auth-users/${id}`, data);
     return response.data;
   }
 
+  /**
+   * Removes, stops, or releases the requested state.
+   */
   async deleteUser(id: string): Promise<void> {
     await this.client.delete(`/auth-users/${id}`);
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getTenantMemberships(tenantId: string): Promise<Membership[]> {
     const response = await this.client.get<Membership[]>(`/tenants/${tenantId}/memberships`);
     return response.data;
   }
 
+  /**
+   * Creates or persists the requested state.
+   */
   async createTenantMembership(tenantId: string, authUserId: string, roleId: string, abilities: string[] = []): Promise<Membership> {
     const response = await this.client.post<Membership>(`/tenants/${tenantId}/memberships`, {
       authUserId,
@@ -282,6 +372,9 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Updates the requested state.
+   */
   async updateTenantMembership(tenantId: string, membershipId: string, roleId?: string, abilities?: string[]): Promise<Membership> {
     const response = await this.client.patch<Membership>(`/tenants/${tenantId}/memberships/${membershipId}`, {
       roleId,
@@ -290,11 +383,17 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Removes, stops, or releases the requested state.
+   */
   async deleteTenantMembership(tenantId: string, membershipId: string): Promise<void> {
     await this.client.delete(`/tenants/${tenantId}/memberships/${membershipId}`);
   }
 
   // Modules
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getModules(tenantId: string, type?: string): Promise<CodeModule[]> {
     const params = new URLSearchParams({ tenantId });
     if (type) params.append('type', type);
@@ -302,25 +401,40 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getModule(id: string): Promise<CodeModule> {
     const response = await this.client.get<CodeModule>(`/modules/${id}`);
     return response.data;
   }
 
+  /**
+   * Creates or persists the requested state.
+   */
   async createModule(tenantId: string, name: string, moduleType: string, description?: string): Promise<CodeModule> {
     const response = await this.client.post<CodeModule>(`/modules?tenantId=${tenantId}`, { name, moduleType, description });
     return response.data;
   }
 
+  /**
+   * Removes, stops, or releases the requested state.
+   */
   async deleteModule(id: string): Promise<void> {
     await this.client.delete(`/modules/${id}`);
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getModuleVersions(moduleId: string): Promise<ModuleVersion[]> {
     const response = await this.client.get<ModuleVersion[]>(`/modules/${moduleId}/versions`);
     return response.data;
   }
 
+  /**
+   * Creates or persists the requested state.
+   */
   async createModuleVersion(
     moduleId: string,
     code: string,
@@ -332,6 +446,9 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Updates the requested state.
+   */
   async updateModuleVersion(
     moduleId: string,
     versionId: string,
@@ -341,12 +458,18 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Updates the requested state.
+   */
   async setDefaultModuleVersion(moduleId: string, versionId: string): Promise<CodeModule> {
     const response = await this.client.post<CodeModule>(`/modules/${moduleId}/versions/${versionId}/default`);
     return response.data;
   }
 
   // Pipelines
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getPipelines(tenantId: string, options?: {
     includeRunSummary?: boolean;
     runHealth?: 'ALL' | 'PROBLEMATIC' | 'RUNNING' | 'FAILED' | 'HEALTHY';
@@ -363,40 +486,64 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getPipeline(id: string): Promise<Pipeline> {
     const response = await this.client.get<Pipeline>(`/pipelines/${id}`);
     return response.data;
   }
 
+  /**
+   * Creates or persists the requested state.
+   */
   async createPipeline(tenantId: string, name: string, data?: Partial<Pipeline>): Promise<Pipeline> {
     const response = await this.client.post<Pipeline>(`/pipelines?tenantId=${tenantId}`, { name, ...data });
     return response.data;
   }
 
+  /**
+   * Updates the requested state.
+   */
   async updatePipeline(id: string, data: Partial<Pipeline>): Promise<Pipeline> {
     const response = await this.client.patch<Pipeline>(`/pipelines/${id}`, data);
     return response.data;
   }
 
+  /**
+   * Removes, stops, or releases the requested state.
+   */
   async deletePipeline(id: string): Promise<void> {
     await this.client.delete(`/pipelines/${id}`);
   }
 
+  /**
+   * Implements `triggerPipeline` for this source unit.
+   */
   async triggerPipeline(id: string, triggerType?: string): Promise<PipelineRun> {
     const response = await this.client.post<PipelineRun>(`/pipelines/${id}/run${triggerType ? `?triggerType=${triggerType}` : ''}`);
     return response.data;
   }
 
+  /**
+   * Evaluates the named capability or state predicate.
+   */
   async cancelPipelineRun(pipelineId: string, runId: string): Promise<PipelineRun> {
     const response = await this.client.post<PipelineRun>(`/pipelines/${pipelineId}/runs/${runId}/cancel`);
     return response.data;
   }
 
+  /**
+   * Implements `retryPipelineRun` for this source unit.
+   */
   async retryPipelineRun(pipelineId: string, runId: string): Promise<PipelineRun> {
     const response = await this.client.post<PipelineRun>(`/pipelines/${pipelineId}/runs/${runId}/retry`);
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getPipelineRuns(
     pipelineId: string,
     options?: {
@@ -418,11 +565,17 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getPipelineRun(pipelineId: string, runId: string, includeDetails = true): Promise<PipelineRun> {
     const response = await this.client.get<PipelineRun>(`/pipelines/${pipelineId}/runs/${runId}?includeDetails=${includeDetails}`);
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getPipelineRunLineage(
     pipelineId: string,
     runId: string,
@@ -443,17 +596,26 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getPipelineRunSummary(tenantId: string, limit = 50, sinceHours = 24): Promise<PipelineRunSummary> {
     const response = await this.client.get<PipelineRunSummary>(`/pipelines/runs/summary?tenantId=${tenantId}&limit=${limit}&sinceHours=${sinceHours}`);
     return response.data;
   }
 
   /** Returns per-tenant run stats for every tenant the current user belongs to — single roundtrip. */
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getAllTenantRunSummaries(sinceHours: 1 | 24 | 168 = 24): Promise<TenantRunSummary[]> {
     const response = await this.client.get<TenantRunSummary[]>(`/pipelines/runs/summary/all?sinceHours=${sinceHours}`);
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getPipelineRunSummaryByPipeline(
     pipelineId: string,
     sinceHours: 1 | 24 | 168 = 24,
@@ -462,6 +624,9 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getTenantPipelineRuns(
     tenantId: string,
     options?: {
@@ -482,11 +647,17 @@ class ApiService {
   }
 
   // Alerts
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getAlertChannels(tenantId: string): Promise<AlertChannel[]> {
     const response = await this.publicClient.get<AlertChannel[]>(`/alerts/channels?tenantId=${tenantId}`);
     return response.data;
   }
 
+  /**
+   * Creates or persists the requested state.
+   */
   async createAlertChannel(tenantId: string, name: string, channelType: string, config?: Record<string, unknown>): Promise<AlertChannel> {
     const response = await this.publicClient.post<AlertChannel>(`/alerts/channels?tenantId=${tenantId}`, {
       tenantId,
@@ -497,20 +668,32 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Removes, stops, or releases the requested state.
+   */
   async deleteAlertChannel(id: string): Promise<void> {
     await this.publicClient.delete(`/alerts/channels/${id}`);
   }
 
+  /**
+   * Updates the requested state.
+   */
   async updateAlertChannel(id: string, data: Partial<AlertChannel>): Promise<AlertChannel> {
     const response = await this.publicClient.patch<AlertChannel>(`/alerts/channels/${id}`, data);
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getAlertRules(tenantId: string): Promise<AlertRule[]> {
     const response = await this.publicClient.get<AlertRule[]>(`/alerts/rules?tenantId=${tenantId}`);
     return response.data;
   }
 
+  /**
+   * Creates or persists the requested state.
+   */
   async createAlertRule(
     tenantId: string,
     name: string,
@@ -528,15 +711,24 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Removes, stops, or releases the requested state.
+   */
   async deleteAlertRule(id: string): Promise<void> {
     await this.publicClient.delete(`/alerts/rules/${id}`);
   }
 
+  /**
+   * Updates the requested state.
+   */
   async updateAlertRule(id: string, data: Partial<AlertRule>): Promise<AlertRule> {
     const response = await this.publicClient.patch<AlertRule>(`/alerts/rules/${id}`, data);
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getAlertHistory(tenantId: string, limit?: number): Promise<AlertHistory[]> {
     const params = new URLSearchParams({ tenantId });
     if (limit) params.append('limit', limit.toString());
@@ -545,6 +737,9 @@ class ApiService {
   }
 
   // Data
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async queryData(
     tenantId: string,
     table: string,
@@ -556,16 +751,25 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Creates or persists the requested state.
+   */
   async insertData(tenantId: string, table: string, data: unknown[]): Promise<{ inserted: number }> {
     const response = await this.publicClient.post(`/data/${tenantId}/insert?table=${table}`, data);
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async listTables(tenantId: string): Promise<{ tables: { name: string; type: string }[] }> {
     const response = await this.publicClient.get(`/data/${tenantId}/tables`);
     return response.data;
   }
 
+  /**
+   * Creates or persists the requested state.
+   */
   async registerTable(
     tenantId: string,
     payload: {
@@ -578,10 +782,16 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Removes, stops, or releases the requested state.
+   */
   async deleteTable(tenantId: string, table: string): Promise<void> {
     await this.publicClient.delete(`/data/${tenantId}/tables/${encodeURIComponent(table)}`);
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getDataSummary(
     tenantId: string,
     table: string,
@@ -604,6 +814,9 @@ class ApiService {
   }
 
   // Connectors
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getMqttConnectorDefaults(): Promise<{
     internalBrokerUrl: string;
     externalBrokerUrl: string;
@@ -621,11 +834,17 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getMqttBrokerCredentials(tenantId: string): Promise<BrokerCredential[]> {
     const response = await this.client.get<BrokerCredential[]>(`/connectors/mqtt/credentials?tenantId=${tenantId}`);
     return response.data;
   }
 
+  /**
+   * Creates or persists the requested state.
+   */
   async createMqttBrokerCredential(
     tenantId: string,
     data: { name: string; username?: string; password?: string; allowedTopics: string[]; isActive?: boolean }
@@ -634,6 +853,9 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Updates the requested state.
+   */
   async updateMqttBrokerCredential(
     id: string,
     data: Partial<Pick<BrokerCredential, 'name' | 'allowedTopics' | 'isActive'>>
@@ -642,15 +864,24 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Implements `rotateMqttBrokerCredentialPassword` for this source unit.
+   */
   async rotateMqttBrokerCredentialPassword(id: string, password?: string): Promise<BrokerCredential & { password: string }> {
     const response = await this.client.post<BrokerCredential & { password: string }>(`/connectors/mqtt/credentials/${id}/rotate-password`, password ? { password } : {});
     return response.data;
   }
 
+  /**
+   * Removes, stops, or releases the requested state.
+   */
   async deleteMqttBrokerCredential(id: string): Promise<void> {
     await this.client.delete(`/connectors/mqtt/credentials/${id}`);
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getConnectors(
     tenantId: string,
     type?: string,
@@ -666,16 +897,25 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getConnector(id: string): Promise<Connector> {
     const response = await this.client.get<Connector>(`/connectors/${id}`);
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getConnectorReferences(id: string): Promise<ConnectorReferenceSummary> {
     const response = await this.client.get<ConnectorReferenceSummary>(`/connectors/${id}/references`);
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getConnectorImpact(
     id: string,
     sinceHours: 1 | 24 | 168 = 24,
@@ -688,6 +928,9 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Creates or persists the requested state.
+   */
   async createConnector(tenantId: string, name: string, connectorType: string, direction: string, config?: Record<string, unknown>, description?: string, options?: { pollingEnabled?: boolean; pollingIntervalSeconds?: number }): Promise<Connector> {
     const response = await this.client.post<Connector>(`/connectors?tenantId=${tenantId}`, {
       name,
@@ -701,15 +944,24 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Updates the requested state.
+   */
   async updateConnector(id: string, data: Partial<Connector>): Promise<Connector> {
     const response = await this.client.patch<Connector>(`/connectors/${id}`, data);
     return response.data;
   }
 
+  /**
+   * Removes, stops, or releases the requested state.
+   */
   async deleteConnector(id: string): Promise<void> {
     await this.client.delete(`/connectors/${id}`);
   }
 
+  /**
+   * Implements `cloneConnector` for this source unit.
+   */
   async cloneConnector(
     id: string,
     options?: { name?: string; direction?: string; description?: string; keepSecrets?: boolean }
@@ -726,44 +978,68 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Initializes, connects, or acquires the named runtime resource.
+   */
   async connectConnector(id: string): Promise<Connector> {
     const response = await this.client.post<Connector>(`/connectors/${id}/connect`);
     return response.data;
   }
 
+  /**
+   * Removes, stops, or releases the requested state.
+   */
   async disconnectConnector(id: string, force = false): Promise<Connector> {
     const suffix = force ? '?force=true' : '';
     const response = await this.client.post<Connector>(`/connectors/${id}/disconnect${suffix}`);
     return response.data;
   }
 
+  /**
+   * Implements `testConnector` for this source unit.
+   */
   async testConnector(id: string): Promise<{ ok: boolean; message: string; missing?: string[] }> {
     const response = await this.client.post<{ ok: boolean; message: string; missing?: string[] }>(`/connectors/${id}/test`);
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getConnectorStatus(id: string): Promise<ConnectorStatus> {
     const response = await this.client.get<ConnectorStatus>(`/connectors/${id}/status`);
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getConnectorStatuses(tenantId: string): Promise<Record<string, ConnectorStatus>> {
     const response = await this.client.get<Record<string, ConnectorStatus>>(`/connectors/statuses?tenantId=${tenantId}`);
     return response.data;
   }
 
   // Roles
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getRoles(tenantId?: string): Promise<Role[]> {
     const params = tenantId ? new URLSearchParams({ tenantId }) : '';
     const response = await this.client.get<Role[]>(`/roles${params ? `?${params}` : ''}`);
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getRole(id: string): Promise<Role> {
     const response = await this.client.get<Role>(`/roles/${id}`);
     return response.data;
   }
 
+  /**
+   * Creates or persists the requested state.
+   */
   async createRole(tenantId: string | undefined, name: string, abilities?: string[], description?: string): Promise<Role> {
     const response = await this.client.post<Role>(`/roles${tenantId ? `?tenantId=${tenantId}` : ''}`, { 
       name, 
@@ -773,21 +1049,33 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Updates the requested state.
+   */
   async updateRole(id: string, data: Partial<Role>): Promise<Role> {
     const response = await this.client.patch<Role>(`/roles/${id}`, data);
     return response.data;
   }
 
+  /**
+   * Removes, stops, or releases the requested state.
+   */
   async deleteRole(id: string): Promise<void> {
     await this.client.delete(`/roles/${id}`);
   }
 
   // Data blobs
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   async getDataBlobs(tenantId: string): Promise<DataBlob[]> {
     const response = await this.publicClient.get<{ blobs: DataBlob[] }>(`/data/${tenantId}/blobs`);
     return response.data.blobs;
   }
 
+  /**
+   * Implements `uploadDataBlob` for this source unit.
+   */
   async uploadDataBlob(tenantId: string, file: File): Promise<{ id: string; name: string; sizeBytes: number }> {
     const formData = new FormData();
     formData.append('name', file.name);
@@ -799,10 +1087,16 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Retrieves or enumerates the requested state.
+   */
   getDataBlobUrl(tenantId: string, blobId: string): string {
     return `${PUBLIC_API_BASE_URL}/data/${tenantId}/blobs/${encodeURIComponent(blobId)}/download`;
   }
 
+  /**
+   * Removes, stops, or releases the requested state.
+   */
   async deleteDataBlob(tenantId: string, blobId: string): Promise<void> {
     await this.publicClient.delete(`/data/${tenantId}/blobs/${encodeURIComponent(blobId)}`);
   }

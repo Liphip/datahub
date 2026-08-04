@@ -20,6 +20,9 @@ import java.util.UUID
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
+/**
+ * Defines the class `RoleResource`, the contract implemented by this source unit.
+ */
 class RoleResource {
     private val objectMapper = ObjectMapper()
 
@@ -29,12 +32,18 @@ class RoleResource {
     @PersistenceContext
     lateinit var em: EntityManager
 
+    /**
+     * Implements `currentUser` for this source unit.
+     */
     private fun currentUser(): User? {
         val subject = jwt.subject ?: return null
         val userId = try { UUID.fromString(subject) } catch (_: Exception) { return null }
         return em.find(User::class.java, userId)
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseUuid(value: String, field: String): UUID? {
         return try {
             UUID.fromString(value)
@@ -43,6 +52,9 @@ class RoleResource {
         }
     }
 
+    /**
+     * Parses external or persisted input into the required representation.
+     */
     private fun parseAbilities(raw: String?): List<String> {
         if (raw.isNullOrBlank()) return emptyList()
         return try {
@@ -52,6 +64,9 @@ class RoleResource {
         }
     }
 
+    /**
+     * Implements `abilitiesJson` for this source unit.
+     */
     private fun abilitiesJson(raw: Any?): String {
         return try {
             objectMapper.writeValueAsString(raw ?: emptyList<String>())
@@ -60,6 +75,9 @@ class RoleResource {
         }
     }
 
+    /**
+     * Implements `roleToMap` for this source unit.
+     */
     private fun roleToMap(role: Role): Map<String, Any?> {
         return mapOf(
             "id" to role.id,
@@ -74,6 +92,9 @@ class RoleResource {
     }
     
     @GET
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun list(@QueryParam("tenantId") tenantId: String?): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
 
@@ -101,6 +122,9 @@ class RoleResource {
     
     @POST
     @Transactional
+    /**
+     * Creates or persists the requested state.
+     */
     fun create(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
 
@@ -144,6 +168,9 @@ class RoleResource {
     
     @GET
     @Path("/{id}")
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun get(@PathParam("id") id: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val roleId = parseUuid(id, "role id")
@@ -172,6 +199,9 @@ class RoleResource {
     @PATCH
     @Path("/{id}")
     @Transactional
+    /**
+     * Updates the requested state.
+     */
     fun update(@PathParam("id") id: String, request: Map<String, Any>): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val roleId = parseUuid(id, "role id")
@@ -208,6 +238,9 @@ class RoleResource {
     @DELETE
     @Path("/{id}")
     @Transactional
+    /**
+     * Removes, stops, or releases the requested state.
+     */
     fun delete(@PathParam("id") id: String): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val roleId = parseUuid(id, "role id")

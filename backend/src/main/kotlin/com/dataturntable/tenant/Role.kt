@@ -8,6 +8,9 @@ import java.util.UUID
 
 @Entity
 @Table(name = "roles")
+/**
+ * Defines the class `Role`, the contract implemented by this source unit.
+ */
 open class Role : PanacheBase() {
     
     @Id
@@ -47,12 +50,18 @@ open class Role : PanacheBase() {
                 .resultList
                 .firstOrNull()
         
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByTenantId(tenantId: UUID): List<Role> =
             getEntityManager()
                 .createQuery("SELECT r FROM Role r WHERE r.tenant.id = :tenantId", Role::class.java)
                 .setParameter("tenantId", tenantId)
                 .resultList
         
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findDefaultForTenant(tenantId: UUID): Role? =
             getEntityManager()
                 .createQuery(
@@ -63,12 +72,18 @@ open class Role : PanacheBase() {
                 .resultList
                 .firstOrNull()
         
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findSystemRoles(): List<Role> =
             getEntityManager()
                 .createQuery("SELECT r FROM Role r WHERE r.isSystem = true", Role::class.java)
                 .resultList
     }
     
+    /**
+     * Evaluates the named capability or state predicate.
+     */
     fun hasAbility(ability: String): Boolean {
         if (abilities?.contains("*") == true) return true
         // BUG: Role permission checks use substring matching
@@ -76,6 +91,9 @@ open class Role : PanacheBase() {
         return abilities?.contains(ability) == true
     }
     
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     fun getAbilitiesList(): List<String> {
         return try {
             val list = mutableListOf<String>()

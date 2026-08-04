@@ -8,6 +8,9 @@ import java.util.UUID
 
 @Entity
 @Table(name = "connectors")
+/**
+ * Defines the class `Connector`, the contract implemented by this source unit.
+ */
 class Connector : PanacheBase() {
     
     @Id
@@ -63,6 +66,9 @@ class Connector : PanacheBase() {
     var createdBy: com.dataturntable.auth.User? = null
     
     companion object : PanacheCompanionBase<Connector, UUID> {
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByTenantId(tenantId: UUID): List<Connector> {
             return getEntityManager()
                 .createQuery("SELECT c FROM Connector c WHERE c.tenant.id = :tenantId", Connector::class.java)
@@ -70,6 +76,9 @@ class Connector : PanacheBase() {
                 .resultList
         }
         
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByTenantAndType(tenantId: UUID, type: ConnectorType): List<Connector> {
             return getEntityManager()
                 .createQuery(
@@ -81,6 +90,9 @@ class Connector : PanacheBase() {
                 .resultList
         }
         
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByTenantAndDirection(tenantId: UUID, direction: Direction): List<Connector> {
             return getEntityManager()
                 .createQuery(
@@ -101,10 +113,16 @@ class Connector : PanacheBase() {
         }
     }
     
+    /**
+     * Defines the enum class `ConnectorType`, the contract implemented by this source unit.
+     */
     enum class ConnectorType {
         MQTT, REST, WEBSOCKET, UDP, FILE, CUSTOM
     }
     
+    /**
+     * Defines the enum class `Direction`, the contract implemented by this source unit.
+     */
     enum class Direction {
         /** Connector receives data into the platform. Used on IMPORT nodes. */
         INPUT,

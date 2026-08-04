@@ -43,6 +43,9 @@ const NODE_TYPE_ICON: Record<string, string> = {
   EXPORT:     '↑',
 };
 
+/**
+ * Implements `formatDuration` for this source unit.
+ */
 function formatDuration(ms?: number) {
   if (ms == null) return '—';
   if (ms < 1000) return `${ms}ms`;
@@ -50,6 +53,9 @@ function formatDuration(ms?: number) {
   return `${Math.floor(ms / 60000)}m ${Math.floor((ms % 60000) / 1000)}s`;
 }
 
+/**
+ * Implements `ResultDisplay` for this source unit.
+ */
 function ResultDisplay({ result }: { result: unknown }) {
   if (result == null) return <span className="text-gray-400 italic">null</span>;
 
@@ -70,6 +76,9 @@ function ResultDisplay({ result }: { result: unknown }) {
   );
 }
 
+/**
+ * Implements `ModuleLogCard` for this source unit.
+ */
 function ModuleLogCard({ log, index }: {
   log: NonNullable<PipelineRun['moduleLogs']>[0];
   index: number;
@@ -198,8 +207,14 @@ export default function RunDetail() {
   const [loading, setLoading] = useState(!runId || !runCache.has(runId));
   const [error, setError] = useState('');
 
+  /**
+   * Implements `useEffect` for this source unit.
+   */
   useEffect(() => {
     if (!pipelineId || !runId) { setLoading(false); return; }
+    /**
+     * Retrieves or enumerates the requested state.
+     */
     const load = async () => {
       try {
         const [runData, pipelineData] = await Promise.all([

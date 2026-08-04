@@ -6,17 +6,26 @@ import jakarta.persistence.*
 import java.time.Instant
 import java.util.UUID
 
+/**
+ * Defines the enum class `GrafanaSyncScopeType`, the contract implemented by this source unit.
+ */
 enum class GrafanaSyncScopeType {
     TENANT,
     USER,
     MEMBERSHIP
 }
 
+/**
+ * Defines the enum class `GrafanaTargetInstance`, the contract implemented by this source unit.
+ */
 enum class GrafanaTargetInstance {
     DASHBOARD,
     MONITORING
 }
 
+/**
+ * Defines the enum class `GrafanaSyncStatus`, the contract implemented by this source unit.
+ */
 enum class GrafanaSyncStatus {
     PENDING,
     SYNCED,
@@ -33,6 +42,9 @@ enum class GrafanaSyncStatus {
         )
     ]
 )
+/**
+ * Defines the class `GrafanaSyncState`, the contract implemented by this source unit.
+ */
 open class GrafanaSyncState : PanacheBase() {
 
     @Id
@@ -86,6 +98,9 @@ open class GrafanaSyncState : PanacheBase() {
                 .resultList
                 .firstOrNull()
 
+        /**
+         * Retrieves or enumerates the requested state.
+         */
         fun findByTargetAndScope(target: GrafanaTargetInstance, scopeType: GrafanaSyncScopeType, scopeId: UUID): GrafanaSyncState? =
             getEntityManager()
                 .createQuery(
