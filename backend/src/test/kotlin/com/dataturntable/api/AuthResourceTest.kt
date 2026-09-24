@@ -3,7 +3,6 @@ package com.dataturntable.api
 import com.dataturntable.auth.User
 import com.dataturntable.alert.AlertChannel
 import com.dataturntable.alert.AlertHistory
-import com.dataturntable.alert.AlertRule
 import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
@@ -33,7 +32,6 @@ class AuthResourceTest {
     @Transactional
     fun cleanup() {
         em.createQuery("DELETE FROM AlertHistory").executeUpdate()
-        em.createQuery("DELETE FROM AlertRule").executeUpdate()
         em.createQuery("DELETE FROM AlertChannel").executeUpdate()
         em.createQuery("DELETE FROM Membership").executeUpdate()
         em.createQuery("DELETE FROM User").executeUpdate()
@@ -123,37 +121,6 @@ class AuthResourceTest {
             .body("user.email", equalTo("register@example.com"))
     }
 
-    @Test
-    fun testLoginAcceptsHexEncodedSha256Hash() {
-        val setupBody = """
-            {
-                "email": "adminhex@example.com"
-            }
-        """.trimIndent()
-
-        val setupResponse = given()
-            .contentType(ContentType.JSON)
-            .body(setupBody)
-        .`when`()
-            .post("/api/internal/v1/auth/setup")
-        .then()
-            .statusCode(201)
-            .extract()
-            .body()
-            .jsonPath()
-
-        val password = setupResponse.getString("password")
-        val passwordHash = hashPasswordHex(password)
-
-        given()
-            .contentType(ContentType.JSON)
-            .body(mapOf("email" to "adminhex@example.com", "passwordHash" to passwordHash))
-        .`when`()
-            .post("/api/internal/v1/auth/login")
-        .then()
-            .statusCode(200)
-            .body("token", notNullValue())
-    }
     
     @Test
     fun testLoginEndpoint() {
@@ -378,11 +345,5 @@ class AuthResourceTest {
         val digest = MessageDigest.getInstance("SHA-256")
         val hash = digest.digest(password.toByteArray())
         return Base64.getEncoder().encodeToString(hash)
-    }
-
-    private fun hashPasswordHex(password: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val hash = digest.digest(password.toByteArray())
-        return hash.joinToString("") { "%02x".format(it) }
     }
 }

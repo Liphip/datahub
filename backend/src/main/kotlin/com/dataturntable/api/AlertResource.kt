@@ -2,7 +2,6 @@ package com.dataturntable.api
 
 import com.dataturntable.alert.AlertChannel
 import com.dataturntable.alert.AlertChannelType
-import com.dataturntable.alert.AlertRule
 import com.dataturntable.alert.AlertHistory
 import com.dataturntable.auth.User
 import com.dataturntable.pipeline.Pipeline
@@ -25,7 +24,7 @@ import java.util.UUID
 @Consumes(MediaType.APPLICATION_JSON)
 @Authenticated
 /**
- * Tenant-scoped management API for alert channels, rules, and delivery history.
+ * Tenant-scoped management API for alert channels and delivery history.
  *
  * Each handler resolves the JWT subject to a persisted user and verifies both
  * tenant membership and the required alert ability before reading or mutating
@@ -92,30 +91,16 @@ class AlertResource {
         }
     }
 
-    /** Decodes a persisted JSON value, retaining the original string if legacy/invalid JSON cannot be decoded. */
-    /**
-     * Parses external or persisted input into the required representation.
-     */
+    /** Decodes a persisted JSON value; values are always written as JSON by [serializeJsonValue]. */
     private fun parseJsonValue(raw: String?): Any {
         if (raw.isNullOrBlank()) return emptyMap<String, Any>()
-        return try {
-            objectMapper.readValue(raw, Any::class.java)
-        } catch (_: Exception) {
-            raw
-        }
+        return objectMapper.readValue(raw, Any::class.java)
     }
 
     /** Serializes a request value for JSON-backed persistence, using an empty object for `null`. */
-    /**
-     * Converts a value into the representation required by its caller.
-     */
     private fun serializeJsonValue(value: Any?): String {
         if (value == null) return "{}"
-        return try {
-            objectMapper.writeValueAsString(value)
-        } catch (_: Exception) {
-            value.toString()
-        }
+        return objectMapper.writeValueAsString(value)
     }
 
     /** Accepts either a JSON string or a map and returns a condition object suitable for validation. */
@@ -188,25 +173,6 @@ class AlertResource {
         )
     }
 
-    /** Maps an alert rule entity to its public response representation. */
-    /**
-     * Converts a value into the representation required by its caller.
-     */
-    private fun toRuleDto(rule: AlertRule): Map<String, Any?> {
-        return mapOf(
-            "id" to rule.id,
-            "tenantId" to rule.tenant?.id,
-            "pipelineId" to rule.pipeline?.id,
-            "channelId" to rule.channel?.id,
-            "name" to rule.name,
-            "description" to rule.description,
-            "condition" to parseJsonValue(rule.condition),
-            "enabled" to rule.enabled,
-            "cooldownSeconds" to rule.cooldownSeconds,
-            "createdAt" to rule.createdAt.toString()
-        )
-    }
-
     /** Maps an alert delivery record to its public response representation. */
     /**
      * Converts a value into the representation required by its caller.
@@ -215,7 +181,6 @@ class AlertResource {
         return mapOf(
             "id" to history.id,
             "tenantId" to history.tenant?.id,
-            "ruleId" to history.rule?.id,
             "channelId" to history.channel?.id,
             "severity" to history.severity?.name,
             "title" to history.title,
@@ -236,8 +201,8 @@ class AlertResource {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseUuid(tenantId, "tenantId")
         requireTenantAccess(currentUser, tenantUuid.toString(), "alert:read")?.let { return it }
-        // TODO: Paginate and order alert channel and rule listings
-        // Details: Both list endpoints return every tenant record without a stable order, while history is bounded. Add validated limit/cursor parameters and deterministic ordering before tenant alert configuration grows large.
+        // TODO: Paginate and order alert channel listings
+        // Details: The list endpoint returns every tenant record without a stable order, while history is bounded. Add validated limit/cursor parameters and deterministic ordering before tenant alert configuration grows large.
         val channels = em.createQuery(
             "SELECT c FROM AlertChannel c WHERE c.tenant.id = :tenantId",
             AlertChannel::class.java
@@ -337,157 +302,8 @@ class AlertResource {
         }
     }
     
-    @GET
-    @Path("/rules")
-    /** Lists a tenant's alert rules after enforcing `alert:read`. */
-    /**
-     * Retrieves or enumerates the requested state.
-     */
-    fun listRules(@QueryParam("tenantId") tenantId: String): Response {
-        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        val tenantUuid = parseUuid(tenantId, "tenantId")
-        requireTenantAccess(currentUser, tenantUuid.toString(), "alert:read")?.let { return it }
-        val rules = em.createQuery(
-            "SELECT r FROM AlertRule r WHERE r.tenant.id = :tenantId",
-            AlertRule::class.java
-        )
-            .setParameter("tenantId", tenantUuid)
-            .resultList
-        return Response.ok(rules.map { toRuleDto(it) }).build()
-    }
     
-    @POST
-    @Path("/rules")
-    @Transactional
-    /** Creates a rule with a valid condition tree and references to existing pipeline/channel entities. */
-    /**
-     * Creates or persists the requested state.
-     */
-    fun createRule(@QueryParam("tenantId") tenantIdQuery: String?, request: Map<String, Any>): Response {
-        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        val tenantId = tenantIdQuery ?: (request["tenantId"] as? String)
-            ?: return Response.status(400).entity(mapOf("error" to "Tenant ID is required")).build()
-        val tenantUuid = parseUuid(tenantId, "tenantId")
-        requireTenantAccess(currentUser, tenantUuid.toString(), "alert:configure")?.let { return it }
-        val name = request["name"] as? String ?: return Response.status(400).entity(mapOf("error" to "Name is required")).build()
-        val conditionRaw = request["condition"] ?: return Response.status(400).entity(mapOf("error" to "Condition is required")).build()
-        val conditionMap = parseConditionMap(conditionRaw)
-            ?: return Response.status(400).entity(mapOf("error" to "Invalid condition JSON")).build()
-        if (!isValidConditionMap(conditionMap)) {
-            return Response.status(400).entity(mapOf("error" to "Invalid condition format")).build()
-        }
-        val condition = serializeJsonValue(conditionMap)
-        
-        val tenant = em.find(Tenant::class.java, tenantUuid)
-            ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
-        
-        val channelId = request["channelId"] as? String
-        val channel = channelId?.let { em.find(AlertChannel::class.java, parseUuid(it, "channelId")) }
-        if (channelId != null && channel == null) {
-            return Response.status(400).entity(mapOf("error" to "Channel not found")).build()
-        }
-        if (channel != null && channel.tenant?.id != tenant.id) {
-            return Response.status(400).entity(mapOf("error" to "Channel does not belong to tenant")).build()
-        }
-        
-        val pipelineId = request["pipelineId"] as? String
-        val pipeline = pipelineId?.let { em.find(Pipeline::class.java, parseUuid(it, "pipelineId")) }
-        if (pipelineId != null && pipeline == null) {
-            return Response.status(400).entity(mapOf("error" to "Pipeline not found")).build()
-        }
-        if (pipeline != null && pipeline.tenant?.id != tenant.id) {
-            return Response.status(400).entity(mapOf("error" to "Pipeline does not belong to tenant")).build()
-        }
-        
-        val rule = AlertRule().apply {
-            this.tenant = tenant
-            this.name = name
-            this.description = request["description"] as? String
-            this.condition = condition
-            this.channel = channel
-            this.pipeline = pipeline
-            this.enabled = true
-            this.cooldownSeconds = (request["cooldownSeconds"] as? Int) ?: 60
-            this.createdAt = java.time.Instant.now()
-            this.updatedAt = java.time.Instant.now()
-        }
-        rule.persist()
-        return Response.status(201).entity(toRuleDto(rule)).build()
-    }
-
-    @PATCH
-    @Path("/rules/{id}")
-    @Transactional
-    /** Updates a rule's supplied fields, validating any replacement condition or related entity reference. */
-    /**
-     * Updates the requested state.
-     */
-    fun updateRule(@PathParam("id") id: String, request: Map<String, Any>): Response {
-        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        val rule = em.find(AlertRule::class.java, parseUuid(id, "rule id"))
-            ?: return Response.status(404).entity(mapOf("error" to "Rule not found")).build()
-        val tenantId = rule.tenant?.id?.toString()
-            ?: return Response.status(400).entity(mapOf("error" to "Rule tenant not found")).build()
-        requireTenantAccess(currentUser, tenantId, "alert:configure")?.let { return it }
-
-        request["name"]?.let { rule.name = it as String }
-        request["description"]?.let { rule.description = it as String }
-        request["condition"]?.let {
-            val conditionMap = parseConditionMap(it)
-                ?: return Response.status(400).entity(mapOf("error" to "Invalid condition JSON")).build()
-            if (!isValidConditionMap(conditionMap)) {
-                return Response.status(400).entity(mapOf("error" to "Invalid condition format")).build()
-            }
-            rule.condition = serializeJsonValue(conditionMap)
-        }
-        request["channelId"]?.let {
-            val channel = em.find(AlertChannel::class.java, parseUuid(it as String, "channelId"))
-                ?: return Response.status(400).entity(mapOf("error" to "Channel not found")).build()
-            if (channel.tenant?.id != rule.tenant?.id) {
-                return Response.status(400).entity(mapOf("error" to "Channel does not belong to tenant")).build()
-            }
-            rule.channel = channel
-        }
-        request["pipelineId"]?.let {
-            if ((it as String).isBlank()) {
-                rule.pipeline = null
-            } else {
-                val pipeline = em.find(Pipeline::class.java, parseUuid(it, "pipelineId"))
-                    ?: return Response.status(400).entity(mapOf("error" to "Pipeline not found")).build()
-                if (pipeline.tenant?.id != rule.tenant?.id) {
-                    return Response.status(400).entity(mapOf("error" to "Pipeline does not belong to tenant")).build()
-                }
-                rule.pipeline = pipeline
-            }
-        }
-        request["enabled"]?.let { rule.enabled = it as Boolean }
-        request["cooldownSeconds"]?.let { rule.cooldownSeconds = (it as Number).toInt() }
-        rule.updatedAt = java.time.Instant.now()
-        rule.persist()
-
-        return Response.ok(toRuleDto(rule)).build()
-    }
     
-    @DELETE
-    @Path("/rules/{id}")
-    @Transactional
-    /** Deletes one alert rule after tenant and `alert:configure` authorization. */
-    /**
-     * Removes, stops, or releases the requested state.
-     */
-    fun deleteRule(@PathParam("id") id: String): Response {
-        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        val rule = em.find(AlertRule::class.java, parseUuid(id, "rule id"))
-        return if (rule != null) {
-            val tenantId = rule.tenant?.id?.toString()
-                ?: return Response.status(400).entity(mapOf("error" to "Rule tenant not found")).build()
-            requireTenantAccess(currentUser, tenantId, "alert:configure")?.let { return it }
-            rule.delete()
-            Response.noContent().build()
-        } else {
-            Response.status(404).entity(mapOf("error" to "Rule not found")).build()
-        }
-    }
     
     @GET
     @Path("/history")

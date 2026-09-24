@@ -70,7 +70,6 @@ class AuthUserResource {
      */
     private fun extractPasswordHash(request: Map<String, Any>): String? {
         return (request["passwordHash"] as? String)?.takeIf { it.isNotBlank() }
-            ?: (request["password"] as? String)?.takeIf { it.isNotBlank() }
     }
 
     /**
@@ -108,7 +107,7 @@ class AuthUserResource {
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, resolvedTenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "read:user")) {
+        if (!SecurityUtils.hasAbility(currentUser, "user:read")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
 
@@ -142,7 +141,7 @@ class AuthUserResource {
         if (currentUser == null || tenantId == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "write:user")) {
+        if (!SecurityUtils.hasAbility(currentUser, "user:write")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
 
@@ -199,7 +198,7 @@ class AuthUserResource {
         if (currentUser == null || tenantId == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "read:user")) {
+        if (!SecurityUtils.hasAbility(currentUser, "user:read")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
         if (!userHasMembershipInTenant(user, tenantUuid)) {
@@ -243,7 +242,7 @@ class AuthUserResource {
         if (currentUser == null || tenantId == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "write:user")) {
+        if (!SecurityUtils.hasAbility(currentUser, "user:write")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
         if (!userHasMembershipInTenant(user, tenantUuid)) {
@@ -288,7 +287,7 @@ class AuthUserResource {
         if (currentUser == null || tenantId == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "delete:user")) {
+        if (!SecurityUtils.hasAbility(currentUser, "user:delete")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
         if (!userHasMembershipInTenant(user, tenantUuid)) {

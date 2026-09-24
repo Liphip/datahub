@@ -17,26 +17,10 @@ quarkus:
       generation: none
     log:
       sql: false
-    persistence-units:
-      default:
-        packages:
-          - com.dataturntable.tenant
-          - com.dataturntable.auth
-          - com.dataturntable.pipeline
-          - com.dataturntable.module
-          - com.dataturntable.alert
   
   flyway:
     migrate-at-start: true
-    baseline-on-migrate: true
   
-  # FIXME: Unsupported Quarkus Kafka namespace
-  # Details: `mvn test` reports quarkus.kafka.bootstrap.servers as unrecognized, so this value is ignored. Use the Kafka client configuration namespace supported by the pinned Quarkus version.
-  kafka:
-    bootstrap:
-      servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-
-
   micrometer:
     export:
       prometheus:
@@ -44,19 +28,6 @@ quarkus:
     binder:
       http-server:
         enabled: true
-    # WARNING: Unrecognized Micrometer distribution settings
-    # Details: `mvn test` reports every key below as unrecognized. Confirm the Micrometer property names for Quarkus 3.32.2; ignored settings do not publish the intended histogram buckets or bounds.
-    # Publish histogram buckets so Grafana can compute histogram_quantile()
-    distribution:
-      percentiles-histogram:
-        "dt_pipeline_duration_seconds": true
-        "dt_module_duration_seconds": true
-      minimum-expected-value:
-        "dt_pipeline_duration_seconds": "100ms"
-        "dt_module_duration_seconds": "10ms"
-      maximum-expected-value:
-        "dt_pipeline_duration_seconds": "300000ms"
-        "dt_module_duration_seconds": "120000ms"
 
 mp:
   messaging:
@@ -170,19 +141,6 @@ dataturntable:
     default-size: 20
     max-size: 100
 
-"%dev":
-  quarkus:
-    datasource:
-      jdbc:
-        url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dataturntable}
-      username: ${DB_USER:dataturntable}
-      password: ${DB_PASSWORD:dataturntable}
-    kafka:
-      bootstrap:
-        servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-    flyway:
-      migrate-at-start: true
-
 "%test":
   dataturntable:
     runtime:
@@ -239,9 +197,5 @@ dataturntable:
   quarkus:
     datasource:
       jdbc:
-        url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dataturntable}
         max-size: 20
         min-size: 5
-    kafka:
-      bootstrap:
-        servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}

@@ -309,10 +309,10 @@ export default function Pipelines() {
    * Evaluates the named capability or state predicate.
    */
   const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
-  const canReadPipelines = hasAbility('pipeline:read') || hasAbility('pipeline:write') || hasAbility('pipeline:execute') || hasAbility('manage:tenant');
-  const canWritePipelines = hasAbility('pipeline:write') || hasAbility('manage:tenant');
+  const canReadPipelines = hasAbility('pipeline:read') || hasAbility('pipeline:write') || hasAbility('pipeline:execute') || hasAbility('tenant:manage');
+  const canWritePipelines = hasAbility('pipeline:write') || hasAbility('tenant:manage');
   const canExecutePipelines = hasAbility('pipeline:execute') || canWritePipelines;
-  const canManageTenantSettings = hasAbility('manage:tenant');
+  const canManageTenantSettings = hasAbility('tenant:manage');
 
   /**
    * Implements `showToast` for this source unit.
@@ -1217,9 +1217,7 @@ export default function Pipelines() {
   /**
    * Implements `graphNodeCount` for this source unit.
    */
-  const graphNodeCount = (p: Pipeline) =>
-    (p.graphDefinition?.nodes?.length ?? 0) ||
-    (1 + (p.processingModuleVersionIds?.length ?? 0) + (p.exportModuleVersionIds?.length ?? 0));
+  const graphNodeCount = (p: Pipeline) => p.graphDefinition?.nodes?.length ?? 0;
 
   const getRunMetricNumber = (run: PipelineRun, key: string): number | null => {
     const metrics = run.metrics as Record<string, unknown> | undefined;

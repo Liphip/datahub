@@ -29,7 +29,7 @@ import java.time.Duration
  * Connector behaviour per type:
  *   REST  INPUT  → HTTP GET  to baseUrl+path; returns response body as Map
  *   REST  OUTPUT → HTTP POST to baseUrl+path with shaped payload as JSON body
- *   MQTT  INPUT  → data already arrived via MqttIngestService push; fetch is a no-op
+ *   MQTT  INPUT  → data already arrived via MqttConnectionManager push; fetch is a no-op
  *   MQTT  OUTPUT → publish JSON payload to configured topic (via MqttPublishService)
  *   WEBSOCKET INPUT  → push-based; fetch is a no-op
  *   WEBSOCKET OUTPUT → send JSON payload over the configured WebSocket

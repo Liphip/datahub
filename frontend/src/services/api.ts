@@ -1,5 +1,5 @@
 import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertRule, AlertHistory, DataSummaryResponse, DataBlob, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential } from '../types';
+import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertHistory, DataSummaryResponse, DataBlob, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential } from '../types';
 
 /** Error shape returned by backend endpoints (`{ error, missing }` JSON bodies). */
 export type ApiError = AxiosError<{ error?: string; missing?: string[] }>;
@@ -683,49 +683,6 @@ class ApiService {
    */
   async updateAlertChannel(id: string, data: Partial<AlertChannel>): Promise<AlertChannel> {
     const response = await this.publicClient.patch<AlertChannel>(`/alerts/channels/${id}`, data);
-    return response.data;
-  }
-
-  /**
-   * Retrieves or enumerates the requested state.
-   */
-  async getAlertRules(tenantId: string): Promise<AlertRule[]> {
-    const response = await this.publicClient.get<AlertRule[]>(`/alerts/rules?tenantId=${tenantId}`);
-    return response.data;
-  }
-
-  /**
-   * Creates or persists the requested state.
-   */
-  async createAlertRule(
-    tenantId: string,
-    name: string,
-    condition: Record<string, unknown> | string,
-    channelId?: string,
-    pipelineId?: string
-  ): Promise<AlertRule> {
-    const response = await this.publicClient.post<AlertRule>(`/alerts/rules?tenantId=${tenantId}`, {
-      tenantId,
-      name,
-      condition,
-      channelId,
-      pipelineId,
-    });
-    return response.data;
-  }
-
-  /**
-   * Removes, stops, or releases the requested state.
-   */
-  async deleteAlertRule(id: string): Promise<void> {
-    await this.publicClient.delete(`/alerts/rules/${id}`);
-  }
-
-  /**
-   * Updates the requested state.
-   */
-  async updateAlertRule(id: string, data: Partial<AlertRule>): Promise<AlertRule> {
-    const response = await this.publicClient.patch<AlertRule>(`/alerts/rules/${id}`, data);
     return response.data;
   }
 

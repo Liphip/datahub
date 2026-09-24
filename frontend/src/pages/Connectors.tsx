@@ -87,10 +87,10 @@ export default function Connectors() {
    * Evaluates the named capability or state predicate.
    */
   const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
-  const canManageTenant = hasAbility('manage:tenant');
-  const canReadConnectors = canManageTenant || hasAbility('read:connector') || hasAbility('write:connector') || hasAbility('delete:connector');
-  const canWriteConnectors = canManageTenant || hasAbility('write:connector');
-  const canDeleteConnectors = canManageTenant || hasAbility('delete:connector');
+  const canManageTenant = hasAbility('tenant:manage');
+  const canReadConnectors = canManageTenant || hasAbility('connector:read') || hasAbility('connector:write') || hasAbility('connector:delete');
+  const canWriteConnectors = canManageTenant || hasAbility('connector:write');
+  const canDeleteConnectors = canManageTenant || hasAbility('connector:delete');
   const canManageBrokerUsers = canManageTenant;
   const canReadBrokerUsers = canReadConnectors;
   const [connectors, setConnectors] = useState<Connector[]>([]);

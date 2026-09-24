@@ -37,10 +37,6 @@ open class AlertHistory : PanacheBase() {
     var tenant: Tenant? = null
     
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "rule_id")
-    var rule: AlertRule? = null
-    
-    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "channel_id")
     var channel: AlertChannel? = null
     

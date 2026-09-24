@@ -321,7 +321,7 @@ export default function Layout({ children }: LayoutProps) {
   });
 
   const canManageTenants = Boolean(
-    user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('manage:tenant')
+    user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('tenant:manage')
   );
   const visibleNav = navItems.filter((item) => !item.adminOnly || canManageTenants);
 

@@ -23,16 +23,6 @@ import java.net.http.HttpResponse
  */
 class AlertDispatcher {
 
-    /**
-     * Defines the class `AlertEvaluationReport`, the contract implemented by this source unit.
-     */
-    data class AlertEvaluationReport(
-        val evaluatedRules: Int,
-        val matchedRules: Int,
-        val firedAlerts: Int,
-        val cooldownSkipped: Int
-    )
-    
     private val LOG = Logger.getLogger(AlertDispatcher::class.java)
     private val objectMapper = ObjectMapper()
     private val httpClient = HttpClient.newHttpClient()
@@ -43,102 +33,6 @@ class AlertDispatcher {
     @PersistenceContext
     lateinit var em: EntityManager
 
-    @Transactional
-    /**
-     * Processes the named request, event, or operation.
-     */
-    fun evaluateRulesForPipeline(pipeline: Pipeline, payload: Map<String, Any>?): AlertEvaluationReport {
-        val pipelineId = pipeline.id ?: return AlertEvaluationReport(0, 0, 0, 0)
-        val tenantId = pipeline.tenant?.id ?: return AlertEvaluationReport(0, 0, 0, 0)
-
-        val rules = em.createQuery(
-            "SELECT r FROM AlertRule r WHERE r.enabled = true AND r.tenant.id = :tenantId AND (r.pipeline IS NULL OR r.pipeline.id = :pipelineId)",
-            AlertRule::class.java
-        )
-            .setParameter("tenantId", tenantId)
-            .setParameter("pipelineId", pipelineId)
-            .resultList
-
-        var matched = 0
-        var fired = 0
-        var cooldownSkipped = 0
-        for (rule in rules) {
-            if (!matchesCondition(rule.condition, payload)) continue
-            matched++
-            if (isInCooldown(rule)) {
-                cooldownSkipped++
-                continue
-            }
-
-            val condition = parseCondition(rule.condition)
-            val severity = parseSeverity((condition["severity"] ?: "WARNING").toString())
-            val message = (condition["message"] as? String)
-                ?: "Rule '${rule.name ?: rule.id}' matched pipeline data"
-
-            createAlertFromRule(rule, pipeline, severity, message, payload)
-            fired++
-        }
-
-        return AlertEvaluationReport(
-            evaluatedRules = rules.size,
-            matchedRules = matched,
-            firedAlerts = fired,
-            cooldownSkipped = cooldownSkipped
-        )
-    }
-
-    /**
-     * Implements `matchesCondition` for this source unit.
-     */
-    fun matchesCondition(conditionRaw: String?, payload: Map<String, Any>?): Boolean {
-        val condition = parseCondition(conditionRaw)
-        return evaluateConditionMap(condition, payload ?: emptyMap())
-    }
-    
-    @Transactional
-    /**
-     * Delivers or routes the named data to its configured destination.
-     */
-    fun dispatchAlert(alert: AlertHistory) {
-        if (!alertsEnabled) {
-            LOG.infof("Alerts disabled, skipping dispatch for alert: %s", alert.title)
-            return
-        }
-        
-        val rule = alert.rule
-        if (rule == null) {
-            LOG.warnf("Alert %s has no associated rule", alert.id)
-            return
-        }
-        
-        val channel = rule.channel
-        if (channel == null) {
-            LOG.warnf("Alert rule %s has no associated channel", rule.id)
-            return
-        }
-        
-        try {
-            when (channel.channelType) {
-                null -> throw IllegalArgumentException("Channel type not set")
-                MQTT -> dispatchMqttAlert(channel, alert)
-                WEBHOOK -> dispatchWebhookAlert(channel, alert)
-                REST -> dispatchRestAlert(channel, alert)
-                EMAIL -> dispatchEmailAlert(channel, alert)
-                SLACK -> dispatchSlackAlert(channel, alert)
-            }
-            
-            alert.status = AlertStatus.SENT
-            alert.sentAt = java.time.Instant.now()
-            alert.persist()
-            
-            LOG.infof("Alert dispatched successfully: %s", alert.title)
-        } catch (e: Exception) {
-            LOG.errorf("Failed to dispatch alert: %s", e.message)
-            alert.status = AlertStatus.FAILED
-            alert.persist()
-        }
-    }
-    
     /**
      * Delivers or routes the named data to its configured destination.
      */
@@ -278,90 +172,6 @@ class AlertDispatcher {
     /**
      * Parses external or persisted input into the required representation.
      */
-    private fun parseCondition(conditionRaw: String?): Map<String, Any> {
-        if (conditionRaw.isNullOrBlank()) return emptyMap()
-        return try {
-            @Suppress("UNCHECKED_CAST")
-            objectMapper.readValue(conditionRaw, Map::class.java) as? Map<String, Any> ?: emptyMap()
-        } catch (_: Exception) {
-            emptyMap()
-        }
-    }
-
-    /**
-     * Processes the named request, event, or operation.
-     */
-    private fun evaluateConditionMap(condition: Map<String, Any>, payload: Map<String, Any>): Boolean {
-        if (condition.isEmpty()) return false
-
-        val all = condition["all"] as? List<*>
-        if (all != null) {
-            return all.all {
-                val nested = it as? Map<*, *> ?: return@all false
-                @Suppress("UNCHECKED_CAST")
-                evaluateConditionMap(nested as Map<String, Any>, payload)
-            }
-        }
-
-        val any = condition["any"] as? List<*>
-        if (any != null) {
-            return any.any {
-                val nested = it as? Map<*, *> ?: return@any false
-                @Suppress("UNCHECKED_CAST")
-                evaluateConditionMap(nested as Map<String, Any>, payload)
-            }
-        }
-
-        val field = condition["field"]?.toString() ?: return false
-        val operator = (condition["operator"]?.toString() ?: "==").lowercase()
-        val expected = condition["value"]
-        val actual = resolvePayloadValue(payload, field)
-
-        return when (operator) {
-            "exists" -> actual != null
-            "==", "eq", "equals" -> compareValues(actual, expected) == 0
-            "!=", "neq", "not_equals" -> compareValues(actual, expected) != 0
-            ">", "gt" -> compareValues(actual, expected) > 0
-            ">=", "gte" -> compareValues(actual, expected) >= 0
-            "<", "lt" -> compareValues(actual, expected) < 0
-            "<=", "lte" -> compareValues(actual, expected) <= 0
-            "contains" -> actual?.toString()?.contains(expected?.toString() ?: "", ignoreCase = true) == true
-            else -> false
-        }
-    }
-
-    /**
-     * Implements `resolvePayloadValue` for this source unit.
-     */
-    private fun resolvePayloadValue(payload: Map<String, Any>, fieldPath: String): Any? {
-        val segments = fieldPath.split('.')
-        var current: Any? = payload
-        for (segment in segments) {
-            current = (current as? Map<*, *>)?.get(segment) ?: return null
-        }
-        return current
-    }
-
-    /**
-     * Implements `compareValues` for this source unit.
-     */
-    private fun compareValues(actual: Any?, expected: Any?): Int {
-        if (actual == null && expected == null) return 0
-        if (actual == null) return -1
-        if (expected == null) return 1
-
-        val aNum = actual.toString().toDoubleOrNull()
-        val eNum = expected.toString().toDoubleOrNull()
-        if (aNum != null && eNum != null) {
-            return aNum.compareTo(eNum)
-        }
-
-        return actual.toString().compareTo(expected.toString(), ignoreCase = true)
-    }
-
-    /**
-     * Parses external or persisted input into the required representation.
-     */
     private fun parseSeverity(raw: String): AlertSeverity {
         return try {
             AlertSeverity.valueOf(raw.uppercase())
@@ -370,24 +180,6 @@ class AlertDispatcher {
         }
     }
 
-    /**
-     * Evaluates the named capability or state predicate.
-     */
-    private fun isInCooldown(rule: AlertRule): Boolean {
-        if (rule.cooldownSeconds <= 0) return false
-        val latest = em.createQuery(
-            "SELECT a FROM AlertHistory a WHERE a.rule.id = :ruleId ORDER BY a.sentAt DESC",
-            AlertHistory::class.java
-        )
-            .setParameter("ruleId", rule.id)
-            .setMaxResults(1)
-            .resultList
-            .firstOrNull()
-            ?: return false
-
-        val elapsed = java.time.Duration.between(latest.sentAt, java.time.Instant.now()).seconds
-        return elapsed < rule.cooldownSeconds
-    }
     
     /**
      * Implements `buildAlertPayload` for this source unit.
@@ -517,33 +309,4 @@ class AlertDispatcher {
         }
     }
 
-    /**
-     * Creates or persists the requested state.
-     */
-    fun createAlertFromRule(
-        rule: AlertRule,
-        pipeline: Pipeline,
-        severity: AlertSeverity,
-        message: String,
-        payload: Map<String, Any>?
-    ): AlertHistory {
-        val tenant = pipeline.tenant
-            ?: throw IllegalArgumentException("Pipeline has no tenant")
-        
-        val alert = AlertHistory().apply {
-            this.tenant = tenant
-            this.rule = rule
-            this.severity = severity
-            this.title = rule.name
-            this.message = message
-            this.status = AlertStatus.PENDING
-            this.payload = payload?.let { objectMapper.writeValueAsString(it) }
-        }
-        
-        alert.persist()
-        
-        dispatchAlert(alert)
-        
-        return alert
-    }
 }

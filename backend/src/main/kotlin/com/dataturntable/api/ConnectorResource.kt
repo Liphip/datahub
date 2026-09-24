@@ -6,7 +6,6 @@ import com.dataturntable.connectors.Connector.ConnectorType
 import com.dataturntable.connectors.BrokerCredential
 import com.dataturntable.connectors.ConnectorStatusService
 import com.dataturntable.connectors.mqtt.MqttConnectionManager
-import com.dataturntable.connectors.mqtt.MqttIngestService
 import com.dataturntable.connectors.polling.ConnectorPollingService
 import com.dataturntable.connectors.websocket.WebSocketConnectionManager
 import com.dataturntable.pipeline.Pipeline
@@ -54,9 +53,6 @@ class ConnectorResource {
 
     @ConfigProperty(name = "dataturntable.mqtt.integrated.default-topic", defaultValue = "dataturntable/events")
     lateinit var mqttDefaultTopic: String
-
-    @Inject
-    lateinit var mqttIngestService: MqttIngestService
 
     @Inject
     lateinit var mqttConnectionManager: MqttConnectionManager
@@ -202,7 +198,7 @@ class ConnectorResource {
     private fun canReadConnector(currentUser: User?, tenantId: String): Boolean {
         if (currentUser == null) return false
         if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) return false
-        return SecurityUtils.hasAbility(currentUser, "read:connector")
+        return SecurityUtils.hasAbility(currentUser, "connector:read")
     }
 
     /**
@@ -211,7 +207,7 @@ class ConnectorResource {
     private fun canWriteConnector(currentUser: User?, tenantId: String): Boolean {
         if (currentUser == null) return false
         if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) return false
-        return SecurityUtils.hasAbility(currentUser, "write:connector")
+        return SecurityUtils.hasAbility(currentUser, "connector:write")
     }
 
     /**
@@ -246,7 +242,7 @@ class ConnectorResource {
     private fun canManageBrokerCredentials(currentUser: User?, tenantId: String): Boolean {
         if (currentUser == null) return false
         if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) return false
-        return currentUser.isSuperAdmin() || SecurityUtils.hasAbility(currentUser, "manage:tenant")
+        return currentUser.isSuperAdmin() || SecurityUtils.hasAbility(currentUser, "tenant:manage")
     }
 
     /**
@@ -255,7 +251,7 @@ class ConnectorResource {
     private fun canReadBrokerCredentials(currentUser: User?, tenantId: String): Boolean {
         if (currentUser == null) return false
         if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) return false
-        return SecurityUtils.hasAbility(currentUser, "read:connector")
+        return SecurityUtils.hasAbility(currentUser, "connector:read")
     }
 
     /**
@@ -484,7 +480,7 @@ class ConnectorResource {
      */
     fun mqttDefaults(): Response {
         val currentUser = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        if (!SecurityUtils.hasAbility(currentUser, "read:connector")) {
+        if (!SecurityUtils.hasAbility(currentUser, "connector:read")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
 
@@ -720,7 +716,7 @@ class ConnectorResource {
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tid)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "read:connector")) {
+        if (!SecurityUtils.hasAbility(currentUser, "connector:read")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
         
@@ -821,7 +817,7 @@ class ConnectorResource {
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "write:connector")) {
+        if (!SecurityUtils.hasAbility(currentUser, "connector:write")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
 
@@ -853,7 +849,7 @@ class ConnectorResource {
         val createdId = connector.id
         if (createdId != null) {
             when (parsedConnectorType) {
-                ConnectorType.MQTT -> if (parsedDirection == Direction.INPUT) mqttIngestService.refreshConnector(createdId)
+                ConnectorType.MQTT -> if (parsedDirection == Direction.INPUT) mqttConnectionManager.refreshConnector(createdId)
                 ConnectorType.WEBSOCKET -> if (parsedDirection == Direction.INPUT) webSocketConnectionManager.refreshConnector(createdId)
                 else -> if (pollingAllowed && requestedPolling) connectorPollingService.onConnectorChanged(createdId)
             }
@@ -885,7 +881,7 @@ class ConnectorResource {
             if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString())) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
-            if (!SecurityUtils.hasAbility(currentUser, "read:connector")) {
+            if (!SecurityUtils.hasAbility(currentUser, "connector:read")) {
                 return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
             }
             Response.ok(connectorToMap(connector)).build()
@@ -1161,7 +1157,7 @@ class ConnectorResource {
         val cId = connector.id
         if (cId != null) {
             when (connector.connectorType) {
-                ConnectorType.MQTT -> if (connector.direction == Direction.INPUT) mqttIngestService.refreshConnector(cId)
+                ConnectorType.MQTT -> if (connector.direction == Direction.INPUT) mqttConnectionManager.refreshConnector(cId)
                 ConnectorType.WEBSOCKET -> if (connector.direction == Direction.INPUT) webSocketConnectionManager.refreshConnector(cId)
                 else -> connectorPollingService.onConnectorChanged(cId)
             }
@@ -1225,7 +1221,7 @@ class ConnectorResource {
         val cId = connector.id
         if (cId != null) {
             when (connector.connectorType) {
-                ConnectorType.MQTT -> if (connector.direction == Direction.INPUT) mqttIngestService.disconnectConnector(cId)
+                ConnectorType.MQTT -> if (connector.direction == Direction.INPUT) mqttConnectionManager.disconnectConnector(cId)
                 ConnectorType.WEBSOCKET -> if (connector.direction == Direction.INPUT) webSocketConnectionManager.disconnectConnector(cId)
                 else -> connectorPollingService.cancelConnector(cId)
             }
@@ -1374,7 +1370,7 @@ class ConnectorResource {
             if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString())) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
-            if (!SecurityUtils.hasAbility(currentUser, "write:connector")) {
+            if (!SecurityUtils.hasAbility(currentUser, "connector:write")) {
                 return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
             }
             request["name"]?.let { connector.name = it as String }
@@ -1436,7 +1432,7 @@ class ConnectorResource {
             val updatedId = connector.id
             if (updatedId != null) {
                 when (connector.connectorType) {
-                    ConnectorType.MQTT -> mqttIngestService.refreshConnector(updatedId)
+                    ConnectorType.MQTT -> mqttConnectionManager.refreshConnector(updatedId)
                     ConnectorType.WEBSOCKET -> webSocketConnectionManager.refreshConnector(updatedId)
                     else -> connectorPollingService.onConnectorChanged(updatedId)
                 }
@@ -1473,7 +1469,7 @@ class ConnectorResource {
             if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString())) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
-            if (!SecurityUtils.hasAbility(currentUser, "delete:connector")) {
+            if (!SecurityUtils.hasAbility(currentUser, "connector:delete")) {
                 return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
             }
             val connectorTenantId = connector.tenant?.id
@@ -1496,7 +1492,7 @@ class ConnectorResource {
             // Clean up connection managers
             if (deletedId != null) {
                 when (deletedType) {
-                    ConnectorType.MQTT -> if (deletedDir == Direction.INPUT) mqttIngestService.disconnectConnector(deletedId)
+                    ConnectorType.MQTT -> if (deletedDir == Direction.INPUT) mqttConnectionManager.disconnectConnector(deletedId)
                     ConnectorType.WEBSOCKET -> if (deletedDir == Direction.INPUT) webSocketConnectionManager.disconnectConnector(deletedId)
                     else -> connectorPollingService.cancelConnector(deletedId)
                 }

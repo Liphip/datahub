@@ -4,163 +4,114 @@ import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
 import io.quarkus.test.junit.QuarkusTest
-import jakarta.transaction.Transactional
+import io.quarkus.test.TestTransaction
 import org.junit.jupiter.api.Test
 
 import org.junit.jupiter.api.Assertions.*
 
 @QuarkusTest
-// FIXME: Keep bidirectional test relationships synchronized
-// Details: These tests persist Membership.authUser but never add the membership to User.memberships. User.getAllAbilities reads that initialized collection, so role abilities are absent until the entity is reloaded or both sides are updated.
 class UserTest {
-    
-    @Test
-    @Transactional
-    fun testUserHasAbility() {
-        // Given
-        val tenant = Tenant().apply {
+
+    private fun tenant(parent: Tenant? = null): Tenant =
+        Tenant().apply {
             name = "Test Tenant"
-        }
-        tenant.persist()
-        
-        val role = Role().apply {
+            this.parent = parent
+        }.also { it.persist() }
+
+    private fun role(tenant: Tenant, name: String, abilities: String): Role =
+        Role().apply {
             this.tenant = tenant
-            name = "Editor"
-            abilities = "[\"module:read\", \"module:write\", \"pipeline:execute\"]"
-        }
-        role.persist()
-        
-        val user = User().apply {
-            email = "test@example.com"
+            this.name = name
+            this.abilities = abilities
+        }.also { it.persist() }
+
+    private fun user(email: String, abilities: String? = null): User =
+        User().apply {
+            this.email = email
             passwordHash = "hash"
-        }
-        user.persist()
-        
+            this.abilities = abilities
+        }.also { it.persist() }
+
+    /** Persists a membership and keeps both sides of the User <-> Membership relation in sync. */
+    private fun addMembership(user: User, tenant: Tenant, role: Role) {
         val membership = Membership().apply {
-            this.authUser = user
+            authUser = user
             this.tenant = tenant
             this.role = role
         }
         membership.persist()
-        
-        // Then
-        // Test that user has abilities from membership
+        user.memberships.add(membership)
+    }
+
+    @Test
+    @TestTransaction
+    fun testUserHasAbility() {
+        val tenant = tenant()
+        val user = user("test@example.com")
+        addMembership(user, tenant, role(tenant, "Editor", "[\"module:read\", \"module:write\", \"pipeline:execute\"]"))
+
         val abilities = user.getAllAbilities()
         assertTrue(abilities.contains("module:read"))
         assertTrue(abilities.contains("module:write"))
         assertTrue(abilities.contains("pipeline:execute"))
         assertFalse(abilities.contains("module:delete"))
     }
-    
+
     @Test
-    @Transactional
-    fun testSuperadminHasAllAbilities() {
-        // Given
-        val user = User().apply {
-            email = "admin@example.com"
-            passwordHash = "hash"
-            isSuperadmin = true
-        }
-        user.persist()
-        
-        // Then
+    @TestTransaction
+    fun testRootTenantAdminIsSuperadminWithAllAbilities() {
+        val root = tenant()
+        val user = user("admin@example.com")
+        addMembership(user, root, role(root, "Tenant Admin", "[\"*\"]"))
+
+        assertTrue(user.isSuperAdmin())
         assertTrue(user.hasAbility("module:read"))
         assertTrue(user.hasAbility("module:write"))
         assertTrue(user.hasAbility("module:delete"))
         assertTrue(user.hasAbility("tenant:manage"))
     }
-    
+
     @Test
-    @Transactional
+    @TestTransaction
+    fun testChildTenantAdminIsNotSuperadmin() {
+        val child = tenant(parent = tenant())
+        val user = user("child-admin@example.com")
+        addMembership(user, child, role(child, "Tenant Admin", "[\"*\"]"))
+
+        assertFalse(user.isSuperAdmin())
+    }
+
+    @Test
+    @TestTransaction
     fun testUserWithAdditionalAbilities() {
-        // Given
-        val tenant = Tenant().apply {
-            name = "Test Tenant"
-        }
-        tenant.persist()
-        
-        val role = Role().apply {
-            this.tenant = tenant
-            name = "Viewer"
-            abilities = "[\"module:read\"]"
-        }
-        role.persist()
-        
-        val user = User().apply {
-            email = "test2@example.com"
-            passwordHash = "hash"
-            abilities = "[\"pipeline:execute\"]"
-        }
-        user.persist()
-        
-        val membership = Membership().apply {
-            this.authUser = user
-            this.tenant = tenant
-            this.role = role
-        }
-        membership.persist()
-        
-        // Then
-        // Test that user has abilities from role and direct abilities
+        val tenant = tenant()
+        val user = user("test2@example.com", abilities = "[\"pipeline:execute\"]")
+        addMembership(user, tenant, role(tenant, "Viewer", "[\"module:read\"]"))
+
         val abilities = user.getAllAbilities()
         assertTrue(abilities.contains("module:read"))
         assertTrue(abilities.contains("pipeline:execute"))
-        // BUG: Assertion requires an ability that the fixture never grants
-        // Details: The user has pipeline:execute and the role has module:read; neither grants data:write. Add it to the fixture only if it is part of this test's intended contract.
-        assertTrue(abilities.contains("data:write"))
+        assertFalse(abilities.contains("data:write"))
     }
-    
+
     @Test
-    @Transactional
-    fun testCanAccessTenant() {
-        // Given - test superadmin access since hierarchy loading is complex in H2
-        val user = User().apply {
-            email = "admin@example.com"
-            passwordHash = "hash"
-            isSuperadmin = true
-        }
-        user.persist()
-        
-        val tenantId = java.util.UUID.randomUUID()
-        
-        // Then - superadmin can access any tenant
-        assertTrue(user.canAccessTenant(tenantId))
+    @TestTransaction
+    fun testSuperadminCanAccessAnyTenant() {
+        val root = tenant()
+        val user = user("root-admin@example.com")
+        addMembership(user, root, role(root, "Tenant Admin", "[\"*\"]"))
+
+        assertTrue(user.canAccessTenant(java.util.UUID.randomUUID()))
     }
-    
+
     @Test
-    @Transactional
+    @TestTransaction
     fun testGetAllAbilities() {
-        // Given
-        val tenant = Tenant().apply {
-            name = "Test Tenant"
-        }
-        tenant.persist()
-        
-        val role = Role().apply {
-            this.tenant = tenant
-            name = "Editor"
-            abilities = "[\"module:read\", \"pipeline:execute\"]"
-        }
-        role.persist()
-        
-        val user = User().apply {
-            email = "test@example.com"
-            passwordHash = "hash"
-            abilities = "[\"data:write\"]"
-        }
-        user.persist()
-        
-        val membership = Membership().apply {
-            this.authUser = user
-            this.tenant = tenant
-            this.role = role
-        }
-        membership.persist()
-        
-        // When
+        val tenant = tenant()
+        val user = user("test3@example.com", abilities = "[\"data:write\"]")
+        addMembership(user, tenant, role(tenant, "Editor", "[\"module:read\", \"pipeline:execute\"]"))
+
         val abilities = user.getAllAbilities()
-        
-        // Then
         assertTrue(abilities.contains("module:read"))
         assertTrue(abilities.contains("pipeline:execute"))
         assertTrue(abilities.contains("data:write"))

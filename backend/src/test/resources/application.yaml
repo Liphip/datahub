@@ -8,20 +8,6 @@ quarkus:
       generation: drop-and-create
     log:
       sql: false
-  # WARNING: Ineffective H2 Dev Services switch
-  # Details: Quarkus reports quarkus.h2.devservices.enabled as unrecognized during tests, so it does not control test infrastructure.
-  h2:
-    devservices:
-      enabled: false
-  # WARNING: Ineffective MQTT Dev Services switch
-  # Details: Quarkus reports quarkus.mqtt.devservices.enabled as unrecognized during tests; this project uses Eclipse Paho rather than a Quarkus MQTT Dev Service.
-  mqtt:
-    devservices:
-      enabled: false
-  # WARNING: Ineffective reactive-messaging switch
-  # Details: Quarkus reports this key as unrecognized. Disable individual channels with mp.messaging.*.enabled so tests do not attempt Kafka connections.
-  smallrye-reactive-messaging:
-    enabled: false
 
 mp:
   jwt:

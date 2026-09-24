@@ -14,7 +14,7 @@ interface TenantWithChildren extends Tenant {
 export default function Tenants() {
   const { t } = useTranslation();
   const { user, selectedTenantId, tenantContexts, switchTenant } = useAuthStore();
-  const canManageTenants = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('manage:tenant'));
+  const canManageTenants = Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('tenant:manage'));
 
   const [tenants, setTenants] = useState<TenantWithChildren[]>([]);
   const [loading, setLoading] = useState(true);

@@ -671,9 +671,8 @@ class PipelineConsumer {
 
         graphEdgesRaw.forEach { rawEdge ->
             val edgeMap = rawEdge as? Map<*, *> ?: return@forEach
-            // React Flow serialises as source/target; also accept legacy from/to
-            val from = (edgeMap["source"] ?: edgeMap["from"])?.toString()?.trim().orEmpty()
-            val to   = (edgeMap["target"] ?: edgeMap["to"])?.toString()?.trim().orEmpty()
+            val from = edgeMap["source"]?.toString()?.trim().orEmpty()
+            val to   = edgeMap["target"]?.toString()?.trim().orEmpty()
             if (from !in nodeById || to !in nodeById) return@forEach
             downstream[from]?.add(to)
             upstream[to]?.add(from)

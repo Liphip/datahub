@@ -45,9 +45,7 @@ class AuthService {
             throw SecurityException("Invalid credentials")
         }
         
-        val candidateHashes = normalizeClientPasswordHash(request.passwordHash)
-        val valid = candidateHashes.any { BcryptUtil.matches(it, user.passwordHash) }
-        if (!valid) {
+        if (!BcryptUtil.matches(request.passwordHash, user.passwordHash)) {
             throw SecurityException("Invalid credentials")
         }
         
@@ -205,22 +203,6 @@ class AuthService {
         return java.util.Base64.getEncoder().encodeToString(hash)
     }
 
-    /**
-     * Validates or normalizes input before the caller continues.
-     */
-    private fun normalizeClientPasswordHash(passwordHash: String): List<String> {
-        val normalized = mutableSetOf(passwordHash)
-        if (passwordHash.length == 64 && passwordHash.matches(Regex("^[0-9a-fA-F]{64}$"))) {
-            val bytes = ByteArray(passwordHash.length / 2)
-            var i = 0
-            while (i < passwordHash.length) {
-                bytes[i / 2] = passwordHash.substring(i, i + 2).toInt(16).toByte()
-                i += 2
-            }
-            normalized.add(java.util.Base64.getEncoder().encodeToString(bytes))
-        }
-        return normalized.toList()
-    }
     
     /**
      * Implements `generateJwtToken` for this source unit.

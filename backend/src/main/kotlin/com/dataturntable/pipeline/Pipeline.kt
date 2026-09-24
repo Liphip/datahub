@@ -2,7 +2,6 @@ package com.dataturntable.pipeline
 
 import com.dataturntable.auth.User
 import com.dataturntable.tenant.Tenant
-import com.dataturntable.module.ModuleVersion
 import com.dataturntable.PanacheBase
 import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanionBase
 import jakarta.persistence.*
@@ -29,15 +28,6 @@ open class Pipeline : PanacheBase() {
     
     @Column
     var description: String? = null
-    
-    @Column(name = "import_module_version_id")
-    var importModuleVersionId: UUID? = null
-    
-    @Column(name = "processing_module_version_ids", columnDefinition = "UUID ARRAY")
-    var processingModuleVersionIds: Array<UUID> = emptyArray()
-    
-    @Column(name = "export_module_version_ids", columnDefinition = "UUID ARRAY")
-    var exportModuleVersionIds: Array<UUID> = emptyArray()
     
     @Column(name = "kafka_consumer_group", unique = true)
     var kafkaConsumerGroup: String? = null
@@ -103,23 +93,5 @@ open class Pipeline : PanacheBase() {
                 .setParameter("group", group)
                 .resultList
                 .firstOrNull()
-    }
-    
-    /**
-     * Retrieves or enumerates the requested state.
-     */
-    fun getProcessingVersions(): List<ModuleVersion> {
-        return processingModuleVersionIds.mapNotNull { id ->
-            ModuleVersion.findById(id)
-        }
-    }
-    
-    /**
-     * Retrieves or enumerates the requested state.
-     */
-    fun getExportVersions(): List<ModuleVersion> {
-        return exportModuleVersionIds.mapNotNull { id ->
-            ModuleVersion.findById(id)
-        }
     }
 }

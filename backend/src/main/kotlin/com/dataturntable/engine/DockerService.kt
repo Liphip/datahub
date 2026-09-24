@@ -226,24 +226,14 @@ class DockerService {
         val trimmed = stdout.trim()
         if (trimmed.isBlank()) return null
 
-        // Prefer the sentinel line emitted by the platform script
+        // The platform script emits exactly one sentinel line; no sentinel means no result.
         val sentinelLine = trimmed.lines()
             .lastOrNull { it.trim().startsWith("__RESULT__:") }
-        if (sentinelLine != null) {
-            val json = sentinelLine.trim().removePrefix("__RESULT__:")
-            return try {
-                objectMapper.readValue(json, Any::class.java)
-            } catch (_: Exception) { json }
-        }
-
-        // Fallback: try last non-blank line as JSON (legacy / error paths)
-        val lines = trimmed.lines().map { it.trim() }.filter { it.isNotBlank() }
-        val candidate = lines.lastOrNull() ?: return trimmed
+            ?: return null
+        val json = sentinelLine.trim().removePrefix("__RESULT__:")
         return try {
-            objectMapper.readValue(candidate, Any::class.java)
-        } catch (_: Exception) {
-            try { objectMapper.readValue(trimmed, Any::class.java) } catch (_: Exception) { trimmed }
-        }
+            objectMapper.readValue(json, Any::class.java)
+        } catch (_: Exception) { json }
     }
     
     /**

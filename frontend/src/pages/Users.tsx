@@ -15,7 +15,7 @@ interface EditState {
 const PERMISSION_GROUPS = [
   {
     label: 'Pipeline',
-    abilities: ['pipeline:read', 'pipeline:write', 'pipeline:execute', 'pipeline:delete'],
+    abilities: ['pipeline:read', 'pipeline:write', 'pipeline:execute'],
   },
   {
     label: 'Module',
@@ -27,7 +27,7 @@ const PERMISSION_GROUPS = [
   },
   {
     label: 'Data',
-    abilities: ['data:read', 'data:write'],
+    abilities: ['data:read', 'data:write', 'data:export'],
   },
   {
     label: 'Alerts',
@@ -35,7 +35,7 @@ const PERMISSION_GROUPS = [
   },
   {
     label: 'Users / Tenant',
-    abilities: ['read:user', 'write:user', 'manage:tenant'],
+    abilities: ['user:read', 'user:write', 'user:delete', 'tenant:manage'],
   },
 ];
 
@@ -82,9 +82,9 @@ export default function Users() {
    * Evaluates the named capability or state predicate.
    */
   const hasAbility = (ability: string) => user?.superadmin || abilities.includes('*') || abilities.includes(ability);
-  const canReadUsers = hasAbility('read:user');
-  const canWriteUsers = hasAbility('write:user');
-  const canManageTenant = hasAbility('manage:tenant');
+  const canReadUsers = hasAbility('user:read');
+  const canWriteUsers = hasAbility('user:write');
+  const canManageTenant = hasAbility('tenant:manage');
   const canInviteUsers = canWriteUsers && canManageTenant;
 
   /**

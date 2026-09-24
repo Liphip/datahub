@@ -6,7 +6,7 @@ import com.dataturntable.pipeline.PipelineRunNodeLog
 import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.connectors.Connector
-import com.dataturntable.connectors.mqtt.MqttIngestService
+import com.dataturntable.connectors.mqtt.MqttConnectionManager
 import com.dataturntable.connectors.websocket.WebSocketConnectionManager
 import com.dataturntable.engine.PipelineConsumer
 import com.dataturntable.module.ModuleType
@@ -51,7 +51,7 @@ class PipelineResource {
     lateinit var pipelineConsumer: PipelineConsumer
 
     @Inject
-    lateinit var mqttIngestService: MqttIngestService
+    lateinit var mqttConnectionManager: MqttConnectionManager
 
     @Inject
     lateinit var webSocketConnectionManager: WebSocketConnectionManager
@@ -200,9 +200,8 @@ class PipelineResource {
 
         for (edge in edges) {
             val edgeMap = edge as? Map<*, *> ?: continue
-            // React Flow serialises edges with "source"/"target"; also accept legacy "from"/"to"
-            val fromId = (edgeMap["source"] ?: edgeMap["from"])?.toString() ?: continue
-            val toId   = (edgeMap["target"] ?: edgeMap["to"])?.toString() ?: continue
+            val fromId = edgeMap["source"]?.toString() ?: continue
+            val toId   = edgeMap["target"]?.toString() ?: continue
             if (fromId !in nodeIds || toId !in nodeIds) {
                 return "Edge $fromId -> $toId references unknown node"
             }
@@ -265,9 +264,6 @@ class PipelineResource {
             "tenantId" to p.tenant?.id,
             "name" to p.name,
             "description" to p.description,
-            "importModuleVersionId" to p.importModuleVersionId,
-            "processingModuleVersionIds" to p.processingModuleVersionIds.toList(),
-            "exportModuleVersionIds" to p.exportModuleVersionIds.toList(),
             "kafkaConsumerGroup" to p.kafkaConsumerGroup,
             "isActive" to p.isActive,
             "graphDefinition" to parseGraphDefinition(p.graphDefinition),
@@ -880,7 +876,7 @@ class PipelineResource {
         }
 
         // Refresh routing tables so MQTT/WS subscriptions stay in sync if pipeline is active
-        mqttIngestService.refreshAll()
+        mqttConnectionManager.refreshAll()
         webSocketConnectionManager.refreshAll()
 
         return Response.status(201).entity(pipelineToMap(pipeline)).build()
@@ -929,7 +925,7 @@ class PipelineResource {
             requireTenantAccess(currentUser, tenantId, "pipeline:write")?.let { return it }
             pipeline.delete()
             // Rebuild routing tables to remove this pipeline's subscriptions
-            mqttIngestService.refreshAll()
+            mqttConnectionManager.refreshAll()
             webSocketConnectionManager.refreshAll()
             Response.noContent().build()
         } else {
@@ -958,17 +954,6 @@ class PipelineResource {
             request["name"]?.let { pipeline.name = it as String }
             request["description"]?.let { pipeline.description = it as String }
             request["isActive"]?.let { pipeline.isActive = it as Boolean }
-            request["importModuleVersionId"]?.let { pipeline.importModuleVersionId = UUID.fromString(it as String) }
-            request["processingModuleVersionIds"]?.let { 
-                (it as List<*>).let { ids -> 
-                    pipeline.processingModuleVersionIds = ids.map { id -> UUID.fromString(id as String) }.toTypedArray()
-                }
-            }
-            request["exportModuleVersionIds"]?.let { 
-                (it as List<*>).let { ids -> 
-                    pipeline.exportModuleVersionIds = ids.map { id -> UUID.fromString(id as String) }.toTypedArray()
-                }
-            }
 
             request["graphDefinition"]?.let {
                 val tenantId = pipeline.tenant?.id
@@ -984,7 +969,7 @@ class PipelineResource {
             pipeline.persist()
 
             // Refresh connection managers so topic subscriptions stay in sync with graph changes
-            mqttIngestService.refreshAll()
+            mqttConnectionManager.refreshAll()
             webSocketConnectionManager.refreshAll()
 
             Response.ok(pipelineToMap(pipeline)).build()

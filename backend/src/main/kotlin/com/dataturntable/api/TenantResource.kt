@@ -78,7 +78,7 @@ class TenantResource {
     private fun requireTenantManager(): Pair<User?, Response?> {
         val user = getCurrentUser()
             ?: return Pair(null, Response.status(401).entity(mapOf("error" to "Unauthorized")).build())
-        if (!user.isSuperAdmin() && !user.hasAbility("manage:tenant")) {
+        if (!user.isSuperAdmin() && !user.hasAbility("tenant:manage")) {
             return Pair(null, Response.status(403).entity(mapOf("error" to "Forbidden")).build())
         }
         return Pair(user, null)
@@ -89,7 +89,7 @@ class TenantResource {
      */
     private fun canManageTenant(user: User, tenantId: UUID): Boolean {
         if (user.isSuperAdmin()) return true
-        return user.hasAbility("manage:tenant") && user.canAccessTenant(tenantId)
+        return user.hasAbility("tenant:manage") && user.canAccessTenant(tenantId)
     }
 
     /**

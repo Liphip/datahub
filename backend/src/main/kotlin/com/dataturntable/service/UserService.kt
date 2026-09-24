@@ -45,8 +45,7 @@ class UserService {
         firstName: String?,
         lastName: String?,
         roleId: UUID?,
-        abilities: List<String>? = null,
-        isSuperadmin: Boolean = false
+        abilities: List<String>? = null
     ): UserDto {
         val tenant = Tenant.findById(tenantId)
             ?: throw IllegalArgumentException("Tenant not found")
@@ -63,7 +62,6 @@ class UserService {
             this.passwordHash = BcryptUtil.bcryptHash(password)
             this.firstName = firstName
             this.lastName = lastName
-            this.isSuperadmin = isSuperadmin
         }
         user.persist()
         
@@ -167,7 +165,7 @@ class UserService {
              tenantId = user.getPrimaryTenant()?.id.toString(),
              roleName = user.getMembershipForTenant(user.getPrimaryTenant()?.id ?: UUID.randomUUID())?.role?.name,
              abilities = user.getAllAbilities().toList(),
-             superadmin = user.isSuperadmin
+             superadmin = user.isSuperAdmin()
          )
     }
 }

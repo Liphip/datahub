@@ -22,29 +22,4 @@ class AlertDispatcherTest {
         assertTrue(alertDispatcher.alertsEnabled)
     }
 
-    @Test
-    fun testMatchesConditionWithNumericOperator() {
-        val payload = mapOf("temperature" to 86)
-        val condition = """{"field":"temperature","operator":">","value":80}"""
-        assertTrue(alertDispatcher.matchesCondition(condition, payload))
-    }
-
-    @Test
-    fun testMatchesConditionWithNestedFieldPath() {
-        val payload = mapOf("sensor" to mapOf("humidity" to 41))
-        val condition = """{"field":"sensor.humidity","operator":"<=","value":50}"""
-        assertTrue(alertDispatcher.matchesCondition(condition, payload))
-    }
-
-    @Test
-    fun testMatchesConditionWithAnyClause() {
-        val payload = mapOf("temperature" to 28, "status" to "WARN")
-        val condition = """
-            {"any":[
-              {"field":"temperature","operator":">","value":80},
-              {"field":"status","operator":"==","value":"WARN"}
-            ]}
-        """.trimIndent()
-        assertTrue(alertDispatcher.matchesCondition(condition, payload))
-    }
 }

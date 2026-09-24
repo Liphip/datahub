@@ -353,7 +353,7 @@ class GrafanaSyncService {
 
         return when {
             roleName.contains("tenant admin") || roleName.contains("tenantadmin") -> "Admin"
-            "manage:tenant" in abilities || "write:user" in abilities -> "Admin"
+            "tenant:manage" in abilities || "user:write" in abilities -> "Admin"
             "module:write" in abilities || "pipeline:write" in abilities || "data:write" in abilities -> "Editor"
             else -> "Viewer"
         }

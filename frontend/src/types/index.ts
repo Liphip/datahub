@@ -212,9 +212,6 @@ export interface Pipeline {
   tenantId?: string;
   name: string;
   description?: string;
-  importModuleVersionId?: string;
-  processingModuleVersionIds: string[];
-  exportModuleVersionIds: string[];
   graphDefinition?: {
     nodes: Array<Record<string, unknown> & { moduleId?: string; moduleVersionId?: string }>;
     edges: Array<Record<string, unknown>>;
@@ -367,28 +364,11 @@ export interface AlertChannel {
 }
 
 /**
- * Defines the interface `AlertRule`, the contract implemented by this source unit.
- */
-export interface AlertRule {
-  id: string;
-  tenantId?: string;
-  pipelineId?: string;
-  channelId?: string;
-  name: string;
-  description?: string;
-  condition?: Record<string, unknown> | string;
-  enabled: boolean;
-  cooldownSeconds?: number;
-  createdAt?: string;
-}
-
-/**
  * Defines the interface `AlertHistory`, the contract implemented by this source unit.
  */
 export interface AlertHistory {
   id: string;
   tenantId?: string;
-  ruleId?: string;
   channelId?: string;
   severity: 'INFO' | 'WARNING' | 'CRITICAL' | 'ERROR';
   title: string;

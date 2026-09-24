@@ -23,12 +23,18 @@ enum class Ability(val value: String) {
     ALERT_READ("alert:read"),
     ALERT_CONFIGURE("alert:configure"),
     
+    // Connectors
+    CONNECTOR_READ("connector:read"),
+    CONNECTOR_WRITE("connector:write"),
+    CONNECTOR_DELETE("connector:delete"),
+
+    // Users
+    USER_READ("user:read"),
+    USER_WRITE("user:write"),
+    USER_DELETE("user:delete"),
+
     // Tenant
-    TENANT_USERS("tenant:users"),
-    TENANT_MANAGE("tenant:manage"),
-    
-    // User management
-    USER_MANAGE("user:manage");
+    TENANT_MANAGE("tenant:manage");
     
     companion object {
         /**

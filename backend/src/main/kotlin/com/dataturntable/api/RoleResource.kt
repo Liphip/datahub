@@ -104,7 +104,7 @@ class RoleResource {
             if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
-            if (!SecurityUtils.hasAbility(currentUser, "manage:tenant")) {
+            if (!SecurityUtils.hasAbility(currentUser, "tenant:manage")) {
                 return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
             }
             em.createQuery("SELECT r FROM Role r WHERE r.tenant.id = :tenantId", Role::class.java)
@@ -136,7 +136,7 @@ class RoleResource {
         if (tenantId != null && !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (tenantId != null && !SecurityUtils.hasAbility(currentUser, "manage:tenant")) {
+        if (tenantId != null && !SecurityUtils.hasAbility(currentUser, "tenant:manage")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
         if (tenantId == null && !currentUser.isSuperAdmin()) {
@@ -186,7 +186,7 @@ class RoleResource {
                 if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) {
                     return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
                 }
-                if (!SecurityUtils.hasAbility(currentUser, "manage:tenant")) {
+                if (!SecurityUtils.hasAbility(currentUser, "tenant:manage")) {
                     return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
                 }
             }
@@ -218,7 +218,7 @@ class RoleResource {
             if (tenantId != null && !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
-            if (!SecurityUtils.hasAbility(currentUser, "manage:tenant")) {
+            if (!SecurityUtils.hasAbility(currentUser, "tenant:manage")) {
                 return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
             }
             
@@ -257,7 +257,7 @@ class RoleResource {
             if (tenantId != null && !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
-            if (!SecurityUtils.hasAbility(currentUser, "manage:tenant")) {
+            if (!SecurityUtils.hasAbility(currentUser, "tenant:manage")) {
                 return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
             }
             role.delete()

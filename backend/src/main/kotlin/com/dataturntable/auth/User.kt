@@ -32,9 +32,6 @@ open class User : PanacheBase() {
     @Column(name = "last_name")
     var lastName: String? = null
     
-    @Column(name = "is_superadmin")
-    var isSuperadmin: Boolean = false
-    
     @Column(name = "is_active")
     var isActive: Boolean = true
     
@@ -129,7 +126,6 @@ open class User : PanacheBase() {
      */
     fun isSuperAdmin(): Boolean {
         // Superadmin is defined as having TenantAdmin role in the root tenant
-        if (isSuperadmin) return true // backward compatibility
         return loadMemberships().any { membership ->
             membership.role?.name == "Tenant Admin" && membership.tenant?.parent == null
         }

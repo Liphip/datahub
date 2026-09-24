@@ -70,7 +70,7 @@ class AuthUserResourceTest {
             .body(
                 mapOf(
                     "email" to email,
-                    "password" to passwordHash
+                    "passwordHash" to passwordHash
                 )
             )
         .`when`()
