@@ -1,5 +1,8 @@
-import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
+import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertRule, AlertHistory, DataSummaryResponse, DataBlob, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential } from '../types';
+
+/** Error shape returned by backend endpoints (`{ error, missing }` JSON bodies). */
+export type ApiError = AxiosError<{ error?: string; missing?: string[] }>;
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 const PUBLIC_API_BASE_URL = import.meta.env.VITE_PUBLIC_API_URL || '/api/v1';

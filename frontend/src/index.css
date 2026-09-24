@@ -1,50 +1,76 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
 
-:root {
-  font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --color-primary-50: #eef2ff;
+  --color-primary-100: #e0e7ff;
+  --color-primary-200: #c7d2fe;
+  --color-primary-300: #a5b4fc;
+  --color-primary-400: #818cf8;
+  --color-primary-500: #6366f1;
+  --color-primary-600: #4f46e5;
+  --color-primary-700: #4338ca;
+  --color-primary-800: #3730a3;
+  --color-primary-900: #312e81;
 }
 
-body {
-  margin: 0;
-  min-width: 320px;
-  min-height: 100vh;
-  @apply bg-slate-100 text-slate-900;
+/* Default border color for elements that set a border width without a color utility. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
 }
 
-.dark body {
-  @apply bg-slate-950 text-slate-100;
+@utility btn-primary {
+  @apply inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 active:bg-primary-800 transition-colors font-medium shadow-xs shadow-primary-900/20 disabled:opacity-60 disabled:pointer-events-none;
 }
 
-#root {
-  width: 100%;
-  min-height: 100vh;
+@utility btn-secondary {
+  @apply inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 hover:border-slate-300 dark:hover:border-slate-600 transition-colors font-medium disabled:opacity-60 disabled:pointer-events-none;
+}
+
+@utility btn-danger {
+  @apply inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 active:bg-red-800 transition-colors font-medium disabled:opacity-60 disabled:pointer-events-none;
+}
+
+@utility input {
+  @apply w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-400 transition-shadow;
+}
+
+@utility card {
+  @apply bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-6;
+}
+
+@layer utilities {
+  :root {
+    font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+    line-height: 1.5;
+    font-weight: 400;
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    @apply bg-slate-100 text-slate-900;
+  }
+
+  .dark body {
+    @apply bg-slate-950 text-slate-100;
+  }
+
+  #root {
+    width: 100%;
+    min-height: 100vh;
+  }
 }
 
 @layer components {
-  .btn-primary {
-    @apply inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 active:bg-primary-800 transition-colors font-medium shadow-sm shadow-primary-900/20 disabled:opacity-60 disabled:pointer-events-none;
-  }
-
-  .btn-secondary {
-    @apply inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 hover:border-slate-300 dark:hover:border-slate-600 transition-colors font-medium disabled:opacity-60 disabled:pointer-events-none;
-  }
-
-  .btn-danger {
-    @apply inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 active:bg-red-800 transition-colors font-medium disabled:opacity-60 disabled:pointer-events-none;
-  }
-
-  .input {
-    @apply w-full px-3 py-2 border border-slate-300 bg-white text-slate-900 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-400 transition-shadow;
-  }
-
-  .card {
-    @apply bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-6;
-  }
-
   /* Scrollbar polish */
   ::-webkit-scrollbar { @apply w-1.5 h-1.5; }
   ::-webkit-scrollbar-track { @apply bg-transparent; }

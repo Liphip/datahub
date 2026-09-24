@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
-import { BrowserRouter } from 'react-router-dom'
+import { BrowserRouter } from 'react-router'
 import Login from '../../pages/Login'
 import { useAuthStore } from '../../stores/auth'
 
 const mockLogin = vi.fn()
 const mockNavigate = vi.fn()
 
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual('react-router-dom')
+vi.mock('react-router', async () => {
+  const actual = await vi.importActual('react-router')
   return {
     ...actual,
     useNavigate: () => mockNavigate,
@@ -27,8 +27,6 @@ vi.mock('../../stores/auth', () => ({
   })),
 }))
 
-// BUG: Login tests do not initialize the i18n provider
-// Details: The component renders translation keys (for example auth.emailAddress) because the suite never imports or initializes src/i18n. Assertions for English labels therefore fail; initialize a deterministic test language or mock useTranslation.
 describe('Login Page', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -54,7 +52,7 @@ describe('Login Page', () => {
       expect(screen.getByText(/Sign in to DataTurntable/i)).toBeInTheDocument()
       expect(screen.getByLabelText(/Email address/i)).toBeInTheDocument()
       expect(screen.getByLabelText(/Password/i)).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /Sign in/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /^Login$/i })).toBeInTheDocument()
     })
 
     it('has email input with correct type', () => {
@@ -92,7 +90,7 @@ describe('Login Page', () => {
 
       const emailInput = screen.getByLabelText(/Email address/i)
       const passwordInput = screen.getByLabelText(/Password/i)
-      const submitButton = screen.getByRole('button', { name: /Sign in/i })
+      const submitButton = screen.getByRole('button', { name: /^Login$/i })
 
       fireEvent.change(emailInput, { target: { value: 'test@example.com' } })
       fireEvent.change(passwordInput, { target: { value: 'password123' } })
@@ -114,14 +112,14 @@ describe('Login Page', () => {
 
       const emailInput = screen.getByLabelText(/Email address/i)
       const passwordInput = screen.getByLabelText(/Password/i)
-      const submitButton = screen.getByRole('button', { name: /Sign in/i })
+      const submitButton = screen.getByRole('button', { name: /^Login$/i })
 
       fireEvent.change(emailInput, { target: { value: 'test@example.com' } })
       fireEvent.change(passwordInput, { target: { value: 'password123' } })
       fireEvent.click(submitButton)
 
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /Signing in/i })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /Loading/i })).toBeInTheDocument()
       })
     })
 
@@ -136,7 +134,7 @@ describe('Login Page', () => {
 
       const emailInput = screen.getByLabelText(/Email address/i)
       const passwordInput = screen.getByLabelText(/Password/i)
-      const submitButton = screen.getByRole('button', { name: /Sign in/i })
+      const submitButton = screen.getByRole('button', { name: /^Login$/i })
 
       fireEvent.change(emailInput, { target: { value: 'test@example.com' } })
       fireEvent.change(passwordInput, { target: { value: 'wrongpassword' } })
@@ -160,7 +158,7 @@ describe('Login Page', () => {
 
       const emailInput = screen.getByLabelText(/Email address/i)
       const passwordInput = screen.getByLabelText(/Password/i)
-      const submitButton = screen.getByRole('button', { name: /Sign in/i })
+      const submitButton = screen.getByRole('button', { name: /^Login$/i })
 
       fireEvent.change(emailInput, { target: { value: 'test@example.com' } })
       fireEvent.change(passwordInput, { target: { value: 'password123' } })

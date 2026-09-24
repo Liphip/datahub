@@ -434,13 +434,13 @@ export default function Users() {
       </div>
 
       {!canReadUsers && !canManageTenant && (
-        <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+        <div className="mb-4 rounded-sm border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
           {t('users.permissionViewUsers')}
         </div>
       )}
 
       {error && (
-        <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700 flex justify-between items-center">
+        <div className="mb-4 rounded-sm border border-red-200 bg-red-50 px-4 py-3 text-red-700 flex justify-between items-center">
           <span>{error}</span>
           <div className="flex items-center gap-3 ml-4">
             <button onClick={handleReload} className="text-red-700 hover:text-red-900 text-sm underline">{t('common.retry')}</button>
@@ -480,7 +480,7 @@ export default function Users() {
           {loading ? (
             <div className="space-y-4">
               {[1, 2, 3].map(i => (
-                <div key={i} className="card animate-pulse"><div className="h-4 bg-gray-200 rounded w-1/3"></div></div>
+                <div key={i} className="card animate-pulse"><div className="h-4 bg-gray-200 rounded-sm w-1/3"></div></div>
               ))}
             </div>
           ) : !tenantId ? (
@@ -564,23 +564,23 @@ export default function Users() {
                               </button>
                             </div>
                           ) : (
-                            <span className="px-2 py-1 text-xs font-medium rounded bg-gray-100 text-gray-800">
+                            <span className="px-2 py-1 text-xs font-medium rounded-sm bg-gray-100 text-gray-800">
                               {role?.name ?? membership?.roleName ?? t('users.noRole')}
                             </span>
                           )}
                         </td>
                         <td className="px-6 py-4">
-                          <span className={`px-2 py-1 text-xs font-medium rounded ${(u.isActive ?? true) ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-700'}`}>
+                          <span className={`px-2 py-1 text-xs font-medium rounded-sm ${(u.isActive ?? true) ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-700'}`}>
                             {(u.isActive ?? true) ? t('users.active') : t('users.inactive')}
                           </span>
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex flex-wrap gap-1">
                             {memberAbilities.slice(0, 3).map((a) => (
-                              <span key={a} className="px-2 py-0.5 text-xs rounded bg-blue-100 text-blue-800">{a}</span>
+                              <span key={a} className="px-2 py-0.5 text-xs rounded-sm bg-blue-100 text-blue-800">{a}</span>
                             ))}
                             {memberAbilities.length > 3 && (
-                              <span className="px-2 py-0.5 text-xs rounded bg-gray-100 text-gray-600">
+                              <span className="px-2 py-0.5 text-xs rounded-sm bg-gray-100 text-gray-600">
                                 +{memberAbilities.length - 3}
                               </span>
                             )}
@@ -646,7 +646,7 @@ export default function Users() {
           {loading ? (
             <div className="space-y-4">
               {[1, 2].map(i => (
-                <div key={i} className="card animate-pulse"><div className="h-4 bg-gray-200 rounded w-1/3"></div></div>
+                <div key={i} className="card animate-pulse"><div className="h-4 bg-gray-200 rounded-sm w-1/3"></div></div>
               ))}
             </div>
           ) : roles.length === 0 ? (
@@ -665,10 +665,10 @@ export default function Users() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="text-base font-semibold text-gray-900">{role.name}</h3>
                         {role.isDefault && (
-                          <span className="px-2 py-0.5 text-xs rounded bg-blue-100 text-blue-800">Default</span>
+                          <span className="px-2 py-0.5 text-xs rounded-sm bg-blue-100 text-blue-800">Default</span>
                         )}
                         {role.isSystem && (
-                          <span className="px-2 py-0.5 text-xs rounded bg-gray-200 text-gray-700">System</span>
+                          <span className="px-2 py-0.5 text-xs rounded-sm bg-gray-200 text-gray-700">System</span>
                         )}
                       </div>
                       {role.description && (
@@ -676,7 +676,7 @@ export default function Users() {
                       )}
                       <div className="flex flex-wrap gap-1 mt-2">
                         {role.abilities.map((a) => (
-                          <span key={a} className="px-2 py-0.5 text-xs rounded bg-indigo-50 text-indigo-700 border border-indigo-100">{a}</span>
+                          <span key={a} className="px-2 py-0.5 text-xs rounded-sm bg-indigo-50 text-indigo-700 border border-indigo-100">{a}</span>
                         ))}
                         {role.abilities.length === 0 && (
                           <span className="text-xs text-gray-400 italic">No abilities</span>
@@ -684,7 +684,7 @@ export default function Users() {
                       </div>
                     </div>
                     {canManageTenant && (
-                      <div className="flex items-center gap-2 ml-4 flex-shrink-0">
+                      <div className="flex items-center gap-2 ml-4 shrink-0">
                         <button
                           onClick={() => openEditRole(role)}
                           disabled={role.isSystem}
@@ -811,7 +811,7 @@ export default function Users() {
                     type="checkbox"
                     checked={roleModalIsDefault}
                     onChange={(e) => setRoleModalIsDefault(e.target.checked)}
-                    className="rounded"
+                    className="rounded-sm"
                   />
                   Default role for new members
                 </label>
@@ -829,7 +829,7 @@ export default function Users() {
                               type="checkbox"
                               checked={roleModalAbilities.includes(ability)}
                               onChange={() => toggleAbility(ability)}
-                              className="rounded"
+                              className="rounded-sm"
                             />
                             <span className="text-sm text-gray-700">{ability}</span>
                           </label>

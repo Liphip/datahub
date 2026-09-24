@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 
@@ -34,14 +34,14 @@ export default function Setup() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
-      <div className="max-w-md w-full p-8 bg-white rounded-lg shadow">
+      <div className="max-w-md w-full p-8 bg-white rounded-lg shadow-sm">
         <h2 className="text-2xl font-bold text-gray-900 mb-2">{t('auth.runInitialSetup')}</h2>
         <p className="text-sm text-gray-600 mb-6">
           {t('tenants.createFirstRoot')}
         </p>
 
         {error && (
-          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded text-sm">
+          <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-sm text-sm">
             {error}
           </div>
         )}

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
@@ -138,7 +138,7 @@ function StatCard({
   return (
     <div className="relative bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
       {accentClass && (
-        <div className={`absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r ${accentClass}`} />
+        <div className={`absolute inset-x-0 top-0 h-0.5 bg-linear-to-r ${accentClass}`} />
       )}
       <div className="p-4">
         <div className="flex items-start justify-between">
@@ -368,7 +368,7 @@ export default function Dashboard() {
   return (
     <div className="space-y-8">
       {/* ── Welcome banner ───────────────────────────────────────────────────── */}
-      <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-primary-600 to-primary-800 dark:from-primary-800 dark:to-primary-950 p-6 text-white shadow-lg shadow-primary-900/20">
+      <div className="relative rounded-2xl overflow-hidden bg-linear-to-br from-primary-600 to-primary-800 dark:from-primary-800 dark:to-primary-950 p-6 text-white shadow-lg shadow-primary-900/20">
         {/* decorative orb */}
         <div className="pointer-events-none absolute -top-8 -right-8 w-40 h-40 rounded-full bg-white/5" />
         <div className="pointer-events-none absolute -bottom-12 right-16 w-64 h-64 rounded-full bg-white/5" />
@@ -384,7 +384,7 @@ export default function Dashboard() {
           <div className="flex items-center gap-2 shrink-0">
             <Link
               to="/pipelines"
-              className="px-4 py-2 bg-white text-primary-700 rounded-lg hover:bg-primary-50 transition-colors font-medium text-sm shadow-sm"
+              className="px-4 py-2 bg-white text-primary-700 rounded-lg hover:bg-primary-50 transition-colors font-medium text-sm shadow-xs"
             >
               + New Pipeline
             </Link>
@@ -453,8 +453,8 @@ export default function Dashboard() {
 
                   {ts.loading ? (
                     <div className="animate-pulse space-y-2">
-                      <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-3/4" />
-                      <div className="h-8 bg-slate-100 dark:bg-slate-800 rounded mt-3" />
+                      <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded-sm w-3/4" />
+                      <div className="h-8 bg-slate-100 dark:bg-slate-800 rounded-sm mt-3" />
                     </div>
                   ) : (
                     <>
@@ -766,7 +766,7 @@ export default function Dashboard() {
                     </Link>
                     {p.latestRunStatus && (
                       <span
-                        className={`shrink-0 px-1.5 py-0.5 text-[10px] rounded font-medium ${STATUS_BADGE[p.latestRunStatus] ?? ''}`}
+                        className={`shrink-0 px-1.5 py-0.5 text-[10px] rounded-sm font-medium ${STATUS_BADGE[p.latestRunStatus] ?? ''}`}
                       >
                         {p.latestRunStatus}
                       </span>

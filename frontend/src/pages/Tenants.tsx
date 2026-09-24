@@ -230,7 +230,7 @@ export default function Tenants() {
                 {hasChildren && (
                   <button
                     onClick={() => setExpandedTenantIds((prev) => ({ ...prev, [tenant.id]: !isExpanded }))}
-                    className="text-xs px-1.5 py-0.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-50"
+                    className="text-xs px-1.5 py-0.5 rounded-sm border border-gray-300 text-gray-600 hover:bg-gray-50"
                     title={isExpanded ? 'Collapse subtree' : 'Expand subtree'}
                   >
                     {isExpanded ? '−' : '+'}
@@ -238,7 +238,7 @@ export default function Tenants() {
                 )}
                 <h3 className="text-lg font-semibold">{tenant.name}</h3>
                 {isCurrentTenant && (
-                  <span className="px-2 py-0.5 text-xs rounded bg-primary-100 text-primary-700">Current</span>
+                  <span className="px-2 py-0.5 text-xs rounded-sm bg-primary-100 text-primary-700">Current</span>
                 )}
               </div>
               <p className="text-sm text-gray-500">ID: {tenant.id}</p>
@@ -318,7 +318,7 @@ export default function Tenants() {
 
       {/* Tenant switcher */}
       {tenantContexts.length > 0 && (
-        <div className="mb-4 rounded border border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center gap-3">
+        <div className="mb-4 rounded-sm border border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center gap-3">
           <span className="text-sm font-medium text-slate-700">
             Current tenant: <strong>{currentTenantName}</strong>
           </span>
@@ -384,7 +384,7 @@ export default function Tenants() {
       {loading ? (
         <div className="space-y-3">
           {[1, 2, 3].map(i => (
-            <div key={i} className="card animate-pulse"><div className="h-4 bg-gray-200 rounded w-1/3"></div></div>
+            <div key={i} className="card animate-pulse"><div className="h-4 bg-gray-200 rounded-sm w-1/3"></div></div>
           ))}
         </div>
       ) : tenants.length === 0 ? (
@@ -404,7 +404,7 @@ export default function Tenants() {
           <div className="bg-white rounded-lg p-6 max-w-md w-full">
             <h2 className="text-xl font-bold mb-4">Create Tenant</h2>
             {error && (
-              <div className="mb-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-red-700 text-sm">{error}</div>
+              <div className="mb-3 rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-red-700 text-sm">{error}</div>
             )}
             <form onSubmit={handleCreateTenant}>
               <div className="mb-4">

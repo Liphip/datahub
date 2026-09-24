@@ -1,6 +1,6 @@
 import { Component, useEffect, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
 import { useAuthStore } from './stores/auth';
 import { API_STATUS_EVENT } from './services/api';
 
@@ -48,7 +48,7 @@ class ErrorBoundary extends Component<
                 this.setState({ hasError: false, error: null });
                 window.location.href = '/';
               }}
-              className="px-4 py-2 bg-primary-600 text-white rounded hover:bg-primary-700 text-sm"
+              className="px-4 py-2 bg-primary-600 text-white rounded-sm hover:bg-primary-700 text-sm"
             >
               Go to Dashboard
             </button>
@@ -151,7 +151,7 @@ function App() {
           <span>{apiStatusMessage || 'API unavailable. Some data may be outdated.'}</span>
           <button
             onClick={() => window.location.reload()}
-            className="ml-4 px-2 py-1 rounded border border-amber-400 hover:bg-amber-100"
+            className="ml-4 px-2 py-1 rounded-sm border border-amber-400 hover:bg-amber-100"
           >
             Retry
           </button>

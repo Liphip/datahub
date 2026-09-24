@@ -270,13 +270,13 @@ export default function Alerts() {
       </div>
 
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-sm">
           {error}
         </div>
       )}
 
       {!canReadAlerts && (
-        <div className="mb-4 rounded border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+        <div className="mb-4 rounded-sm border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
           {t('alerts.permissionViewAlerts')}
         </div>
       )}
@@ -299,7 +299,7 @@ export default function Alerts() {
 
       {loading ? (
         <div className="card animate-pulse">
-          <div className="h-4 bg-gray-200 rounded w-1/3"></div>
+          <div className="h-4 bg-gray-200 rounded-sm w-1/3"></div>
         </div>
       ) : !tenantId ? (
         <div className="card text-center py-12">
@@ -309,12 +309,12 @@ export default function Alerts() {
         <>
           {activeTab === 'channels' && (
             <div className="space-y-4">
-              <div className="rounded border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+              <div className="rounded-sm border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
                 <p className="font-semibold mb-1">How ALERT modules fire channels</p>
                 <p className="mb-2">
                   Alert modules dispatch alerts by returning a special object from their code. The platform detects this return value and fires the matching channel:
                 </p>
-                <pre className="bg-blue-100 rounded px-3 py-2 text-xs font-mono overflow-x-auto whitespace-pre-wrap">{`return {
+                <pre className="bg-blue-100 rounded-sm px-3 py-2 text-xs font-mono overflow-x-auto whitespace-pre-wrap">{`return {
   "__alert__": {
     "channelId": "<id>",
     "title": "Threshold exceeded",
@@ -344,10 +344,10 @@ export default function Alerts() {
                           <p className="text-sm text-gray-500">{channel.description}</p>
                         )}
                         <div className="flex items-center gap-2 mt-2 flex-wrap">
-                          <span className="inline-block px-2 py-1 text-xs font-medium rounded bg-gray-100">
+                          <span className="inline-block px-2 py-1 text-xs font-medium rounded-sm bg-gray-100">
                             {channel.channelType}
                           </span>
-                          <span className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded bg-slate-100 text-slate-700 font-mono">
+                          <span className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-sm bg-slate-100 text-slate-700 font-mono">
                             {channel.id}
                             <button
                               onClick={() => copyChannelId(channel.id)}
@@ -359,7 +359,7 @@ export default function Alerts() {
                           </span>
                         </div>
                       </div>
-                      <span className={`px-2 py-1 text-xs rounded ${channel.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                      <span className={`px-2 py-1 text-xs rounded-sm ${channel.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
                         {channel.isActive ? t('common.active') : t('common.inactive')}
                       </span>
                     </div>
@@ -480,7 +480,7 @@ export default function Alerts() {
                   <option value="MQTT">MQTT</option>
                 </select>
               </div>
-              <div className="mb-4 rounded border border-slate-200 p-3">
+              <div className="mb-4 rounded-sm border border-slate-200 p-3">
                 <label className="block text-sm font-medium text-slate-700 mb-2">{newChannelType} Configuration</label>
                 <div className="space-y-3">
                   {(channelConfigSchema[newChannelType] || []).map((field) => (

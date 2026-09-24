@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router';
 import { useAuthStore } from '../stores/auth';
-import api from '../services/api';
+import api, { type ApiError } from '../services/api';
 import type { Pipeline, CodeModule, Connector, ModuleVersion, PipelineRun } from '../types';
 import {
   ReactFlow,
@@ -105,7 +105,7 @@ function DagNode({ data, selected }: NodeProps<DagNodeType>) {
 
   return (
     <div
-      className={`rounded-lg border-2 ${colors} ${selected ? 'ring-2 ring-offset-1 ring-primary-500' : ''} min-w-[160px] shadow-sm`}
+      className={`rounded-lg border-2 ${colors} ${selected ? 'ring-2 ring-offset-1 ring-primary-500' : ''} min-w-[160px] shadow-xs`}
     >
       {/* Incoming handle (all except IMPORT) */}
       {!isSource && (
@@ -234,7 +234,7 @@ export default function PipelineEditor() {
   const navigate = useNavigate();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
   // Ref to current pipeline ID so polling closures always see the latest value
-  const pipelineIdRef = useRef<string | undefined>();
+  const pipelineIdRef = useRef<string | undefined>(undefined);
   const canWritePipelines = Boolean(
     user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('pipeline:write')
   );
@@ -435,7 +435,8 @@ export default function PipelineEditor() {
         navigate(`/pipelines/${created.id}`);
         showToast('Pipeline created', 'success');
       }
-    } catch (err: any) {
+    } catch (caught) {
+      const err = caught as ApiError;
       console.error('Save failed:', err);
       showToast(err?.response?.data?.error ?? 'Failed to save pipeline', 'error');
     } finally {
@@ -458,7 +459,8 @@ export default function PipelineEditor() {
       showToast('Pipeline triggered', 'success');
       // poll run status
       pollRunStatus(run.id);
-    } catch (err: any) {
+    } catch (caught) {
+      const err = caught as ApiError;
       showToast(err?.response?.data?.error ?? 'Failed to trigger pipeline', 'error');
     } finally {
       setTriggering(false);
@@ -555,14 +557,14 @@ export default function PipelineEditor() {
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="border rounded px-2 py-1 text-sm font-semibold w-52"
+            className="border rounded-sm px-2 py-1 text-sm font-semibold w-52"
             placeholder="Pipeline name"
             disabled={!canWritePipelines}
           />
           <input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            className="border rounded px-2 py-1 text-sm text-gray-500 w-72"
+            className="border rounded-sm px-2 py-1 text-sm text-gray-500 w-72"
             placeholder="Description (optional)"
             disabled={!canWritePipelines}
           />
@@ -572,7 +574,7 @@ export default function PipelineEditor() {
               checked={isActive}
               onChange={(e) => setIsActive(e.target.checked)}
               disabled={!canWritePipelines}
-              className="rounded"
+              className="rounded-sm"
             />
             <span>Active</span>
           </label>
@@ -606,7 +608,7 @@ export default function PipelineEditor() {
             <button
               key={nt}
               onClick={() => addNode(nt)}
-              className={`px-2 py-1 rounded border font-medium ${NODE_COLORS[nt]} hover:opacity-80`}
+              className={`px-2 py-1 rounded-sm border font-medium ${NODE_COLORS[nt]} hover:opacity-80`}
             >
               {NODE_ICON[nt]} {nt}
             </button>
@@ -614,7 +616,7 @@ export default function PipelineEditor() {
           {selectedNodeId && (
             <button
               onClick={deleteSelectedNode}
-              className="ml-auto px-2 py-1 rounded border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 font-medium"
+              className="ml-auto px-2 py-1 rounded-sm border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 font-medium"
             >
               Delete selected
             </button>
@@ -710,7 +712,7 @@ function NodeConfigPanel({
   return (
     <div className="p-4 space-y-4">
       <div>
-        <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded ${NODE_COLORS[data.nodeType]}`}>
+        <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-sm ${NODE_COLORS[data.nodeType]}`}>
           {NODE_ICON[data.nodeType]} {data.nodeType}
         </span>
         <p className="text-[10px] text-gray-400 mt-1">Node ID: {nodeId}</p>
@@ -719,7 +721,7 @@ function NodeConfigPanel({
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">Label</label>
         <input
-          className="border rounded px-2 py-1 text-sm w-full"
+          className="border rounded-sm px-2 py-1 text-sm w-full"
           value={data.label}
           onChange={(e) => onChange({ label: e.target.value })}
           disabled={!canWrite}
@@ -734,7 +736,7 @@ function NodeConfigPanel({
           <p className="text-xs text-amber-600">No compatible modules available.</p>
         ) : (
           <select
-            className="border rounded px-2 py-1 text-sm w-full"
+            className="border rounded-sm px-2 py-1 text-sm w-full"
             value={data.moduleId ?? ''}
             onChange={(e) => {
               const nextModuleId = e.target.value || undefined;
@@ -761,7 +763,7 @@ function NodeConfigPanel({
           <p className="text-xs text-amber-600">No versions available for the selected module.</p>
         ) : (
           <select
-            className="border rounded px-2 py-1 text-sm w-full"
+            className="border rounded-sm px-2 py-1 text-sm w-full"
             value={data.moduleVersionId ?? ''}
             onChange={(e) => onChange({ moduleVersionId: e.target.value || undefined })}
             disabled={!canWrite || !data.moduleId}
@@ -781,7 +783,7 @@ function NodeConfigPanel({
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Input connector</label>
             <select
-              className="border rounded px-2 py-1 text-sm w-full"
+              className="border rounded-sm px-2 py-1 text-sm w-full"
               value={data.connectorId ?? ''}
               onChange={(e) => onChange({ connectorId: e.target.value || undefined })}
               disabled={!canWrite}
@@ -801,7 +803,7 @@ function NodeConfigPanel({
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">MQTT Topic</label>
               <input
-                className="border rounded px-2 py-1 text-sm w-full"
+                className="border rounded-sm px-2 py-1 text-sm w-full"
                 value={data.mqttTopic ?? ''}
                 onChange={(e) => onChange({ mqttTopic: e.target.value || undefined })}
                 placeholder="sensors/+/telemetry"
@@ -820,7 +822,7 @@ function NodeConfigPanel({
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Output connector</label>
             <select
-              className="border rounded px-2 py-1 text-sm w-full"
+              className="border rounded-sm px-2 py-1 text-sm w-full"
               value={data.connectorId ?? ''}
               onChange={(e) => onChange({ connectorId: e.target.value || undefined })}
               disabled={!canWrite}
@@ -840,7 +842,7 @@ function NodeConfigPanel({
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">MQTT Topic</label>
               <input
-                className="border rounded px-2 py-1 text-sm w-full"
+                className="border rounded-sm px-2 py-1 text-sm w-full"
                 value={data.mqttTopic ?? ''}
                 onChange={(e) => onChange({ mqttTopic: e.target.value || undefined })}
                 placeholder="output/results"
@@ -945,7 +947,7 @@ function RunLogPanel({
                 {new Date(latestRun.startedAt).toLocaleString()} · {latestRun.triggerType}
               </p>
               {latestRun.errorMessage && (
-                <p className="text-xs text-red-600 mt-1 break-words">{latestRun.errorMessage}</p>
+                <p className="text-xs text-red-600 mt-1 wrap-break-word">{latestRun.errorMessage}</p>
               )}
             </div>
             {pipelineId && (

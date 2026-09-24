@@ -101,9 +101,9 @@ function DataBarChart({ bars }: { bars: Array<{ label: string; count: number; av
               {entry.count} rows • avg {formatMetric(entry.avgValue)}
             </span>
           </div>
-          <div className="h-2 overflow-hidden rounded bg-slate-100">
+          <div className="h-2 overflow-hidden rounded-sm bg-slate-100">
             <div
-              className="h-full rounded bg-gradient-to-r from-cyan-500 to-sky-500"
+              className="h-full rounded-sm bg-linear-to-r from-cyan-500 to-sky-500"
               style={{ width: `${(entry.count / maxCount) * 100}%` }}
             />
           </div>
@@ -462,8 +462,8 @@ export default function Data() {
     return (
       <div className="px-4 py-6">
         <div className="card animate-pulse">
-          <div className="mb-4 h-4 w-1/3 rounded bg-gray-200" />
-          <div className="h-32 rounded bg-gray-200" />
+          <div className="mb-4 h-4 w-1/3 rounded-sm bg-gray-200" />
+          <div className="h-32 rounded-sm bg-gray-200" />
         </div>
       </div>
     );
@@ -495,7 +495,7 @@ export default function Data() {
   return (
     <div className="px-4 py-6 sm:px-0">
       {toast && (
-        <div className={`fixed right-4 top-4 z-50 rounded px-4 py-3 text-sm text-white shadow-lg ${toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
+        <div className={`fixed right-4 top-4 z-50 rounded-sm px-4 py-3 text-sm text-white shadow-lg ${toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
           {toast.message}
         </div>
       )}
@@ -519,13 +519,13 @@ export default function Data() {
         ))}
       </div>
 
-      {error && <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700">{error}</div>}
+      {error && <div className="mb-4 rounded-sm border border-red-200 bg-red-50 px-4 py-3 text-red-700">{error}</div>}
 
       {/* Tables tab */}
       {activeTab === 'tables' && (
         <div>
           {/* SDK snippet callout */}
-          <div className="mb-4 rounded border border-slate-200 bg-slate-50">
+          <div className="mb-4 rounded-sm border border-slate-200 bg-slate-50">
             <button
               onClick={() => setSdkCalloutOpen(!sdkCalloutOpen)}
               className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100"
@@ -535,7 +535,7 @@ export default function Data() {
             </button>
             {sdkCalloutOpen && (
               <div className="px-4 pb-4">
-                <pre className="rounded bg-slate-900 text-slate-100 text-xs font-mono px-4 py-3 overflow-x-auto whitespace-pre">{`# In your module code, use the dt helpers:
+                <pre className="rounded-sm bg-slate-900 text-slate-100 text-xs font-mono px-4 py-3 overflow-x-auto whitespace-pre">{`# In your module code, use the dt helpers:
 
 # Write to a time-series table:
 dt.write_table('my_table', [
@@ -584,7 +584,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-sm font-semibold text-slate-800">
                   Query: <span className="font-mono">{selectedTable}</span>
-                  <span className="ml-2 px-2 py-0.5 text-xs rounded bg-slate-100 text-slate-600">
+                  <span className="ml-2 px-2 py-0.5 text-xs rounded-sm bg-slate-100 text-slate-600">
                     {selectedTableInfo?.type || 'timeseries'}
                   </span>
                 </h2>
@@ -625,7 +625,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
                 ) : (
                   <div className="md:col-span-2">
                     <label className="mb-1 block text-xs font-medium text-gray-600">Relational querying</label>
-                    <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                    <div className="rounded-sm border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
                       Ad hoc SQL filters are intentionally disabled here. Use Grafana or a DB_LOAD module for scoped relational querying.
                     </div>
                   </div>
@@ -682,7 +682,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
           )}
 
           {summaryLoading && (
-            <div className="mb-4 rounded border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-700">
+            <div className="mb-4 rounded-sm border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-700">
               Updating summary charts…
             </div>
           )}
@@ -764,7 +764,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
                 </div>
 
                 {newTableType === 'timeseries' ? (
-                  <div className="mb-4 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  <div className="mb-4 rounded-sm border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
                     <p className="font-medium mb-1">Fixed schema:</p>
                     <p className="font-mono text-xs">time (TIMESTAMPTZ), device_id (TEXT), value (FLOAT), tags (JSONB)</p>
                     <p className="mt-2 text-xs text-slate-500">Time-series tables always use this schema. Data is partitioned by time.</p>
@@ -867,7 +867,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
           </div>
 
           {blobsLoading ? (
-            <div className="card animate-pulse"><div className="h-4 bg-gray-200 rounded w-1/3"></div></div>
+            <div className="card animate-pulse"><div className="h-4 bg-gray-200 rounded-sm w-1/3"></div></div>
           ) : blobs.length === 0 ? (
             <div className="card text-center py-12">
               <p className="text-gray-500 mb-2">No files uploaded yet.</p>
@@ -926,12 +926,12 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
       {/* Grafana tab */}
       {activeTab === 'grafana' && (
         <div className="space-y-4">
-          <div className="rounded border border-blue-200 bg-blue-50 px-4 py-4">
+          <div className="rounded-sm border border-blue-200 bg-blue-50 px-4 py-4">
             <h2 className="text-base font-semibold text-blue-900 mb-2">Grafana Data Explorer</h2>
             <p className="text-sm text-blue-800 mb-3">
               Use the PostgreSQL datasource in Grafana to query your data tables directly. Tenant data lives in a dedicated schema and tables are addressed as:
             </p>
-            <div className="rounded bg-white border border-blue-200 px-3 py-2 flex items-center justify-between gap-2 mb-3">
+            <div className="rounded-sm bg-white border border-blue-200 px-3 py-2 flex items-center justify-between gap-2 mb-3">
               <code className="text-sm font-mono text-slate-800">{tableSchema}.{'<table_name>'}</code>
               <button
                 onClick={() => navigator.clipboard.writeText(tableSchema).then(() => showToast('Copied schema', 'success'))}
@@ -945,7 +945,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
             </p>
           </div>
 
-          <div className="rounded border border-slate-200 bg-slate-50 px-4 py-3">
+          <div className="rounded-sm border border-slate-200 bg-slate-50 px-4 py-3">
             <p className="text-sm text-slate-700 mb-2">
               Grafana is available at: <a href={grafanaUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-mono">{grafanaUrl}</a>
             </p>
@@ -954,7 +954,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
             </p>
           </div>
 
-          <div className="rounded border border-slate-200 overflow-hidden" style={{ height: 600 }}>
+          <div className="rounded-sm border border-slate-200 overflow-hidden" style={{ height: 600 }}>
             <iframe
               src={grafanaUrl}
               className="w-full h-full"

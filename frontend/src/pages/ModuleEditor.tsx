@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router';
 import Editor from '@monaco-editor/react';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
@@ -141,6 +141,42 @@ const TEMPLATES = {
 `,
 };
 
+/**
+ * Implements `defaultModuleConfig` for this source unit.
+ */
+function defaultModuleConfig(moduleType: CodeModule['moduleType']) {
+  if (moduleType === 'DB_LOAD') {
+    return JSON.stringify(
+      {
+        table: 'measurements',
+        limit: 100,
+        orderBy: 'created_at',
+        orderDirection: 'DESC',
+        columns: ['device_id', 'value', 'created_at'],
+      },
+      null,
+      2
+    );
+  }
+  if (moduleType === 'DB_SAVE') {
+    return JSON.stringify(
+      {
+        table: 'measurements',
+        mode: 'append',
+        keyColumns: ['device_id', 'created_at'],
+        columnModel: {
+          device_id: 'TEXT',
+          value: 'DOUBLE PRECISION',
+          created_at: 'TIMESTAMPTZ',
+        },
+      },
+      null,
+      2
+    );
+  }
+  return '{}';
+}
+
 export default function ModuleEditor() {
   const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
@@ -275,42 +311,6 @@ export default function ModuleEditor() {
         </button>
       </div>
     );
-  }
-
-  /**
-   * Implements `defaultModuleConfig` for this source unit.
-   */
-  function defaultModuleConfig(moduleType: CodeModule['moduleType']) {
-    if (moduleType === 'DB_LOAD') {
-      return JSON.stringify(
-        {
-          table: 'measurements',
-          limit: 100,
-          orderBy: 'created_at',
-          orderDirection: 'DESC',
-          columns: ['device_id', 'value', 'created_at'],
-        },
-        null,
-        2
-      );
-    }
-    if (moduleType === 'DB_SAVE') {
-      return JSON.stringify(
-        {
-          table: 'measurements',
-          mode: 'append',
-          keyColumns: ['device_id', 'created_at'],
-          columnModel: {
-            device_id: 'TEXT',
-            value: 'DOUBLE PRECISION',
-            created_at: 'TIMESTAMPTZ',
-          },
-        },
-        null,
-        2
-      );
-    }
-    return '{}';
   }
 
   /**
@@ -494,18 +494,18 @@ export default function ModuleEditor() {
           <div className="border-t pt-4 mt-4">
             <h4 className="font-medium text-sm mb-2">{t('modules.versionHistory')}</h4>
             {pendingLoadVersionId && (
-              <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <div className="mb-3 rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                 <p className="mb-2">{t('modules.unsavedChangesPrompt')}</p>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => loadVersionIntoEditor(pendingLoadVersionId, true)}
-                    className="px-2 py-0.5 rounded border border-amber-300 bg-white hover:bg-amber-100"
+                    className="px-2 py-0.5 rounded-sm border border-amber-300 bg-white hover:bg-amber-100"
                   >
                     {t('modules.loadAnyway')}
                   </button>
                   <button
                     onClick={() => setPendingLoadVersionId(null)}
-                    className="px-2 py-0.5 rounded border border-amber-300 bg-white hover:bg-amber-100"
+                    className="px-2 py-0.5 rounded-sm border border-amber-300 bg-white hover:bg-amber-100"
                   >
                     {t('modules.keepEditing')}
                   </button>
@@ -515,22 +515,22 @@ export default function ModuleEditor() {
             {module.versions.length > 0 ? (
               <div className="space-y-2">
                 {module.versions.map((v) => (
-                  <div key={v.id} className="p-2 bg-white rounded border text-sm">
+                  <div key={v.id} className="p-2 bg-white rounded-sm border text-sm">
                     <div className="flex justify-between">
                       <span className="font-medium">v{v.version}</span>
                       <div className="flex items-center gap-1">
                         {module.defaultVersionId === v.id && (
-                          <span className="text-xs bg-blue-100 px-2 py-0.5 rounded text-blue-800">
+                          <span className="text-xs bg-blue-100 px-2 py-0.5 rounded-sm text-blue-800">
                             Default
                           </span>
                         )}
                         {!v.isActive && (
-                          <span className="text-xs bg-amber-100 px-2 py-0.5 rounded text-amber-800">
+                          <span className="text-xs bg-amber-100 px-2 py-0.5 rounded-sm text-amber-800">
                             Inactive
                           </span>
                         )}
                         {v.versionTag && (
-                          <span className="text-xs bg-gray-100 px-2 py-0.5 rounded">
+                          <span className="text-xs bg-gray-100 px-2 py-0.5 rounded-sm">
                             {v.versionTag}
                           </span>
                         )}
@@ -542,21 +542,21 @@ export default function ModuleEditor() {
                     <div className="mt-2 flex items-center gap-2">
                       <button
                         onClick={() => loadVersionIntoEditor(v.id)}
-                        className="px-2 py-0.5 text-xs rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
+                        className="px-2 py-0.5 text-xs rounded-sm border border-gray-300 text-gray-700 hover:bg-gray-50"
                       >
                         {t('common.load')}
                       </button>
                       {module.defaultVersionId !== v.id && v.isActive && (
                         <button
                           onClick={() => handleSetDefaultVersion(v.id)}
-                          className="px-2 py-0.5 text-xs rounded border border-blue-300 text-blue-700 hover:bg-blue-50"
+                          className="px-2 py-0.5 text-xs rounded-sm border border-blue-300 text-blue-700 hover:bg-blue-50"
                         >
                           Set default
                         </button>
                       )}
                       <button
                         onClick={() => handleToggleVersionActive(v.id, v.isActive)}
-                        className="px-2 py-0.5 text-xs rounded border border-gray-300 text-gray-700 hover:bg-gray-50"
+                        className="px-2 py-0.5 text-xs rounded-sm border border-gray-300 text-gray-700 hover:bg-gray-50"
                       >
                         {v.isActive ? 'Deactivate' : 'Activate'}
                       </button>

@@ -1,4 +1,5 @@
-import '@testing-library/jest-dom'
+import '@testing-library/jest-dom/vitest'
+import i18n from '../i18n'
 import { vi } from 'vitest'
 
 // Mock localStorage
@@ -17,9 +18,12 @@ vi.stubGlobal('location', {
 })
 
 // Mock React Router
-vi.mock('react-router-dom', () => ({
-  ...vi.importActual('react-router-dom'),
+vi.mock('react-router', () => ({
+  ...vi.importActual('react-router'),
   useNavigate: () => vi.fn(),
   useLocation: () => ({ pathname: '/' }),
   Link: ({ children }: { children: React.ReactNode }) => children,
 }))
+
+// Deterministic language for assertions on rendered text.
+await i18n.changeLanguage('en')

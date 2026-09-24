@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router';
 import api from '../services/api';
 import type { PipelineRun, Pipeline } from '../types';
 
@@ -63,14 +63,14 @@ function ResultDisplay({ result }: { result: unknown }) {
     const json = JSON.stringify(result, null, 2);
     const isLong = json.length > 500;
     return (
-      <pre className="text-xs bg-gray-900 text-emerald-300 rounded p-3 overflow-x-auto whitespace-pre-wrap break-all font-mono leading-relaxed max-h-64 overflow-y-auto">
+      <pre className="text-xs bg-gray-900 text-emerald-300 rounded-sm p-3 overflow-x-auto whitespace-pre-wrap break-all font-mono leading-relaxed max-h-64 overflow-y-auto">
         {isLong ? json.slice(0, 500) + '\n…' : json}
       </pre>
     );
   }
 
   return (
-    <pre className="text-xs bg-gray-900 text-emerald-300 rounded p-3 font-mono">
+    <pre className="text-xs bg-gray-900 text-emerald-300 rounded-sm p-3 font-mono">
       {String(result)}
     </pre>
   );
@@ -92,7 +92,7 @@ function ModuleLogCard({ log, index }: {
   const hasOutput = log.stdout || log.stderr || log.result != null || log.error;
 
   return (
-    <div className="border rounded-lg overflow-hidden shadow-sm">
+    <div className="border rounded-lg overflow-hidden shadow-xs">
       {/* Header */}
       <button
         className={`w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${
@@ -102,7 +102,7 @@ function ModuleLogCard({ log, index }: {
       >
         <div className="flex items-center gap-3 min-w-0">
           <span className="text-gray-400 text-xs font-mono w-5 text-center shrink-0">{index + 1}</span>
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded shrink-0 ${colorClass}`}>
+          <span className={`text-xs font-semibold px-2 py-0.5 rounded-sm shrink-0 ${colorClass}`}>
             {icon} {stageLabel}
           </span>
           <span className="font-medium text-gray-800 truncate">
@@ -135,7 +135,7 @@ function ModuleLogCard({ log, index }: {
           {log.error && (
             <div className="px-4 py-3">
               <p className="text-xs font-semibold text-red-600 mb-1">Error</p>
-              <p className="text-sm text-red-700 break-words font-mono">{log.error}</p>
+              <p className="text-sm text-red-700 wrap-break-word font-mono">{log.error}</p>
             </div>
           )}
 
@@ -156,7 +156,7 @@ function ModuleLogCard({ log, index }: {
           {log.stdout ? (
             <div className="px-4 py-3">
               <p className="text-xs font-semibold text-gray-600 mb-1.5">stdout</p>
-              <pre className="text-xs bg-gray-900 text-gray-100 rounded p-3 overflow-x-auto whitespace-pre-wrap break-all max-h-96 overflow-y-auto font-mono leading-relaxed">
+              <pre className="text-xs bg-gray-900 text-gray-100 rounded-sm p-3 overflow-x-auto whitespace-pre-wrap break-all max-h-96 overflow-y-auto font-mono leading-relaxed">
                 {log.stdout}
               </pre>
             </div>
@@ -170,7 +170,7 @@ function ModuleLogCard({ log, index }: {
           {log.stderr && (
             <div className="px-4 py-3">
               <p className="text-xs font-semibold text-red-600 mb-1.5">stderr</p>
-              <pre className="text-xs bg-red-950 text-red-200 rounded p-3 overflow-x-auto whitespace-pre-wrap break-all max-h-64 overflow-y-auto font-mono leading-relaxed">
+              <pre className="text-xs bg-red-950 text-red-200 rounded-sm p-3 overflow-x-auto whitespace-pre-wrap break-all max-h-64 overflow-y-auto font-mono leading-relaxed">
                 {log.stderr}
               </pre>
             </div>
@@ -225,7 +225,7 @@ export default function RunDetail() {
         cappedSet(pipelineCache, pipelineId, pipelineData);
         setRun(runData);
         setPipeline(pipelineData);
-      } catch (err) {
+      } catch {
         if (!runCache.has(runId)) setError('Failed to load run details');
       } finally {
         setLoading(false);
@@ -291,7 +291,7 @@ export default function RunDetail() {
       </nav>
 
       {/* Run header */}
-      <div className="bg-white rounded-lg border shadow-sm p-5">
+      <div className="bg-white rounded-lg border shadow-xs p-5">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-lg font-semibold text-gray-900 mb-1">
@@ -306,7 +306,7 @@ export default function RunDetail() {
                 Running…
               </span>
             )}
-            <span className={`text-sm font-bold px-3 py-1 rounded border ${statusClass}`}>
+            <span className={`text-sm font-bold px-3 py-1 rounded-sm border ${statusClass}`}>
               {run.status}
             </span>
           </div>
@@ -351,9 +351,9 @@ export default function RunDetail() {
         )}
 
         {run.errorMessage && (
-          <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded">
+          <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-sm">
             <p className="text-sm font-semibold text-red-700 mb-0.5">Pipeline error</p>
-            <p className="text-sm text-red-600 break-words font-mono">{run.errorMessage}</p>
+            <p className="text-sm text-red-600 wrap-break-word font-mono">{run.errorMessage}</p>
           </div>
         )}
 
@@ -386,7 +386,7 @@ export default function RunDetail() {
           <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
             Execution log
           </h2>
-          <pre className="text-xs bg-gray-900 text-gray-200 rounded p-4 overflow-x-auto whitespace-pre-wrap break-all max-h-64 overflow-y-auto font-mono leading-relaxed">
+          <pre className="text-xs bg-gray-900 text-gray-200 rounded-sm p-4 overflow-x-auto whitespace-pre-wrap break-all max-h-64 overflow-y-auto font-mono leading-relaxed">
             {executionLog.join('\n')}
           </pre>
         </div>
