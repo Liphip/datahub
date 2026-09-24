@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: kafka
-          image: confluentinc/cp-kafka:7.5.0
+          image: apache/kafka:4.3.1
           env:
             - name: KAFKA_NODE_ID
               value: "1"
@@ -45,6 +45,8 @@ spec:
               value: "0"
             - name: CLUSTER_ID
               value: "MkU3OEVBNTcwNTJENDM2Qk"
+            - name: KAFKA_LOG_DIRS
+              value: "/var/lib/kafka/data"
           ports:
             - containerPort: 9092
               name: kafka
@@ -94,7 +96,7 @@ spec:
     spec:
       containers:
         - name: mosquitto
-          image: eclipse-mosquitto:2
+          image: eclipse-mosquitto:2.0.22
           ports:
             - containerPort: 1883
               name: mqtt

@@ -17,7 +17,7 @@ networks:
 
 services:
   prometheus:
-    image: prom/prometheus:v2.54.1
+    image: prom/prometheus:v3.14.0
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -42,7 +42,7 @@ services:
           - node.role == manager
 
   loki:
-    image: grafana/loki:3.1.1
+    image: grafana/loki:3.7.8
     command: -config.file=/etc/loki/loki.yml
     ports:
       - target: 3100
@@ -63,7 +63,7 @@ services:
           - node.role == manager
 
   alloy:
-    image: grafana/alloy:latest
+    image: grafana/alloy:v1.19.2
     command: run /etc/alloy/config.alloy --storage.path=/var/lib/alloy/data
     configs:
       - source: alloy_cfg
@@ -76,7 +76,7 @@ services:
       mode: global
 
   grafana:
-    image: grafana/grafana:11.1.4
+    image: grafana/grafana:13.2.2
     ports:
       - target: 3000
         published: 3001
@@ -99,7 +99,7 @@ services:
           - node.role == manager
 
   node-exporter:
-    image: prom/node-exporter:v1.8.2
+    image: prom/node-exporter:v1.12.1
     command:
       - --path.rootfs=/host
     volumes:
@@ -110,7 +110,7 @@ services:
       mode: global
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: ghcr.io/google/cadvisor:v0.60.6
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro

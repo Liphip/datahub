@@ -305,10 +305,11 @@ services:
         condition: on-failure
 
   kafka-0:
-    image: confluentinc/cp-kafka:7.6.1
+    image: apache/kafka:4.3.1
     hostname: kafka-0
     environment: &kafka_env
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
@@ -330,7 +331,7 @@ services:
       - dataturntable
 
   kafka-1:
-    image: confluentinc/cp-kafka:7.6.1
+    image: apache/kafka:4.3.1
     hostname: kafka-1
     environment:
       <<: *kafka_env
@@ -342,7 +343,7 @@ services:
       - dataturntable
 
   kafka-2:
-    image: confluentinc/cp-kafka:7.6.1
+    image: apache/kafka:4.3.1
     hostname: kafka-2
     environment:
       <<: *kafka_env
@@ -354,7 +355,7 @@ services:
       - dataturntable
 
   emqx:
-    image: emqx/emqx:5.7.1
+    image: emqx/emqx:5.8.9
     environment:
       EMQX_NAME: emqx
       EMQX_CLUSTER__DISCOVERY_STRATEGY: dns
@@ -466,7 +467,7 @@ services:
       replicas: 2
 
   dashboard-grafana:
-    image: grafana/grafana:11.1.4
+    image: grafana/grafana:13.2.2
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
@@ -486,7 +487,7 @@ services:
       replicas: 2
 
   grafana:
-    image: grafana/grafana:11.1.4
+    image: grafana/grafana:13.2.2
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
@@ -504,7 +505,7 @@ services:
       replicas: 2
 
   nginx:
-    image: nginx:alpine
+    image: nginx:1.30.5-alpine3.24
     configs:
       - source: nginx_cfg
         target: /etc/nginx/conf.d/default.conf

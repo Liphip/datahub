@@ -10,3 +10,4 @@ scripts/
 scripts/*
 !scripts/add-inline-source-documentation.ps1
 !scripts/generate-source-function-reference.ps1
+docs-site/site/

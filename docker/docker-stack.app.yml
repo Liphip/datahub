@@ -23,13 +23,13 @@ services:
   postgresql:
     # TODO: Pin production stack images to immutable releases
     # Details: This stack uses floating database, application, and documentation tags. Use one version or digest per release across all services so deployments, rollbacks, and incident investigations are reproducible.
-    image: timescale/timescaledb:latest-pg16
+    image: timescale/timescaledb:2.30.1-pg18
     environment:
       POSTGRES_USER: dataturntable
       POSTGRES_PASSWORD: dataturntable
       POSTGRES_DB: dataturntable
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql
     networks:
       - dataturntable
     deploy:
@@ -39,13 +39,13 @@ services:
           - node.role == manager
 
   pipeline-postgresql:
-    image: timescale/timescaledb:latest-pg16
+    image: timescale/timescaledb:2.30.1-pg18
     environment:
       POSTGRES_USER: pipeline_data
       POSTGRES_PASSWORD: pipeline_data
       POSTGRES_DB: pipeline_data
     volumes:
-      - pipeline-pgdata:/var/lib/postgresql/data
+      - pipeline-pgdata:/var/lib/postgresql
     networks:
       - dataturntable
     deploy:
@@ -55,13 +55,13 @@ services:
           - node.role == manager
 
   monitoring-postgresql:
-    image: postgres:16-alpine
+    image: postgres:18.6-alpine3.24
     environment:
       POSTGRES_USER: monitoring
       POSTGRES_PASSWORD: monitoring
       POSTGRES_DB: monitoring
     volumes:
-      - monitoring-pgdata:/var/lib/postgresql/data
+      - monitoring-pgdata:/var/lib/postgresql
     networks:
       - dataturntable
     deploy:
@@ -71,13 +71,13 @@ services:
           - node.role == manager
 
   dashboard-postgresql:
-    image: postgres:16-alpine
+    image: postgres:18.6-alpine3.24
     environment:
       POSTGRES_USER: dashboard
       POSTGRES_PASSWORD: dashboard
       POSTGRES_DB: dashboard
     volumes:
-      - dashboard-pgdata:/var/lib/postgresql/data
+      - dashboard-pgdata:/var/lib/postgresql
     networks:
       - dataturntable
     deploy:
@@ -87,7 +87,7 @@ services:
           - node.role == manager
 
   kafka:
-    image: confluentinc/cp-kafka:7.5.0
+    image: apache/kafka:4.3.1
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
@@ -101,6 +101,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
     volumes:
       - kafka-data:/var/lib/kafka/data
     networks:
@@ -113,7 +114,7 @@ services:
 
 
   mosquitto:
-    image: eclipse-mosquitto:2
+    image: eclipse-mosquitto:2.0.22
     ports:
       - target: 1883
         published: 1883
@@ -275,7 +276,7 @@ services:
         condition: on-failure
 
   dashboard-grafana:
-    image: grafana/grafana:11.1.4
+    image: grafana/grafana:13.2.2
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
@@ -300,7 +301,7 @@ services:
         condition: on-failure
 
   grafana:
-    image: grafana/grafana:11.1.4
+    image: grafana/grafana:13.2.2
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
@@ -323,7 +324,7 @@ services:
         condition: on-failure
 
   nginx:
-    image: nginx:alpine
+    image: nginx:1.30.5-alpine3.24
     configs:
       - source: nginx_cfg
         target: /etc/nginx/conf.d/default.conf
