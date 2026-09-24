@@ -8,7 +8,7 @@ import com.dataturntable.tenant.Tenant
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.transaction.Transactional
-import org.mindrot.jbcrypt.BCrypt
+import io.quarkus.elytron.security.common.BcryptUtil
 import java.util.UUID
 
 @ApplicationScoped
@@ -60,7 +60,7 @@ class UserService {
         
         val user = User().apply {
             this.email = email
-            this.passwordHash = BCrypt.hashpw(password, BCrypt.gensalt())
+            this.passwordHash = BcryptUtil.bcryptHash(password)
             this.firstName = firstName
             this.lastName = lastName
             this.isSuperadmin = isSuperadmin
@@ -144,11 +144,11 @@ class UserService {
     fun changePassword(id: UUID, oldPassword: String, newPassword: String): Boolean {
         val user = User.findById(id) ?: return false
         
-        if (!BCrypt.checkpw(oldPassword, user.passwordHash)) {
+        if (!BcryptUtil.matches(oldPassword, user.passwordHash)) {
             throw SecurityException("Invalid old password")
         }
         
-        user.passwordHash = BCrypt.hashpw(newPassword, BCrypt.gensalt())
+        user.passwordHash = BcryptUtil.bcryptHash(newPassword)
         user.updatedAt = java.time.Instant.now()
         user.persist()
         

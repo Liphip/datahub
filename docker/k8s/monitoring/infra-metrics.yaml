@@ -144,51 +144,6 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: redis-exporter
-  labels:
-    app: dataturntable
-    component: monitoring
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: dataturntable
-      component: redis-exporter
-  template:
-    metadata:
-      labels:
-        app: dataturntable
-        component: redis-exporter
-    spec:
-      containers:
-        - name: redis-exporter
-          image: oliver006/redis_exporter:v1.62.0
-          env:
-            - name: REDIS_ADDR
-              value: redis://redis:6379
-          ports:
-            - containerPort: 9121
-              name: metrics
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: redis-exporter
-  labels:
-    app: dataturntable
-    component: monitoring
-spec:
-  selector:
-    app: dataturntable
-    component: redis-exporter
-  ports:
-    - name: metrics
-      port: 9121
-      targetPort: 9121
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
   name: kafka-exporter
   labels:
     app: dataturntable

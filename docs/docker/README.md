@@ -10,7 +10,6 @@ The development environment consists of the following services:
 |---------|-------|------|-------------|
 | postgresql | timescale/timescaledb:latest-pg16 | 5432 | TimescaleDB for time-series data |
 | kafka | confluentinc/cp-kafka:7.5.0 | 9092 | Message broker for data streaming |
-| redis | redis:7-alpine | 6379 | Cache and session storage |
 | mosquitto | eclipse-mosquitto:2 | 1883 | MQTT broker for IoT data |
 | backend | custom (Quarkus) | 8080 | REST API server |
 | frontend | custom (React + Nginx) | 3000 | Web UI |
@@ -44,7 +43,6 @@ All services have health checks configured:
 
 - **PostgreSQL**: `pg_isready -U dataturntable`
 - **Kafka**: `kafka-broker-api-versions --bootstrap-server localhost:9092`
-- **Redis**: `redis-cli ping`
 - **Mosquitto**: `mosquitto_sub -t $$SYS/#`
 - **Backend**: `http://localhost:8080/q/health/ready`
 - **Frontend**: `http://localhost/health`
@@ -61,7 +59,6 @@ All services have health checks configured:
 | DB_USER | dataturntable | Database user |
 | DB_PASSWORD | dataturntable | Database password |
 | KAFKA_BOOTSTRAP_SERVERS | kafka:9092 | Kafka servers |
-| REDIS_HOSTS | redis://redis:6379 | Redis host |
 
 ## Troubleshooting
 

@@ -45,9 +45,6 @@ scrape_configs:
     static_configs:
       - targets: ["postgres-exporter:9187"]
 
-  - job_name: dataturntable-redis
-    static_configs:
-      - targets: ["redis-exporter:9121"]
 
   - job_name: dataturntable-kafka
     static_configs:
@@ -118,7 +115,6 @@ scrape_configs:
       - targets:
           - postgresql:5432
           - kafka:9092
-          - redis:6379
           - mosquitto:1883
     relabel_configs:
       - source_labels: [__address__]

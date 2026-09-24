@@ -97,8 +97,6 @@ spec:
               value: "admin"
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka:9092"
-            - name: REDIS_HOSTS
-              value: "redis://redis:6379"
           resources:
             requests:
               cpu: 250m
@@ -234,8 +232,6 @@ spec:
                   key: pipeline-db-password
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka:9092"
-            - name: REDIS_HOSTS
-              value: "redis://redis:6379"
           resources:
             requests:
               cpu: 300m
@@ -371,8 +367,6 @@ spec:
                   key: pipeline-db-password
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka:9092"
-            - name: REDIS_HOSTS
-              value: "redis://redis:6379"
           resources:
             requests:
               cpu: 250m
@@ -510,8 +504,6 @@ spec:
                   key: pipeline-db-password
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka:9092"
-            - name: REDIS_HOSTS
-              value: "redis://redis:6379"
           resources:
             requests:
               cpu: 500m

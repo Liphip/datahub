@@ -16,5 +16,4 @@ This overlay rewrites:
 - app DB host -> `app-db-ha-postgresql-ha-pgpool`
 - pipeline DB JDBC host -> `pipeline-db-ha-postgresql-ha-pgpool`
 - Kafka bootstrap -> `kafka-ha:9092`
-- Redis host -> `redis-ha-master:6379`
 - dashboard Grafana datasource host -> `pipeline-db-ha-postgresql-ha-pgpool`

@@ -12,7 +12,7 @@ import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
 import org.eclipse.microprofile.jwt.JsonWebToken
-import org.mindrot.jbcrypt.BCrypt
+import io.quarkus.elytron.security.common.BcryptUtil
 import java.util.UUID
 
 @Path("/api/internal/v1/auth-users")
@@ -77,7 +77,7 @@ class AuthUserResource {
      * Evaluates the named capability or state predicate.
      */
     private fun hashForStorage(passwordHash: String): String {
-        return BCrypt.hashpw(passwordHash, BCrypt.gensalt())
+        return BcryptUtil.bcryptHash(passwordHash)
     }
 
     /**

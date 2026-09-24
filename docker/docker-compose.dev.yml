@@ -42,18 +42,6 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
-    container_name: dataturntable-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
   mosquitto:
     image: eclipse-mosquitto:2
@@ -100,7 +88,6 @@ services:
       DATATURNTABLE_GRAFANA_MONITORING_ADMIN_USER: admin
       DATATURNTABLE_GRAFANA_MONITORING_ADMIN_PASSWORD: admin
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      REDIS_HOSTS: redis://redis:6379
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
@@ -117,8 +104,6 @@ services:
       monitoring-postgresql:
         condition: service_healthy
       kafka:
-        condition: service_healthy
-      redis:
         condition: service_healthy
 
   public-api:
@@ -138,7 +123,6 @@ services:
       DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME: pipeline_data
       DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD: pipeline_data
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      REDIS_HOSTS: redis://redis:6379
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/q/health/ready"]
       interval: 10s
@@ -151,8 +135,6 @@ services:
       pipeline-postgresql:
         condition: service_healthy
       kafka:
-        condition: service_healthy
-      redis:
         condition: service_healthy
 
   pipeline-postgresql:
@@ -225,7 +207,6 @@ services:
       DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME: pipeline_data
       DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD: pipeline_data
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      REDIS_HOSTS: redis://redis:6379
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/q/health/ready"]
       interval: 10s
@@ -238,8 +219,6 @@ services:
       pipeline-postgresql:
         condition: service_healthy
       kafka:
-        condition: service_healthy
-      redis:
         condition: service_healthy
 
   pipeline-executor:
@@ -259,7 +238,6 @@ services:
       DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME: pipeline_data
       DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD: pipeline_data
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      REDIS_HOSTS: redis://redis:6379
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
@@ -274,8 +252,6 @@ services:
       pipeline-postgresql:
         condition: service_healthy
       kafka:
-        condition: service_healthy
-      redis:
         condition: service_healthy
 
   frontend:
@@ -423,14 +399,6 @@ services:
       postgresql:
         condition: service_healthy
 
-  redis-exporter:
-    image: oliver006/redis_exporter:v1.62.0
-    container_name: dataturntable-redis-exporter
-    environment:
-      REDIS_ADDR: redis://redis:6379
-    depends_on:
-      redis:
-        condition: service_healthy
 
   kafka-exporter:
     image: danielqsj/kafka-exporter:v1.8.0
@@ -491,7 +459,6 @@ volumes:
   pipeline-pgdata:
   monitoring-pgdata:
   kafka-data:
-  redis-data:
   mosquitto-data:
   mosquitto-logs:
   prometheus-data:

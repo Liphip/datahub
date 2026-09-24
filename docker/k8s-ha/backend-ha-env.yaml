@@ -14,8 +14,6 @@ spec:
               value: jdbc:postgresql://pipeline-db-ha-postgresql-ha-pgpool:5432/pipeline_data
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: kafka-ha:9092
-            - name: REDIS_HOSTS
-              value: redis://redis-ha-master:6379
             - name: DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_HOST
               value: pipeline-db-ha-postgresql-ha-pgpool
 ---
@@ -35,8 +33,6 @@ spec:
               value: jdbc:postgresql://pipeline-db-ha-postgresql-ha-pgpool:5432/pipeline_data
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: kafka-ha:9092
-            - name: REDIS_HOSTS
-              value: redis://redis-ha-master:6379
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -54,8 +50,6 @@ spec:
               value: jdbc:postgresql://pipeline-db-ha-postgresql-ha-pgpool:5432/pipeline_data
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: kafka-ha:9092
-            - name: REDIS_HOSTS
-              value: redis://redis-ha-master:6379
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -73,6 +67,4 @@ spec:
               value: jdbc:postgresql://pipeline-db-ha-postgresql-ha-pgpool:5432/pipeline_data
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: kafka-ha:9092
-            - name: REDIS_HOSTS
-              value: redis://redis-ha-master:6379
 

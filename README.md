@@ -256,7 +256,6 @@ Environment variables for the backend:
 | DB_PORT | PostgreSQL port | 5432 |
 | DB_NAME | Database name | dataturntable |
 | KAFKA_BOOTSTRAP_SERVERS | Kafka servers | kafka:9092 |
-| REDIS_HOSTS | Redis hosts | redis://redis:6379 |
 | DATATURNTABLE_GRAFANA_DASHBOARD_ENABLED | Enable dashboard Grafana reconciliation | false |
 | DATATURNTABLE_GRAFANA_DASHBOARD_BASE_URL | Dashboard Grafana base URL for admin API calls | http://dashboard-grafana:3000 |
 | DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_USER | Dashboard Grafana admin username | admin |
@@ -300,7 +299,7 @@ docker network create --driver overlay --attachable dataturntable
 docker stack deploy -c docker/docker-stack.app.yml dataturntable
 ```
 
-- Deploys full platform services in Swarm: app PostgreSQL, pipeline PostgreSQL/Timescale, monitoring PostgreSQL, Kafka, Redis, Mosquitto, `control-api`, `public-api`, `ingest-edge`, `pipeline-executor`, Frontend, Nginx, monitoring Grafana, and dashboard Grafana
+- Deploys full platform services in Swarm: app PostgreSQL, pipeline PostgreSQL/Timescale, monitoring PostgreSQL, Kafka, Mosquitto, `control-api`, `public-api`, `ingest-edge`, `pipeline-executor`, Frontend, Nginx, monitoring Grafana, and dashboard Grafana
 - Includes dedicated docs service (`dataturntable/docs:latest`) for user/admin documentation
 - Scales stateless services by default (`control-api=2`, `public-api=2`, `ingest-edge=2`, `pipeline-executor=2`, `frontend=3`, `nginx=2`)
 - Works with the monitoring stack on the shared `dataturntable` overlay network
@@ -314,7 +313,7 @@ docker network create --driver overlay --attachable dataturntable
 docker stack deploy -c docker/docker-stack.ha.yml dataturntable-ha
 ```
 
-The HA stack file is in [docker/docker-stack.ha.yml](docker/docker-stack.ha.yml). The Kubernetes Helm values below are the stronger reference for the full HA infra plane, including Redis replication/Sentinel.
+The HA stack file is in [docker/docker-stack.ha.yml](docker/docker-stack.ha.yml). The Kubernetes Helm values below are the stronger reference for the full HA infra plane.
 
 ### Kubernetes
 
@@ -329,7 +328,7 @@ Monitoring endpoint host for Kubernetes ingress:
 - `docs.dataturntable.example.com` → Documentation portal
 
 Kubernetes bundle now includes full application + monitoring resources:
-- App services: app PostgreSQL, pipeline PostgreSQL/Timescale, monitoring PostgreSQL, Kafka, Redis, Mosquitto, `control-api`, `public-api`, `ingest-edge`, `pipeline-executor`, Frontend
+- App services: app PostgreSQL, pipeline PostgreSQL/Timescale, monitoring PostgreSQL, Kafka, Mosquitto, `control-api`, `public-api`, `ingest-edge`, `pipeline-executor`, Frontend
 - Monitoring services: Prometheus, Loki, Grafana Alloy, monitoring Grafana, dashboard Grafana, node-exporter, kube-state-metrics, DB/broker exporters
 
 System/hardware visibility in Grafana:
@@ -347,7 +346,6 @@ Production HA infrastructure Helm values are included in:
 - [docker/helm/ha-values/pipeline-postgresql-ha.yaml](docker/helm/ha-values/pipeline-postgresql-ha.yaml)
 - [docker/helm/ha-values/monitoring-postgresql-ha.yaml](docker/helm/ha-values/monitoring-postgresql-ha.yaml)
 - [docker/helm/ha-values/kafka-ha.yaml](docker/helm/ha-values/kafka-ha.yaml)
-- [docker/helm/ha-values/redis-ha.yaml](docker/helm/ha-values/redis-ha.yaml)
 - [docker/helm/ha-values/mqtt-ha.yaml](docker/helm/ha-values/mqtt-ha.yaml)
 
 Installation notes and expected service names are documented in [docker/helm/README.md](docker/helm/README.md).

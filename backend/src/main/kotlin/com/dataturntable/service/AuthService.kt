@@ -12,7 +12,7 @@ import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
 import jakarta.ws.rs.NotFoundException
 import org.eclipse.microprofile.jwt.JsonWebToken
-import org.mindrot.jbcrypt.BCrypt
+import io.quarkus.elytron.security.common.BcryptUtil
 import java.security.SecureRandom
 import java.util.HashSet
 import java.util.UUID
@@ -46,7 +46,7 @@ class AuthService {
         }
         
         val candidateHashes = normalizeClientPasswordHash(request.passwordHash)
-        val valid = candidateHashes.any { BCrypt.checkpw(it, user.passwordHash) }
+        val valid = candidateHashes.any { BcryptUtil.matches(it, user.passwordHash) }
         if (!valid) {
             throw SecurityException("Invalid credentials")
         }
@@ -159,7 +159,7 @@ class AuthService {
         
         val user = User().apply {
             this.email = request.email
-            this.passwordHash = BCrypt.hashpw(passwordHash, BCrypt.gensalt())
+            this.passwordHash = BcryptUtil.bcryptHash(passwordHash)
             this.firstName = "Admin"
             this.lastName = "User"
             this.isActive = true

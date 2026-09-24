@@ -37,7 +37,6 @@ x-backend-common-env: &backend_common
   DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME: pipeline_data
   DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD: pipeline_data
   KAFKA_BOOTSTRAP_SERVERS: kafka-0:9092,kafka-1:9092,kafka-2:9092
-  REDIS_HOSTS: redis://redis-ha:6379
   DATATURNTABLE_GRAFANA_DASHBOARD_ENABLED: "true"
   DATATURNTABLE_GRAFANA_DASHBOARD_BASE_URL: http://dashboard-grafana:3000
   DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_USER: admin
@@ -519,12 +518,3 @@ services:
     deploy:
       replicas: 2
 
-  redis-ha:
-    image: bitnami/redis:7.4
-    environment:
-      ALLOW_EMPTY_PASSWORD: "yes"
-      REDIS_REPLICATION_MODE: master
-    networks:
-      - dataturntable
-    deploy:
-      replicas: 1

@@ -13,19 +13,19 @@
     <description>High-performance data hub for IoT/sensor data processing</description>
     
     <properties>
-        <compiler-plugin.version>3.13.0</compiler-plugin.version>
-        <maven.compiler.release>21</maven.compiler.release>
+        <compiler-plugin.version>3.16.0</compiler-plugin.version>
+        <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <quarkus.platform.version>3.32.2</quarkus.platform.version>
-        <kotlin.version>2.3.0</kotlin.version>
-        <surefire-plugin.version>3.5.2</surefire-plugin.version>
+        <quarkus.platform.version>3.39.5</quarkus.platform.version>
+        <kotlin.version>2.4.10</kotlin.version>
+        <surefire-plugin.version>3.6.0</surefire-plugin.version>
     </properties>
     
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>io.quarkus</groupId>
-                <artifactId>quarkus-universe-bom</artifactId>
+                <groupId>io.quarkus.platform</groupId>
+                <artifactId>quarkus-bom</artifactId>
                 <version>${quarkus.platform.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
@@ -95,12 +95,6 @@
             <artifactId>quarkus-websockets</artifactId>
         </dependency>
         
-        <!-- Redis -->
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-redis-client</artifactId>
-        </dependency>
-        
         <!-- Config -->
         <dependency>
             <groupId>io.quarkus</groupId>
@@ -127,16 +121,8 @@
 
         <!-- Password Hashing -->
         <dependency>
-            <groupId>org.mindrot</groupId>
-            <artifactId>jbcrypt</artifactId>
-            <version>0.4</version>
-        </dependency>
-        
-        <!-- Docker Java API -->
-        <dependency>
-            <groupId>com.spotify</groupId>
-            <artifactId>docker-client</artifactId>
-            <version>8.16.0</version>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-elytron-security-common</artifactId>
         </dependency>
         
         <!-- Kotlin -->
@@ -177,18 +163,6 @@
             <artifactId>quarkus-test-h2</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- FIXME: Duplicate H2 test dependencies
-             Details: quarkus-jdbc-h2 and quarkus-test-h2 are each declared twice. Keep one declaration of each so dependency updates and effective-POM inspection remain unambiguous. -->
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-jdbc-h2</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-test-h2</artifactId>
-            <scope>test</scope>
-        </dependency>
     </dependencies>
     
     <build>
@@ -214,9 +188,6 @@
                 <version>${compiler-plugin.version}</version>
                 <configuration>
                     <parameters>true</parameters>
-                    <compilerArgs>
-                        <arg>-Xjvm-default=all</arg>
-                    </compilerArgs>
                 </configuration>
             </plugin>
             <plugin>
@@ -234,7 +205,7 @@
                 <version>${kotlin.version}</version>
                 <configuration>
                     <args>
-                        <arg>-Xjvm-default=all</arg>
+                        <arg>-jvm-default=no-compatibility</arg>
                     </args>
                     <sourceDirs>
                         <sourceDir>${project.basedir}/src/main/kotlin</sourceDir>

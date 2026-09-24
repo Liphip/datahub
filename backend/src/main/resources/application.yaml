@@ -35,9 +35,7 @@ quarkus:
   kafka:
     bootstrap:
       servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-  
-  redis:
-    hosts: ${REDIS_HOSTS:redis://localhost:6379}
+
 
   micrometer:
     export:
@@ -182,8 +180,6 @@ dataturntable:
     kafka:
       bootstrap:
         servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-    redis:
-      hosts: ${REDIS_HOSTS:redis://localhost:6379}
     flyway:
       migrate-at-start: true
 
@@ -249,5 +245,3 @@ dataturntable:
     kafka:
       bootstrap:
         servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-    redis:
-      hosts: ${REDIS_HOSTS:redis://localhost:6379}

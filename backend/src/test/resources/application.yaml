@@ -13,9 +13,6 @@ quarkus:
   h2:
     devservices:
       enabled: false
-  redis:
-    devservices:
-      enabled: false
   # WARNING: Ineffective MQTT Dev Services switch
   # Details: Quarkus reports quarkus.mqtt.devservices.enabled as unrecognized during tests; this project uses Eclipse Paho rather than a Quarkus MQTT Dev Service.
   mqtt:

@@ -10,7 +10,6 @@ volumes:
   monitoring-pgdata:
   dashboard-pgdata:
   kafka-data:
-  redis-data:
   mosquitto-data:
   mosquitto-logs:
   grafana-data:
@@ -112,14 +111,6 @@ services:
         constraints:
           - node.role == manager
 
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis-data:/data
-    networks:
-      - dataturntable
-    deploy:
-      replicas: 1
 
   mosquitto:
     image: eclipse-mosquitto:2
@@ -167,7 +158,6 @@ services:
       DATATURNTABLE_GRAFANA_MONITORING_ADMIN_USER: admin
       DATATURNTABLE_GRAFANA_MONITORING_ADMIN_PASSWORD: admin
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      REDIS_HOSTS: redis://redis:6379
     ports:
       - target: 8080
         published: 8080
@@ -197,7 +187,6 @@ services:
       DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME: pipeline_data
       DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD: pipeline_data
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      REDIS_HOSTS: redis://redis:6379
     networks:
       - dataturntable
     deploy:
@@ -222,7 +211,6 @@ services:
       DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME: pipeline_data
       DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD: pipeline_data
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      REDIS_HOSTS: redis://redis:6379
     networks:
       - dataturntable
     deploy:
@@ -249,7 +237,6 @@ services:
       DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME: pipeline_data
       DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD: pipeline_data
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      REDIS_HOSTS: redis://redis:6379
     networks:
       - dataturntable
     deploy:
