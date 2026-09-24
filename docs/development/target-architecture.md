@@ -125,7 +125,7 @@ Current gap: `logging/AuditLogger.kt` has no callers and only writes to stdout. 
 
 - **Table format:** Apache Iceberg via `iceberg-core` inside the backend.
 - **Catalog:** Iceberg JDBC catalog in the existing Postgres; the backend also serves the Iceberg REST catalog API with a namespace per tenant and app authentication, so Python modules (PyIceberg/DuckDB) and external tools can attach.
-- **Object storage:** bundled S3-compatible store (SeaweedFS default; external S3 optional). Open point: verify current licensing/distribution of candidate stores.
+- **Object storage:** bundled S3-compatible store (SeaweedFS, Apache-2.0, as default; external S3 optional). MinIO is excluded: its community edition is archived and no longer distributed (see `licenses.md`).
 - **Writes:** sink consumer group writes Parquet; one committer per table elected via `ConnectorLeaseService`, committing every 30–60 s; app-scheduled compaction, snapshot expiry, orphan cleanup.
 - **Layers:** bronze (all raw ingested events, enabling replay), silver/gold (`DB_SAVE` targets).
 - **Time-series layout:** `tenant, series_id, tags, ts, value(s), quality, ingest_ts`, partitioned by `day(ts)` and a `series_id` bucket, sorted by `series_id, ts`. Late data handled by event-time partitioning plus compaction re-sort. Continuously maintained 1m/1h/1d rollups.
@@ -135,7 +135,7 @@ Current gap: `logging/AuditLogger.kt` has no callers and only writes to stdout. 
 ## 7. Deployment
 
 - One Helm chart with bundled dependencies managed by operators (CloudNativePG, Strimzi, KEDA), plus the object store and MQTT broker. Single-node Docker Compose uses the same images.
-- Open point: `docker/helm/` currently relies on Bitnami charts; verify their current availability terms.
+- `docker/helm/` and the Swarm HA stack still reference Bitnami PostgreSQL/pgpool images, which Bitnami no longer publishes; they are replaced by CloudNativePG. The HA MQTT broker needs a decision because EMQX 5.9+ is BSL-licensed (see `licenses.md`).
 - Images pinned to versions/digests; lockfiles committed.
 
 ## 8. Phases

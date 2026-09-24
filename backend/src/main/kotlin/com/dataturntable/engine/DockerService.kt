@@ -64,7 +64,7 @@ class DockerService {
     @Inject
     lateinit var warmPool: WarmContainerPool
     
-    @ConfigProperty(name = "dataturntable.docker.module.base-image", defaultValue = "python:3.11-slim")
+    @ConfigProperty(name = "dataturntable.docker.module.base-image", defaultValue = "python:3.14.7-slim-trixie")
     lateinit var baseImage: String
     
     @ConfigProperty(name = "dataturntable.docker.network", defaultValue = "dataturntable")

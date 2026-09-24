@@ -308,7 +308,7 @@ Each running module instance is an isolated Docker container:
 
 | Property | Value |
 | -------- | ----- |
-| Base image | `python:3.11-slim` (configurable via `application.yaml`) |
+| Base image | `python:3.14.7-slim-trixie` (configurable via `application.yaml`) |
 | User | Non-root (`module-runner`) |
 | Filesystem | Read-only root; `/tmp` writable; cleared between batch invocations |
 | Network | None by default; explicit allowlist per module (requires TenantAdmin approval) |
@@ -904,7 +904,7 @@ For production dashboards, use the Grafana datasource EXPORT module or the Thing
 | Internal Bus | Apache Kafka (Confluent) | 7.5.0 | KRaft mode (no ZooKeeper) |
 | Pipeline Engine | Quarkus Kafka consumers | — | Graph-based, part of backend |
 | Admin UI | React + TypeScript + Vite | 18.2 / 5.3 / 5.1 | Tailwind CSS, Zustand, Axios |
-| Module Runtime | Python | 3.11 | `python:3.11-slim` Docker image |
+| Module Runtime | Python | 3.14 | `python:3.14.7-slim-trixie` Docker image |
 | Default Storage (TS) | TimescaleDB | latest-pg16 | PostgreSQL extension |
 | Default Storage (SQL) | PostgreSQL | 16.x | Metadata and config |
 | Optional Storage | MongoDB | 7.x | Document store (V2) |

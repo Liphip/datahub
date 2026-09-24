@@ -41,7 +41,7 @@ Grafana admin account through general application configuration.
 
 | Variable/key | Default | Meaning |
 |---|---|---|
-| `dataturntable.docker.module.base-image` | `python:3.11-slim` | Base image used for user module containers |
+| `dataturntable.docker.module.base-image` | `python:3.14.7-slim-trixie` | Base image used for user module containers |
 | `dataturntable.docker.module.network` | `dataturntable` | Docker network connected to module containers |
 | `dataturntable.docker.resources.cpu-limit` | `1.0` | CPU limit passed to module containers |
 | `dataturntable.docker.resources.memory-limit` | `512m` | Memory limit passed to module containers |
