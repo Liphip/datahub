@@ -157,6 +157,19 @@ class PipelineResource {
                 validateAlertChannel(tenantId, nodeId, nodeMap["alertChannel"]?.toString())?.let { return it }
             }
 
+            // IMPORT without a module is the built-in pass-through: records flow on as received.
+            if (nodeType == "IMPORT" && nodeMap["moduleVersionId"] == null) {
+                val connectorId = nodeMap["connectorId"] as? String ?: continue   // HTTP/WebSocket push by pipeline id
+                val connector = runCatching { UUID.fromString(connectorId) }.getOrNull()
+                    ?.let { em.find(Connector::class.java, it) }
+                    ?: return "Node $nodeId references missing connector: $connectorId"
+                if (connector.tenant?.id != tenantId) return "Node $nodeId references connector from another tenant"
+                if (connector.direction?.name != "INPUT") {
+                    return "Node $nodeId (IMPORT) requires INPUT connector direction (found ${connector.direction?.name})"
+                }
+                continue
+            }
+
             val declaredModuleId = nodeMap["moduleId"] as? String
             val moduleVersionId = nodeMap["moduleVersionId"] as? String
                 ?: return "Node $nodeId ($nodeType) requires moduleVersionId"

@@ -48,6 +48,12 @@ data class PipelineEvent(
  */
 class PipelineConsumer {
 
+    private companion object {
+        /** Metadata the platform adds to queued records; not part of the device data. */
+        val PLATFORM_KEYS = setOf("_pipelineId", "_runId", "_ingestedAt", "_tenantId", "_connectorId",
+            "_mqttTopic", "_triggerType", "_source", "_retryOfRunId")
+    }
+
     private val LOG = Logger.getLogger(PipelineConsumer::class.java)
     private val objectMapper = ObjectMapper()
 
@@ -339,7 +345,7 @@ class PipelineConsumer {
         data class GraphNode(
             val id: String,
             val type: ModuleType,
-            /** Null only for ALERT nodes that use a built-in rule. */
+            /** Null for ALERT nodes with a built-in rule and for pass-through IMPORT nodes. */
             val moduleVersionId: UUID?,
             val connector: ResolvedConnector?,
             /** ALERT nodes: default channel (id or name) when an alert names none. */
@@ -405,8 +411,36 @@ class PipelineConsumer {
          * EXPORT  — module shapes data, then platform delivers via connector.
          * PROCESSING / ALERT — standard single-input execution.
          */
+        /**
+         * Built-in IMPORT without a module: emits the received record. Connector deliveries
+         * ({"payload": ..., "_connectorId": ...}) are unwrapped to their payload and platform
+         * metadata keys are removed, so rules and sinks see the device's own fields.
+         */
+        fun executePassThrough(node: GraphNode, input: Any?, order: Int): Any? {
+            val startedAt = System.currentTimeMillis()
+            executionLog.add("START IMPORT #$order pass-through [${node.id}]")
+            val received = input ?: node.connector?.let { connectorRuntime.fetchFromConnector(it.connector, it.config) }
+            val record = when {
+                received is Map<*, *> && received.containsKey("payload") && received.containsKey("_connectorId") -> received["payload"]
+                received is Map<*, *> -> received.filterKeys { it.toString() !in PLATFORM_KEYS }
+                else -> received
+            }
+            val durationMs = System.currentTimeMillis() - startedAt
+            if (runUuid != null) {
+                logWriter.persistNodeLog(
+                    runId = runUuid, nodeId = node.id, nodeType = "IMPORT", moduleName = "pass-through",
+                    success = true, stdout = "", stderr = "", errorMessage = null, durationMs = durationMs,
+                )
+            }
+            moduleLogs.add(mapOf("stage" to "IMPORT", "order" to order, "nodeId" to node.id, "moduleName" to "pass-through",
+                "success" to true, "durationMs" to durationMs))
+            executionLog.add("DONE IMPORT #$order pass-through [${node.id}] (${durationMs}ms)")
+            return record
+        }
+
         fun executeNode(node: GraphNode, moduleInput: Any?, order: Int): Any? {
             node.alertRule?.let { return executeRuleNode(node, it, moduleInput, order) }
+            if (node.type == ModuleType.IMPORT && node.moduleVersionId == null) return executePassThrough(node, moduleInput, order)
             val version = node.moduleVersionId?.let { ModuleVersion.findById(it) }
                 ?: throw IllegalStateException("Missing module version for node ${node.id}")
             // DB_LOAD/DB_SAVE modules sit on IMPORT/EXPORT nodes; execution follows the module's own type.
@@ -623,7 +657,7 @@ class PipelineConsumer {
                 }
             }
             val moduleVersionId = parseUuid(nodeMap["moduleVersionId"]?.toString())
-            if (moduleVersionId == null && alertRule == null) return@mapNotNull null
+            if (moduleVersionId == null && alertRule == null && nodeType != ModuleType.IMPORT) return@mapNotNull null
             GraphNode(
                 id = nodeId,
                 type = nodeType,

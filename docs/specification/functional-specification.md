@@ -162,6 +162,8 @@ The import layer sits at the boundary between the outside world and the pipeline
 
 **Active (we pull):** The platform fetches data from an external source through an INPUT connector (e.g. REST polling, file watch, broker subscription) and hands it to the IMPORT module for parsing.
 
+**Pass-through IMPORT:** An IMPORT node without a module forwards each record as received. Connector deliveries are unwrapped to their payload and platform metadata (`_runId`, `_ingestedAt`, …) is removed. Structured measurements (JSON from devices, gateways or other systems) therefore reach built-in rules, sinks and modules without any code. A Python IMPORT module is only needed to parse or reshape other formats. New IMPORT nodes default to pass-through in the pipeline editor.
+
 ### 3.2 Passive Inbound Endpoints
 
 | Protocol | Endpoint / Address | Notes |

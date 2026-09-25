@@ -64,6 +64,7 @@ class PipelineRunQueueTest {
     @AfterEach
     fun cleanUp() {
         QuarkusTransaction.requiringNew().run {
+            em.createQuery("DELETE FROM PipelineRunNodeLog l WHERE l.run.pipeline.id = :p").setParameter("p", pipelineId).executeUpdate()
             em.createQuery("DELETE FROM PipelineRun r WHERE r.pipeline.id = :p").setParameter("p", pipelineId).executeUpdate()
             em.createQuery("DELETE FROM Pipeline p WHERE p.id = :p").setParameter("p", pipelineId).executeUpdate()
             em.createQuery("DELETE FROM Tenant t WHERE t.id = :t").setParameter("t", tenantId).executeUpdate()
@@ -137,6 +138,49 @@ class PipelineRunQueueTest {
         val failed = run(runId)
         assertEquals(PipelineRunStatus.FAILED, failed.status)
         assertEquals(5, mapper.readTree(failed.inputPayload)["v"].asInt())
+    }
+
+    @Test
+    fun passThroughImportFeedsBuiltInRuleWithoutAnyModule() {
+        val received = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/hook") { ex ->
+                received += ex.requestBody.readAllBytes().decodeToString()
+                ex.sendResponseHeaders(204, -1)
+                ex.close()
+            }
+            start()
+        }
+        try {
+            QuarkusTransaction.requiringNew().run {
+                val channel = com.dataturntable.alert.AlertChannel().apply {
+                    tenant = em.find(Tenant::class.java, tenantId); name = "hook"
+                    channelType = com.dataturntable.alert.AlertChannelType.WEBHOOK
+                    config = """{"url":"http://127.0.0.1:${server.address.port}/hook"}"""
+                }.also { em.persist(it) }
+                em.find(Pipeline::class.java, pipelineId).graphDefinition = """{"nodes":[
+                    {"id":"in","type":"IMPORT"},
+                    {"id":"hot","type":"ALERT","alertChannel":"${channel.id}",
+                     "alertRule":{"type":"threshold","field":"temp","operator":">","value":80,"seriesField":"device","cooldownSeconds":0}}],
+                    "edges":[{"source":"in","target":"hot"}]}"""
+            }
+            val sink = messaging.sink<String>("pipeline-commands")
+            queue.enqueue(pipelineId, TriggerType.DATA, mapOf("device" to "b1", "temp" to 75))
+            queue.enqueue(pipelineId, TriggerType.DATA, mapOf("device" to "b1", "temp" to 91))
+            // MQTT-style delivery: the payload is unwrapped for the rule.
+            queue.enqueue(pipelineId, TriggerType.DATA, mapOf("_connectorId" to "c", "payload" to mapOf("device" to "b2", "temp" to 99)))
+            sink.received().forEach { assertTrue(consumer.consume(it.payload).success) }
+
+            assertEquals(2, received.size)
+            assertTrue(received.any { "\"b1\"" in it } && received.any { "\"b2\"" in it }, received.toString())
+        } finally {
+            server.stop(0)
+            QuarkusTransaction.requiringNew().run {
+                em.createQuery("DELETE FROM AlertHistory h WHERE h.tenant.id = :t").setParameter("t", tenantId).executeUpdate()
+                em.createQuery("DELETE FROM AlertChannel c WHERE c.tenant.id = :t").setParameter("t", tenantId).executeUpdate()
+                em.createQuery("DELETE FROM AlertRuleState").executeUpdate()
+            }
+        }
     }
 
     @Test

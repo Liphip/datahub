@@ -59,7 +59,12 @@ interface PipelineNodeData extends Record<string, unknown> {
   alertChannel?: string;
   /** ALERT nodes: built-in rule evaluated by the platform instead of a Python module */
   alertRule?: AlertRuleConfig;
+  /** IMPORT nodes: forward records as received instead of running a Python module */
+  passThrough?: boolean;
 }
+
+/** Nodes that run a Python module (as opposed to a built-in rule or pass-through). */
+const usesModule = (d: PipelineNodeData) => !d.alertRule && !d.passThrough;
 
 /**
  * Defines the type `ModuleVersionOption`, the contract implemented by this source unit.
@@ -143,6 +148,9 @@ function DagNode({ data, selected }: NodeProps<DagNodeType>) {
         {d.connectorId && (
           <div className="text-[10px] text-gray-400 mt-0.5 truncate max-w-[140px]">⚡ connector</div>
         )}
+        {d.passThrough && (
+          <div className="text-[10px] text-gray-500 mt-0.5 truncate max-w-[140px]">↦ pass-through</div>
+        )}
         {d.alertRule && (
           <div className="text-[10px] text-gray-500 mt-0.5 truncate max-w-[140px]">
             📏 {RULE_TYPES.find((t) => t.value === d.alertRule?.type)?.label ?? d.alertRule.type}
@@ -195,6 +203,7 @@ function graphToFlow(
       mqttTopic: raw.mqttTopic as string | undefined,
       alertChannel: raw.alertChannel as string | undefined,
       alertRule: raw.alertRule as AlertRuleConfig | undefined,
+      passThrough: raw.type === 'IMPORT' && !raw.moduleVersionId,
     } satisfies PipelineNodeData,
   }));
 
@@ -223,8 +232,8 @@ function flowToGraph(
         id: n.id,
         type: d.nodeType,
         label: d.label,
-        moduleId: d.alertRule ? undefined : d.moduleId,
-        moduleVersionId: d.alertRule ? undefined : d.moduleVersionId,
+        moduleId: usesModule(d) ? d.moduleId : undefined,
+        moduleVersionId: usesModule(d) ? d.moduleVersionId : undefined,
         connectorId: d.connectorId,
         mqttTopic: d.mqttTopic,
         alertChannel: d.alertChannel,
@@ -396,6 +405,8 @@ export default function PipelineEditor() {
         label: nodeType,
         moduleVersionId: undefined,
         connectorId: undefined,
+        // Structured measurements need no parsing code; a module can still be chosen instead.
+        passThrough: nodeType === 'IMPORT' ? true : undefined,
       } satisfies PipelineNodeData,
     };
     setNodes((nds: DagNodeType[]) => [...nds, newNode as DagNodeType]);
@@ -444,6 +455,12 @@ export default function PipelineEditor() {
     if (invalidRuleNode) {
       showToast(`${invalidRuleNode.data.label}: ${validateAlertRule(invalidRuleNode.data.alertRule!)}`, 'error');
       setSelectedNodeId(invalidRuleNode.id);
+      return;
+    }
+    const nodeWithoutModule = nodes.find((n) => usesModule(n.data) && !n.data.moduleVersionId);
+    if (nodeWithoutModule) {
+      showToast(`${nodeWithoutModule.data.label}: select a module version`, 'error');
+      setSelectedNodeId(nodeWithoutModule.id);
       return;
     }
     setSaving(true);
@@ -784,9 +801,42 @@ function NodeConfigPanel({
         </div>
       )}
 
+      {data.nodeType === 'IMPORT' && (
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Processing</label>
+          <div className="grid grid-cols-2 gap-1 text-xs" role="radiogroup">
+            {[
+              { passThrough: true, label: 'Pass through' },
+              { passThrough: false, label: 'Python module' },
+            ].map((option) => {
+              const active = Boolean(data.passThrough) === option.passThrough;
+              return (
+                <button
+                  key={option.label}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  disabled={!canWrite}
+                  onClick={() => onChange({ passThrough: option.passThrough })}
+                  className={`px-2 py-1 rounded-sm border ${active ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+          {data.passThrough && (
+            <p className="text-[10px] text-gray-400 mt-1">
+              Records are forwarded as received (JSON fields as sent by the device). Choose a Python module to parse
+              or reshape other formats.
+            </p>
+          )}
+        </div>
+      )}
+
       {data.nodeType === 'ALERT' && data.alertRule ? (
         <AlertRuleForm rule={data.alertRule} disabled={!canWrite} onChange={(alertRule) => onChange({ alertRule })} />
-      ) : (
+      ) : data.passThrough ? null : (
         <>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">
