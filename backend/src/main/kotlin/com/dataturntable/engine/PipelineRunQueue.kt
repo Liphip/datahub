@@ -60,15 +60,11 @@ class PipelineRunQueue {
         retryOfRunId: UUID? = null,
         partitionKey: String? = null,
     ): UUID {
-        val runId = QuarkusTransaction.requiringNew().call {
-            val run = PipelineRun().apply {
-                pipeline = em.getReference(Pipeline::class.java, pipelineId)
-                this.triggerType = triggerType
-                this.retryOfRunId = retryOfRunId
-            }
-            em.persist(run)
-            em.flush()
-            run.id!!
+        val runId = try {
+            createRun(pipelineId, triggerType, retryOfRunId)
+        } catch (e: Exception) {
+            if (!isTransientInfrastructureFailure(e)) throw e
+            throw PipelineQueueUnavailableException("Database unavailable, retry later", e)
         }
         val input = data + mapOf("_pipelineId" to pipelineId.toString(), "_runId" to runId.toString())
         val message = objectMapper.writeValueAsString(
@@ -81,16 +77,32 @@ class PipelineRunQueue {
             ).await().atMost(sendTimeout)
         } catch (e: Exception) {
             log.errorf("Pipeline %s: run %s could not be queued: %s", pipelineId, runId, e.message)
-            QuarkusTransaction.requiringNew().run {
-                em.find(PipelineRun::class.java, runId)?.apply {
-                    status = PipelineRunStatus.FAILED
-                    completedAt = Instant.now()
-                    errorMessage = "Could not queue run: ${e.message}"
-                    inputPayload = objectMapper.writeValueAsString(input)
+            // Best effort: with the database also down the run stays PENDING, which the
+            // client's resend makes irrelevant.
+            runCatching {
+                QuarkusTransaction.requiringNew().run {
+                    em.find(PipelineRun::class.java, runId)?.apply {
+                        status = PipelineRunStatus.FAILED
+                        completedAt = Instant.now()
+                        errorMessage = "Could not queue run: ${e.message}"
+                        inputPayload = objectMapper.writeValueAsString(input)
+                    }
                 }
             }
             throw PipelineQueueUnavailableException("Pipeline queue unavailable, retry later", e)
         }
         return runId
     }
+
+    private fun createRun(pipelineId: UUID, triggerType: TriggerType, retryOfRunId: UUID?): UUID =
+        QuarkusTransaction.requiringNew().call {
+            val run = PipelineRun().apply {
+                pipeline = em.getReference(Pipeline::class.java, pipelineId)
+                this.triggerType = triggerType
+                this.retryOfRunId = retryOfRunId
+            }
+            em.persist(run)
+            em.flush()
+            run.id!!
+        }
 }

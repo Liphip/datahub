@@ -416,11 +416,6 @@ ALTER TABLE module_versions
 ALTER TABLE pipeline_run_node_logs
     ADD CONSTRAINT pipeline_run_node_logs_pkey PRIMARY KEY (id);
 
--- pipeline_runs pipeline_runs_pipeline_id_started_at_key (constraint)
-
-ALTER TABLE pipeline_runs
-    ADD CONSTRAINT pipeline_runs_pipeline_id_started_at_key UNIQUE (pipeline_id, started_at);
-
 -- pipeline_runs pipeline_runs_pkey (constraint)
 
 ALTER TABLE pipeline_runs

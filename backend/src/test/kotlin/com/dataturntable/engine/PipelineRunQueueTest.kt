@@ -39,6 +39,9 @@ class PipelineRunQueueTest {
     @Inject
     lateinit var em: EntityManager
 
+    @Inject
+    lateinit var reaper: PendingRunReaper
+
     private val mapper = ObjectMapper()
     private lateinit var tenantId: UUID
     private lateinit var pipelineId: UUID
@@ -106,6 +109,19 @@ class PipelineRunQueueTest {
 
         assertTrue(consumer.consume(record).success)
         assertEquals(PipelineRunStatus.SUCCESS, run(runId).status)
+    }
+
+    @Test
+    fun reapedRunIsStillProcessedWhenItsRecordArrivesLate() {
+        val runId = queue.enqueue(pipelineId, TriggerType.DATA, mapOf("v" to 1))
+        val record = messaging.sink<String>("pipeline-commands").received().single().payload
+
+        assertTrue(QuarkusTransaction.requiringNew().call { reaper.reap(java.time.Instant.now().plus(java.time.Duration.ofHours(1))) } >= 1)
+        assertEquals(PipelineRunStatus.FAILED, run(runId).status)
+
+        assertTrue(consumer.consume(record).success)                // backlog drained after the reaper ran
+        assertEquals(PipelineRunStatus.SUCCESS, run(runId).status)
+        assertEquals(null, run(runId).errorMessage)
     }
 
     @Test

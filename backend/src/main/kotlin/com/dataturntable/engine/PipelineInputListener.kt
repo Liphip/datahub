@@ -67,7 +67,8 @@ class PipelineInputListener {
                     log.errorf(e, "Giving up on pipeline record after %s, sending it to the dead-letter topic", maxInfraRetry)
                     throw e
                 }
-                log.warnf("Pipeline record not processed (%s), retrying in %d ms", e.message, backoffMs)
+                val root = generateSequence<Throwable>(e) { it.cause }.last()
+                log.warnf("Pipeline record not processed (%s; cause: %s), retrying in %d ms", e.message, root.message, backoffMs)
                 Thread.sleep(backoffMs)
                 backoffMs = (backoffMs * 2).coerceAtMost(15_000)
             }

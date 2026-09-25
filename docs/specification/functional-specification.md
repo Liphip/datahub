@@ -292,6 +292,11 @@ Delivery is **at-least-once** end to end; no acknowledged record is lost when a 
 | Executors | Offsets are committed only after a run finished. A dead executor's partitions move to the others and its uncommitted records are processed again; runs that already finished are skipped, a run that was running is started again. Lost database connections (e.g. a PostgreSQL failover) are retried with backoff for up to 10 minutes (`dataturntable.pipeline.max-infra-retry`) while the partition waits; only then the record goes to the DLQ. |
 | Built-in alert rules | Rule state is stored in PostgreSQL with row locks, so any executor can continue it (§9.2). |
 
+| Database unavailable at ingest | `503` + `Retry-After` (never `500`), so clients resend. |
+| Orphaned runs | A run whose instance stopped before Kafka acknowledged it stays PENDING; after 30 minutes (`dataturntable.pipeline.max-pending-age`) it is marked failed as "never queued". If its record still arrives later, it is processed normally. |
+
+Verified on a local 3-broker Kafka cluster with two application instances under continuous ingest (16 parallel clients): `kill -9` of a broker and of an application instance — 6,000 of 6,000 acknowledged records processed, none lost; stopping PostgreSQL for 15 s — 4,000 of 4,000 processed, clients received only `503` during the outage.
+
 Consequences: a record can be processed twice (client resend after a lost `202`, executor death mid-run). Exports and alerts of such a run can therefore repeat; alert cooldowns suppress repeated alerts, idempotent sinks (upserts keyed by measurement id and timestamp) avoid duplicate rows.
 
 ---

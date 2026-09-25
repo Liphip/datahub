@@ -41,7 +41,10 @@ class PipelineLogWriter {
     @Transactional(Transactional.TxType.REQUIRES_NEW)
     fun claimRun(runId: UUID): Boolean {
         val run = em.find(PipelineRun::class.java, runId, LockModeType.PESSIMISTIC_WRITE) ?: return false
-        if (run.status != PipelineRunStatus.PENDING && run.status != PipelineRunStatus.RUNNING) return false
+        val reaped = run.status == PipelineRunStatus.FAILED && run.errorMessage == PendingRunReaper.REAPED_MESSAGE
+        if (run.status != PipelineRunStatus.PENDING && run.status != PipelineRunStatus.RUNNING && !reaped) return false
+        run.errorMessage = null
+        run.completedAt = null
         run.status = PipelineRunStatus.RUNNING
         run.startedAt = Instant.now()
         return true
