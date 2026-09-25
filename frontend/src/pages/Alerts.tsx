@@ -311,22 +311,16 @@ export default function Alerts() {
           {activeTab === 'channels' && (
             <div className="space-y-4">
               <div className="rounded-sm border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-                <p className="font-semibold mb-1">How ALERT modules fire channels</p>
-                <p className="mb-2">
-                  Alert modules dispatch alerts by returning a special object from their code. The platform detects this return value and fires the matching channel:
-                </p>
-                <pre className="bg-blue-100 rounded-sm px-3 py-2 text-xs font-mono overflow-x-auto whitespace-pre-wrap">{`return {
-  "__alert__": {
-    "channelId": "<id>",
-    "title": "Threshold exceeded",
-    "message": "Temperature is above limit",
-    "severity": "WARNING",
-    "payload": {}
-  }
-}`}</pre>
-                <p className="mt-2 text-blue-800 text-xs">
-                  Copy the channel ID from any channel card below to use in your module code.
-                </p>
+                <p className="font-semibold mb-1">{t('alerts.howTitle')}</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>{t('alerts.howRules')}</li>
+                  <li>
+                    {t('alerts.howModules')}
+                    <pre className="bg-blue-100 rounded-sm px-3 py-2 mt-1 text-xs font-mono overflow-x-auto whitespace-pre-wrap">{`alert_fn(severity="critical", title="Boiler too hot",
+         message=f"temp = {record['temp']}", channel="<channel id or name>")`}</pre>
+                  </li>
+                </ul>
+                <p className="mt-2 text-blue-800 text-xs">{t('alerts.howChannelHint')}</p>
               </div>
 
               {canConfigureAlerts && (

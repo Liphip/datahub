@@ -11,3 +11,8 @@ scripts/*
 !scripts/add-inline-source-documentation.ps1
 !scripts/generate-source-function-reference.ps1
 docs-site/site/
+
+# Emitted by `tsc -b` for the config files; Vite would load them instead of the .ts sources
+frontend/*.config.js
+!frontend/eslint.config.js
+frontend/*.config.d.ts

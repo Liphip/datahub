@@ -946,7 +946,8 @@ class PipelineResource {
             val tenantId = pipeline.tenant?.id?.toString()
                 ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
             requireTenantAccess(currentUser, tenantId, "pipeline:read")?.let { return it }
-            Response.ok(pipelineToMap(pipeline)).build()
+            // The editor loads and polls the latest run through this endpoint.
+            Response.ok(pipelineToMap(pipeline) + latestRunSummary(pipelineId)).build()
         } else {
             Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
         }

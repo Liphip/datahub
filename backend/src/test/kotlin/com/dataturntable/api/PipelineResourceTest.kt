@@ -679,6 +679,15 @@ class PipelineResourceTest {
         assertEquals(sourceRunId, queued["data"]["_retryOfRunId"].asText())
         assertEquals(queued["runId"].asText(), queued["data"]["_runId"].asText())
 
+        // The editor reads the latest run from the single-pipeline endpoint.
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/pipelines/$pipelineId")
+        .then()
+            .statusCode(200)
+            .body("latestRunId", equalTo(queued["runId"].asText()))
+
         val runningRunId = QuarkusTransaction.requiringNew().call<String> {
             val pipeline = em.find(Pipeline::class.java, java.util.UUID.fromString(pipelineId))
             val run = PipelineRun().apply {

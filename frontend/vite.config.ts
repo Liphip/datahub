@@ -17,7 +17,7 @@ export default defineConfig({
     proxy: {
       // Backend resources are served under /api/..., so the path is forwarded unchanged.
       '/api': {
-        target: 'http://localhost:8080',
+        target: process.env.API_PROXY_TARGET ?? 'http://localhost:8080',
         changeOrigin: true,
       },
     },

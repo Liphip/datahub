@@ -185,15 +185,44 @@ function makeNodeId() {
 /**
  * Implements `graphToFlow` for this source unit.
  */
+/**
+ * Positions for graphs saved without them (e.g. created through the API): one column per
+ * depth from the sources, nodes of a column stacked, so fan-out and fan-in stay visible.
+ */
+function layeredLayout(graph: NonNullable<Pipeline['graphDefinition']>): Map<string, { x: number; y: number }> {
+  const ids = (graph.nodes ?? []).map((n, idx) => String(n.id ?? `n-${idx}`));
+  const incoming = new Map(ids.map((id) => [id, [] as string[]]));
+  for (const e of graph.edges ?? []) incoming.get(String(e.target))?.push(String(e.source));
+  const depth = new Map<string, number>();
+  const depthOf = (id: string, seen: Set<string>): number => {
+    if (depth.has(id)) return depth.get(id)!;
+    if (seen.has(id)) return 0; // cycle guard; the backend rejects cyclic graphs
+    seen.add(id);
+    const d = Math.max(-1, ...(incoming.get(id) ?? []).map((src) => depthOf(src, seen))) + 1;
+    depth.set(id, d);
+    return d;
+  };
+  const rows = new Map<number, number>();
+  const positions = new Map<string, { x: number; y: number }>();
+  for (const id of ids) {
+    const d = depthOf(id, new Set());
+    const row = rows.get(d) ?? 0;
+    rows.set(d, row + 1);
+    positions.set(id, { x: 80 + d * 260, y: 80 + row * 140 });
+  }
+  return positions;
+}
+
 function graphToFlow(
   graph: Pipeline['graphDefinition'],
 ): { nodes: DagNodeType[]; edges: Edge[] } {
   if (!graph) return { nodes: [], edges: [] };
 
+  const layout = layeredLayout(graph);
   const nodes: DagNodeType[] = (graph.nodes ?? []).map((raw, idx) => ({
     id: String(raw.id ?? `n-${idx}`),
     type: 'dagNode',
-    position: (raw.position as { x: number; y: number }) ?? { x: 150 + idx * 200, y: 150 },
+    position: (raw.position as { x: number; y: number }) ?? layout.get(String(raw.id ?? `n-${idx}`)) ?? { x: 150 + idx * 200, y: 150 },
     data: {
       nodeType: raw.type as NodeType,
       label: String(raw.label ?? raw.type ?? 'Node'),
