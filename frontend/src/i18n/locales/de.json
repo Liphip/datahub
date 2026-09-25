@@ -627,7 +627,7 @@
     "disconnectAnyway:": "Trotzdem trennen",
     "integratedMqttUsers:": "Integrierte MQTT-Broker-Benutzer",
     "brokerUsersDescription:": "Mandantenbezogene Broker-Anmeldedaten für den gebündelten Mosquitto-Broker. Diese sind von App-Login-Benutzern getrennt.",
-    "createBrokerUser:": "Broker-Benutzer erstellen",
+    "createBrokerUser:": "MQTT-Broker-Benutzer erstellen",
     "noBrokerUsers:": "Keine MQTT-Broker-Benutzer für diesen Mandanten konfiguriert.",
     "username:": "Benutzername",
     "password:": "Passwort",
@@ -676,8 +676,7 @@
     "allPipelines:": "Alle Pipelines",
     "editConnector:": "Konnektor bearbeiten",
     "createConnector:": "Konnektor erstellen",
-    "editBrokerUser:": "MQTT-Broker-Benutzer bearbeiten",
-    "createBrokerUser:": "MQTT-Broker-Benutzer erstellen"
+    "editBrokerUser:": "MQTT-Broker-Benutzer bearbeiten"
   },
   "data": {
     "title": "Daten-Explorer",
@@ -780,7 +779,9 @@
     "failedDeleteChannel:": "Kanal konnte nicht gelöscht werden",
     "failedDeleteRule:": "Regel konnte nicht gelöscht werden",
     "invalidConditionJson:": "Ungültiges Bedingungs-JSON. Verwenden Sie ein gültiges Objektformat.",
-    "failedCreateRuleCheckJson:": "Regel konnte nicht erstellt werden. JSON-Bedingung und ausgewählte Referenzen prüfen."
+    "failedCreateRuleCheckJson:": "Regel konnte nicht erstellt werden. JSON-Bedingung und ausgewählte Referenzen prüfen.",
+    "mqttConnector": "MQTT-Ausgangs-Connector",
+    "selectMqttConnector": "MQTT-Ausgangs-Connector auswählen"
   },
   "users": {
     "title": "Benutzer",
@@ -853,7 +854,7 @@
     "unsavedPolicyChanges:": "Ungespeicherte Richtlinienänderungen",
     "unsavedChanges:": "Ungespeicherte Änderungen",
     "currentHealth:": "Aktuelle Gesundheit",
-    "tenantUpdated:": "Mandant aktualisiert:",
+    "tenantUpdated:": "Mandant aktualisiert",
     "poll:": "Abfrage:",
     "checked:": "Geprüft:",
     "offlineRetries:": "Offline-Wiederholungen:",
@@ -886,7 +887,6 @@
     "latest:": "Neueste:",
     "mine:": "Meine:",
     "tenantCreated:": "Mandant erfolgreich erstellt",
-    "tenantUpdated:": "Mandant aktualisiert",
     "tenantDeleted:": "Mandant gelöscht",
     "cannotDeleteLastRoot:": "Der letzte Stamm-Mandant kann nicht gelöscht werden",
     "lineageDefaultsSaved:": "Mandanten-Verlaufsstandardwerte gespeichert",

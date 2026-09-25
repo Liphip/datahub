@@ -5,10 +5,8 @@ import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.alert.AlertDispatcher
-import com.dataturntable.connectors.BrokerCredential
 import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.ConnectorRuntimeService
-import com.dataturntable.security.EncryptionUtils
 import com.dataturntable.service.PipelineDataService
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.micrometer.core.instrument.MeterRegistry
@@ -151,24 +149,8 @@ class PipelineConsumer {
             val connector = em.find(Connector::class.java, connectorId) ?: return@forEach
             if (connector.tenant?.id != tenantId) return@forEach
 
-            // Decrypt full config (used by ConnectorRuntimeService for actual fetch/deliver)
-            val decryptedConfig = connectorRuntime.decryptConfig(connector).toMutableMap()
-
-            // Inject MQTT credentials if present (only into platform-side config, not module)
-            if (connector.connectorType == Connector.ConnectorType.MQTT) {
-                val brokerCredentialId = parseUuid(decryptedConfig["brokerCredentialId"]?.toString())
-                if (brokerCredentialId != null) {
-                    val credential = em.find(BrokerCredential::class.java, brokerCredentialId)
-                    if (credential != null && credential.tenant?.id == tenantId && credential.isActive) {
-                        decryptedConfig["username"] = credential.username
-                        val password = credential.passwordEncrypted?.let {
-                            try { EncryptionUtils.decrypt(it) } catch (_: Exception) { null }
-                        }
-                        if (!password.isNullOrBlank()) decryptedConfig["password"] = password
-                        decryptedConfig["brokerCredentialName"] = credential.name
-                    }
-                }
-            }
+            // Full platform-side config incl. credentials (used for actual fetch/deliver, never sent to modules)
+            val decryptedConfig = connectorRuntime.resolveRuntimeConfig(connector)
 
             // Non-sensitive metadata forwarded to module container as CONNECTOR_META.
             // Credentials (password, token, key) are explicitly excluded.
@@ -441,7 +423,9 @@ class PipelineConsumer {
             val id: String,
             val type: ModuleType,
             val moduleVersionId: UUID,
-            val connector: ResolvedConnector?
+            val connector: ResolvedConnector?,
+            /** ALERT nodes: default channel (id or name) when alert_fn() names none. */
+            val alertChannel: String? = null,
         )
 
         /**
@@ -520,21 +504,22 @@ class PipelineConsumer {
                     }
                 }
 
-                // Dispatch channel alert if ALERT module returned __alert__ key
+                // Dispatch alerts collected by alert_fn() in the ALERT module
                 if (node.type == ModuleType.ALERT) {
-                    val resultMap = output.result as? Map<*, *>
-                    val alertPayload = resultMap?.get("__alert__") as? Map<*, *>
-                    if (alertPayload != null) {
+                    val alerts = (output.result as? Map<*, *>)?.get("alerts") as? List<*> ?: emptyList<Any>()
+                    alerts.filterIsInstance<Map<*, *>>().forEach { alert ->
                         try {
                             @Suppress("UNCHECKED_CAST")
                             alertDispatcher.dispatchToChannel(
                                 pipeline = pipeline,
-                                channelRef = alertPayload["channelId"]?.toString()
-                                    ?: alertPayload["channelName"]?.toString(),
-                                title = alertPayload["title"]?.toString() ?: "Pipeline Alert",
-                                message = alertPayload["message"]?.toString() ?: "",
-                                severity = alertPayload["severity"]?.toString() ?: "WARNING",
-                                payload = alertPayload["payload"] as? Map<String, Any>
+                                channelRef = alert["channel"]?.toString()?.takeIf { it.isNotBlank() } ?: node.alertChannel,
+                                title = alert["title"]?.toString()?.takeIf { it.isNotBlank() }
+                                    ?: "${pipeline.name ?: "Pipeline"}: ${version.module?.name ?: node.id}",
+                                message = alert["message"]?.toString() ?: "",
+                                severity = alert["severity"]?.toString() ?: "WARNING",
+                                payload = alert["payload"] as? Map<String, Any>,
+                                dedupKey = "${pipeline.id}:${node.id}:${alert["title"] ?: ""}",
+                                cooldownSeconds = (alert["cooldownSeconds"] as? Number)?.toLong(),
                             )
                         } catch (ae: Exception) {
                             LOG.warnf("Alert dispatch failed for node %s: %s", node.id, ae.message)
@@ -660,7 +645,8 @@ class PipelineConsumer {
                 id = nodeId,
                 type = nodeType,
                 moduleVersionId = moduleVersionId,
-                connector = connectorsByNodeId[nodeId]
+                connector = connectorsByNodeId[nodeId],
+                alertChannel = nodeMap["alertChannel"]?.toString()?.takeIf { it.isNotBlank() },
             )
         }
 
@@ -729,7 +715,7 @@ class PipelineConsumer {
             )
         }
 
-        // Alerts are now dispatched inside ALERT module nodes via __alert__ in their output.
+        // Alerts are dispatched inside ALERT module nodes from the alerts collected by alert_fn().
         // No separate rule evaluation pass is needed here.
 
         return mapOf(

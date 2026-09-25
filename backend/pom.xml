@@ -101,6 +101,12 @@
             <artifactId>quarkus-config-yaml</artifactId>
         </dependency>
         
+        <!-- Alert e-mail delivery (SMTP) -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-mailer</artifactId>
+        </dependency>
+        
         <!-- Health -->
         <dependency>
             <groupId>io.quarkus</groupId>

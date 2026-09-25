@@ -627,7 +627,7 @@
     "disconnectAnyway:": "Disconnect Anyway",
     "integratedMqttUsers:": "Integrated MQTT Broker Users",
     "brokerUsersDescription:": "Tenant-scoped broker credentials for the bundled Mosquitto broker. These are separate from app login users.",
-    "createBrokerUser:": "Create Broker User",
+    "createBrokerUser:": "Create MQTT Broker User",
     "noBrokerUsers:": "No MQTT broker users configured for this tenant.",
     "username:": "Username",
     "password:": "Password",
@@ -676,8 +676,7 @@
     "allPipelines:": "All pipelines",
     "editConnector:": "Edit Connector",
     "createConnector:": "Create Connector",
-    "editBrokerUser:": "Edit MQTT Broker User",
-    "createBrokerUser:": "Create MQTT Broker User"
+    "editBrokerUser:": "Edit MQTT Broker User"
   },
   "data": {
     "title": "Data Explorer",
@@ -780,7 +779,9 @@
     "failedDeleteChannel:": "Failed to delete channel",
     "failedDeleteRule:": "Failed to delete rule",
     "invalidConditionJson:": "Invalid condition JSON. Use a valid object format.",
-    "failedCreateRuleCheckJson:": "Failed to create rule. Check condition JSON and selected references."
+    "failedCreateRuleCheckJson:": "Failed to create rule. Check condition JSON and selected references.",
+    "mqttConnector": "MQTT output connector",
+    "selectMqttConnector": "Select an MQTT output connector"
   },
   "users": {
     "title": "Users",
@@ -853,7 +854,7 @@
     "unsavedPolicyChanges:": "Unsaved policy changes",
     "unsavedChanges:": "Unsaved changes",
     "currentHealth:": "Current health",
-    "tenantUpdated:": "Tenant updated:",
+    "tenantUpdated:": "Tenant updated",
     "poll:": "Poll:",
     "checked:": "Checked:",
     "offlineRetries:": "Offline retries:",
@@ -886,7 +887,6 @@
     "latest:": "Latest:",
     "mine:": "Mine:",
     "tenantCreated:": "Tenant created successfully",
-    "tenantUpdated:": "Tenant updated",
     "tenantDeleted:": "Tenant deleted",
     "cannotDeleteLastRoot:": "Cannot delete the last root tenant",
     "lineageDefaultsSaved:": "Tenant lineage defaults saved",

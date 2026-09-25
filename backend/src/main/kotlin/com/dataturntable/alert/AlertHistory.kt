@@ -39,6 +39,14 @@ open class AlertHistory : PanacheBase() {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "channel_id")
     var channel: AlertChannel? = null
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "pipeline_id")
+    var pipeline: com.dataturntable.pipeline.Pipeline? = null
+
+    /** Identifies "the same alert" (pipeline, node, title) for cooldown suppression. */
+    @Column(name = "dedup_key", length = 512)
+    var dedupKey: String? = null
     
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

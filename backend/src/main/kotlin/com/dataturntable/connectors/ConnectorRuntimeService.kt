@@ -5,6 +5,8 @@ import com.dataturntable.connectors.Connector.Direction
 import com.dataturntable.connectors.mqtt.MqttConnectionManager
 import com.dataturntable.connectors.websocket.WebSocketConnectionManager
 import com.dataturntable.security.EncryptionUtils
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
@@ -58,6 +60,9 @@ class ConnectorRuntimeService {
 
     @Inject
     lateinit var connectorMetrics: ConnectorMetrics
+
+    @PersistenceContext
+    lateinit var em: EntityManager
 
     // ── Public API ───────────────────────────────────────────────────────────
 
@@ -170,6 +175,29 @@ class ConnectorRuntimeService {
         } catch (_: Exception) {
             emptyMap()
         }
+    }
+
+    /**
+     * Decrypted config plus platform-side secrets needed to talk to the external system
+     * (MQTT broker credentials are resolved from the tenant's credential store).
+     * Never pass the result to module containers.
+     */
+    fun resolveRuntimeConfig(connector: Connector): Map<String, Any?> {
+        val config = decryptConfig(connector).toMutableMap()
+        if (connector.connectorType == ConnectorType.MQTT) {
+            val credentialId = config["brokerCredentialId"]?.toString()
+                ?.let { runCatching { java.util.UUID.fromString(it) }.getOrNull() }
+            val credential = credentialId?.let { em.find(BrokerCredential::class.java, it) }
+            if (credential != null && credential.tenant?.id == connector.tenant?.id && credential.isActive) {
+                config["username"] = credential.username
+                credential.passwordEncrypted
+                    ?.let { runCatching { EncryptionUtils.decrypt(it) }.getOrNull() }
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { config["password"] = it }
+                config["brokerCredentialName"] = credential.name
+            }
+        }
+        return config
     }
 
     // ── REST ─────────────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { AlertChannel, AlertHistory } from '../types';
+import type { AlertChannel, AlertHistory, Connector } from '../types';
 
 /**
  * Defines the type `AlertChannelType`, the contract implemented by this source unit.
@@ -14,7 +14,7 @@ type AlertChannelType = AlertChannel['channelType'];
 type ChannelConfigField = {
   key: string;
   labelKey: string;
-  type?: 'text' | 'url' | 'email' | 'number' | 'password';
+  type?: 'text' | 'url' | 'email' | 'number' | 'password' | 'mqttConnector';
   placeholderKey?: string;
   required?: boolean;
 };
@@ -30,7 +30,7 @@ const channelConfigSchema: Record<AlertChannelType, ChannelConfigField[]> = {
     { key: 'channel', labelKey: 'alerts.slackChannel', placeholderKey: 'alerts.slackChannelPlaceholder' },
   ],
   EMAIL: [
-    { key: 'recipient', labelKey: 'alerts.recipientEmail', type: 'email', required: true, placeholderKey: 'alerts.recipientEmailPlaceholder' },
+    { key: 'recipient', labelKey: 'alerts.recipientEmail', type: 'text', required: true, placeholderKey: 'alerts.recipientEmailPlaceholder' },
     { key: 'subjectTemplate', labelKey: 'alerts.subjectTemplate', placeholderKey: 'alerts.subjectTemplatePlaceholder' },
   ],
   REST: [
@@ -40,10 +40,8 @@ const channelConfigSchema: Record<AlertChannelType, ChannelConfigField[]> = {
     { key: 'authToken', labelKey: 'alerts.authToken', type: 'password' },
   ],
   MQTT: [
-    { key: 'broker', labelKey: 'connectors.brokerUrl', type: 'url', required: true, placeholderKey: 'alerts.brokerUrlPlaceholder' },
-    { key: 'topic', labelKey: 'common.topic', required: true, placeholderKey: 'alerts.topicPlaceholder' },
-    { key: 'username', labelKey: 'common.username' },
-    { key: 'password', labelKey: 'common.password', type: 'password' },
+    { key: 'connectorId', labelKey: 'alerts.mqttConnector', type: 'mqttConnector', required: true },
+    { key: 'topic', labelKey: 'common.topic', placeholderKey: 'alerts.topicPlaceholder' },
   ],
 };
 
@@ -72,6 +70,7 @@ export default function Alerts() {
 
   const [channels, setChannels] = useState<AlertChannel[]>([]);
   const [history, setHistory] = useState<AlertHistory[]>([]);
+  const [mqttConnectors, setMqttConnectors] = useState<Connector[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<'channels' | 'history'>('channels');
@@ -119,12 +118,14 @@ export default function Alerts() {
       }
 
       try {
-        const [channelsData, historyData] = await Promise.all([
+        const [channelsData, historyData, connectorsData] = await Promise.all([
           api.getAlertChannels(tenantId),
           api.getAlertHistory(tenantId, 20),
+          api.getConnectors(tenantId).catch(() => [] as Connector[]),
         ]);
         setChannels(channelsData);
         setHistory(historyData);
+        setMqttConnectors(connectorsData.filter((c) => c.connectorType === 'MQTT' && c.direction === 'OUTPUT'));
         setError('');
       } catch (err) {
         console.error('Error fetching alerts:', err);
@@ -488,14 +489,28 @@ export default function Alerts() {
                       <label className="block text-sm text-slate-600 mb-1">
                         {t(field.labelKey)}{field.required ? ` ${t('common.required')}` : ''}
                       </label>
-                      <input
-                        type={field.type || 'text'}
-                        value={newChannelConfig[field.key] || ''}
-                        onChange={(e) => setNewChannelConfig((prev) => ({ ...prev, [field.key]: e.target.value }))}
-                        className="input w-full"
-                        placeholder={field.placeholderKey ? t(field.placeholderKey) : ''}
-                        required={field.required}
-                      />
+                      {field.type === 'mqttConnector' ? (
+                        <select
+                          value={newChannelConfig[field.key] || ''}
+                          onChange={(e) => setNewChannelConfig((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                          className="input w-full"
+                          required={field.required}
+                        >
+                          <option value="">{t('alerts.selectMqttConnector')}</option>
+                          {mqttConnectors.map((c) => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type={field.type || 'text'}
+                          value={newChannelConfig[field.key] || ''}
+                          onChange={(e) => setNewChannelConfig((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                          className="input w-full"
+                          placeholder={field.placeholderKey ? t(field.placeholderKey) : ''}
+                          required={field.required}
+                        />
+                      )}
                     </div>
                   ))}
                 </div>

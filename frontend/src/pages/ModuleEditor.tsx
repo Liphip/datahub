@@ -81,22 +81,26 @@ const TEMPLATES = {
     ALERT node — evaluate conditions and fire alerts via the platform.
     Terminal node — does NOT forward data downstream.
 
-    Call alert_fn(severity, message, payload) to fire an alert.
+    alert_fn(severity, message, payload=None, title=None, channel=None, cooldown_seconds=None)
+      severity          'info' | 'warning' | 'error' | 'critical'
+      channel           alert channel id or name (default: the node's default channel)
+      cooldown_seconds  suppress repeats of the same alert (same pipeline, node and title)
+                        within this window; defaults to the platform setting
     Return True if an alert was fired, False otherwise.
     """
 
     def __init__(self, config: dict = None):
         cfg = config or {}
         self.threshold = cfg.get('threshold', 80)
-        self.severity = cfg.get('severity', 'warning')
 
     def evaluate(self, data: dict, alert_fn=None, query_fn=None) -> bool:
-        # Example:
-        # if data.get('value', 0) > self.threshold:
-        #     alert_fn(severity=self.severity,
-        #              message=f"Value {data['value']} exceeds threshold",
-        #              payload=data)
-        #     return True
+        value = data.get('value')
+        if isinstance(value, (int, float)) and value > self.threshold:
+            alert_fn(severity='warning',
+                     title='Threshold exceeded',
+                     message=f"Value {value} exceeds threshold {self.threshold}",
+                     payload=data)
+            return True
         return False
 `,
   EXPORT: `class ExportModule:

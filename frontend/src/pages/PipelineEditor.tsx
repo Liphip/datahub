@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
 import { useAuthStore } from '../stores/auth';
 import api, { type ApiError } from '../services/api';
-import type { Pipeline, CodeModule, Connector, ModuleVersion, PipelineRun } from '../types';
+import type { AlertChannel, Pipeline, CodeModule, Connector, ModuleVersion, PipelineRun } from '../types';
 import {
   ReactFlow,
   Background,
@@ -53,6 +53,8 @@ interface PipelineNodeData extends Record<string, unknown> {
   connectorId?: string;
   /** MQTT topic scoped to this pipeline node (connector only defines the broker) */
   mqttTopic?: string;
+  /** ALERT nodes: default alert channel id when alert_fn() names none */
+  alertChannel?: string;
 }
 
 /**
@@ -182,6 +184,7 @@ function graphToFlow(
       moduleVersionId: raw.moduleVersionId as string | undefined,
       connectorId: raw.connectorId as string | undefined,
       mqttTopic: raw.mqttTopic as string | undefined,
+      alertChannel: raw.alertChannel as string | undefined,
     } satisfies PipelineNodeData,
   }));
 
@@ -214,6 +217,7 @@ function flowToGraph(
         moduleVersionId: d.moduleVersionId,
         connectorId: d.connectorId,
         mqttTopic: d.mqttTopic,
+        alertChannel: d.alertChannel,
         position: n.position,
       };
     }),
@@ -251,6 +255,7 @@ export default function PipelineEditor() {
   const [moduleVersionOptions, setModuleVersionOptions] = useState<ModuleVersionOption[]>([]);
   const [moduleOptions, setModuleOptions] = useState<ModuleOption[]>([]);
   const [connectors, setConnectors] = useState<Connector[]>([]);
+  const [alertChannels, setAlertChannels] = useState<AlertChannel[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
@@ -291,10 +296,11 @@ export default function PipelineEditor() {
     const fetchData = async () => {
       if (!id || !tenantId) { setLoading(false); return; }
       try {
-        const [pipelineData, modulesData, connectorsData] = await Promise.all([
+        const [pipelineData, modulesData, connectorsData, alertChannelsData] = await Promise.all([
           id === 'new' ? Promise.resolve(null) : api.getPipeline(id),
           api.getModules(tenantId),
           api.getConnectors(tenantId),
+          api.getAlertChannels(tenantId).catch(() => [] as AlertChannel[]),
         ]);
 
         const versionsByModule = await Promise.all(
@@ -311,6 +317,7 @@ export default function PipelineEditor() {
         })));
         setModuleVersionOptions(versionsByModule.flat());
         setConnectors(connectorsData);
+        setAlertChannels(alertChannelsData);
 
         if (pipelineData) {
           setPipeline(pipelineData);
@@ -663,6 +670,7 @@ export default function PipelineEditor() {
               moduleVersionOptions={moduleVersionOptions}
               inputConnectors={inputConnectors}
               outputConnectors={outputConnectors}
+              alertChannels={alertChannels}
               canWrite={canWritePipelines}
               onChange={updateSelectedNodeData}
             />
@@ -687,6 +695,7 @@ function NodeConfigPanel({
   moduleVersionOptions,
   inputConnectors,
   outputConnectors,
+  alertChannels,
   canWrite,
   onChange,
 }: {
@@ -696,6 +705,7 @@ function NodeConfigPanel({
   moduleVersionOptions: ModuleVersionOption[];
   inputConnectors: Connector[];
   outputConnectors: Connector[];
+  alertChannels: AlertChannel[];
   canWrite: boolean;
   onChange: (patch: Partial<PipelineNodeData>) => void;
 }) {
@@ -869,9 +879,25 @@ function NodeConfigPanel({
       )}
 
       {data.nodeType === 'ALERT' && (
-        <p className="text-[10px] text-gray-400">
-          ALERT is terminal — it evaluates a condition and fires alerts via the platform. No connector needed.
-        </p>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Default alert channel</label>
+          <select
+            className="border rounded-sm px-2 py-1 text-sm w-full"
+            value={data.alertChannel ?? ''}
+            onChange={(e) => onChange({ alertChannel: e.target.value || undefined })}
+            disabled={!canWrite}
+          >
+            <option value="">— first active tenant channel —</option>
+            {alertChannels.filter((c) => c.isActive).map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} ({c.channelType})
+              </option>
+            ))}
+          </select>
+          <p className="text-[10px] text-gray-400 mt-1">
+            ALERT is terminal. Alerts raised with alert_fn() go to this channel unless the call names another one.
+          </p>
+        </div>
       )}
     </div>
   );

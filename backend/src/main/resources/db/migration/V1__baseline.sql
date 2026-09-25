@@ -28,6 +28,8 @@ CREATE TABLE alert_history (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     tenant_id uuid,
     channel_id uuid,
+    pipeline_id uuid,
+    dedup_key varchar(512),
     severity varchar(50) NOT NULL,
     title varchar(500) NOT NULL,
     message text,
@@ -629,6 +631,15 @@ ALTER TABLE alert_channels
 
 ALTER TABLE alert_channels
     ADD CONSTRAINT alert_channels_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE;
+
+-- alert_history alert_history_pipeline_id_fkey (fk constraint)
+
+ALTER TABLE alert_history
+    ADD CONSTRAINT alert_history_pipeline_id_fkey FOREIGN KEY (pipeline_id) REFERENCES pipelines(id) ON DELETE SET NULL;
+
+-- alert_history idx_alert_history_dedup (index)
+
+CREATE INDEX idx_alert_history_dedup ON alert_history USING btree (channel_id, dedup_key, sent_at);
 
 -- alert_history alert_history_channel_id_fkey (fk constraint)
 
