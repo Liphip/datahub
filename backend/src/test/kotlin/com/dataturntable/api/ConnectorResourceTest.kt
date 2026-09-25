@@ -25,14 +25,12 @@ class ConnectorResourceTest {
 
     private fun createNonMemberToken(): String {
         val email = "connector-outsider-${java.util.UUID.randomUUID()}@example.com"
-        val passwordHash = java.util.Base64.getEncoder().encodeToString(
-            java.security.MessageDigest.getInstance("SHA-256").digest("ViewerPass!123".toByteArray())
-        )
+        val password = "ViewerPass!123"
 
         QuarkusTransaction.requiringNew().run {
             val user = User().apply {
                 this.email = email
-                this.passwordHash = BcryptUtil.bcryptHash(passwordHash)
+                this.passwordHash = BcryptUtil.bcryptHash(password)
                 this.isActive = true
                 this.createdAt = java.time.Instant.now()
                 this.updatedAt = java.time.Instant.now()
@@ -43,7 +41,7 @@ class ConnectorResourceTest {
 
         return given()
             .contentType(ContentType.JSON)
-            .body(mapOf("email" to email, "passwordHash" to passwordHash))
+            .body(mapOf("email" to email, "password" to password))
         .`when`()
             .post("/api/internal/v1/auth/login")
         .then()

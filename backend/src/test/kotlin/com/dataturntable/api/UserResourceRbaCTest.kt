@@ -13,7 +13,7 @@ class UserResourceRbaCTest {
     fun createUserWithoutAuthReturnsUnauthorized() {
         RestAssured.given()
             .contentType("application/json")
-            .body(mapOf("email" to "a@b.com", "passwordHash" to "x"))
+            .body(mapOf("email" to "a@b.com", "password" to "x"))
             .`when`().post("/api/internal/v1/auth-users")
             .then()
             .statusCode(401)
@@ -34,7 +34,7 @@ class UserResourceRbaCTest {
         RestAssured.given()
             .header("Authorization", "Bearer $token")
             .contentType("application/json")
-            .body(mapOf("passwordHash" to "x"))
+            .body(mapOf("password" to "x"))
             .`when`().post("/api/internal/v1/auth-users")
             .then()
             .statusCode(400)

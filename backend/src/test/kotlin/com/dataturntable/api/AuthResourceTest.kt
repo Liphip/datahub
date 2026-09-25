@@ -19,8 +19,6 @@ import org.junit.jupiter.api.Test
 import io.restassured.RestAssured.given
 import org.hamcrest.CoreMatchers.*
 
-import java.security.MessageDigest
-import java.util.Base64
 
 @QuarkusTest
 class AuthResourceTest {
@@ -106,7 +104,7 @@ class AuthResourceTest {
             {
                 "tenantName": "Tenant-${'$'}{java.util.UUID.randomUUID()}",
                 "email": "register@example.com",
-                "passwordHash": "${hashPassword("Password123!")}"
+                "password": "${"Password123!"}"
             }
         """.trimIndent()
 
@@ -142,13 +140,11 @@ class AuthResourceTest {
             .jsonPath()
         
         val password = setupResponse.getString("password")
-        // Backend stores BCrypt(SHA-256(password))
-        val passwordHash = hashPassword(password)
         
         val loginBody = """
             {
                 "email": "admin2@example.com",
-                "passwordHash": "$passwordHash"
+                "password": "$password"
             }
         """.trimIndent()
         
@@ -182,7 +178,7 @@ class AuthResourceTest {
 
         given()
             .contentType(ContentType.JSON)
-            .body(mapOf("email" to "custompass@example.com", "passwordHash" to hashPassword(customPassword)))
+            .body(mapOf("email" to "custompass@example.com", "password" to customPassword))
         .`when`()
             .post("/api/internal/v1/auth/login")
         .then()
@@ -195,7 +191,7 @@ class AuthResourceTest {
         val loginBody = """
             {
                 "email": "admin2@example.com",
-                "passwordHash": "invalidhash"
+                "password": "invalidhash"
             }
         """.trimIndent()
         
@@ -229,13 +225,11 @@ class AuthResourceTest {
             .jsonPath()
         
         val password = setupResponse.getString("password")
-        // Backend stores BCrypt(SHA-256(password))
-        val passwordHash = hashPassword(password)
         
         val loginBody = """
             {
                 "email": "admin3@example.com",
-                "passwordHash": "$passwordHash"
+                "password": "$password"
             }
         """.trimIndent()
         
@@ -286,7 +280,7 @@ class AuthResourceTest {
         val rootTenantId = setupResponse.getString("user.tenantId")
         val token = given()
             .contentType(ContentType.JSON)
-            .body(mapOf("email" to "switch@example.com", "passwordHash" to hashPassword(password)))
+            .body(mapOf("email" to "switch@example.com", "password" to password))
         .`when`()
             .post("/api/internal/v1/auth/login")
         .then()
@@ -341,9 +335,4 @@ class AuthResourceTest {
             .statusCode(401)
     }
     
-    private fun hashPassword(password: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val hash = digest.digest(password.toByteArray())
-        return Base64.getEncoder().encodeToString(hash)
-    }
 }

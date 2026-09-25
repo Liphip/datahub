@@ -2,18 +2,15 @@ package com.dataturntable.test
 
 import io.restassured.RestAssured.given
 import io.restassured.http.ContentType
-import java.security.MessageDigest
-import java.util.Base64
 
 object TestAuthHelpers {
     fun createAdminToken(): String {
         val password = "AdminPass!123"
-        val passwordHash = Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(password.toByteArray()))
 
         val setupBody = """
             {
                 "email": "admin@example.com",
-                "passwordHash": "$passwordHash"
+                "password": "$password"
             }
         """.trimIndent()
 
@@ -34,7 +31,7 @@ object TestAuthHelpers {
 
         return given()
             .contentType(ContentType.JSON)
-            .body(mapOf("email" to "admin@example.com", "passwordHash" to passwordHash))
+            .body(mapOf("email" to "admin@example.com", "password" to password))
         .`when`()
             .post("/api/internal/v1/auth/login")
         .then()

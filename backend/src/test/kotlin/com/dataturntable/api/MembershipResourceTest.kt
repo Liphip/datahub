@@ -55,12 +55,11 @@ class MembershipResourceTest {
 
         // Create a new user to be a member
         val password = "password123"
-        val passwordHash = java.util.Base64.getEncoder().encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest(password.toByteArray()))
 
         val userResp = given()
             .header("Authorization", "Bearer $token")
             .contentType(ContentType.JSON)
-            .body(mapOf("email" to "member-${UUID.randomUUID()}@example.com", "passwordHash" to passwordHash))
+            .body(mapOf("email" to "member-${UUID.randomUUID()}@example.com", "password" to password))
         .`when`()
             .post("/api/internal/v1/auth-users")
         .then()
@@ -195,11 +194,11 @@ class MembershipResourceTest {
             .jsonPath()
             .getString("id")
 
-        val passwordHash = java.util.Base64.getEncoder().encodeToString(java.security.MessageDigest.getInstance("SHA-256").digest("password123".toByteArray()))
+        val password = "password123"
         val userId = given()
             .header("Authorization", "Bearer $token")
             .contentType(ContentType.JSON)
-            .body(mapOf("email" to "member-${UUID.randomUUID()}@example.com", "passwordHash" to passwordHash))
+            .body(mapOf("email" to "member-${UUID.randomUUID()}@example.com", "password" to password))
         .`when`()
             .post("/api/internal/v1/auth-users")
         .then()

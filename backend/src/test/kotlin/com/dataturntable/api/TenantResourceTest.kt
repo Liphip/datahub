@@ -49,14 +49,12 @@ class TenantResourceTest {
 
     fun createNonAdminToken(): String {
         val email = "viewer@example.com"
-        val passwordHash = java.util.Base64.getEncoder().encodeToString(
-            java.security.MessageDigest.getInstance("SHA-256").digest("ViewerPass!123".toByteArray())
-        )
+        val password = "ViewerPass!123"
 
         QuarkusTransaction.requiringNew().run {
             val user = User().apply {
                 this.email = email
-                this.passwordHash = BcryptUtil.bcryptHash(passwordHash)
+                this.passwordHash = BcryptUtil.bcryptHash(password)
                 this.isActive = true
                 this.createdAt = java.time.Instant.now()
                 this.updatedAt = java.time.Instant.now()
@@ -67,7 +65,7 @@ class TenantResourceTest {
 
         return given()
             .contentType(ContentType.JSON)
-            .body(mapOf("email" to email, "passwordHash" to passwordHash))
+            .body(mapOf("email" to email, "password" to password))
         .`when`()
             .post("/api/internal/v1/auth/login")
         .then()
@@ -80,9 +78,7 @@ class TenantResourceTest {
 
     fun createTenantManagerToken(tenantId: String): String {
         val email = "tenant-admin@example.com"
-        val passwordHash = java.util.Base64.getEncoder().encodeToString(
-            java.security.MessageDigest.getInstance("SHA-256").digest("TenantPass!123".toByteArray())
-        )
+        val password = "TenantPass!123"
 
         QuarkusTransaction.requiringNew().run {
             val tenantUuid = java.util.UUID.fromString(tenantId)
@@ -100,7 +96,7 @@ class TenantResourceTest {
 
             val user = User().apply {
                 this.email = email
-                this.passwordHash = BcryptUtil.bcryptHash(passwordHash)
+                this.passwordHash = BcryptUtil.bcryptHash(password)
                 this.isActive = true
                 this.createdAt = java.time.Instant.now()
                 this.updatedAt = java.time.Instant.now()
@@ -122,7 +118,7 @@ class TenantResourceTest {
 
         return given()
             .contentType(ContentType.JSON)
-            .body(mapOf("email" to email, "passwordHash" to passwordHash, "tenantId" to tenantId))
+            .body(mapOf("email" to email, "password" to password, "tenantId" to tenantId))
         .`when`()
             .post("/api/internal/v1/auth/login")
         .then()

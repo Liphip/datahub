@@ -12,8 +12,6 @@ import jakarta.transaction.Transactional
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
-import java.security.MessageDigest
-import java.util.Base64
 import java.util.UUID
 
 import org.junit.jupiter.api.Assertions.*
@@ -71,13 +69,11 @@ class AuthServiceTest {
         val setupRequest = SetupRequest(email = "admin@example.com")
         val setupResponse = authService.setup(setupRequest)
         
-        // Backend stores BCrypt(SHA-256(password))
-        // Frontend sends SHA-256(password), backend checks BCrypt directly
-        val passwordHash = hashPassword(setupResponse.password)
+        val password = setupResponse.password
         
         val loginRequest = LoginRequest(
             email = "admin@example.com",
-            passwordHash = passwordHash
+            password = password
         )
         
         val response = authService.login(loginRequest)
@@ -95,11 +91,11 @@ class AuthServiceTest {
         authService.setup(setupRequest)
         
         // Backend double-hashes, so wrong hash should fail
-        val wrongHash = hashPassword("wrongpassword")
+        val wrongHash = "wrongpassword"
         
         val loginRequest = LoginRequest(
             email = "admin@example.com",
-            passwordHash = wrongHash
+            password = wrongHash
         )
         
         assertThrows(SecurityException::class.java) {
@@ -112,7 +108,7 @@ class AuthServiceTest {
     fun testLoginWithNonexistentUser() {
         val loginRequest = LoginRequest(
             email = "nonexistent@example.com",
-            passwordHash = "somehash"
+            password = "somehash"
         )
         
         assertThrows(SecurityException::class.java) {
@@ -126,11 +122,11 @@ class AuthServiceTest {
         val setupRequest = SetupRequest(email = "admin@example.com")
         val setupResponse = authService.setup(setupRequest)
         
-        val passwordHash = hashPassword(setupResponse.password)
+        val password = setupResponse.password
         
         val loginRequest = LoginRequest(
             email = "admin@example.com",
-            passwordHash = passwordHash
+            password = password
         )
         
         val response = authService.login(loginRequest)
@@ -166,9 +162,4 @@ class AuthServiceTest {
         assertTrue(password.any { !it.isLetterOrDigit() })
     }
     
-    private fun hashPassword(password: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val hash = digest.digest(password.toByteArray())
-        return Base64.getEncoder().encodeToString(hash)
-    }
 }

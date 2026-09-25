@@ -636,7 +636,7 @@ Roles, their permissions and assignments are defined per installation (IAM-02); 
 
 **Identity providers:** The platform is an OIDC client for external identity providers configured at run time (issuer, client, scopes, claim → role-assignment mapping, just-in-time provisioning) (IAM-10). Local password login can be restricted to break-glass accounts (IAM-11). Logout is propagated (RP-initiated and back-channel) and sessions can be revoked (IAM-12).
 
-**Local passwords:** Password is SHA-256-hashed client-side before transmission; the server stores a BCrypt hash of that value (NFR-S2).
+**Local passwords:** Sent over TLS only; the server stores a BCrypt hash; minimum 8 characters (NFR-S2).
 
 **Machine clients:** JWT Bearer tokens or API keys (hashed at rest, explicit ability set, optional expiry, plaintext shown once).
 
@@ -974,7 +974,7 @@ Module name, type, description, requirements and config are stored with the modu
 
 - Browser sessions: HttpOnly, Secure, SameSite cookie with CSRF protection; configurable lifetime; revocable.
 - Machine clients: JWT (1 hour) or API keys (hashed, optional expiry, plaintext shown once).
-- Local passwords: SHA-256 client-side, BCrypt server-side (NFR-S2).
+- Local passwords: TLS in transit, BCrypt at rest, minimum 8 characters (NFR-S2).
 - Failed login attempts are rate-limited (5 attempts per 15 minutes per IP) and audited.
 - Signing keys and all credentials come from the installation's secrets, never from the image or repository (NFR-S7).
 

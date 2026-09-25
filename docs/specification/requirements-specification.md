@@ -395,7 +395,7 @@ Connections describe how to reach an external system (endpoint, credentials). Th
 | ID | Requirement |
 | -- | ----------- |
 | NFR-S1 | All inter-service communication shall use TLS in production deployments. |
-| NFR-S2 | User passwords shall be hashed client-side with SHA-256 before transmission, then stored server-side using BCrypt. |
+| NFR-S2 | User passwords shall only be transmitted over TLS and stored server-side using BCrypt; passwords shall have at least 8 characters. |
 | NFR-S3 | Python module containers shall run as non-root users with a read-only filesystem and no network access by default. |
 | NFR-S4 | API keys shall be stored hashed; the plaintext key shall only be shown once at creation. |
 | NFR-S5 | All user actions that modify system state shall be audit-logged (see AUD). |
@@ -657,7 +657,7 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | NFR-R1, NFR-R2 | ~ | Tied to the Kubernetes HA deployment. | Partial (HA overlay exists) |
 | NFR-R3, NFR-R4 | = | | Partial |
 | NFR-S1 | = | | Open |
-| NFR-S2 | = | Kept; open decision whether client-side pre-hashing is still wanted once OIDC is in place. | Done |
+| NFR-S2 | ~ | Client-side SHA-256 pre-hashing dropped: over TLS it adds no protection (the hash becomes the password). BCrypt storage kept; minimum length added. | Done |
 | NFR-S3 | = | | Partial (network with requirements) |
 | NFR-S4 | = | | Open |
 | NFR-S5 | ~ | Detailed in AUD. | Open |

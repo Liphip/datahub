@@ -23,6 +23,10 @@ import java.util.UUID
  * Defines the class `AuthUserResource`, the contract implemented by this source unit.
  */
 class AuthUserResource {
+    companion object {
+        const val MIN_PASSWORD_LENGTH = 8
+    }
+
     @Inject
     lateinit var jwt: JsonWebToken
 
@@ -66,17 +70,17 @@ class AuthUserResource {
     }
 
     /**
-     * Implements `extractPasswordHash` for this source unit.
+     * Implements `extractPassword` for this source unit.
      */
-    private fun extractPasswordHash(request: Map<String, Any>): String? {
-        return (request["passwordHash"] as? String)?.takeIf { it.isNotBlank() }
+    private fun extractPassword(request: Map<String, Any>): String? {
+        return (request["password"] as? String)?.takeIf { it.isNotBlank() }
     }
 
     /**
      * Evaluates the named capability or state predicate.
      */
-    private fun hashForStorage(passwordHash: String): String {
-        return BcryptUtil.bcryptHash(passwordHash)
+    private fun hashForStorage(password: String): String {
+        return BcryptUtil.bcryptHash(password)
     }
 
     /**
@@ -147,8 +151,11 @@ class AuthUserResource {
 
         val email = request["email"] as? String
             ?: return Response.status(400).entity(mapOf("error" to "Email is required")).build()
-        val passwordHash = extractPasswordHash(request)
-            ?: return Response.status(400).entity(mapOf("error" to "Password hash is required")).build()
+        val password = extractPassword(request)
+            ?: return Response.status(400).entity(mapOf("error" to "Password is required")).build()
+        if (password.length < MIN_PASSWORD_LENGTH) {
+            return Response.status(400).entity(mapOf("error" to "Password must have at least $MIN_PASSWORD_LENGTH characters")).build()
+        }
 
         val existingUser = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User::class.java)
             .setParameter("email", email)
@@ -160,7 +167,7 @@ class AuthUserResource {
 
         val user = User().apply {
             this.email = email
-            this.passwordHash = hashForStorage(passwordHash)
+            this.passwordHash = hashForStorage(password)
             this.firstName = request["firstName"] as? String
             this.lastName = request["lastName"] as? String
             this.isActive = true
@@ -250,7 +257,12 @@ class AuthUserResource {
         }
 
         request["email"]?.let { user.email = it as String }
-        extractPasswordHash(request)?.let { user.passwordHash = hashForStorage(it) }
+        extractPassword(request)?.let {
+            if (it.length < MIN_PASSWORD_LENGTH) {
+                return Response.status(400).entity(mapOf("error" to "Password must have at least $MIN_PASSWORD_LENGTH characters")).build()
+            }
+            user.passwordHash = hashForStorage(it)
+        }
         request["firstName"]?.let { user.firstName = it as String }
         request["lastName"]?.let { user.lastName = it as String }
         request["isActive"]?.let { user.isActive = it as Boolean }

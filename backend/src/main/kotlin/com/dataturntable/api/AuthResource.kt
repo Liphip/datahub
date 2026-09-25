@@ -47,17 +47,7 @@ class AuthResource {
     fun register(@Valid request: SetupRequest): Response {
         return try {
             val setupResponse = authService.setup(request)
-            val loginHash = request.passwordHash
-                ?: request.password?.let { plain ->
-                    val digest = java.security.MessageDigest.getInstance("SHA-256")
-                    java.util.Base64.getEncoder().encodeToString(digest.digest(plain.toByteArray()))
-                }
-                ?: run {
-                    val digest = java.security.MessageDigest.getInstance("SHA-256")
-                    java.util.Base64.getEncoder().encodeToString(digest.digest(setupResponse.password.toByteArray()))
-                }
-
-            val auth = authService.login(LoginRequest(request.email, loginHash, setupResponse.user.tenantId))
+            val auth = authService.login(LoginRequest(request.email, setupResponse.password, setupResponse.user.tenantId))
                 ?: return Response.status(401).entity(mapOf("error" to "Unable to authenticate registered user")).build()
 
             Response.status(201).entity(auth).build()

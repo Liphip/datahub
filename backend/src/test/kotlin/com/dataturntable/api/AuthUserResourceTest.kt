@@ -59,10 +59,10 @@ class AuthUserResourceTest {
     }
 
     @Test
-    fun testCreateAuthUserAcceptsPasswordAlias() {
+    fun testCreateAuthUserWithPassword() {
         val token = TestAuthHelpers.createAdminToken()
         val email = "auth-user-${UUID.randomUUID()}@example.com"
-        val passwordHash = "dGVzdC1zaGEyNTYtaGFzaA=="
+        val password = "Initial-Pass!123"
 
         given()
             .header("Authorization", "Bearer $token")
@@ -70,7 +70,7 @@ class AuthUserResourceTest {
             .body(
                 mapOf(
                     "email" to email,
-                    "passwordHash" to passwordHash
+                    "password" to password
                 )
             )
         .`when`()
@@ -81,7 +81,7 @@ class AuthUserResourceTest {
 
         given()
             .contentType("application/json")
-            .body(mapOf("email" to email, "passwordHash" to passwordHash))
+            .body(mapOf("email" to email, "password" to password))
         .`when`()
             .post("/api/internal/v1/auth/login")
         .then()
@@ -109,12 +109,12 @@ class AuthUserResourceTest {
         val tenantId = resolveTenantId(token)
         val roleId = resolveDefaultRoleId(token, tenantId)
         val email = "auth-user-active-${UUID.randomUUID()}@example.com"
-        val passwordHash = "dGVzdC1zaGEyNTYtaGFzaA=="
+        val password = "Initial-Pass!123"
 
         val userId = given()
             .header("Authorization", "Bearer $token")
             .contentType("application/json")
-            .body(mapOf("email" to email, "passwordHash" to passwordHash))
+            .body(mapOf("email" to email, "password" to password))
         .`when`()
             .post("/api/internal/v1/auth-users")
         .then()
@@ -154,7 +154,7 @@ class AuthUserResourceTest {
         val userId = given()
             .header("Authorization", "Bearer $token")
             .contentType("application/json")
-            .body(mapOf("email" to email, "passwordHash" to "dGVzdC1zaGEyNTYtaGFzaA=="))
+            .body(mapOf("email" to email, "password" to "Initial-Pass!123"))
         .`when`()
             .post("/api/internal/v1/auth-users")
         .then()

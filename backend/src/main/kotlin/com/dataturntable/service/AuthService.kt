@@ -45,7 +45,7 @@ class AuthService {
             throw SecurityException("Invalid credentials")
         }
         
-        if (!BcryptUtil.matches(request.passwordHash, user.passwordHash)) {
+        if (!BcryptUtil.matches(request.password, user.passwordHash)) {
             throw SecurityException("Invalid credentials")
         }
         
@@ -145,19 +145,11 @@ class AuthService {
         em.flush()
         
         val generatedPassword = generateRandomPassword(16)
-        val passwordHash = when {
-            !request.passwordHash.isNullOrBlank() -> request.passwordHash
-            !request.password.isNullOrBlank() -> hashPasswordForStorage(request.password)
-            else -> hashPasswordForStorage(generatedPassword)
-        }
-        val responsePassword = when {
-            !request.password.isNullOrBlank() -> request.password
-            else -> generatedPassword
-        }
+        val responsePassword = request.password?.takeIf { it.isNotBlank() } ?: generatedPassword
         
         val user = User().apply {
             this.email = request.email
-            this.passwordHash = BcryptUtil.bcryptHash(passwordHash)
+            this.passwordHash = BcryptUtil.bcryptHash(responsePassword)
             this.firstName = "Admin"
             this.lastName = "User"
             this.isActive = true
@@ -192,15 +184,6 @@ class AuthService {
             password = responsePassword,
             user = toUserDto(user)
         )
-    }
-
-    /**
-     * Evaluates the named capability or state predicate.
-     */
-    private fun hashPasswordForStorage(password: String): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-        val hash = digest.digest(password.toByteArray())
-        return java.util.Base64.getEncoder().encodeToString(hash)
     }
 
     

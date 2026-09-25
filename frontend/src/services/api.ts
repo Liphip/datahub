@@ -26,20 +26,6 @@ function emitApiStatus(detail: ApiStatusDetail): void {
 }
 
 /**
- * Implements `sha256` for this source unit.
- */
-async function sha256(message: string): Promise<string> {
-  const msgBuffer = new TextEncoder().encode(message);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-  const hashArray = new Uint8Array(hashBuffer);
-  let binary = '';
-  for (let i = 0; i < hashArray.length; i++) {
-    binary += String.fromCharCode(hashArray[i]);
-  }
-  return btoa(binary);
-}
-
-/**
  * Defines the class `ApiService`, the contract implemented by this source unit.
  */
 class ApiService {
@@ -147,8 +133,7 @@ class ApiService {
    * Implements `login` for this source unit.
    */
   async login(email: string, password: string, tenantId?: string): Promise<AuthResponse> {
-    const passwordHash = await sha256(password);
-    const response = await this.client.post<AuthResponse>('/auth/login', { email, passwordHash, tenantId });
+    const response = await this.client.post<AuthResponse>('/auth/login', { email, password, tenantId });
     return response.data;
   }
 
@@ -156,8 +141,7 @@ class ApiService {
    * Creates or persists the requested state.
    */
   async register(email: string, password: string, tenantName?: string, tenantId?: string): Promise<AuthResponse> {
-    const passwordHash = await sha256(password);
-    const response = await this.client.post<AuthResponse>('/auth/register', { email, passwordHash, tenantName, tenantId });
+    const response = await this.client.post<AuthResponse>('/auth/register', { email, password, tenantName, tenantId });
     return response.data;
   }
 
@@ -335,8 +319,7 @@ class ApiService {
    * Creates or persists the requested state.
    */
   async createUser(tenantId: string, email: string, password: string, data?: Partial<User>): Promise<User> {
-    const passwordHash = await sha256(password);
-    const response = await this.client.post<User>(`/auth-users?tenantId=${tenantId}`, { email, passwordHash, ...data });
+    const response = await this.client.post<User>(`/auth-users?tenantId=${tenantId}`, { email, password, ...data });
     return response.data;
   }
 
