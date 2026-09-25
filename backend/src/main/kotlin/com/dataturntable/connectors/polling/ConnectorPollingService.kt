@@ -10,7 +10,7 @@ import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.security.EncryptionUtils
-import com.dataturntable.service.KafkaService
+import com.dataturntable.engine.PipelineRunQueue
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.runtime.StartupEvent
 import io.quarkus.runtime.ShutdownEvent
@@ -55,9 +55,6 @@ class ConnectorPollingService {
     lateinit var connectorRuntime: ConnectorRuntimeService
 
     @Inject
-    lateinit var kafkaService: KafkaService
-
-    @Inject
     lateinit var pollExecutor: PollTransactionExecutor
 
     @Inject
@@ -72,7 +69,7 @@ class ConnectorPollingService {
     @Inject
     lateinit var connectorLeaseService: ConnectorLeaseService
 
-    @ConfigProperty(name = "dataturntable.connectors.lease.reconcile-interval-seconds", defaultValue = "20")
+    @ConfigProperty(name = "dataturntable.connectors.lease.reconcile-interval-seconds", defaultValue = "10")
     var leaseReconcileIntervalSeconds: Long = 20
 
     private val scheduler: ScheduledExecutorService = Executors.newScheduledThreadPool(4)
@@ -155,6 +152,7 @@ class ConnectorPollingService {
      * If the connector is not pollable or pollingEnabled=false, cancels any existing schedule.
      */
     fun onConnectorChanged(connectorId: UUID) {
+        if (!runtimeRoleConfig.ownsIngestRuntime()) return // connections live on ingest replicas only
         try {
             val connector = em.find(Connector::class.java, connectorId) ?: run {
                 cancelConnector(connectorId)
@@ -277,7 +275,7 @@ class PollTransactionExecutor {
     lateinit var connectorRuntime: ConnectorRuntimeService
 
     @Inject
-    lateinit var kafkaService: KafkaService
+    lateinit var runQueue: PipelineRunQueue
 
     @PersistenceContext
     lateinit var em: EntityManager
@@ -316,18 +314,8 @@ class PollTransactionExecutor {
             val pipeline = em.find(Pipeline::class.java, pipelineId) ?: continue
             if (!pipeline.isActive) continue
 
-            val run = PipelineRun().apply {
-                this.pipeline = pipeline
-                this.triggerType = TriggerType.SCHEDULED
-                this.status = PipelineRunStatus.PENDING
-                this.startedAt = java.time.Instant.now()
-            }
-            em.persist(run)
-            em.flush()
-
-            kafkaService.triggerPipelineWithData(
-                pipelineId = pipeline.id!!.toString(),
-                runId = run.id!!.toString(),
+            val runId = runQueue.enqueue(
+                pipelineId = pipeline.id!!,
                 triggerType = TriggerType.SCHEDULED,
                 data = mapOf(
                     "_connectorId" to connectorId.toString(),
@@ -335,7 +323,7 @@ class PollTransactionExecutor {
                     "payload" to data
                 )
             )
-            LOG.infof("Poll connector %s triggered pipeline %s (run %s)", connectorId, pipeline.id, run.id)
+            LOG.infof("Poll connector %s triggered pipeline %s (run %s)", connectorId, pipeline.id, runId)
         }
     }
 

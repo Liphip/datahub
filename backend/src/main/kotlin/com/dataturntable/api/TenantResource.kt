@@ -694,7 +694,7 @@ class TenantResource {
      * Retrieves or enumerates the requested state.
      */
     private fun getVisibleTenantsForUser(user: User): List<Tenant> {
-        val allTenants = em.createQuery("SELECT t FROM Tenant t", Tenant::class.java).resultList
+        val allTenants = em.createQuery("SELECT t FROM Tenant t ORDER BY t.createdAt, t.name", Tenant::class.java).resultList
         if (user.isSuperAdmin()) return allTenants
         return allTenants.filter { tenant ->
             tenant.id?.let { user.canAccessTenant(it) } == true

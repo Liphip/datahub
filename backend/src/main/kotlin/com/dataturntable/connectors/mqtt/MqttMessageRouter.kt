@@ -7,7 +7,7 @@ import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.security.EncryptionUtils
-import com.dataturntable.service.KafkaService
+import com.dataturntable.engine.PipelineRunQueue
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
@@ -34,7 +34,7 @@ class MqttMessageRouter {
     private val objectMapper = ObjectMapper()
 
     @Inject
-    lateinit var kafkaService: KafkaService
+    lateinit var runQueue: PipelineRunQueue
 
     @PersistenceContext
     lateinit var em: EntityManager
@@ -69,26 +69,17 @@ class MqttMessageRouter {
             val pipeline = em.find(Pipeline::class.java, entry.pipelineId)
             if (pipeline == null || !pipeline.isActive) continue
 
-            val run = PipelineRun().apply {
-                this.pipeline = pipeline
-                this.triggerType = TriggerType.DATA
-                this.status = PipelineRunStatus.PENDING
-                this.startedAt = java.time.Instant.now()
-            }
-            em.persist(run)
-            em.flush()
-
-            kafkaService.triggerPipelineWithData(
-                pipelineId = pipeline.id!!.toString(),
-                runId = run.id!!.toString(),
+            val runId = runQueue.enqueue(
+                pipelineId = pipeline.id!!,
                 triggerType = TriggerType.DATA,
                 data = mapOf(
                     "_mqttTopic" to topic,
                     "_connectorId" to connectorId.toString(),
                     "payload" to payload
-                )
+                ),
+                partitionKey = topic,
             )
-            LOG.infof("MQTT message on topic '%s' triggered pipeline %s (run %s)", topic, pipeline.id, run.id)
+            LOG.infof("MQTT message on topic '%s' triggered pipeline %s (run %s)", topic, pipeline.id, runId)
         }
     }
 

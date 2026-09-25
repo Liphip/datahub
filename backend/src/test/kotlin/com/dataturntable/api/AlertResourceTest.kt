@@ -15,7 +15,7 @@ import io.quarkus.elytron.security.common.BcryptUtil
 
 @QuarkusTest
 // FIXME: Alert endpoint contract is out of date
-// Details: AlertResource is intentionally exposed at /api/v1/alerts for the public API, but this test class calls /api/internal/v1/alerts and consequently receives 404 responses. Update these request paths or deliberately add an internal route.
+// Details: AlertResource is intentionally exposed at /api/v1/alerts for the public API, but this test class calls /api/v1/alerts and consequently receives 404 responses. Update these request paths or deliberately add an internal route.
 class AlertResourceTest {
 
     @PersistenceContext
@@ -70,7 +70,7 @@ class AlertResourceTest {
         given()
             .queryParam("tenantId", "00000000-0000-0000-0000-000000000000")
         .`when`()
-            .get("/api/internal/v1/alerts/channels")
+            .get("/api/v1/alerts/channels")
         .then()
             .statusCode(401)
     }
@@ -90,7 +90,7 @@ class AlertResourceTest {
                 )
             )
         .`when`()
-            .post("/api/internal/v1/alerts/channels")
+            .post("/api/v1/alerts/channels")
         .then()
             .statusCode(400)
             .body("error", equalTo("Invalid channel type"))
@@ -106,7 +106,7 @@ class AlertResourceTest {
             .contentType("application/json")
             .body(mapOf("name" to "Editable Channel", "channelType" to "WEBHOOK", "config" to mapOf("url" to "https://a")))
         .`when`()
-            .post("/api/internal/v1/alerts/channels?tenantId=$tenantId")
+            .post("/api/v1/alerts/channels?tenantId=$tenantId")
         .then()
             .statusCode(201)
             .extract()
@@ -119,7 +119,7 @@ class AlertResourceTest {
             .contentType("application/json")
             .body(mapOf("name" to "Updated Channel", "isActive" to false))
         .`when`()
-            .patch("/api/internal/v1/alerts/channels/$channelId")
+            .patch("/api/v1/alerts/channels/$channelId")
         .then()
             .statusCode(200)
             .body("name", equalTo("Updated Channel"))
@@ -136,7 +136,7 @@ class AlertResourceTest {
             .header("Authorization", "Bearer $outsiderToken")
             .queryParam("tenantId", tenantId)
         .`when`()
-            .get("/api/internal/v1/alerts/channels")
+            .get("/api/v1/alerts/channels")
         .then()
             .statusCode(403)
             .body("error", equalTo("Forbidden"))
@@ -153,7 +153,7 @@ class AlertResourceTest {
             .contentType("application/json")
             .body(mapOf("name" to "Unauthorized Channel", "channelType" to "WEBHOOK", "config" to mapOf("url" to "https://example.com/hook")))
         .`when`()
-            .post("/api/internal/v1/alerts/channels?tenantId=$tenantId")
+            .post("/api/v1/alerts/channels?tenantId=$tenantId")
         .then()
             .statusCode(403)
             .body("error", equalTo("Forbidden"))

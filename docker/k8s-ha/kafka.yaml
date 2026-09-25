@@ -37,7 +37,37 @@ spec:
       transaction.state.log.min.isr: 2
       default.replication.factor: 3
       min.insync.replicas: 2
-      auto.create.topics.enable: true
+      # Topics are declared below, so a typo cannot silently create a 1-partition topic.
+      auto.create.topics.enable: false
   entityOperator:
     topicOperator: {}
     userOperator: {}
+---
+# Pipeline input: the partition count caps how many executor consumers work in parallel
+# (replicas x PIPELINE_CONSUMER_CONCURRENCY). Partitions can be added later, never removed.
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: dataturntable.pipelines.input
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 48
+  replicas: 3
+  config:
+    min.insync.replicas: 2
+    retention.ms: 604800000
+---
+# Records the executors could not process after retrying (see PipelineInputListener).
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: dataturntable.pipelines.input.dlq
+  labels:
+    strimzi.io/cluster: kafka
+spec:
+  partitions: 6
+  replicas: 3
+  config:
+    min.insync.replicas: 2
+    retention.ms: 2592000000

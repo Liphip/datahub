@@ -710,7 +710,7 @@ class ConnectorResourceTest {
             .contentType("application/json")
             .body(mapOf(
                 "name" to "Override Clone",
-                "direction" to "BOTH",
+                "direction" to "OUTPUT",
                 "description" to "new description"
             ))
         .`when`()
@@ -718,7 +718,7 @@ class ConnectorResourceTest {
         .then()
             .statusCode(201)
             .body("name", equalTo("Override Clone"))
-            .body("direction", equalTo("BOTH"))
+            .body("direction", equalTo("OUTPUT"))
             .body("description", equalTo("new description"))
 
         given()
@@ -743,7 +743,8 @@ class ConnectorResourceTest {
                 "name" to "Bad MQTT Config",
                 "connectorType" to "MQTT",
                 "direction" to "INPUT",
-                "config" to mapOf("broker" to "mqtt://localhost:1883")
+                // Topics live on pipeline nodes; the broker is the only required field.
+                "config" to mapOf("clientId" to "no-broker")
             ))
         .`when`()
             .post("/api/internal/v1/connectors")
@@ -760,7 +761,7 @@ class ConnectorResourceTest {
             .post("/api/internal/v1/connectors/$connectorId/test")
         .then()
             .statusCode(400)
-            .body("missing", hasItem("topic"))
+            .body("missing", hasItem("broker"))
     }
 
     @Test

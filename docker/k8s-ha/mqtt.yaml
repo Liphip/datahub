@@ -14,5 +14,9 @@ spec:
       - rabbitmq_web_mqtt
     additionalConfig: |
       mqtt.allow_anonymous = false
+      # Persistent MQTT sessions (connectors use clean_session=false) are replicated
+      # quorum queues, so queued QoS 1 messages survive the loss of a broker node.
+      # Must be set before the first client connects: a queue type cannot change later.
+      mqtt.durable_queue_type = quorum
   persistence:
     storage: 20Gi

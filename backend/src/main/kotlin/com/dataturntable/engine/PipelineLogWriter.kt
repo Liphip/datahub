@@ -5,6 +5,7 @@ import com.dataturntable.pipeline.PipelineRunNodeLog
 import com.dataturntable.pipeline.PipelineRunStatus
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.persistence.EntityManager
+import jakarta.persistence.LockModeType
 import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
 import org.jboss.logging.Logger
@@ -32,16 +33,18 @@ class PipelineLogWriter {
 
     // ── Run lifecycle ────────────────────────────────────────────────────────
 
-    @Transactional(Transactional.TxType.REQUIRES_NEW)
     /**
-     * Implements `markRunning` for this source unit.
+     * Marks a queued run RUNNING. Returns false when the run is already finished or
+     * cancelled, i.e. the Kafka record is a redelivery that must not execute again.
+     * A run left RUNNING by an executor that died is claimed again.
      */
-    fun markRunning(runId: UUID) {
-        val run = em.find(PipelineRun::class.java, runId) ?: return
-        if (run.status == PipelineRunStatus.CANCELLED) return
+    @Transactional(Transactional.TxType.REQUIRES_NEW)
+    fun claimRun(runId: UUID): Boolean {
+        val run = em.find(PipelineRun::class.java, runId, LockModeType.PESSIMISTIC_WRITE) ?: return false
+        if (run.status != PipelineRunStatus.PENDING && run.status != PipelineRunStatus.RUNNING) return false
         run.status = PipelineRunStatus.RUNNING
         run.startedAt = Instant.now()
-        em.merge(run)
+        return true
     }
 
     @Transactional(Transactional.TxType.REQUIRES_NEW)
@@ -60,12 +63,13 @@ class PipelineLogWriter {
     /**
      * Implements `markFailed` for this source unit.
      */
-    fun markFailed(runId: UUID, errorMessage: String?, metrics: String?) {
+    fun markFailed(runId: UUID, errorMessage: String?, metrics: String?, input: String? = null) {
         val run = em.find(PipelineRun::class.java, runId) ?: return
         run.status = PipelineRunStatus.FAILED
         run.completedAt = Instant.now()
         run.errorMessage = errorMessage
         run.metrics = metrics
+        run.inputPayload = input
         em.merge(run)
     }
 
@@ -76,18 +80,6 @@ class PipelineLogWriter {
     fun isCancelled(runId: UUID): Boolean {
         val run = em.find(PipelineRun::class.java, runId) ?: return false
         return run.status == PipelineRunStatus.CANCELLED
-    }
-
-    @Transactional(Transactional.TxType.REQUIRES_NEW)
-    /**
-     * Updates the requested state.
-     */
-    fun setRetryOfRunId(runId: UUID, retryOfRunId: UUID) {
-        val run = em.find(PipelineRun::class.java, runId) ?: return
-        if (run.retryOfRunId == null) {
-            run.retryOfRunId = retryOfRunId
-            em.merge(run)
-        }
     }
 
     // ── Node logs ────────────────────────────────────────────────────────────

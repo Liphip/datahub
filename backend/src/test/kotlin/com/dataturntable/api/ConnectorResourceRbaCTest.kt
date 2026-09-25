@@ -10,20 +10,20 @@ import org.junit.jupiter.api.Test
 class ConnectorResourceRbaCTest {
 
     @Test
-    fun listConnectorsWithoutAuthReturnsForbidden() {
+    fun listConnectorsWithoutAuthReturnsUnauthorized() {
         RestAssured.given()
-            .`when`().get("/connectors?tenantId=00000000-0000-0000-0000-000000000001")
+            .`when`().get("/api/internal/v1/connectors?tenantId=00000000-0000-0000-0000-000000000001")
             .then()
-            .statusCode(403)
+            .statusCode(401)
     }
 
     @Test
-    fun createConnectorWithoutAuthReturnsForbidden() {
+    fun createConnectorWithoutAuthReturnsUnauthorized() {
         RestAssured.given()
             .contentType("application/json")
             .body(mapOf("tenantId" to "00000000-0000-0000-0000-000000000001", "name" to "c1", "connectorType" to "MQTT", "direction" to "INPUT"))
-            .`when`().post("/connectors")
+            .`when`().post("/api/internal/v1/connectors")
             .then()
-            .statusCode(403)
+            .statusCode(401)
     }
 }

@@ -1,5 +1,6 @@
 package com.dataturntable.api
 
+import com.dataturntable.connectors.AfterCommit
 import com.dataturntable.alert.AlertChannel
 import com.dataturntable.alert.AlertRuleConfig
 import com.dataturntable.pipeline.Pipeline
@@ -10,7 +11,8 @@ import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.mqtt.MqttConnectionManager
 import com.dataturntable.connectors.websocket.WebSocketConnectionManager
-import com.dataturntable.engine.PipelineConsumer
+import com.dataturntable.engine.PipelineQueueUnavailableException
+import com.dataturntable.engine.PipelineRunQueue
 import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
 import com.dataturntable.auth.User
@@ -50,10 +52,13 @@ class PipelineResource {
     }
 
     @Inject
-    lateinit var pipelineConsumer: PipelineConsumer
+    lateinit var runQueue: PipelineRunQueue
 
     @Inject
     lateinit var mqttConnectionManager: MqttConnectionManager
+
+    @Inject
+    lateinit var afterCommit: AfterCommit
 
     @Inject
     lateinit var webSocketConnectionManager: WebSocketConnectionManager
@@ -903,8 +908,10 @@ class PipelineResource {
         }
 
         // Refresh routing tables so MQTT/WS subscriptions stay in sync if pipeline is active
-        mqttConnectionManager.refreshAll()
-        webSocketConnectionManager.refreshAll()
+        afterCommit.run {
+            mqttConnectionManager.refreshAll()
+            webSocketConnectionManager.refreshAll()
+        }
 
         return Response.status(201).entity(pipelineToMap(pipeline)).build()
     }
@@ -952,8 +959,10 @@ class PipelineResource {
             requireTenantAccess(currentUser, tenantId, "pipeline:write")?.let { return it }
             pipeline.delete()
             // Rebuild routing tables to remove this pipeline's subscriptions
-            mqttConnectionManager.refreshAll()
-            webSocketConnectionManager.refreshAll()
+            afterCommit.run {
+                mqttConnectionManager.refreshAll()
+                webSocketConnectionManager.refreshAll()
+            }
             Response.noContent().build()
         } else {
             Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
@@ -996,8 +1005,10 @@ class PipelineResource {
             pipeline.persist()
 
             // Refresh connection managers so topic subscriptions stay in sync with graph changes
-            mqttConnectionManager.refreshAll()
-            webSocketConnectionManager.refreshAll()
+            afterCommit.run {
+                mqttConnectionManager.refreshAll()
+                webSocketConnectionManager.refreshAll()
+            }
 
             Response.ok(pipelineToMap(pipeline)).build()
         } else {
@@ -1027,7 +1038,7 @@ class PipelineResource {
             em.createNativeQuery(
                 """INSERT INTO connector_pipeline_map (id, connector_id, pipeline_id, node_id, node_type)
                    VALUES (gen_random_uuid(), :cid, :pid, :nid, :ntype)
-                   ON CONFLICT (connector_id, pipeline_id, node_id) DO NOTHING"""
+                   ON CONFLICT DO NOTHING"""
             )
                 .setParameter("cid", connectorUuid)
                 .setParameter("pid", pipelineId)
@@ -1043,39 +1054,26 @@ class PipelineResource {
     private fun enqueuePipelineRun(
         pipeline: Pipeline,
         triggerType: TriggerType,
-        extraData: Map<String, Any?> = emptyMap(),
+        data: Map<String, Any?> = emptyMap(),
         retryOfRunId: UUID? = null
     ): PipelineRun {
-        val run = PipelineRun().apply {
-            this.pipeline = pipeline
-            this.triggerType = triggerType
-            this.retryOfRunId = retryOfRunId
+        val runId = try {
+            runQueue.enqueue(pipeline.id!!, triggerType, mapOf("_triggerType" to triggerType.name) + data, retryOfRunId)
+        } catch (e: PipelineQueueUnavailableException) {
+            throw WebApplicationException(
+                Response.status(503).header("Retry-After", 5).entity(mapOf("error" to e.message)).build()
+            )
         }
-        run.persist()
-        em.flush()
+        return em.find(PipelineRun::class.java, runId)
+    }
 
-        val triggerData = mutableMapOf<String, Any?>(
-            "_pipelineId" to pipeline.id.toString(),
-            "_triggerType" to run.triggerType.name
-        )
-        triggerData.putAll(extraData)
-        val triggerMessage = mapOf(
-            "runId" to run.id.toString(),
-            "pipelineId" to pipeline.id.toString(),
-            "triggerType" to run.triggerType.name,
-            "data" to triggerData
-        )
-
-        try {
-            pipelineConsumer.consume(objectMapper.writeValueAsString(triggerMessage))
-        } catch (e: Exception) {
-            run.status = PipelineRunStatus.FAILED
-            run.completedAt = java.time.Instant.now()
-            run.errorMessage = e.message ?: "Failed to execute pipeline trigger"
-            run.persist()
-        }
-
-        return run
+    /** Input of the run being retried: the stored trigger data of a failed run, if any. */
+    private fun retryInput(sourceRun: PipelineRun): Map<String, Any?> {
+        @Suppress("UNCHECKED_CAST")
+        val stored = sourceRun.inputPayload
+            ?.let { runCatching { objectMapper.readValue(it, Map::class.java) as Map<String, Any?> }.getOrNull() }
+            .orEmpty()
+        return stored.filterKeys { it != "_runId" && it != "_pipelineId" } + ("_retryOfRunId" to sourceRun.id.toString())
     }
 
     @POST
@@ -1154,7 +1152,7 @@ class PipelineResource {
         val retriedRun = enqueuePipelineRun(
             pipeline,
             sourceRun.triggerType,
-            mapOf("_retryOfRunId" to sourceRun.id.toString()),
+            retryInput(sourceRun),
             sourceRun.id
         )
 

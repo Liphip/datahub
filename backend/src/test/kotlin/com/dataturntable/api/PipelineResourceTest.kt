@@ -9,19 +9,28 @@ import com.dataturntable.test.TestAuthHelpers
 import io.quarkus.narayana.jta.QuarkusTransaction
 import io.quarkus.test.junit.QuarkusTest
 import io.restassured.http.ContentType
+import io.smallrye.reactive.messaging.memory.InMemoryConnector
+import jakarta.enterprise.inject.Any as AnyBean
+import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import io.quarkus.elytron.security.common.BcryptUtil
 
 import io.restassured.RestAssured.given
 import org.hamcrest.CoreMatchers.*
+import org.hamcrest.Matchers.lessThanOrEqualTo
 
 @QuarkusTest
 class PipelineResourceTest {
 
     @PersistenceContext
     lateinit var em: EntityManager
+
+    @Inject
+    @AnyBean
+    lateinit var messaging: InMemoryConnector
 
     fun createNonMemberToken(): String {
         val email = "pipeline-viewer@example.com"
@@ -187,7 +196,7 @@ class PipelineResourceTest {
             .post("/api/internal/v1/pipelines?tenantId=$tenantId")
         .then()
             .statusCode(400)
-            .body("error", containsString("INPUT/BOTH"))
+            .body("error", containsString("requires INPUT connector direction"))
     }
 
     @Test
@@ -237,8 +246,8 @@ class PipelineResourceTest {
                 mapOf("id" to "n3", "type" to "ALERT", "moduleVersionId" to createModuleVersion(token, tenantId, "ALERT", "Alert Module"))
             ),
             "edges" to listOf(
-                mapOf("from" to "n1", "to" to "n2"),
-                mapOf("from" to "n2", "to" to "n3")
+                mapOf("source" to "n1", "target" to "n2"),
+                mapOf("source" to "n2", "target" to "n3")
             )
         )
 
@@ -308,7 +317,7 @@ class PipelineResourceTest {
             .post("/api/internal/v1/pipelines?tenantId=$tenantId")
         .then()
             .statusCode(400)
-            .body("error", containsString("expects EXPORT module version"))
+            .body("error", containsString("expects one of EXPORT/DB_SAVE"))
     }
 
     @Test
@@ -328,6 +337,7 @@ class PipelineResourceTest {
 
         val importVersionId = createModuleVersion(token, tenantId, "IMPORT", "Cycle Import")
         val processingVersionId = createModuleVersion(token, tenantId, "PROCESSING", "Cycle Processing")
+        val mergeVersionId = createModuleVersion(token, tenantId, "MERGE", "Cycle Merge")
 
         val connectorId = given()
             .header("Authorization", "Bearer $token")
@@ -352,11 +362,13 @@ class PipelineResourceTest {
         val graphDefinition = mapOf(
             "nodes" to listOf(
                 mapOf("id" to "n-import", "type" to "IMPORT", "moduleVersionId" to importVersionId, "connectorId" to connectorId),
-                mapOf("id" to "n-processing", "type" to "PROCESSING", "moduleVersionId" to processingVersionId)
+                mapOf("id" to "n-processing", "type" to "PROCESSING", "moduleVersionId" to processingVersionId),
+                mapOf("id" to "n-merge", "type" to "MERGE", "moduleVersionId" to mergeVersionId)
             ),
             "edges" to listOf(
-                mapOf("from" to "n-import", "to" to "n-processing"),
-                mapOf("from" to "n-processing", "to" to "n-import")
+                mapOf("source" to "n-import", "target" to "n-merge"),
+                mapOf("source" to "n-merge", "target" to "n-processing"),
+                mapOf("source" to "n-processing", "target" to "n-merge")
             )
         )
 
@@ -640,12 +652,15 @@ class PipelineResourceTest {
                 this.startedAt = java.time.Instant.now().minusSeconds(40)
                 this.completedAt = java.time.Instant.now().minusSeconds(20)
                 this.errorMessage = "simulated failure"
+                this.inputPayload = """{"payload":{"v":42},"_runId":"stale"}"""
             }
             em.persist(run)
             em.flush()
             run.id.toString()
         }
 
+        val sink = messaging.sink<String>("pipeline-commands")
+        sink.clear()
         given()
             .header("Authorization", "Bearer $token")
             .contentType("application/json")
@@ -657,6 +672,12 @@ class PipelineResourceTest {
             .body("id", notNullValue())
             .body("triggerType", equalTo("MANUAL"))
             .body("retryOfRunId", equalTo(sourceRunId))
+
+        // The retry replays the failed run's input.
+        val queued = com.fasterxml.jackson.databind.ObjectMapper().readTree(sink.received().single().payload)
+        assertEquals(42, queued["data"]["payload"]["v"].asInt())
+        assertEquals(sourceRunId, queued["data"]["_retryOfRunId"].asText())
+        assertEquals(queued["runId"].asText(), queued["data"]["_runId"].asText())
 
         val runningRunId = QuarkusTransaction.requiringNew().call<String> {
             val pipeline = em.find(Pipeline::class.java, java.util.UUID.fromString(pipelineId))
@@ -1274,7 +1295,7 @@ class PipelineResourceTest {
             .get("/api/internal/v1/pipelines/runs/summary")
         .then()
             .statusCode(200)
-            .body("windowSize", equalTo(25))
+            .body("windowSize", lessThanOrEqualTo(25)) // number of runs found, capped by limit
             .body("sinceHours", equalTo(24))
             .body("bucketSeconds", equalTo(3600))
             .body("trendBuckets.size()", equalTo(24))

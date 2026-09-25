@@ -1,0 +1,4 @@
+-- Tables the application only accesses with native SQL, so Hibernate's generated test
+-- schema does not contain them. Keep in sync with db/migration/V1__baseline.sql.
+CREATE TABLE connector_pipeline_map (id uuid DEFAULT random_uuid() PRIMARY KEY, connector_id uuid NOT NULL REFERENCES connectors(id) ON DELETE CASCADE, pipeline_id uuid NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE, node_id varchar(255) NOT NULL, node_type varchar(50) NOT NULL, created_at timestamp with time zone DEFAULT now(), mqtt_topic varchar(512), UNIQUE (connector_id, pipeline_id, node_id));
+CREATE TABLE connector_runtime_leases (connector_id uuid PRIMARY KEY REFERENCES connectors(id) ON DELETE CASCADE, runtime_role varchar(64) NOT NULL, owner_instance_id varchar(255) NOT NULL, lease_until timestamp with time zone NOT NULL, updated_at timestamp with time zone DEFAULT now());

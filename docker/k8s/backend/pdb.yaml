@@ -1,0 +1,71 @@
+# Voluntary disruptions (node drains, cluster upgrades) keep at least one replica of
+# every component running.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: dataturntable-control-api
+  labels:
+    app: dataturntable
+    component: control-api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: dataturntable
+      component: control-api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: dataturntable-public-api
+  labels:
+    app: dataturntable
+    component: public-api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: dataturntable
+      component: public-api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: dataturntable-ingest-edge
+  labels:
+    app: dataturntable
+    component: ingest-edge
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: dataturntable
+      component: ingest-edge
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: dataturntable-pipeline-executor
+  labels:
+    app: dataturntable
+    component: pipeline-executor
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: dataturntable
+      component: pipeline-executor
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: dataturntable-frontend
+  labels:
+    app: dataturntable
+    component: frontend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: dataturntable
+      component: frontend

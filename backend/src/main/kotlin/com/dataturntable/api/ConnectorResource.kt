@@ -1,5 +1,6 @@
 package com.dataturntable.api
 
+import com.dataturntable.connectors.AfterCommit
 import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.Connector.Direction
 import com.dataturntable.connectors.Connector.ConnectorType
@@ -56,6 +57,9 @@ class ConnectorResource {
 
     @Inject
     lateinit var mqttConnectionManager: MqttConnectionManager
+
+    @Inject
+    lateinit var afterCommit: AfterCommit
 
     @Inject
     lateinit var webSocketConnectionManager: WebSocketConnectionManager
@@ -845,13 +849,15 @@ class ConnectorResource {
         }
         connector.persist()
 
-        // Refresh connection managers after transaction commits
+        // Refresh connection managers once the transaction has committed
         val createdId = connector.id
         if (createdId != null) {
-            when (parsedConnectorType) {
-                ConnectorType.MQTT -> if (parsedDirection == Direction.INPUT) mqttConnectionManager.refreshConnector(createdId)
-                ConnectorType.WEBSOCKET -> if (parsedDirection == Direction.INPUT) webSocketConnectionManager.refreshConnector(createdId)
-                else -> if (pollingAllowed && requestedPolling) connectorPollingService.onConnectorChanged(createdId)
+            afterCommit.run {
+                when (parsedConnectorType) {
+                    ConnectorType.MQTT -> if (parsedDirection == Direction.INPUT) mqttConnectionManager.refreshConnector(createdId)
+                    ConnectorType.WEBSOCKET -> if (parsedDirection == Direction.INPUT) webSocketConnectionManager.refreshConnector(createdId)
+                    else -> if (pollingAllowed && requestedPolling) connectorPollingService.onConnectorChanged(createdId)
+                }
             }
         }
 
@@ -1156,10 +1162,12 @@ class ConnectorResource {
 
         val cId = connector.id
         if (cId != null) {
-            when (connector.connectorType) {
-                ConnectorType.MQTT -> if (connector.direction == Direction.INPUT) mqttConnectionManager.refreshConnector(cId)
-                ConnectorType.WEBSOCKET -> if (connector.direction == Direction.INPUT) webSocketConnectionManager.refreshConnector(cId)
-                else -> connectorPollingService.onConnectorChanged(cId)
+            afterCommit.run {
+                when (connector.connectorType) {
+                    ConnectorType.MQTT -> if (connector.direction == Direction.INPUT) mqttConnectionManager.refreshConnector(cId)
+                    ConnectorType.WEBSOCKET -> if (connector.direction == Direction.INPUT) webSocketConnectionManager.refreshConnector(cId)
+                    else -> connectorPollingService.onConnectorChanged(cId)
+                }
             }
         }
 
@@ -1220,10 +1228,12 @@ class ConnectorResource {
 
         val cId = connector.id
         if (cId != null) {
-            when (connector.connectorType) {
-                ConnectorType.MQTT -> if (connector.direction == Direction.INPUT) mqttConnectionManager.disconnectConnector(cId)
-                ConnectorType.WEBSOCKET -> if (connector.direction == Direction.INPUT) webSocketConnectionManager.disconnectConnector(cId)
-                else -> connectorPollingService.cancelConnector(cId)
+            afterCommit.run {
+                when (connector.connectorType) {
+                    ConnectorType.MQTT -> if (connector.direction == Direction.INPUT) mqttConnectionManager.disconnectConnector(cId)
+                    ConnectorType.WEBSOCKET -> if (connector.direction == Direction.INPUT) webSocketConnectionManager.disconnectConnector(cId)
+                    else -> connectorPollingService.cancelConnector(cId)
+                }
             }
         }
 
@@ -1431,10 +1441,12 @@ class ConnectorResource {
             // Refresh connection managers
             val updatedId = connector.id
             if (updatedId != null) {
-                when (connector.connectorType) {
-                    ConnectorType.MQTT -> mqttConnectionManager.refreshConnector(updatedId)
-                    ConnectorType.WEBSOCKET -> webSocketConnectionManager.refreshConnector(updatedId)
-                    else -> connectorPollingService.onConnectorChanged(updatedId)
+                afterCommit.run {
+                    when (connector.connectorType) {
+                        ConnectorType.MQTT -> mqttConnectionManager.refreshConnector(updatedId)
+                        ConnectorType.WEBSOCKET -> webSocketConnectionManager.refreshConnector(updatedId)
+                        else -> connectorPollingService.onConnectorChanged(updatedId)
+                    }
                 }
             }
 
@@ -1491,10 +1503,12 @@ class ConnectorResource {
 
             // Clean up connection managers
             if (deletedId != null) {
-                when (deletedType) {
-                    ConnectorType.MQTT -> if (deletedDir == Direction.INPUT) mqttConnectionManager.disconnectConnector(deletedId)
-                    ConnectorType.WEBSOCKET -> if (deletedDir == Direction.INPUT) webSocketConnectionManager.disconnectConnector(deletedId)
-                    else -> connectorPollingService.cancelConnector(deletedId)
+                afterCommit.run {
+                    when (deletedType) {
+                        ConnectorType.MQTT -> if (deletedDir == Direction.INPUT) mqttConnectionManager.disconnectConnector(deletedId)
+                        ConnectorType.WEBSOCKET -> if (deletedDir == Direction.INPUT) webSocketConnectionManager.disconnectConnector(deletedId)
+                        else -> connectorPollingService.cancelConnector(deletedId)
+                    }
                 }
             }
 

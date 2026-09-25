@@ -5,11 +5,9 @@ import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.ConnectorLeaseService
 import com.dataturntable.connectors.ConnectorMetrics
 import com.dataturntable.pipeline.Pipeline
-import com.dataturntable.pipeline.PipelineRun
-import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.security.EncryptionUtils
-import com.dataturntable.service.KafkaService
+import com.dataturntable.engine.PipelineRunQueue
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.runtime.StartupEvent
 import io.quarkus.runtime.ShutdownEvent
@@ -70,7 +68,7 @@ class WebSocketConnectionManager {
     @Inject
     lateinit var connectorLeaseService: ConnectorLeaseService
 
-    @ConfigProperty(name = "dataturntable.connectors.lease.reconcile-interval-seconds", defaultValue = "20")
+    @ConfigProperty(name = "dataturntable.connectors.lease.reconcile-interval-seconds", defaultValue = "10")
     var leaseReconcileIntervalSeconds: Long = 20
 
     /** connectorId → active WebSocket connection */
@@ -151,6 +149,7 @@ class WebSocketConnectionManager {
      * Implements `refreshAll` for this source unit.
      */
     fun refreshAll() {
+        if (!runtimeRoleConfig.ownsIngestRuntime()) return // connections live on ingest replicas only
         try {
             val connectorIds = wsMessageRouter.findAllActiveWebSocketInputConnectors()
             val ownedConnectorIds = mutableSetOf<UUID>()
@@ -177,6 +176,7 @@ class WebSocketConnectionManager {
      * Implements `refreshConnector` for this source unit.
      */
     fun refreshConnector(connectorId: UUID) {
+        if (!runtimeRoleConfig.ownsIngestRuntime()) return // connections live on ingest replicas only
         try {
             val (connector, _) = wsMessageRouter.resolveConnectorConfig(connectorId) ?: run {
                 disconnectConnector(connectorId)
@@ -370,7 +370,7 @@ class WebSocketMessageRouter {
     private val objectMapper = ObjectMapper()
 
     @Inject
-    lateinit var kafkaService: KafkaService
+    lateinit var runQueue: PipelineRunQueue
 
     @PersistenceContext
     lateinit var em: EntityManager
@@ -391,22 +391,12 @@ class WebSocketMessageRouter {
             val pipeline = em.find(Pipeline::class.java, pipelineId) ?: continue
             if (!pipeline.isActive) continue
 
-            val run = PipelineRun().apply {
-                this.pipeline = pipeline
-                this.triggerType = TriggerType.DATA
-                this.status = PipelineRunStatus.PENDING
-                this.startedAt = java.time.Instant.now()
-            }
-            em.persist(run)
-            em.flush()
-
-            kafkaService.triggerPipelineWithData(
-                pipelineId = pipeline.id!!.toString(),
-                runId = run.id!!.toString(),
+            val runId = runQueue.enqueue(
+                pipelineId = pipeline.id!!,
                 triggerType = TriggerType.DATA,
                 data = mapOf("_connectorId" to connectorId.toString(), "payload" to payload)
             )
-            LOG.infof("WebSocket connector %s triggered pipeline %s (run %s)", connectorId, pipeline.id, run.id)
+            LOG.infof("WebSocket connector %s triggered pipeline %s (run %s)", connectorId, pipeline.id, runId)
         }
     }
 

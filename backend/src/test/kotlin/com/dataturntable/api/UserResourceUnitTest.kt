@@ -19,7 +19,7 @@ class UserResourceUnitTest {
     }
 
     @Test
-    fun testCreateMissingPasswordHash() {
+    fun testCreateMissingPassword() {
         val token = TestAuthHelpers.createAdminToken()
 
         RestAssured.given()
@@ -29,6 +29,6 @@ class UserResourceUnitTest {
             .`when`().post("/api/internal/v1/auth-users")
             .then()
             .statusCode(400)
-            .body("error", CoreMatchers.equalTo("Password hash is required"))
+            .body("error", CoreMatchers.equalTo("Password is required"))
     }
 }

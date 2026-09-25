@@ -229,6 +229,7 @@ CREATE TABLE pipeline_runs (
     error_message text,
     retry_of_run_id uuid,
     metrics text DEFAULT '{}',
+    input_payload text,
     CONSTRAINT pipeline_runs_status_check CHECK (status IN ('PENDING', 'RUNNING', 'SUCCESS', 'FAILED', 'CANCELLED')),
     CONSTRAINT pipeline_runs_trigger_type_check CHECK (trigger_type IN ('MANUAL', 'SCHEDULED', 'EVENT', 'DATA'))
 );

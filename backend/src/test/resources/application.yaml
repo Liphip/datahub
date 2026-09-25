@@ -6,6 +6,7 @@ quarkus:
   hibernate-orm:
     database:
       generation: drop-and-create
+    sql-load-script: native-tables.sql
     log:
       sql: false
 

@@ -35,6 +35,21 @@ The applications keep using the single-node service names (`postgresql`, `pipeli
 
 4. MQTT: anonymous access is disabled on the RabbitMQ cluster. Read the credentials from the Secret `mqtt-default-user` (keys `username`, `password`) and register them as a broker credential in the platform for connectors that use the bundled broker.
 
+## Failover behaviour
+
+What happens when a component fails, and why nothing that was acknowledged is lost (details: functional specification §4.9):
+
+| Failure | Effect |
+|---|---|
+| PostgreSQL primary | CloudNativePG promotes a synchronous standby (commits wait for one standby, so none is lost). Requests in flight fail and are retried by clients; pipeline executors retry lost connections for up to 10 minutes without failing runs. |
+| Kafka broker | Topics are replicated three times with `min.insync.replicas=2`; producers wait for `acks=all`. Partition leadership moves within seconds; ingest returns `503` (clients resend) only while fewer than two replicas are in sync. |
+| RabbitMQ (MQTT) node | Persistent MQTT sessions are quorum queues (`mqtt.durable_queue_type = quorum`); queued QoS 1 messages survive. Paho clients reconnect automatically. |
+| Pipeline executor pod | Uncommitted records are redelivered to the remaining executors; finished runs are skipped, the interrupted run starts again. |
+| Ingest pod holding MQTT/polling leases | Another ingest replica takes over the connector lease and resumes the persistent MQTT session. |
+| API / frontend pod | Removed from the Service; remaining replicas serve (PodDisruptionBudgets keep one of each during drains, rolling updates never go below the replica count). |
+
+Processing is at-least-once: exports and alerts of a run that was interrupted can repeat.
+
 ## Known limitations
 
 - The pipeline-data cluster uses the CloudNativePG PostgreSQL image, which does not contain the TimescaleDB extension. The platform does not currently require it; once TimescaleDB features are used, the cluster needs an image that bundles the extension.

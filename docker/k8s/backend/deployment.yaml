@@ -7,6 +7,11 @@ metadata:
     component: control-api
 spec:
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: dataturntable
@@ -21,6 +26,15 @@ spec:
         prometheus.io/path: "/q/metrics"
         prometheus.io/port: "8080"
     spec:
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: dataturntable
+              component: control-api
       containers:
         - name: control-api
           # TODO: Pin deployable images to immutable versions or digests
@@ -104,6 +118,11 @@ spec:
             limits:
               cpu: 1500m
               memory: 1536Mi
+          lifecycle:
+            # Let the Service stop routing to the pod before Quarkus starts its graceful shutdown.
+            preStop:
+              sleep:
+                seconds: 5
           livenessProbe:
             httpGet:
               path: /q/health/live
@@ -176,6 +195,11 @@ metadata:
     component: public-api
 spec:
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: dataturntable
@@ -190,6 +214,15 @@ spec:
         prometheus.io/path: "/q/metrics"
         prometheus.io/port: "8080"
     spec:
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: dataturntable
+              component: public-api
       containers:
         - name: public-api
           image: dataturntable/backend:latest
@@ -239,6 +272,11 @@ spec:
             limits:
               cpu: 1500m
               memory: 1536Mi
+          lifecycle:
+            # Let the Service stop routing to the pod before Quarkus starts its graceful shutdown.
+            preStop:
+              sleep:
+                seconds: 5
           livenessProbe:
             httpGet:
               path: /q/health/live
@@ -311,6 +349,11 @@ metadata:
     component: ingest-edge
 spec:
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: dataturntable
@@ -325,6 +368,15 @@ spec:
         prometheus.io/path: "/q/metrics"
         prometheus.io/port: "8080"
     spec:
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: dataturntable
+              component: ingest-edge
       containers:
         - name: ingest-edge
           image: dataturntable/backend:latest
@@ -374,6 +426,11 @@ spec:
             limits:
               cpu: 1500m
               memory: 1536Mi
+          lifecycle:
+            # Let the Service stop routing to the pod before Quarkus starts its graceful shutdown.
+            preStop:
+              sleep:
+                seconds: 5
           livenessProbe:
             httpGet:
               path: /q/health/live
@@ -446,6 +503,11 @@ metadata:
     component: pipeline-executor
 spec:
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: dataturntable
@@ -460,6 +522,15 @@ spec:
         prometheus.io/path: "/q/metrics"
         prometheus.io/port: "8080"
     spec:
+      terminationGracePeriodSeconds: 120
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: dataturntable
+              component: pipeline-executor
       containers:
         - name: pipeline-executor
           # BUG: Pipeline modules cannot start Docker containers in this pod
@@ -511,6 +582,11 @@ spec:
             limits:
               cpu: 2000m
               memory: 2048Mi
+          lifecycle:
+            # Let the Service stop routing to the pod before Quarkus starts its graceful shutdown.
+            preStop:
+              sleep:
+                seconds: 5
           livenessProbe:
             httpGet:
               path: /q/health/live

@@ -53,7 +53,7 @@ class MqttConnectionManager {
     @Inject
     lateinit var connectorLeaseService: ConnectorLeaseService
 
-    @ConfigProperty(name = "dataturntable.connectors.lease.reconcile-interval-seconds", defaultValue = "20")
+    @ConfigProperty(name = "dataturntable.connectors.lease.reconcile-interval-seconds", defaultValue = "10")
     var leaseReconcileIntervalSeconds: Long = 20
 
     /** connectorId → active Paho client */
@@ -145,6 +145,7 @@ class MqttConnectionManager {
      * Called on startup and when pipelines are activated/deactivated.
      */
     fun refreshAll() {
+        if (!runtimeRoleConfig.ownsIngestRuntime()) return // connections live on ingest replicas only
         try {
             val newTable = messageRouter.buildRoutingTable()
             routingTable = newTable
@@ -178,6 +179,7 @@ class MqttConnectionManager {
      * Rebuilds the routing table and reconnects/resubscribes this connector.
      */
     fun refreshConnector(connectorId: UUID) {
+        if (!runtimeRoleConfig.ownsIngestRuntime()) return // connections live on ingest replicas only
         try {
             routingTable = messageRouter.buildRoutingTable()
             val (connector, _) = messageRouter.resolveConnectorConfig(connectorId) ?: run {
@@ -347,8 +349,12 @@ class MqttConnectionManager {
                 try {
                     messageRouter.routeMessage(connectorId, topic, payload, routingTable)
                 } catch (e: Exception) {
+                    // Throwing makes Paho drop the connection without sending PUBACK; the broker
+                    // keeps the message in the persistent session and redelivers it after the
+                    // automatic reconnect (at-least-once).
                     connectorMetrics.messageCounter("mqtt", "input", "failed").increment()
-                    LOG.errorf("MQTT connector %s message routing failed: %s", connectorId, e.message)
+                    LOG.errorf("MQTT connector %s message routing failed, message will be redelivered: %s", connectorId, e.message)
+                    throw e
                 }
             }
 
@@ -369,8 +375,12 @@ class MqttConnectionManager {
      */
     private fun buildConnectOptions(config: Map<String, Any?>): MqttConnectOptions {
         return MqttConnectOptions().apply {
-            isCleanSession = true
+            // Persistent session with a stable client id: QoS 1 messages published while the
+            // connector is disconnected (restart, failover to another ingest replica) are
+            // queued by the broker and delivered when the new lease holder connects.
+            isCleanSession = false
             isAutomaticReconnect = true
+            maxReconnectDelay = 30_000
             connectionTimeout = 10
             keepAliveInterval = 30
             val username = config["username"]?.toString()?.trim()

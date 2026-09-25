@@ -7,6 +7,13 @@ metadata:
   name: app-db
 spec:
   instances: 3
+  # A commit returns only after one standby has the WAL: a primary failover loses no
+  # committed transaction (RPO 0). With one of three instances down writes continue.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
   bootstrap:
     initdb:
       database: dataturntable
@@ -24,6 +31,13 @@ metadata:
   name: pipeline-db
 spec:
   instances: 3
+  # A commit returns only after one standby has the WAL: a primary failover loses no
+  # committed transaction (RPO 0). With one of three instances down writes continue.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
   bootstrap:
     initdb:
       database: pipeline_data
@@ -39,6 +53,12 @@ metadata:
   name: monitoring-db
 spec:
   instances: 2
+  # Two instances: synchronous while the standby is up, but writes continue without it.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: preferred
   bootstrap:
     initdb:
       database: monitoring
@@ -54,6 +74,12 @@ metadata:
   name: dashboard-db
 spec:
   instances: 2
+  # Two instances: synchronous while the standby is up, but writes continue without it.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: preferred
   bootstrap:
     initdb:
       database: dashboard

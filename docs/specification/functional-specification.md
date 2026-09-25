@@ -258,9 +258,8 @@ The graph is stored in `pipelines.graph_definition`. IMPORT and EXPORT nodes ref
 
 | Topic | Purpose |
 | ----- | ------- |
-| `dataturntable.pipelines.input` | Ingestion → pipeline executor; keyed by tenant/pipeline so that partitions scale processing (PIP-12) |
-| `dataturntable.pipelines.output` | Pipeline results for downstream consumers |
-| `dataturntable.dlq.{tenantId}` | Dead-letter queue for failed messages (PIP-13) |
+| `dataturntable.pipelines.input` | Ingestion → pipeline executor; keyed by pipeline (plus the optional `X-Partition-Key`, e.g. a device id) so that partitions scale processing while each key keeps its order (PIP-12) |
+| `dataturntable.pipelines.input.dlq` | Records the executors could not process after retrying infrastructure failures (PIP-13) |
 | `dataturntable.lake.commits` | Data-file metadata from lake writers to the table committer (§8.4) |
 
 ### 4.6 Error Handling
@@ -272,11 +271,28 @@ The graph is stored in `pipelines.graph_definition`. IMPORT and EXPORT nodes ref
 ### 4.7 Deduplication
 
 - **System duplicates** (Kafka at-least-once retries): suppressed using message-ID deduplication within a configurable window (default: 5 minutes).
+  *Implementation note:* every queued record carries its run id, and a redelivered record whose run already finished is skipped. Client resends after a lost response create a new run and are not deduplicated yet.
 - **User data duplicates** (same measurement arriving twice): preserved unless the user explicitly adds a deduplication PROCESSING module to the pipeline.
+
+*Implementation note:* one dead-letter topic for all tenants; requeueing from the UI is not built yet. A module or pipeline error does not use the DLQ: the run is marked failed and keeps its input, and **Retry** in the run view replays that input.
 
 ### 4.8 Scaling
 
 Ingestion pods and pipeline workers are stateless and scale automatically: ingestion by request rate, workers by Kafka consumer lag (e.g. KEDA). Workers are long-running and process micro-batches; the module contract already accepts DataFrames (MOD-08). Single-node deployments run one instance of each.
+
+### 4.9 Delivery Guarantees and Failover
+
+Delivery is **at-least-once** end to end; no acknowledged record is lost when a pod, a Kafka broker, an MQTT broker node or the PostgreSQL primary fails.
+
+| Stage | Guarantee |
+| ----- | --------- |
+| HTTP / WebSocket ingest | The run is created and the record written to Kafka (`acks=all`, idempotent producer, `min.insync.replicas=2` on Kubernetes HA) before the client gets `202` (WebSocket: `{"status":"accepted"}`). Otherwise the client gets `503` + `Retry-After` (WebSocket: `"retry": true`) and resends. |
+| MQTT connectors | Persistent session (`clean_session=false`, stable client id, QoS 1). The PUBACK is sent only after the record is in Kafka; on failure the connection is dropped and the broker redelivers. On Kubernetes HA the session queues are RabbitMQ quorum queues. When the ingest replica holding the connector lease dies, another replica takes the lease and resumes the session. |
+| Polling connectors | A poll whose records could not be queued is recorded as failed and fetched again on the next cycle. |
+| Executors | Offsets are committed only after a run finished. A dead executor's partitions move to the others and its uncommitted records are processed again; runs that already finished are skipped, a run that was running is started again. Lost database connections (e.g. a PostgreSQL failover) are retried with backoff for up to 10 minutes (`dataturntable.pipeline.max-infra-retry`) while the partition waits; only then the record goes to the DLQ. |
+| Built-in alert rules | Rule state is stored in PostgreSQL with row locks, so any executor can continue it (§9.2). |
+
+Consequences: a record can be processed twice (client resend after a lost `202`, executor death mid-run). Exports and alerts of such a run can therefore repeat; alert cooldowns suppress repeated alerts, idempotent sinks (upserts keyed by measurement id and timestamp) avoid duplicate rows.
 
 ---
 
@@ -685,6 +701,8 @@ Roles, their permissions and assignments are defined per installation (IAM-02); 
 | ------ | ---- | ----------- |
 | POST | `/api/ingest/v1/ingest/{pipelineId}` | Push data into a pipeline (JSON object or array) |
 | POST | `/api/ingest/v1/ingest/connector/{connectorId}` | Push data into all pipelines using an INPUT connector |
+
+`202` means the record is stored durably; `503` with `Retry-After` means it is not and must be resent (§4.9). The optional header `X-Partition-Key` spreads one pipeline's load over all executors while keeping the order per key.
 
 ### 11.4 Standard Response Envelope
 

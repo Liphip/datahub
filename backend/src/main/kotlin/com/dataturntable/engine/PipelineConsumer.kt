@@ -1,6 +1,5 @@
 package com.dataturntable.engine
 
-import com.dataturntable.config.RuntimeRoleConfig
 import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
 import com.dataturntable.pipeline.Pipeline
@@ -12,13 +11,11 @@ import com.dataturntable.connectors.ConnectorRuntimeService
 import com.dataturntable.service.PipelineDataService
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.micrometer.core.instrument.MeterRegistry
-import io.smallrye.reactive.messaging.annotations.Blocking
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
-import org.eclipse.microprofile.reactive.messaging.Incoming
 import org.jboss.logging.Logger
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -90,8 +87,6 @@ class PipelineConsumer {
     @Inject
     lateinit var metrics: PipelineMetrics
 
-    @Inject
-    lateinit var runtimeRoleConfig: RuntimeRoleConfig
 
     @Inject
     lateinit var pipelineDataService: PipelineDataService
@@ -188,137 +183,54 @@ class PipelineConsumer {
     // and execute via the normal topological order in executePipeline.
 
     /**
-     * Main Kafka consumer for pipeline execution.
+     * Executes one queued run (called by [PipelineInputListener] for every Kafka record).
      *
      * The outer @Transactional provides a persistence context for reads (Pipeline, ModuleVersion,
      * Connector lookups). All writes go through [PipelineLogWriter] in REQUIRES_NEW transactions
      * so the frontend can poll progressive state while this method is still running.
+     *
+     * Failures of the pipeline itself are recorded on the run (with its input, so it can be
+     * retried) and do not throw. Exceptions that escape are infrastructure failures (database
+     * unreachable, e.g. during a failover); the listener retries them and does not commit the
+     * Kafka offset, so the record is not lost.
      */
-    @Incoming("pipeline-input")
-    @Blocking
     @Transactional
     fun consume(message: String): PipelineEvent {
-        if (!runtimeRoleConfig.ownsPipelineRuntime()) {
-            return PipelineEvent(
-                runId = "skipped",
-                pipelineId = "skipped",
-                stage = "ignored",
-                success = false,
-                error = "Pipeline consumer is disabled for role ${runtimeRoleConfig.role.name}"
+        val trigger = try {
+            val tree = objectMapper.readTree(message)
+            PipelineTriggerMessage(
+                runId = tree.path("runId").asText(),
+                pipelineId = tree.path("pipelineId").asText(),
+                triggerType = tree.path("triggerType").asText(),
+                data = tree.get("data")?.takeIf { it.isObject }?.let { objectMapper.convertValue(it, Map::class.java) },
             )
-        }
-        LOG.infof("Received pipeline message: %s", message.take(200))
-
-        val pipelineMsg: PipelineTriggerMessage?
-        var dataPayload: Map<String, Any>? = null
-        var pipelineId: String? = null
-
-        try {
-            pipelineMsg = try {
-                objectMapper.readValue(message, PipelineTriggerMessage::class.java)
-            } catch (e: Exception) {
-                null
-            }
-
-            if (pipelineMsg != null) {
-                pipelineId = pipelineMsg.pipelineId
-                if (pipelineMsg.data is Map<*, *>) {
-                    @Suppress("UNCHECKED_CAST")
-                    dataPayload = pipelineMsg.data as? Map<String, Any>
-                }
-            } else {
-                try {
-                    @Suppress("UNCHECKED_CAST")
-                    dataPayload = objectMapper.readValue(message, Map::class.java) as? Map<String, Any>
-                    pipelineId = (dataPayload?.get("_pipelineId") as? String)
-                        ?: (dataPayload?.get("pipelineId") as? String)
-                } catch (e: Exception) {
-                    LOG.errorf("Failed to parse pipeline message: %s", e.message)
-                    return PipelineEvent(
-                        runId = "unknown",
-                        pipelineId = "unknown",
-                        stage = "parse",
-                        success = false,
-                        error = e.message
-                    )
-                }
-            }
         } catch (e: Exception) {
-            LOG.errorf("Failed to parse pipeline message: %s", e.message)
-            return PipelineEvent(
-                runId = "unknown",
-                pipelineId = "unknown",
-                stage = "parse",
-                success = false,
-                error = e.message
-            )
+            LOG.errorf("Discarding unparseable pipeline message: %s", e.message)
+            return PipelineEvent("unknown", "unknown", "parse", false, error = e.message)
         }
-
-        if (pipelineId == null) {
-            LOG.error("No pipeline ID found in message")
-            return PipelineEvent(
-                runId = "unknown",
-                pipelineId = "unknown",
-                stage = "init",
-                success = false,
-                error = "No pipeline ID in message"
-            )
-        }
-
-        val pipelineUuid = try {
-            UUID.fromString(pipelineId)
-        } catch (_: Exception) {
-            return PipelineEvent(
-                runId = "unknown",
-                pipelineId = pipelineId,
-                stage = "init",
-                success = false,
-                error = "Invalid pipeline ID"
-            )
-        }
+        val pipelineId = trigger.pipelineId
+        val runId = trigger.runId
+        @Suppress("UNCHECKED_CAST")
+        val dataPayload = trigger.data as? Map<String, Any>
+        val pipelineUuid = parseUuid(pipelineId)
+            ?: return PipelineEvent(runId, pipelineId, "init", false, error = "Invalid pipeline ID")
+        val runUuid = parseUuid(runId)
+            ?: return PipelineEvent(runId, pipelineId, "init", false, error = "Invalid run ID")
 
         val pipeline = Pipeline.findById(pipelineUuid)
         if (pipeline == null) {
             LOG.errorf("Pipeline not found: %s", pipelineId)
-            return PipelineEvent(
-                runId = pipelineMsg?.runId ?: "unknown",
-                pipelineId = pipelineId,
-                stage = "init",
-                success = false,
-                error = "Pipeline not found"
-            )
+            logWriter.markFailed(runUuid, "Pipeline not found", null)
+            return PipelineEvent(runId, pipelineId, "init", false, error = "Pipeline not found")
         }
 
-        val runId = pipelineMsg?.runId
-            ?: (dataPayload?.get("_runId") as? String)
-            ?: (dataPayload?.get("runId") as? String)
-            ?: UUID.randomUUID().toString()
-
-        val runUuid = parseUuid(runId)
-
-        // Set retry-of link if applicable
-        if (runUuid != null) {
-            val retryOfRunId = parseUuid(dataPayload?.get("_retryOfRunId")?.toString())
-            if (retryOfRunId != null) {
-                logWriter.setRetryOfRunId(runUuid, retryOfRunId)
-            }
+        // A record is redelivered when an executor stopped before committing its offset.
+        // Finished runs are skipped; a run that was RUNNING on the lost executor starts again.
+        if (!logWriter.claimRun(runUuid)) {
+            LOG.infof("Run %s is already finished or cancelled, skipping redelivered record", runId)
+            return PipelineEvent(runId, pipelineId, "skipped", false, error = "Run already finished")
         }
-
-        // Check for cancellation before starting
-        if (runUuid != null && logWriter.isCancelled(runUuid)) {
-            return PipelineEvent(
-                runId = runId,
-                pipelineId = pipelineId,
-                stage = "cancelled",
-                success = false,
-                error = "Run cancelled"
-            )
-        }
-
-        // Mark RUNNING — committed immediately so frontend sees it
-        if (runUuid != null) {
-            logWriter.markRunning(runUuid)
-        }
+        LOG.debugf("Executing run %s of pipeline %s", runId, pipelineId)
 
         val executionStartedAt = System.currentTimeMillis()
 
@@ -332,7 +244,7 @@ class PipelineConsumer {
                 .record(executionMs, TimeUnit.MILLISECONDS)
 
             // Check for cancellation before committing success
-            if (runUuid != null && logWriter.isCancelled(runUuid)) {
+            if (logWriter.isCancelled(runUuid)) {
                 return PipelineEvent(
                     runId = runId,
                     pipelineId = pipelineId,
@@ -342,16 +254,14 @@ class PipelineConsumer {
                 )
             }
 
-            if (runUuid != null) {
-                logWriter.markSuccess(runUuid, objectMapper.writeValueAsString(
-                    mapOf(
-                        "executionMs" to executionMs,
-                        "result" to result["result"],
-                        "moduleLogs" to result["moduleLogs"],
-                        "executionLog" to result["executionLog"]
-                    )
-                ))
-            }
+            logWriter.markSuccess(runUuid, objectMapper.writeValueAsString(
+                mapOf(
+                    "executionMs" to executionMs,
+                    "result" to result["result"],
+                    "moduleLogs" to result["moduleLogs"],
+                    "executionLog" to result["executionLog"]
+                )
+            ))
 
             // Structured log for Loki
             LOG.infof("PIPELINE_COMPLETE pipeline=%s run=%s status=SUCCESS duration_ms=%d modules=%d",
@@ -374,7 +284,7 @@ class PipelineConsumer {
             metrics.pipelineTimer(pipeline.name ?: pipelineId, "FAILED")
                 .record(executionMs, TimeUnit.MILLISECONDS)
 
-            if (runUuid != null && logWriter.isCancelled(runUuid)) {
+            if (logWriter.isCancelled(runUuid)) {
                 return PipelineEvent(
                     runId = runId,
                     pipelineId = pipelineId,
@@ -384,18 +294,20 @@ class PipelineConsumer {
                 )
             }
 
+            // Lost database connections (e.g. a PostgreSQL failover) are not a pipeline error:
+            // rethrow so the record is redelivered once the database is back.
+            if (isTransientInfrastructureFailure(e)) throw e
+
             val moduleException = e as? ModuleExecutionException
-            if (runUuid != null) {
-                logWriter.markFailed(runUuid, e.message, objectMapper.writeValueAsString(
-                    mapOf(
-                        "executionMs" to executionMs,
-                        "error" to (e.message ?: "Pipeline execution failed"),
-                        "stdout" to (moduleException?.stdout?.let { trimLog(it) }),
-                        "stderr" to (moduleException?.stderr?.let { trimLog(it) }),
-                        "exitCode" to moduleException?.exitCode
-                    )
-                ))
-            }
+            logWriter.markFailed(runUuid, e.message, input = objectMapper.writeValueAsString(dataPayload), metrics = objectMapper.writeValueAsString(
+                mapOf(
+                    "executionMs" to executionMs,
+                    "error" to (e.message ?: "Pipeline execution failed"),
+                    "stdout" to (moduleException?.stdout?.let { trimLog(it) }),
+                    "stderr" to (moduleException?.stderr?.let { trimLog(it) }),
+                    "exitCode" to moduleException?.exitCode
+                )
+            ))
 
             // Structured log for Loki
             LOG.errorf("PIPELINE_COMPLETE pipeline=%s run=%s status=FAILED duration_ms=%d error=%s",
@@ -556,10 +468,13 @@ class PipelineConsumer {
                     if (conn != null && output.result != null) {
                         LOG.infof("EXPORT node %s: platform delivering via connector %s (%s)",
                             node.id, conn.connector.name, conn.connector.connectorType)
+                        // A failed delivery fails the run (which keeps its input for Retry)
+                        // instead of silently dropping the data.
                         try {
                             connectorRuntime.deliverViaConnector(conn.connector, conn.config, output.result)
                         } catch (e: Exception) {
-                            LOG.warnf("Connector deliver failed for node %s: %s", node.id, e.message)
+                            throw IllegalStateException(
+                                "Delivery via connector '${conn.connector.name}' failed: ${e.message}", e)
                         }
                     }
                 }

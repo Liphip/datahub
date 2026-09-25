@@ -1,16 +1,14 @@
 package com.dataturntable.api
 
 import com.dataturntable.pipeline.Pipeline
-import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.TriggerType
-import com.dataturntable.engine.PipelineConsumer
-import com.dataturntable.service.KafkaService
+import com.dataturntable.engine.PipelineQueueUnavailableException
+import com.dataturntable.engine.PipelineRunQueue
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
-import jakarta.transaction.Transactional
 import jakarta.websocket.Session
 import org.jboss.logging.Logger
 import java.util.UUID
@@ -25,82 +23,55 @@ class WebSocketIngestResource {
     private val LOG = Logger.getLogger(WebSocketIngestResource::class.java)
     
     @Inject
-    lateinit var kafkaService: KafkaService
-
-    @Inject
-    lateinit var pipelineConsumer: PipelineConsumer
+    lateinit var runQueue: PipelineRunQueue
 
     @PersistenceContext
     lateinit var em: EntityManager
-    
+
     private val objectMapper = ObjectMapper()
-    
-    // BUG: Concurrent session map contains non-thread-safe mutable sets
-    // Details: WebSocket callbacks can register, unregister, and broadcast concurrently. ConcurrentHashMap protects only the map; mutation or iteration of each MutableSet can lose sessions or throw. Use a concurrent set and remove empty entries atomically.
+
     private val sessions = ConcurrentHashMap<String, MutableSet<Session>>()
-    
-    @Transactional
+
     /**
-     * Processes the named request, event, or operation.
+     * Queues one message and answers the sender with `{"status":"accepted","runId":...}` or,
+     * when the record is not stored, `{"status":"error","retry":true}` so it can resend.
      */
     fun handleWebSocketMessage(session: Session, pipelineId: String, message: String) {
-        val pipelineUuid = try {
-            UUID.fromString(pipelineId)
-        } catch (_: Exception) {
-            LOG.warnf("Invalid pipelineId in WebSocket message: %s", pipelineId)
-            return
-        }
+        val pipelineUuid = runCatching { UUID.fromString(pipelineId) }.getOrNull()
+            ?: return reply(session, mapOf("status" to "error", "retry" to false, "error" to "Invalid pipelineId"))
         val pipeline = em.find(Pipeline::class.java, pipelineUuid)
-        
-        if (pipeline == null) {
-            LOG.warnf("WebSocket message for unknown pipeline: %s", pipelineId)
-            return
+        if (pipeline == null || !pipeline.isActive) {
+            return reply(session, mapOf("status" to "error", "retry" to false, "error" to "Pipeline not found or not active"))
         }
-        
-        if (!pipeline.isActive) {
-            LOG.debugf("Pipeline %s is not active, ignoring WebSocket message", pipelineId)
-            return
-        }
-        
-        try {
-            @Suppress("UNCHECKED_CAST")
-            val payload = try {
-                objectMapper.readValue(message, Map::class.java) as? Map<String, Any>
-            } catch (e: Exception) {
-                mapOf("raw" to message)
-            }
-            
-            val enrichedPayload = (payload ?: mutableMapOf()).toMutableMap()
-            enrichedPayload["_pipelineId"] = pipelineId
-            enrichedPayload["_ingestedAt"] = java.time.Instant.now().toString()
-            enrichedPayload["_source"] = "websocket"
 
-            val run = PipelineRun().apply {
-                this.pipeline = pipeline
-                this.triggerType = TriggerType.DATA
-            }
-            run.persist()
-            em.flush()
-            enrichedPayload["_runId"] = run.id.toString()
-            
-            kafkaService.sendToPipelineSpecificInput(pipelineId, enrichedPayload)
-            if (!kafkaService.isKafkaAvailable()) {
-                pipelineConsumer.consume(objectMapper.writeValueAsString(enrichedPayload))
-            }
-            
-            LOG.debugf("WebSocket message queued for pipeline %s", pipelineId)
-        } catch (e: Exception) {
-            // BUG: Failed ingestion can still commit a newly created pipeline run
-            // Details: The exception is swallowed after `run.persist()` and `em.flush()`, so the transactional method can commit a run even when publishing/processing failed. Mark the transaction rollback-only or record a terminal FAILED status with the cause.
-            LOG.errorf("Failed to process WebSocket message: %s", e.message)
+        @Suppress("UNCHECKED_CAST")
+        val payload = runCatching { objectMapper.readValue(message, Map::class.java) as Map<String, Any?> }
+            .getOrElse { mapOf("raw" to message) }
+        val data = payload.toMutableMap()
+        data["_ingestedAt"] = java.time.Instant.now().toString()
+        data["_source"] = "websocket"
+
+        try {
+            val runId = runQueue.enqueue(pipelineUuid, TriggerType.DATA, data)
+            reply(session, mapOf("status" to "accepted", "runId" to runId.toString()))
+        } catch (e: PipelineQueueUnavailableException) {
+            reply(session, mapOf("status" to "error", "retry" to true, "error" to e.message))
         }
     }
-    
+
+    private fun reply(session: Session, body: Map<String, Any?>) {
+        try {
+            session.basicRemote.sendText(objectMapper.writeValueAsString(body))
+        } catch (e: Exception) {
+            LOG.debugf("Could not answer WebSocket client: %s", e.message)
+        }
+    }
+
     /**
      * Creates or persists the requested state.
      */
     fun registerSession(pipelineId: String, session: Session) {
-        sessions.getOrPut(pipelineId) { mutableSetOf() }.add(session)
+        sessions.computeIfAbsent(pipelineId) { ConcurrentHashMap.newKeySet() }.add(session)
         LOG.infof("WebSocket session registered for pipeline %s", pipelineId)
     }
     

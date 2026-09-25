@@ -57,6 +57,10 @@ open class PipelineRun : PanacheBase() {
     
     @Column(columnDefinition = "text")
     var metrics: String? = null
+
+    /** Trigger data of a failed run, kept so that a retry replays the same input. */
+    @Column(name = "input_payload", columnDefinition = "text")
+    var inputPayload: String? = null
     
     companion object : PanacheCompanionBase<PipelineRun, UUID> {
         override fun findById(id: UUID): PipelineRun? =

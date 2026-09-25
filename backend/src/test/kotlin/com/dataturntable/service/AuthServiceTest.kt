@@ -8,8 +8,7 @@ import io.quarkus.test.junit.QuarkusTest
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
-import jakarta.transaction.Transactional
-import org.junit.jupiter.api.BeforeEach
+import io.quarkus.test.TestTransaction
 import org.junit.jupiter.api.Test
 
 import java.util.UUID
@@ -25,19 +24,16 @@ class AuthServiceTest {
     @PersistenceContext
     lateinit var em: EntityManager
     
-    @BeforeEach
-    @Transactional
-    fun cleanup() {
-        // BUG: Cleanup violates membership foreign keys
-        // Details: This bulk delete removes users before their memberships. The suite currently fails with an H2 referential-integrity violation; delete Membership records before users, roles, and tenants.
+    /** Setup requires an empty user table; every test rolls back, so other tests keep their users. */
+    private fun withoutUsers() {
+        em.createQuery("DELETE FROM Membership").executeUpdate()
         em.createQuery("DELETE FROM User").executeUpdate()
-        em.createQuery("DELETE FROM Role").executeUpdate()
-        em.createQuery("DELETE FROM Tenant").executeUpdate()
     }
-    
+
     @Test
-    @Transactional
+    @TestTransaction
     fun testSetupCreatesInitialUser() {
+        withoutUsers()
         val request = SetupRequest(email = "admin@example.com")
         val response = authService.setup(request)
         
@@ -52,8 +48,9 @@ class AuthServiceTest {
     }
     
     @Test
-    @Transactional
+    @TestTransaction
     fun testSetupFailsWhenUsersExist() {
+        withoutUsers()
         val request = SetupRequest(email = "admin@example.com")
         authService.setup(request)
         
@@ -64,8 +61,9 @@ class AuthServiceTest {
     }
     
     @Test
-    @Transactional
+    @TestTransaction
     fun testLoginWithValidCredentials() {
+        withoutUsers()
         val setupRequest = SetupRequest(email = "admin@example.com")
         val setupResponse = authService.setup(setupRequest)
         
@@ -85,8 +83,9 @@ class AuthServiceTest {
     }
     
     @Test
-    @Transactional
+    @TestTransaction
     fun testLoginWithInvalidPasswordHash() {
+        withoutUsers()
         val setupRequest = SetupRequest(email = "admin@example.com")
         authService.setup(setupRequest)
         
@@ -104,8 +103,9 @@ class AuthServiceTest {
     }
     
     @Test
-    @Transactional
+    @TestTransaction
     fun testLoginWithNonexistentUser() {
+        withoutUsers()
         val loginRequest = LoginRequest(
             email = "nonexistent@example.com",
             password = "somehash"
@@ -117,8 +117,9 @@ class AuthServiceTest {
     }
     
     @Test
-    @Transactional
+    @TestTransaction
     fun testLoginGeneratesValidJwt() {
+        withoutUsers()
         val setupRequest = SetupRequest(email = "admin@example.com")
         val setupResponse = authService.setup(setupRequest)
         
@@ -136,8 +137,9 @@ class AuthServiceTest {
     }
     
     @Test
-    @Transactional
+    @TestTransaction
     fun testSetupCreatesRootTenant() {
+        withoutUsers()
         val request = SetupRequest(email = "admin@example.com")
         val response = authService.setup(request)
         
@@ -149,8 +151,9 @@ class AuthServiceTest {
     }
     
     @Test
-    @Transactional
+    @TestTransaction
     fun testSetupGeneratesStrongPassword() {
+        withoutUsers()
         val request = SetupRequest(email = "admin@example.com")
         val response = authService.setup(request)
         
