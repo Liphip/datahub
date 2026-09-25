@@ -279,12 +279,10 @@ CREATE TABLE tenants (
 
 CREATE TABLE users (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    tenant_id uuid,
     email varchar(255) NOT NULL,
     password_hash varchar(255) NOT NULL,
     first_name varchar(100),
     last_name varchar(100),
-    role_id uuid,
     abilities text DEFAULT '[]',
     is_active boolean DEFAULT true,
     last_login_at timestamptz,
@@ -614,14 +612,6 @@ CREATE INDEX idx_roles_tenant ON roles USING btree (tenant_id);
 
 CREATE INDEX idx_tenant_parent ON tenants USING btree (parent_id);
 
--- idx_users_email (index)
-
-CREATE INDEX idx_users_email ON users USING btree (email);
-
--- idx_users_tenant (index)
-
-CREATE INDEX idx_users_tenant ON users USING btree (tenant_id);
-
 -- alert_channels alert_channels_created_by_fkey (fk constraint)
 
 ALTER TABLE alert_channels
@@ -775,16 +765,6 @@ ALTER TABLE roles
 
 ALTER TABLE tenants
     ADD CONSTRAINT tenants_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES tenants(id) ON DELETE SET NULL;
-
--- users users_role_id_fkey (fk constraint)
-
-ALTER TABLE users
-    ADD CONSTRAINT users_role_id_fkey FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE SET NULL;
-
--- users users_tenant_id_fkey (fk constraint)
-
-ALTER TABLE users
-    ADD CONSTRAINT users_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE;
 
 --
 --

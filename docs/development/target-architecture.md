@@ -24,13 +24,13 @@ Scope: records the target state and the phased plan. Where the current code diff
 
 ### 2.1 Permission model
 
-- **The product defines the permission vocabulary** (because each permission maps to an enforcement point in code), using one naming scheme: `domain.resource.action`, e.g. `system.config.read`, `system.deployment.write`, `data.read`, `pipeline.write`, `audit.read`, `audit.note.write`.
-  - Current gap: two naming styles coexist (`read:connector`, `manage:tenant` vs `module:read`, `tenant:manage`), so grants can silently fail to match.
+- **The product defines the permission vocabulary** (because each permission maps to an enforcement point in code), using one naming scheme: `resource:action`, e.g. `pipeline:write`, `data:read`, `system.config:read`, `audit:read`, `audit.note:write`.
+  - Done: the two naming styles (`read:connector` vs `connector:read`) were unified to `resource:action`.
 - **Each installation defines roles and assignments.** Nothing about who may do what is fixed system-wide.
 - **Scopes:** `system` (whole installation), `tenant` (optionally including child tenants), later `resource` (single pipeline/connection).
-  - "Config only" IT role = `system.config.read` without `data.*`.
-  - "Data of all tenants" IT role = `data.read` assigned at `system` scope.
-- **The superadmin flag is removed.** Current gap: `is_superadmin` bypasses every check (`User.kt:142`, `:159`, `:188`). The installing admin receives a system role that cannot be removed while it is the last holder.
+  - "Config only" IT role = `system.config:read` without `data:*`.
+  - "Data of all tenants" IT role = `data:read` assigned at `system` scope.
+- **Superadmin is replaced by system-scope roles.** The `is_superadmin` flag is removed; current gap: a Tenant Admin membership in the root tenant still bypasses every tenant check (`User.isSuperAdmin()`). The installing admin receives a system role that cannot be removed while it is the last holder.
 - **Time-bounded assignments:** every role assignment has `valid_from`, `valid_until`, `granted_by`, `reason`. Current gap: memberships have no validity window.
   - Permissions are resolved server-side per request (short cache, invalidated on change), never embedded in tokens, so expiry is effective immediately.
   - A scheduler performs expiry side effects (e.g. Grafana org removal) and records them in the audit log with actor `system`.
@@ -38,7 +38,7 @@ Scope: records the target state and the phased plan. Where the current code diff
 
 ### 2.2 Role templates
 
-- Shipped with the installation, managed in the UI by users holding `system.roles.manage`.
+- Shipped with the installation, managed in the UI by users holding `system.roles:manage`.
 - **Built-in templates** (System Operator, Config Auditor, Cross-Tenant Data Analyst, Tenant Admin, Pipeline Developer, Viewer):
   - marked as built-in in the UI;
   - **immutable** (API rejects edits; enforced in the database as well);
@@ -99,20 +99,20 @@ Current gap: `logging/AuditLogger.kt` has no callers and only writes to stdout. 
 
 - Users can attach notes to an audit event, or add a standalone note to a component's timeline (e.g. "vendor maintenance window Friday").
 - Notes are immutable, append-only and themselves audited; corrections are follow-up notes.
-- Permission: `audit.note.write` (scoped like everything else).
+- Permission: `audit.note:write` (scoped like everything else).
 
 ### 4.5 UI
 
 - **Activity tab on every component's config page** (pipeline, connector/connection, tenant, user, role, dashboard, …), filtered to that component and its children (e.g. a pipeline includes its versions and run triggers).
 - **Global audit page:** filters for time range, actor, action, target type/id, tenant, outcome, source, free text (full-text search over summary and notes); saved filters; CSV/JSON export (the export is itself audited).
-- Visibility follows `audit.read` scope: tenant scope sees the tenant's events; system scope sees all.
+- Visibility follows `audit:read` scope: tenant scope sees the tenant's events; system scope sees all.
 
 ## 5. Grafana
 
 - **Application Grafana** stays for all user levels to build their own visualizations. One Grafana org per tenant for dashboard separation; users with cross-tenant data roles are members of each relevant org.
 - **Data access through a bundled datasource plugin** that queries the app's query API with the logged-in user's identity. The app enforces the same fine-grained, time-bounded permissions for Grafana queries as everywhere else, and the plugin covers both the hot tier and the lakehouse. Current gap: all tenant datasources share one database user and are separated only by `searchPath` (`GrafanaProvisioningService.kt:242-251`), which is not a security boundary.
   - Open point: the plugin is unsigned; loading it via Grafana configuration must be verified for the pinned Grafana version.
-- **System Grafana** reads Prometheus and Loki only, restricted to `system.monitoring.read`. User module output is kept out of Loki (it goes to tenant-scoped run logs), so no tenant data reaches the system plane.
+- **System Grafana** reads Prometheus and Loki only, restricted to `system.monitoring:read`. User module output is kept out of Loki (it goes to tenant-scoped run logs), so no tenant data reaches the system plane.
 
 ## 6. Data platform
 
