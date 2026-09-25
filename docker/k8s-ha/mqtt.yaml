@@ -1,0 +1,18 @@
+# Clustered MQTT broker: RabbitMQ (MPL-2.0) with the MQTT plugins, managed by the
+# RabbitMQ Cluster Operator (MPL-2.0). MQTT on port 1883, MQTT over WebSocket on 15675.
+# Anonymous access is disabled: register the credentials from the Secret
+# "mqtt-default-user" (keys username/password) as a broker credential in the platform.
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: mqtt
+spec:
+  replicas: 3
+  rabbitmq:
+    additionalPlugins:
+      - rabbitmq_mqtt
+      - rabbitmq_web_mqtt
+    additionalConfig: |
+      mqtt.allow_anonymous = false
+  persistence:
+    storage: 20Gi

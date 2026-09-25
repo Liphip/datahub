@@ -173,7 +173,7 @@ Usually datasource UID mismatch in provisioned dashboards; ensure dashboard JSON
 
 ### Can monitoring run separately from application services?
 
-Yes. Monitoring can be centralized and scrape multi-instance Swarm/Kubernetes application deployments.
+Yes. Monitoring can be centralized and scrape multi-instance Kubernetes application deployments.
 
 ## 13. Practical Tutorials
 

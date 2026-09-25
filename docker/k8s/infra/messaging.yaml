@@ -75,6 +75,26 @@ spec:
     app: dataturntable
     component: kafka
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mosquitto-config
+data:
+  mosquitto.conf: |
+    # Bundled MQTT broker (single-node deployments).
+    # Mosquitto 2.x only accepts local connections unless listeners are configured.
+    persistence true
+    persistence_location /mosquitto/data/
+    log_dest stdout
+
+    listener 1883
+    listener 9001
+    protocol websockets
+
+    # TODO: Provision broker users from the platform's broker credentials
+    # Details: Broker credentials are stored by the platform but not yet pushed to the broker (e.g. via the Mosquitto dynamic-security plugin), so clients are accepted without authentication. Keep the broker ports inside the host/cluster network until provisioning is implemented.
+    allow_anonymous true
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -94,9 +114,17 @@ spec:
         app: dataturntable
         component: mosquitto
     spec:
+      volumes:
+        - name: config
+          configMap:
+            name: mosquitto-config
       containers:
         - name: mosquitto
           image: eclipse-mosquitto:2.0.22
+          volumeMounts:
+            - name: config
+              mountPath: /mosquitto/config/mosquitto.conf
+              subPath: mosquitto.conf
           ports:
             - containerPort: 1883
               name: mqtt

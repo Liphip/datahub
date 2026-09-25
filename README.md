@@ -55,8 +55,8 @@ Push to WebSocket     ──────────► │   UDP endpoints;    
 ### Prerequisites
 
 - Docker & Docker Compose
-- Java 21+ (for backend development)
-- Node.js 20+ (for frontend development)
+- Java 25 (for backend development)
+- Node.js 22.12+ (for frontend development)
 - Maven 3.9+ (for backend build)
 
 ### Development Setup
@@ -272,89 +272,45 @@ Environment variables for the backend:
 
 ## Deployment
 
-### Docker Compose
+Two deployment targets are supported: a single node with Docker Compose, and Kubernetes (single-instance infrastructure or the high-availability overlay). All bundled components are free and open-source software; see [docs/development/licenses.md](docs/development/licenses.md).
 
-Compose is the functional/dev profile. It follows the same service split as production, but it does not attempt to provide quorum-based HA on a single host.
+### Single node (Docker Compose)
 
 ```bash
 cd docker
-docker-compose -f docker-compose.dev.yml up -d
+docker compose -f docker-compose.dev.yml up -d
 ```
 
-### Docker Swarm Monitoring
-
-```bash
-docker network create --driver overlay --attachable dataturntable
-docker stack deploy -c docker/docker-stack.monitoring.yml dataturntable-monitoring
-```
-
-- Prometheus uses Swarm task discovery for multi-replica services
-- Grafana Alloy runs globally and ships service logs to Loki
-- Grafana includes both Prometheus and Loki datasources by default
-
-### Docker Swarm Application Stack (multi-instance)
-
-```bash
-docker network create --driver overlay --attachable dataturntable
-docker stack deploy -c docker/docker-stack.app.yml dataturntable
-```
-
-- Deploys full platform services in Swarm: app PostgreSQL, pipeline PostgreSQL/Timescale, monitoring PostgreSQL, Kafka, Mosquitto, `control-api`, `public-api`, `ingest-edge`, `pipeline-executor`, Frontend, Nginx, monitoring Grafana, and dashboard Grafana
-- Includes dedicated docs service (`dataturntable/docs:latest`) for user/admin documentation
-- Scales stateless services by default (`control-api=2`, `public-api=2`, `ingest-edge=2`, `pipeline-executor=2`, `frontend=3`, `nginx=2`)
-- Works with the monitoring stack on the shared `dataturntable` overlay network
-
-### Docker Swarm HA Stack
-
-For a quorum-oriented Swarm topology with replicated PostgreSQL, KRaft Kafka, clustered EMQX, and the split backend roles, use:
-
-```bash
-docker network create --driver overlay --attachable dataturntable
-docker stack deploy -c docker/docker-stack.ha.yml dataturntable-ha
-```
-
-The HA stack file is in [docker/docker-stack.ha.yml](docker/docker-stack.ha.yml). The Kubernetes Helm values below are the stronger reference for the full HA infra plane.
+Compose runs the same service split as Kubernetes on one host, without quorum-based HA.
 
 ### Kubernetes
 
-Using Kustomize:
+Single-instance infrastructure (PostgreSQL, Kafka and Mosquitto as plain deployments):
+
 ```bash
 kubectl apply -k docker/k8s/
 ```
 
-Monitoring endpoint host for Kubernetes ingress:
+High availability: [docker/k8s-ha](docker/k8s-ha/README.md) replaces the single-instance infrastructure with CloudNativePG (PostgreSQL), Strimzi (Kafka) and a RabbitMQ cluster with the MQTT plugin, all FOSS operators:
+
+```bash
+kubectl apply -k docker/k8s-ha/
+```
+
+Ingress hosts:
 - `monitoring.dataturntable.example.com` → Monitoring Grafana
 - `dashboard.dataturntable.example.com` → Dashboard Grafana
 - `docs.dataturntable.example.com` → Documentation portal
 
-Kubernetes bundle now includes full application + monitoring resources:
+The Kubernetes bundle includes:
 - App services: app PostgreSQL, pipeline PostgreSQL/Timescale, monitoring PostgreSQL, Kafka, Mosquitto, `control-api`, `public-api`, `ingest-edge`, `pipeline-executor`, Frontend
 - Monitoring services: Prometheus, Loki, Grafana Alloy, monitoring Grafana, dashboard Grafana, node-exporter, kube-state-metrics, DB/broker exporters
 
 System/hardware visibility in Grafana:
 - Host metrics via Node Exporter (CPU, memory, filesystem, network)
-- Docker/container metrics via cAdvisor (container CPU/memory/restarts)
+- Container metrics via cAdvisor (container CPU/memory/restarts)
 - Service logs via Loki + Grafana Alloy
-Using Helm (coming soon):
-```bash
-helm install dataturntable ./docker/helm/dataturntable
-```
 
-Production HA infrastructure Helm values are included in:
-
-- [docker/helm/ha-values/app-postgresql-ha.yaml](docker/helm/ha-values/app-postgresql-ha.yaml)
-- [docker/helm/ha-values/pipeline-postgresql-ha.yaml](docker/helm/ha-values/pipeline-postgresql-ha.yaml)
-- [docker/helm/ha-values/monitoring-postgresql-ha.yaml](docker/helm/ha-values/monitoring-postgresql-ha.yaml)
-- [docker/helm/ha-values/kafka-ha.yaml](docker/helm/ha-values/kafka-ha.yaml)
-- [docker/helm/ha-values/mqtt-ha.yaml](docker/helm/ha-values/mqtt-ha.yaml)
-
-Installation notes and expected service names are documented in [docker/helm/README.md](docker/helm/README.md).
-
-A Kubernetes application overlay that points the backend roles at those HA service names is included in:
-
-- [docker/k8s-ha/kustomization.yaml](docker/k8s-ha/kustomization.yaml)
-- [docker/k8s-ha/backend-ha-env.yaml](docker/k8s-ha/backend-ha-env.yaml)
-- [docker/k8s-ha/README.md](docker/k8s-ha/README.md)
 ## Development
 
 ### Running Tests

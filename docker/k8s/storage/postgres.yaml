@@ -41,13 +41,13 @@ spec:
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: db-user
+                  name: app-db-credentials
+                  key: username
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: db-password
+                  name: app-db-credentials
+                  key: password
             - name: POSTGRES_DB
               value: dataturntable
           resources:
@@ -142,13 +142,13 @@ spec:
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: pipeline-db-user
+                  name: pipeline-db-credentials
+                  key: username
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: pipeline-db-password
+                  name: pipeline-db-credentials
+                  key: password
             - name: POSTGRES_DB
               value: pipeline_data
           volumeMounts:
@@ -221,13 +221,13 @@ spec:
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: monitoring-db-user
+                  name: monitoring-db-credentials
+                  key: username
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: monitoring-db-password
+                  name: monitoring-db-credentials
+                  key: password
             - name: POSTGRES_DB
               value: monitoring
           volumeMounts:

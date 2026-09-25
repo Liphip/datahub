@@ -134,8 +134,8 @@ Current gap: `logging/AuditLogger.kt` has no callers and only writes to stdout. 
 
 ## 7. Deployment
 
-- One Helm chart with bundled dependencies managed by operators (CloudNativePG, Strimzi, KEDA), plus the object store and MQTT broker. Single-node Docker Compose uses the same images.
-- `docker/helm/` and the Swarm HA stack still reference Bitnami PostgreSQL/pgpool images, which Bitnami no longer publishes; they are replaced by CloudNativePG. The HA MQTT broker needs a decision because EMQX 5.9+ is BSL-licensed (see `licenses.md`).
+- One Helm chart with bundled dependencies managed by operators (CloudNativePG, Strimzi, RabbitMQ Cluster Operator, KEDA), plus the object store. Single-node Docker Compose uses the same images.
+- Supported targets: single-node Docker Compose and Kubernetes. High availability on Kubernetes uses FOSS operators: CloudNativePG (PostgreSQL), Strimzi (Kafka) and the RabbitMQ Cluster Operator with the MQTT plugin (see `docker/k8s-ha`). Every bundled component must be FOSS or freeware (see `licenses.md`).
 - Images pinned to versions/digests; lockfiles committed.
 
 ## 8. Phases

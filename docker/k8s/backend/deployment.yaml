@@ -44,25 +44,25 @@ spec:
             - name: DB_USER
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: db-user
+                  name: app-db-credentials
+                  key: username
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: db-password
+                  name: app-db-credentials
+                  key: password
             - name: DATATURNTABLE_PIPELINE_DATA_JDBC_URL
               value: jdbc:postgresql://pipeline-postgresql:5432/pipeline_data
             - name: DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: pipeline-db-user
+                  name: pipeline-db-credentials
+                  key: username
             - name: DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: pipeline-db-password
+                  name: pipeline-db-credentials
+                  key: password
             - name: DATATURNTABLE_GRAFANA_DASHBOARD_ENABLED
               value: "true"
             - name: DATATURNTABLE_GRAFANA_DASHBOARD_BASE_URL
@@ -80,13 +80,13 @@ spec:
             - name: DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_USER
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: pipeline-db-user
+                  name: pipeline-db-credentials
+                  key: username
             - name: DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: pipeline-db-password
+                  name: pipeline-db-credentials
+                  key: password
             - name: DATATURNTABLE_GRAFANA_MONITORING_ENABLED
               value: "true"
             - name: DATATURNTABLE_GRAFANA_MONITORING_BASE_URL
@@ -211,25 +211,25 @@ spec:
             - name: DB_USER
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: db-user
+                  name: app-db-credentials
+                  key: username
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: db-password
+                  name: app-db-credentials
+                  key: password
             - name: DATATURNTABLE_PIPELINE_DATA_JDBC_URL
               value: jdbc:postgresql://pipeline-postgresql:5432/pipeline_data
             - name: DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: pipeline-db-user
+                  name: pipeline-db-credentials
+                  key: username
             - name: DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: pipeline-db-password
+                  name: pipeline-db-credentials
+                  key: password
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka:9092"
           resources:
@@ -346,25 +346,25 @@ spec:
             - name: DB_USER
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: db-user
+                  name: app-db-credentials
+                  key: username
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: db-password
+                  name: app-db-credentials
+                  key: password
             - name: DATATURNTABLE_PIPELINE_DATA_JDBC_URL
               value: jdbc:postgresql://pipeline-postgresql:5432/pipeline_data
             - name: DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: pipeline-db-user
+                  name: pipeline-db-credentials
+                  key: username
             - name: DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: pipeline-db-password
+                  name: pipeline-db-credentials
+                  key: password
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka:9092"
           resources:
@@ -483,25 +483,25 @@ spec:
             - name: DB_USER
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: db-user
+                  name: app-db-credentials
+                  key: username
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: db-password
+                  name: app-db-credentials
+                  key: password
             - name: DATATURNTABLE_PIPELINE_DATA_JDBC_URL
               value: jdbc:postgresql://pipeline-postgresql:5432/pipeline_data
             - name: DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: pipeline-db-user
+                  name: pipeline-db-credentials
+                  key: username
             - name: DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: pipeline-db-password
+                  name: pipeline-db-credentials
+                  key: password
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka:9092"
           resources:

@@ -2,9 +2,9 @@
 
 ## Prerequisites
 
-- Java 21+ (JDK)
+- Java 25 (JDK)
 - Maven 3.9+
-- Node.js 20+
+- Node.js 22.12+ (24 LTS recommended)
 - Docker & Docker Compose
 - Python 3.11+ (for local module testing)
 
@@ -12,12 +12,13 @@
 
 | Component | Version |
 |-----------|---------|
-| Quarkus | 3.32.2 |
-| Kotlin | 2.3.0 |
-| PostgreSQL/TimescaleDB | 16 |
-| Kafka | 7.5.0 |
-| Redis | 7 |
-| Mosquitto | 2 |
+| Java | 25 |
+| Quarkus | 3.39 |
+| Kotlin | 2.4 |
+| PostgreSQL / TimescaleDB | 18 / 2.30 |
+| Apache Kafka | 4.3 |
+| Mosquitto | 2.0 |
+| Node.js (frontend build) | 24 |
 
 ## Quick Start
 
@@ -66,35 +67,13 @@ npm run build
 - Includes Prometheus + Grafana + Loki + Grafana Alloy + service exporters in `docker/docker-compose.dev.yml`
 - Prometheus scrapes backend metrics (`/q/metrics`) plus infra exporters and blackbox probes
 - Loki receives Docker logs through Grafana Alloy and is pre-wired as a Grafana datasource
-- Grafana ships with pre-provisioned dashboards: Status, Backend, PostgreSQL, Redis, Kafka, Edge Services, Infrastructure, Overview, and Logs
-
-### Docker Swarm (multi-node)
-
-Deploy monitoring stack with Swarm service discovery and global log/host collectors:
-
-```bash
-docker network create --driver overlay --attachable dataturntable
-docker stack deploy -c docker/docker-stack.monitoring.yml dataturntable-monitoring
-```
-
-- Uses `dockerswarm_sd_configs` for dynamic multi-replica scraping
-- Uses global Grafana Alloy for logs across all nodes/tasks
-- Includes global Node Exporter and cAdvisor for host/container monitoring
-
-Deploy the application stack in Swarm as well:
-
-```bash
-docker network create --driver overlay --attachable dataturntable
-docker stack deploy -c docker/docker-stack.app.yml dataturntable
-```
-
-- `docker-stack.app.yml` includes full platform runtime services (postgres, kafka, redis, mosquitto, backend, frontend, nginx)
-- stateless services are pre-scaled and can be increased with `docker service scale`
+- Grafana ships with pre-provisioned dashboards: Status, Backend, PostgreSQL, Kafka, Edge Services, Infrastructure, Overview, and Logs
 
 ### Kubernetes (multi-replica)
 
 - `docker/k8s/monitoring/*` deploys Prometheus, Loki, Grafana Alloy, Grafana, Node Exporter, and kube-state-metrics
-- `docker/k8s/infra/messaging.yaml` deploys Redis, Kafka, and Mosquitto alongside existing app services
+- `docker/k8s/infra/messaging.yaml` deploys Kafka and Mosquitto alongside existing app services
+- `docker/k8s-ha` replaces the single-instance PostgreSQL, Kafka and Mosquitto with CloudNativePG, Strimzi and a RabbitMQ MQTT cluster
 - Pod annotations on backend/frontend enable per-pod metrics scraping
 - Grafana Alloy DaemonSet collects logs from all pods in `dataturntable` namespace
 - Grafana ingress host: `monitoring.dataturntable.example.com`
@@ -168,4 +147,3 @@ Flyway migrations are in `backend/src/main/resources/db/migration/`
 | DB_USER | dataturntable | Database user |
 | DB_PASSWORD | dataturntable | Database password |
 | KAFKA_BOOTSTRAP_SERVERS | kafka:9092 | Kafka servers |
-| REDIS_HOSTS | redis://redis:6379 | Redis host |

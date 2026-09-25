@@ -17,8 +17,10 @@ resources:
   - monitoring/grafana.yaml
   - monitoring/infra-metrics.yaml
 
-commonLabels:
-  app: dataturntable
+labels:
+  - pairs:
+      app: dataturntable
+    includeSelectors: true
 
 # Uncomment for production with cert-manager
 # patches:

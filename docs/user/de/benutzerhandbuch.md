@@ -173,7 +173,7 @@ Typischerweise liegt ein Datasource-UID-Mismatch in provisionierten Dashboards v
 
 ### Kann Monitoring getrennt von den App-Services laufen?
 
-Ja. Monitoring kann zentral laufen und Multi-Instance-Deployments in Swarm/Kubernetes per Service Discovery scrapen.
+Ja. Monitoring kann zentral laufen und Multi-Instance-Deployments in Kubernetes per Service Discovery scrapen.
 
 ## 13. Praktische Tutorials
 
