@@ -311,6 +311,20 @@ class AlertDispatcher {
         dispatchAlertToChannel(channel, alert)
     }
 
+    /** Dispatches an alert produced by a built-in rule of an ALERT node (cooldown per node, title and series). */
+    fun dispatchRuleAlert(pipeline: Pipeline, nodeId: String, channelRef: String?, rule: AlertRuleConfig, alert: RuleAlert) {
+        dispatchToChannel(
+            pipeline = pipeline,
+            channelRef = channelRef?.takeIf { it.isNotBlank() },
+            title = alert.title,
+            message = alert.message,
+            severity = alert.severity,
+            payload = alert.payload.filterValues { it != null }.mapValues { it.value!! },
+            dedupKey = "${pipeline.id}:$nodeId:${alert.title}:${alert.seriesKey}",
+            cooldownSeconds = rule.cooldownSeconds,
+        )
+    }
+
     private fun isInCooldown(channel: AlertChannel, dedupKey: String, cooldownSeconds: Long): Boolean =
         em.createQuery(
             "SELECT COUNT(a) FROM AlertHistory a WHERE a.channel = :channel AND a.dedupKey = :key " +

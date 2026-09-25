@@ -101,6 +101,12 @@
             <artifactId>quarkus-config-yaml</artifactId>
         </dependency>
         
+        <!-- Periodic jobs (absence alert rules) -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-scheduler</artifactId>
+        </dependency>
+        
         <!-- Alert e-mail delivery (SMTP) -->
         <dependency>
             <groupId>io.quarkus</groupId>
@@ -210,6 +216,7 @@
                 <artifactId>kotlin-maven-plugin</artifactId>
                 <version>${kotlin.version}</version>
                 <configuration>
+                    <jvmTarget>${maven.compiler.release}</jvmTarget>
                     <args>
                         <arg>-jvm-default=no-compatibility</arg>
                     </args>

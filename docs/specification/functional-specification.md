@@ -530,7 +530,7 @@ Built-in rules are ALERT node types configured in the UI without code (ALT-02). 
 | `absence` | Fire when no data arrives within a timeout | `timeoutSeconds`, optional series key |
 | `custom` | Fire based on Python `AlertModule` logic | module version, module config |
 
-*Implementation note:* custom ALERT modules work; the threshold rule is available as the ALERT module template. The built-in stateful rule types are to be built.
+Rule state lives in the `alert_rule_state` table (one row per rule node and series), updated under a row lock in its own transaction; late or redelivered records do not move the state backwards. The absence check runs every 15 s on every executor replica and claims each silence with an atomic conditional update, so exactly one replica alerts. A silence is reported once; data arriving again re-arms the rule. Rules without a timestamp field use the arrival time.
 
 ### 9.3 Alert Channel Types
 

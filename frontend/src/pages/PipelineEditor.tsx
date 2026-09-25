@@ -3,6 +3,8 @@ import { useParams, useNavigate, Link } from 'react-router';
 import { useAuthStore } from '../stores/auth';
 import api, { type ApiError } from '../services/api';
 import type { AlertChannel, Pipeline, CodeModule, Connector, ModuleVersion, PipelineRun } from '../types';
+import AlertRuleForm from '../components/AlertRuleForm';
+import { DEFAULT_RULES, RULE_TYPES, validateAlertRule, type AlertRuleConfig } from '../lib/alertRules';
 import {
   ReactFlow,
   Background,
@@ -53,8 +55,10 @@ interface PipelineNodeData extends Record<string, unknown> {
   connectorId?: string;
   /** MQTT topic scoped to this pipeline node (connector only defines the broker) */
   mqttTopic?: string;
-  /** ALERT nodes: default alert channel id when alert_fn() names none */
+  /** ALERT nodes: default alert channel id when an alert names none */
   alertChannel?: string;
+  /** ALERT nodes: built-in rule evaluated by the platform instead of a Python module */
+  alertRule?: AlertRuleConfig;
 }
 
 /**
@@ -139,6 +143,11 @@ function DagNode({ data, selected }: NodeProps<DagNodeType>) {
         {d.connectorId && (
           <div className="text-[10px] text-gray-400 mt-0.5 truncate max-w-[140px]">⚡ connector</div>
         )}
+        {d.alertRule && (
+          <div className="text-[10px] text-gray-500 mt-0.5 truncate max-w-[140px]">
+            📏 {RULE_TYPES.find((t) => t.value === d.alertRule?.type)?.label ?? d.alertRule.type}
+          </div>
+        )}
       </div>
 
       {/* Outgoing handle (all except ALERT/EXPORT) */}
@@ -185,6 +194,7 @@ function graphToFlow(
       connectorId: raw.connectorId as string | undefined,
       mqttTopic: raw.mqttTopic as string | undefined,
       alertChannel: raw.alertChannel as string | undefined,
+      alertRule: raw.alertRule as AlertRuleConfig | undefined,
     } satisfies PipelineNodeData,
   }));
 
@@ -213,11 +223,12 @@ function flowToGraph(
         id: n.id,
         type: d.nodeType,
         label: d.label,
-        moduleId: d.moduleId,
-        moduleVersionId: d.moduleVersionId,
+        moduleId: d.alertRule ? undefined : d.moduleId,
+        moduleVersionId: d.alertRule ? undefined : d.moduleVersionId,
         connectorId: d.connectorId,
         mqttTopic: d.mqttTopic,
         alertChannel: d.alertChannel,
+        alertRule: d.alertRule,
         position: n.position,
       };
     }),
@@ -429,6 +440,12 @@ export default function PipelineEditor() {
    */
   const handleSave = async () => {
     if (!tenantId || !name || !canWritePipelines) return;
+    const invalidRuleNode = nodes.find((n) => n.data.alertRule && validateAlertRule(n.data.alertRule));
+    if (invalidRuleNode) {
+      showToast(`${invalidRuleNode.data.label}: ${validateAlertRule(invalidRuleNode.data.alertRule!)}`, 'error');
+      setSelectedNodeId(invalidRuleNode.id);
+      return;
+    }
     setSaving(true);
     try {
       const graphDefinition = flowToGraph(nodes, edges);
@@ -738,55 +755,90 @@ function NodeConfigPanel({
         />
       </div>
 
-      <div>
-        <label className="block text-xs font-medium text-gray-600 mb-1">
-          Module <span className="text-gray-400">({compatibleTypes.join('/')})</span>
-        </label>
-        {filteredModules.length === 0 ? (
-          <p className="text-xs text-amber-600">No compatible modules available.</p>
-        ) : (
-          <select
-            className="border rounded-sm px-2 py-1 text-sm w-full"
-            value={data.moduleId ?? ''}
-            onChange={(e) => {
-              const nextModuleId = e.target.value || undefined;
-              const defaultVersionId = moduleOptions.find((module) => module.id === nextModuleId)?.defaultVersionId;
-              onChange({ moduleId: nextModuleId, moduleVersionId: defaultVersionId });
-            }}
-            disabled={!canWrite}
-          >
-            <option value="">— select module —</option>
-            {filteredModules.map((module) => (
-              <option key={module.id} value={module.id}>
-                {module.name} ({module.moduleType})
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
+      {data.nodeType === 'ALERT' && (
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Evaluation</label>
+          <div className="grid grid-cols-2 gap-1 text-xs" role="radiogroup">
+            {[
+              { rule: true, label: 'Built-in rule' },
+              { rule: false, label: 'Python module' },
+            ].map((option) => {
+              const active = Boolean(data.alertRule) === option.rule;
+              return (
+                <button
+                  key={option.label}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  disabled={!canWrite}
+                  onClick={() => onChange(option.rule
+                    ? { alertRule: data.alertRule ?? DEFAULT_RULES.threshold }
+                    : { alertRule: undefined })}
+                  className={`px-2 py-1 rounded-sm border ${active ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
-      <div>
-        <label className="block text-xs font-medium text-gray-600 mb-1">
-          Module version
-        </label>
-        {filteredVersions.length === 0 ? (
-          <p className="text-xs text-amber-600">No versions available for the selected module.</p>
-        ) : (
-          <select
-            className="border rounded-sm px-2 py-1 text-sm w-full"
-            value={data.moduleVersionId ?? ''}
-            onChange={(e) => onChange({ moduleVersionId: e.target.value || undefined })}
-            disabled={!canWrite || !data.moduleId}
-          >
-            <option value="">— select module version —</option>
-            {filteredVersions.map((version) => (
-              <option key={version.id} value={version.id}>
-                v{version.version}{version.versionTag ? ` (${version.versionTag})` : ''}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
+      {data.nodeType === 'ALERT' && data.alertRule ? (
+        <AlertRuleForm rule={data.alertRule} disabled={!canWrite} onChange={(alertRule) => onChange({ alertRule })} />
+      ) : (
+        <>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Module <span className="text-gray-400">({compatibleTypes.join('/')})</span>
+          </label>
+          {filteredModules.length === 0 ? (
+            <p className="text-xs text-amber-600">No compatible modules available.</p>
+          ) : (
+            <select
+              className="border rounded-sm px-2 py-1 text-sm w-full"
+              value={data.moduleId ?? ''}
+              onChange={(e) => {
+                const nextModuleId = e.target.value || undefined;
+                const defaultVersionId = moduleOptions.find((module) => module.id === nextModuleId)?.defaultVersionId;
+                onChange({ moduleId: nextModuleId, moduleVersionId: defaultVersionId });
+              }}
+              disabled={!canWrite}
+            >
+              <option value="">— select module —</option>
+              {filteredModules.map((module) => (
+                <option key={module.id} value={module.id}>
+                  {module.name} ({module.moduleType})
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Module version
+          </label>
+          {filteredVersions.length === 0 ? (
+            <p className="text-xs text-amber-600">No versions available for the selected module.</p>
+          ) : (
+            <select
+              className="border rounded-sm px-2 py-1 text-sm w-full"
+              value={data.moduleVersionId ?? ''}
+              onChange={(e) => onChange({ moduleVersionId: e.target.value || undefined })}
+              disabled={!canWrite || !data.moduleId}
+            >
+              <option value="">— select module version —</option>
+              {filteredVersions.map((version) => (
+                <option key={version.id} value={version.id}>
+                  v{version.version}{version.versionTag ? ` (${version.versionTag})` : ''}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+        </>
+      )}
 
       {data.nodeType === 'IMPORT' && (
         <div className="space-y-3">

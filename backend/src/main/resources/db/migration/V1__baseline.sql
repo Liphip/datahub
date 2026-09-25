@@ -769,6 +769,21 @@ ALTER TABLE tenants
 --
 --
 
+-- alert_rule_state (table): state of built-in alert rules, shared by all executor replicas
+
+CREATE TABLE alert_rule_state (
+    pipeline_id uuid NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+    node_id varchar(255) NOT NULL,
+    series_key varchar(512) NOT NULL,
+    last_value double precision,
+    last_ts timestamptz,
+    window_samples text,
+    last_seen timestamptz,
+    absence_alerted boolean DEFAULT false NOT NULL,
+    updated_at timestamptz DEFAULT now() NOT NULL,
+    PRIMARY KEY (pipeline_id, node_id, series_key)
+);
+
 -- Global role templates
 
 INSERT INTO roles (id, tenant_id, name, description, abilities, is_default, is_system) VALUES

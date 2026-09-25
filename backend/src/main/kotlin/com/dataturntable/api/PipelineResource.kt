@@ -1,5 +1,7 @@
 package com.dataturntable.api
 
+import com.dataturntable.alert.AlertChannel
+import com.dataturntable.alert.AlertRuleConfig
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.PipelineRunNodeLog
@@ -108,6 +110,16 @@ class PipelineResource {
     /**
      * Validates or normalizes input before the caller continues.
      */
+    /** A node's default alert channel must be an active channel of the pipeline's tenant. */
+    private fun validateAlertChannel(tenantId: UUID, nodeId: String, channelRef: String?): String? {
+        if (channelRef.isNullOrBlank()) return null
+        val channelId = runCatching { UUID.fromString(channelRef) }.getOrNull()
+            ?: return "Node $nodeId has invalid alertChannel: $channelRef"
+        val channel = em.find(AlertChannel::class.java, channelId)
+        if (channel == null || channel.tenant?.id != tenantId) return "Node $nodeId references an alert channel outside the tenant"
+        return null
+    }
+
     private fun validateGraphDefinition(tenantId: UUID, graphDefinition: Any?): String? {
         if (graphDefinition !is Map<*, *>) return null
         val nodes = graphDefinition["nodes"] as? List<*> ?: return null
@@ -124,6 +136,21 @@ class PipelineResource {
                 return "Node $nodeId has unsupported type: $nodeType"
             }
             nodeTypes[nodeId] = nodeType
+
+            val alertRule = nodeMap["alertRule"] as? Map<*, *>
+            if (alertRule != null) {
+                if (nodeType != "ALERT") return "Node $nodeId: only ALERT nodes can use a built-in alert rule"
+                try {
+                    AlertRuleConfig.parse(alertRule)
+                } catch (e: IllegalArgumentException) {
+                    return "Node $nodeId: ${e.message}"
+                }
+                validateAlertChannel(tenantId, nodeId, nodeMap["alertChannel"]?.toString())?.let { return it }
+                continue
+            }
+            if (nodeType == "ALERT") {
+                validateAlertChannel(tenantId, nodeId, nodeMap["alertChannel"]?.toString())?.let { return it }
+            }
 
             val declaredModuleId = nodeMap["moduleId"] as? String
             val moduleVersionId = nodeMap["moduleVersionId"] as? String

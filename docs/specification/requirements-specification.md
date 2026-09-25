@@ -596,7 +596,7 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | MOD-08 – MOD-11 | = | | Done |
 | MOD-12, MOD-13 | + | Module config reaches the constructor; errors were previously swallowed. | Done |
 | ALT-01 | = | | Done |
-| ALT-02 | ~ | Realised as built-in ALERT node types; the former rule table was never evaluated and was removed. | Partial (threshold via template) |
+| ALT-02 | ~ | Realised as built-in ALERT node types; the former rule table was never evaluated and was removed. | Done |
 | ALT-03, ALT-04 | = | | Done |
 | ALT-05 | ~ | `error` severity exists in the implementation. | Done |
 | ALT-06, ALT-07 | = | | Done |

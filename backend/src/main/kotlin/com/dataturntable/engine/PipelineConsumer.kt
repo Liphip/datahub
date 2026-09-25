@@ -5,6 +5,8 @@ import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.alert.AlertDispatcher
+import com.dataturntable.alert.AlertRuleConfig
+import com.dataturntable.alert.AlertRuleEvaluator
 import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.ConnectorRuntimeService
 import com.dataturntable.service.PipelineDataService
@@ -72,6 +74,9 @@ class PipelineConsumer {
 
     @Inject
     lateinit var alertDispatcher: AlertDispatcher
+
+    @Inject
+    lateinit var alertRuleEvaluator: AlertRuleEvaluator
 
     @Inject
     lateinit var connectorRuntime: ConnectorRuntimeService
@@ -422,11 +427,63 @@ class PipelineConsumer {
         data class GraphNode(
             val id: String,
             val type: ModuleType,
-            val moduleVersionId: UUID,
+            /** Null only for ALERT nodes that use a built-in rule. */
+            val moduleVersionId: UUID?,
             val connector: ResolvedConnector?,
-            /** ALERT nodes: default channel (id or name) when alert_fn() names none. */
+            /** ALERT nodes: default channel (id or name) when an alert names none. */
             val alertChannel: String? = null,
+            /** ALERT nodes: built-in rule evaluated by the platform instead of a module. */
+            val alertRule: AlertRuleConfig? = null,
         )
+
+        /** Evaluates a built-in alert rule node and dispatches its alerts. */
+        fun executeRuleNode(node: GraphNode, rule: AlertRuleConfig, input: Any?, order: Int): Any? {
+            val stage = "ALERT"
+            val label = "rule:${rule.type.key}"
+            val startedAt = System.currentTimeMillis()
+            executionLog.add("START $stage #$order $label [${node.id}]")
+            val alerts = alertRuleEvaluator.evaluate(pipeline.id!!, node.id, rule, input)
+            alerts.forEach { alert ->
+                try {
+                    alertDispatcher.dispatchRuleAlert(pipeline, node.id, node.alertChannel, rule, alert)
+                } catch (e: Exception) {
+                    LOG.warnf("Alert dispatch failed for node %s: %s", node.id, e.message)
+                }
+            }
+            val durationMs = System.currentTimeMillis() - startedAt
+            val summary = if (alerts.isEmpty()) "No alert raised by ${rule.type.key} rule"
+                else alerts.joinToString("\n") { "Alert: ${it.title} — ${it.message}" }
+            if (runUuid != null) {
+                logWriter.persistNodeLog(
+                    runId = runUuid,
+                    nodeId = node.id,
+                    nodeType = stage,
+                    moduleName = label,
+                    success = true,
+                    stdout = summary,
+                    stderr = "",
+                    errorMessage = null,
+                    durationMs = durationMs,
+                )
+            }
+            metrics.moduleCounter(stage, "SUCCESS").increment()
+            metrics.moduleTimer(stage, "SUCCESS").record(durationMs, TimeUnit.MILLISECONDS)
+            val result = mapOf("alert_fired" to alerts.isNotEmpty(), "alerts" to alerts.size)
+            moduleLogs.add(mapOf(
+                "stage" to stage,
+                "order" to order,
+                "nodeId" to node.id,
+                "moduleName" to label,
+                "success" to true,
+                "stdout" to summary,
+                "stderr" to "",
+                "exitCode" to 0,
+                "durationMs" to durationMs,
+                "result" to result,
+            ))
+            executionLog.add("DONE $stage #$order $label [${node.id}] (${durationMs}ms)")
+            return result
+        }
 
         /**
          * Execute a single pipeline node.
@@ -437,8 +494,11 @@ class PipelineConsumer {
          * PROCESSING / ALERT — standard single-input execution.
          */
         fun executeNode(node: GraphNode, moduleInput: Any?, order: Int): Any? {
-            val version = ModuleVersion.findById(node.moduleVersionId)
+            node.alertRule?.let { return executeRuleNode(node, it, moduleInput, order) }
+            val version = node.moduleVersionId?.let { ModuleVersion.findById(it) }
                 ?: throw IllegalStateException("Missing module version for node ${node.id}")
+            // DB_LOAD/DB_SAVE modules sit on IMPORT/EXPORT nodes; execution follows the module's own type.
+            val execType = version.module?.moduleType ?: node.type
             val stage = node.type.name
             LOG.infof("Executing %s node %s: %s", stage, node.id, version.module?.name)
             executionLog.add("START $stage #$order ${version.module?.name ?: version.id} [${node.id}]")
@@ -446,7 +506,7 @@ class PipelineConsumer {
             val nodeStartedAt = System.currentTimeMillis()
 
             // For IMPORT with no upstream data: platform fetches from connector before calling module.
-            val resolvedInput: Any? = if (node.type == ModuleType.IMPORT && moduleInput == null) {
+            val resolvedInput: Any? = if (execType == ModuleType.IMPORT && moduleInput == null) {
                 val conn = node.connector
                 if (conn != null) {
                     LOG.infof("IMPORT node %s: platform fetching from connector %s (%s)",
@@ -463,12 +523,12 @@ class PipelineConsumer {
             }
 
             try {
-                val output = if (node.type == ModuleType.DB_LOAD || node.type == ModuleType.DB_SAVE) {
+                val output = if (execType == ModuleType.DB_LOAD || execType == ModuleType.DB_SAVE) {
                     val tenantId = pipeline.tenant?.id
                         ?: throw IllegalStateException("Pipeline tenant missing for ${node.type}")
                     val dbOutput = pipelineDataService.execute(
                         moduleVersion = version,
-                        moduleType = node.type,
+                        moduleType = execType,
                         inputData = resolvedInput,
                         tenantId = tenantId
                     )
@@ -485,13 +545,13 @@ class PipelineConsumer {
                         resolvedInput,
                         pipelineId,
                         runId,
-                        node.type,
+                        execType,
                         node.connector?.meta
                     )
                 }
 
                 // For EXPORT: platform delivers shaped result via connector after module runs.
-                if (node.type == ModuleType.EXPORT) {
+                if (execType == ModuleType.EXPORT) {
                     val conn = node.connector
                     if (conn != null && output.result != null) {
                         LOG.infof("EXPORT node %s: platform delivering via connector %s (%s)",
@@ -505,7 +565,7 @@ class PipelineConsumer {
                 }
 
                 // Dispatch alerts collected by alert_fn() in the ALERT module
-                if (node.type == ModuleType.ALERT) {
+                if (execType == ModuleType.ALERT) {
                     val alerts = (output.result as? Map<*, *>)?.get("alerts") as? List<*> ?: emptyList<Any>()
                     alerts.filterIsInstance<Map<*, *>>().forEach { alert ->
                         try {
@@ -640,13 +700,22 @@ class PipelineConsumer {
             val nodeType = try {
                 ModuleType.valueOf(nodeMap["type"]?.toString()?.uppercase() ?: return@mapNotNull null)
             } catch (_: Exception) { return@mapNotNull null }
-            val moduleVersionId = parseUuid(nodeMap["moduleVersionId"]?.toString()) ?: return@mapNotNull null
+            val alertRule = (nodeMap["alertRule"] as? Map<*, *>)?.takeIf { nodeType == ModuleType.ALERT }?.let {
+                try {
+                    AlertRuleConfig.parse(it)
+                } catch (e: IllegalArgumentException) {
+                    throw IllegalStateException("Node $nodeId: ${e.message}")
+                }
+            }
+            val moduleVersionId = parseUuid(nodeMap["moduleVersionId"]?.toString())
+            if (moduleVersionId == null && alertRule == null) return@mapNotNull null
             GraphNode(
                 id = nodeId,
                 type = nodeType,
                 moduleVersionId = moduleVersionId,
                 connector = connectorsByNodeId[nodeId],
                 alertChannel = nodeMap["alertChannel"]?.toString()?.takeIf { it.isNotBlank() },
+                alertRule = alertRule,
             )
         }
 
