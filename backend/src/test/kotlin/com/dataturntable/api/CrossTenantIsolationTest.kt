@@ -207,8 +207,7 @@ class CrossTenantIsolationTest {
             "/api/internal/v1/pipelines?tenantId=$tenantBId",
             "/api/internal/v1/connectors?tenantId=$tenantBId",
             "/api/v1/alerts/channels?tenantId=$tenantBId",
-            "/api/v1/data/$tenantBId/tables",
-            "/api/v1/data/$tenantBId/blobs"
+            "/api/v1/data/$tenantBId/tables"
         ).forEach { path ->
             given().header("Authorization", "Bearer $tokenA")
             .`when`().get(path)
@@ -565,18 +564,16 @@ class CrossTenantIsolationTest {
     }
 
     @Test
-    fun `tenant A cannot query write or manage tenant B data and blobs`() {
+    fun `tenant A cannot query or write tenant B data`() {
         val adminToken = TestAuthHelpers.createAdminToken()
         val rootId = rootTenantId(adminToken)
         val tenantAId = createTenant(adminToken, rootId, "Data isolation tenant A")
         val tenantBId = createTenant(adminToken, rootId, "Data isolation tenant B")
         val tokenA = tenantAToken(tenantAId)
-        val arbitraryBlobId = UUID.randomUUID()
 
         listOf(
             "/api/v1/data/$tenantBId/query?table=readings",
-            "/api/v1/data/$tenantBId/summary?table=readings",
-            "/api/v1/data/$tenantBId/blobs/$arbitraryBlobId/download"
+            "/api/v1/data/$tenantBId/summary?table=readings"
         ).forEach { path ->
             given().header("Authorization", "Bearer $tokenA")
             .`when`().get(path)
@@ -593,13 +590,8 @@ class CrossTenantIsolationTest {
         .`when`().post("/api/v1/data/$tenantBId/tables/register")
         .then().statusCode(403)
 
-        listOf(
-            "/api/v1/data/$tenantBId/tables/readings",
-            "/api/v1/data/$tenantBId/blobs/$arbitraryBlobId"
-        ).forEach { path ->
-            given().header("Authorization", "Bearer $tokenA")
-            .`when`().delete(path)
-            .then().statusCode(403)
-        }
+        given().header("Authorization", "Bearer $tokenA")
+        .`when`().delete("/api/v1/data/$tenantBId/tables/readings")
+        .then().statusCode(403)
     }
 }

@@ -17,6 +17,15 @@ quarkus:
   
   datasource:
     db-kind: postgresql
+    # The JDBC URL must live here rather than in a single profile: the deployed profiles are
+    # "prod,<role>" and "<role>", none of which include "dev", so a URL defined only under %dev
+    # left every container and every Kubernetes pod without one and the backend refused to start
+    # ("Failed to load config value ... quarkus.datasource.jdbc.url"). %prod below still overrides
+    # username/password to mandatory values, and %test still switches the whole datasource to H2.
+    jdbc:
+      url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dataturntable}
+    username: ${DB_USER:dataturntable}
+    password: ${DB_PASSWORD:dataturntable}
   
   hibernate-orm:
     database:
@@ -141,11 +150,9 @@ dataturntable:
   alerts:
     enabled: true
     default-cooldown-seconds: ${DATATURNTABLE_ALERT_COOLDOWN_SECONDS:300}
-  data:
-    blob:
-      max-upload-bytes: ${BLOB_MAX_UPLOAD_BYTES:1048576}
-      max-tenant-bytes: ${BLOB_MAX_TENANT_BYTES:1073741824}
-      failed-retention-days: ${BLOB_FAILED_RETENTION_DAYS:30}
+  # There is no `data` section: unstructured payloads are not stored. Readings, metadata
+  # and locations only — a file, mail or FTP item is parsed into records and then lives in a
+  # table, so there is no blob directory to configure, cap or clean up.
   retention:
     # -1 (default) means indefinite retention — nothing is deleted until a deployment opts in.
     check-interval: ${DATATURNTABLE_RETENTION_CHECK_INTERVAL:24h}
@@ -224,15 +231,6 @@ dataturntable:
     default-size: 20
     max-size: 100
 
-"%dev":
-  quarkus:
-    datasource:
-      jdbc:
-        url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dataturntable}
-      username: ${DB_USER:dataturntable}
-      password: ${DB_PASSWORD:dataturntable}
-    flyway:
-      migrate-at-start: true
 "%test":
   dataturntable:
     runtime:

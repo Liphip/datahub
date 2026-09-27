@@ -425,7 +425,7 @@ export interface Connector {
   id: string;
   tenantId?: string;
   name: string;
-  connectorType: 'MQTT' | 'REST' | 'WEBSOCKET' | 'UDP' | 'FILE' | 'CUSTOM';
+  connectorType: 'MQTT' | 'REST' | 'WEBSOCKET' | 'UDP' | 'FILE' | 'FTP' | 'SFTP' | 'EMAIL' | 'CUSTOM';
   direction: 'INPUT' | 'OUTPUT';
   config: Record<string, unknown>;
   description?: string;
@@ -559,17 +559,6 @@ export interface ModuleLog {
 }
 
 /**
- * Defines the interface `DataBlob`, the contract implemented by this source unit.
- */
-export interface DataBlob {
-  id: string;
-  name: string;
-  contentType: string;
-  sizeBytes: number;
-  createdAt: string;
-}
-
-/**
  * Defines the interface `DataTableRegistrationResult`, the contract implemented by this source unit.
  */
 export interface DataTableRegistrationResult {
@@ -677,4 +666,21 @@ export interface SecretReference {
   id: string;
   name?: string;
   version: number;
+}
+
+/**
+ * Defines the interface `ConnectorInboxItem`, one row of the ledger that makes reading
+ * from a pull connector exactly-once (directory, FTP/FTPS, SFTP, IMAP).
+ */
+export interface ConnectorInboxItem {
+  id: string;
+  name: string;
+  size?: number;
+  status: 'QUEUED' | 'DONE' | 'FAILED';
+  chunks: number;
+  records?: number;
+  error?: string;
+  firstSeenAt: string;
+  queuedAt?: string;
+  acknowledgedAt?: string;
 }

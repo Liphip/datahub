@@ -68,14 +68,22 @@ Push to WebSocket     ──────────► │   UDP endpoints;    
     cd dataturntable
     ```
 
-2. Start the development environment:
+2. Generate the throwaway development JWT signing keys. The backend requires
+   `DATATURNTABLE_JWT_SIGNING_KEY_LOCATION` / `..._PUBLIC_KEY_LOCATION` with no default and will not
+   start without them. The keys are written to the gitignored `secrets/dev-keys/` directory - they
+   are development-only and must never be committed or used outside a local stack:
 
     ```bash
-    cd docker
-    docker-compose -f docker-compose.dev.yml up -d
+    ./scripts/dev/generate-dev-keys.sh
     ```
 
-3. Access the services:
+3. Start the development environment:
+
+    ```bash
+    docker compose -f docker/docker-compose.dev.yml up -d
+    ```
+
+4. Access the services:
 
     - Frontend: http://localhost:3000
     - Internal control API: http://localhost/api/internal/v1
@@ -187,7 +195,7 @@ DB modules are executed by the platform, not by arbitrary module containers:
 - Tables are created implicitly on first write if missing.
 - The default schema naming model is `tenant_<tenant_uuid_with_underscores>`.
 - If `DATATURNTABLE_PIPELINE_DATA_JDBC_*` is not configured, DB modules fall back to the main app datasource.
-- The greenfield schema now includes `data_table_registry`, `data_blobs`, and `pipeline_run_node_logs` so table registration, blob workflows, and per-node run logs are persisted from first boot.
+- The greenfield schema now includes `data_table_registry` and `pipeline_run_node_logs` so table registration and per-node run logs are persisted from first boot. Unstructured payloads are not stored: a file, mail or FTP item is parsed into records and lands in a table.
 
 ## Module Versioning
 
@@ -230,7 +238,6 @@ Pipelines are directed graphs (DAGs), not just linear chains:
 | POST /grafana/reconcile | Rebuild desired Grafana tenant/user/membership sync state |
 | POST /grafana/apply-pending | Apply pending Grafana sync state to configured dashboard/monitoring Grafana instances |
 | GET /data/{tenantId}/query | Query time-series data |
-| POST /data/{tenantId}/blobs/recover | Retry failed blob cleanup and tombstone stale failed metadata after the configured retention window |
 | GET /alerts/history | Alert history |
 
 Notes:
@@ -268,7 +275,6 @@ Environment variables for the backend:
 | DATATURNTABLE_PIPELINE_DATA_JDBC_URL | Optional dedicated JDBC URL for pipeline data DB | (falls back to app datasource) |
 | DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME | Optional dedicated JDBC username for pipeline data DB | (falls back to app datasource) |
 | DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD | Optional dedicated JDBC password for pipeline data DB | (falls back to app datasource) |
-| BLOB_FAILED_RETENTION_DAYS | Days to retain `MISSING`/`DELETE_FAILED` blob metadata before the tenant recovery endpoint may tombstone it | 30 |
 | DATATURNTABLE_DOCKER_ALLOW_NETWORK | Whether module containers can access network (true/false) | false |
 | CONNECTOR_CONFIG_KEY | Base64-encoded 32-byte AES key used to encrypt connector configs at rest. Set in production to protect secrets; if unset, configs may be stored unencrypted for local development. | (none) |
 
@@ -289,8 +295,8 @@ The production readiness record is [docs/production-ready-v1-status.md](docs/pro
 ### Single node (Docker Compose)
 
 ```bash
-cd docker
-docker compose -f docker-compose.dev.yml up -d
+./scripts/dev/generate-dev-keys.sh
+docker compose -f docker/docker-compose.dev.yml up -d
 ```
 
 Compose runs the same service split as Kubernetes on one host, without quorum-based HA.

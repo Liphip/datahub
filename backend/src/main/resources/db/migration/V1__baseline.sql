@@ -142,23 +142,6 @@ CREATE TABLE connectors (
     CONSTRAINT connectors_direction_check CHECK (direction IN ('INPUT', 'OUTPUT'))
 );
 
--- data_blobs (table)
-
-CREATE TABLE data_blobs (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    tenant_id uuid NOT NULL,
-    name varchar(255) NOT NULL,
-    content_type varchar(255) DEFAULT 'application/octet-stream',
-    size_bytes bigint NOT NULL,
-    storage_path text NOT NULL,
-    uploaded_by uuid,
-    created_at timestamptz DEFAULT now(),
-    status varchar(32) DEFAULT 'AVAILABLE' NOT NULL,
-    last_error text,
-    updated_at timestamptz DEFAULT now() NOT NULL,
-    CONSTRAINT chk_data_blobs_status CHECK (status IN ('PENDING', 'AVAILABLE', 'MISSING', 'DELETE_FAILED'))
-);
-
 -- data_table_registry (table)
 
 CREATE TABLE data_table_registry (
@@ -393,11 +376,6 @@ ALTER TABLE connectors
 ALTER TABLE connectors
     ADD CONSTRAINT connectors_tenant_id_name_key UNIQUE (tenant_id, name);
 
--- data_blobs data_blobs_pkey (constraint)
-
-ALTER TABLE data_blobs
-    ADD CONSTRAINT data_blobs_pkey PRIMARY KEY (id);
-
 -- data_table_registry data_table_registry_pkey (constraint)
 
 ALTER TABLE data_table_registry
@@ -546,14 +524,6 @@ CREATE INDEX idx_cpm_connector ON connector_pipeline_map USING btree (connector_
 -- idx_cpm_pipeline (index)
 
 CREATE INDEX idx_cpm_pipeline ON connector_pipeline_map USING btree (pipeline_id);
-
--- idx_data_blobs_tenant (index)
-
-CREATE INDEX idx_data_blobs_tenant ON data_blobs USING btree (tenant_id);
-
--- idx_data_blobs_tenant_created_at (index)
-
-CREATE INDEX idx_data_blobs_tenant_created_at ON data_blobs USING btree (tenant_id, created_at DESC);
 
 -- idx_data_table_registry_tenant (index)
 
@@ -713,16 +683,6 @@ ALTER TABLE connectors
 
 ALTER TABLE connectors
     ADD CONSTRAINT connectors_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE;
-
--- data_blobs data_blobs_tenant_id_fkey (fk constraint)
-
-ALTER TABLE data_blobs
-    ADD CONSTRAINT data_blobs_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE;
-
--- data_blobs data_blobs_uploaded_by_fkey (fk constraint)
-
-ALTER TABLE data_blobs
-    ADD CONSTRAINT data_blobs_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL;
 
 -- data_table_registry data_table_registry_tenant_id_fkey (fk constraint)
 

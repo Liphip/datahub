@@ -35,6 +35,12 @@ spec:
             matchLabels:
               app: dataturntable
               component: control-api
+      # JWT signing/verification keys for every backend role. Without them no role can
+      # verify a token, so the pods start and migrate but never pass /q/health/ready.
+      volumes:
+        - name: jwt-keys
+          secret:
+            secretName: dataturntable-jwt-keys
       containers:
         - name: control-api
           # The literal tag here is a placeholder identity for kustomization.yaml's `images:`
@@ -128,6 +134,17 @@ spec:
                   optional: true
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka:9092"
+            # The backend requires these key locations (it has no default), and the
+            # dataturntable-jwt-keys Secret mounted at /keys is the only thing that can
+            # satisfy them. See docker/k8s/storage/secrets.yaml for how to populate it.
+            - name: DATATURNTABLE_JWT_PUBLIC_KEY_LOCATION
+              value: "file:///keys/public.pem"
+            - name: DATATURNTABLE_JWT_SIGNING_KEY_LOCATION
+              value: "file:///keys/signing.pem"
+          volumeMounts:
+            - name: jwt-keys
+              mountPath: /keys
+              readOnly: true
           resources:
             requests:
               cpu: 250m
@@ -240,6 +257,12 @@ spec:
             matchLabels:
               app: dataturntable
               component: public-api
+      # JWT signing/verification keys for every backend role. Without them no role can
+      # verify a token, so the pods start and migrate but never pass /q/health/ready.
+      volumes:
+        - name: jwt-keys
+          secret:
+            secretName: dataturntable-jwt-keys
       containers:
         - name: public-api
           image: dataturntable/backend:latest
@@ -282,6 +305,17 @@ spec:
                   key: password
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka:9092"
+            # The backend requires these key locations (it has no default), and the
+            # dataturntable-jwt-keys Secret mounted at /keys is the only thing that can
+            # satisfy them. See docker/k8s/storage/secrets.yaml for how to populate it.
+            - name: DATATURNTABLE_JWT_PUBLIC_KEY_LOCATION
+              value: "file:///keys/public.pem"
+            - name: DATATURNTABLE_JWT_SIGNING_KEY_LOCATION
+              value: "file:///keys/signing.pem"
+          volumeMounts:
+            - name: jwt-keys
+              mountPath: /keys
+              readOnly: true
           resources:
             requests:
               cpu: 300m
@@ -396,6 +430,12 @@ spec:
             matchLabels:
               app: dataturntable
               component: ingest-edge
+      # JWT signing/verification keys for every backend role. Without them no role can
+      # verify a token, so the pods start and migrate but never pass /q/health/ready.
+      volumes:
+        - name: jwt-keys
+          secret:
+            secretName: dataturntable-jwt-keys
       containers:
         - name: ingest-edge
           image: dataturntable/backend:latest
@@ -442,6 +482,13 @@ spec:
                   key: password
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka:9092"
+            # The backend requires these key locations (it has no default), and the
+            # dataturntable-jwt-keys Secret mounted at /keys is the only thing that can
+            # satisfy them. See docker/k8s/storage/secrets.yaml for how to populate it.
+            - name: DATATURNTABLE_JWT_PUBLIC_KEY_LOCATION
+              value: "file:///keys/public.pem"
+            - name: DATATURNTABLE_JWT_SIGNING_KEY_LOCATION
+              value: "file:///keys/signing.pem"
           resources:
             requests:
               cpu: 250m
@@ -457,6 +504,9 @@ spec:
           volumeMounts:
             - name: spool
               mountPath: /var/lib/dataturntable/spool
+            - name: jwt-keys
+              mountPath: /keys
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /q/health/live
@@ -567,6 +617,12 @@ spec:
               app: dataturntable
               component: pipeline-executor
       serviceAccountName: dataturntable-execution
+      # JWT signing/verification keys for every backend role. Without them no role can
+      # verify a token, so the pods start and migrate but never pass /q/health/ready.
+      volumes:
+        - name: jwt-keys
+          secret:
+            secretName: dataturntable-jwt-keys
       containers:
         - name: pipeline-executor
           image: dataturntable/backend:latest
@@ -611,6 +667,17 @@ spec:
                   key: password
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka:9092"
+            # The backend requires these key locations (it has no default), and the
+            # dataturntable-jwt-keys Secret mounted at /keys is the only thing that can
+            # satisfy them. See docker/k8s/storage/secrets.yaml for how to populate it.
+            - name: DATATURNTABLE_JWT_PUBLIC_KEY_LOCATION
+              value: "file:///keys/public.pem"
+            - name: DATATURNTABLE_JWT_SIGNING_KEY_LOCATION
+              value: "file:///keys/signing.pem"
+          volumeMounts:
+            - name: jwt-keys
+              mountPath: /keys
+              readOnly: true
           resources:
             requests:
               cpu: 500m

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { DataBlob, DataSummaryResponse } from '../types';
+import type { DataSummaryResponse } from '../types';
 
 /**
  * Defines the type `DataTable`, the contract implemented by this source unit.
@@ -126,7 +126,7 @@ export default function Data() {
 
   const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
 
-  const [activeTab, setActiveTab] = useState<'tables' | 'files' | 'grafana'>('tables');
+  const [activeTab, setActiveTab] = useState<'tables' | 'grafana'>('tables');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [error, setError] = useState('');
 
@@ -152,15 +152,6 @@ export default function Data() {
   const [tagField, setTagField] = useState('location');
   const [topTags, setTopTags] = useState(8);
   const [sdkCalloutOpen, setSdkCalloutOpen] = useState(false);
-
-  // Files tab state
-  const [blobs, setBlobs] = useState<DataBlob[]>([]);
-  const [blobsLoading, setBlobsLoading] = useState(false);
-  const [blobPage, setBlobPage] = useState(0);
-  const [blobHasMore, setBlobHasMore] = useState(false);
-  const [uploadingBlob, setUploadingBlob] = useState(false);
-  const [deletingBlobId, setDeletingBlobId] = useState<string | null>(null);
-  const [confirmDeleteBlobId, setConfirmDeleteBlobId] = useState<string | null>(null);
 
   /**
    * Implements `showToast` for this source unit.
@@ -219,25 +210,6 @@ export default function Data() {
   };
 
   /**
-   * Implements `fetchBlobs` for this source unit.
-   */
-  const fetchBlobs = async (tenant: string, page = 0) => {
-    setBlobsLoading(true);
-    try {
-      const result = await api.getDataBlobs(tenant, page);
-      setBlobs(result.blobs);
-      setBlobPage(result.page);
-      setBlobHasMore(result.hasMore);
-    } catch (err) {
-      console.error('Error fetching blobs:', err);
-      setBlobs([]);
-      setBlobHasMore(false);
-    } finally {
-      setBlobsLoading(false);
-    }
-  };
-
-  /**
    * Implements `useEffect` for this source unit.
    */
   useEffect(() => {
@@ -263,15 +235,6 @@ export default function Data() {
     };
     load();
   }, [tenantId, canReadData, t]);
-
-  /**
-   * Implements `useEffect` for this source unit.
-   */
-  useEffect(() => {
-    if (activeTab === 'files' && tenantId && canReadData) {
-      fetchBlobs(tenantId);
-    }
-  }, [activeTab, tenantId, canReadData]);
 
   const selectedTableInfo = tables.find((t) => t.name === selectedTable);
   const isTimeSeries = !selectedTableInfo || selectedTableInfo.type === 'timeseries';
@@ -407,65 +370,6 @@ export default function Data() {
     URL.revokeObjectURL(url);
   };
 
-  /**
-   * Processes the named request, event, or operation.
-   */
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!canWriteData) { showToast(t('data.permissionCreateTable'), 'error'); return; }
-    if (!tenantId || !e.target.files?.[0]) return;
-    const file = e.target.files[0];
-    setUploadingBlob(true);
-    try {
-      await api.uploadDataBlob(tenantId, file);
-      await fetchBlobs(tenantId, 0);
-      showToast('File uploaded', 'success');
-    } catch {
-      showToast('Failed to upload file', 'error');
-    } finally {
-      setUploadingBlob(false);
-      e.target.value = '';
-    }
-  };
-
-  /**
-   * Processes the named request, event, or operation.
-   */
-  const handleDeleteBlob = async (blobId: string) => {
-    if (!canWriteData) { showToast(t('data.permissionDeleteTable'), 'error'); return; }
-    if (!tenantId) return;
-    setDeletingBlobId(blobId);
-    try {
-      await api.deleteDataBlob(tenantId, blobId);
-      await fetchBlobs(tenantId, blobPage);
-      setConfirmDeleteBlobId(null);
-      showToast('File deleted', 'success');
-    } catch {
-      showToast('Failed to delete file', 'error');
-    } finally {
-      setDeletingBlobId(null);
-    }
-  };
-
-  /**
-   * Processes the named request, event, or operation.
-   */
-  const handleDownloadBlob = async (blob: DataBlob) => {
-    if (!tenantId) return;
-    const download = await api.downloadDataBlob(tenantId, blob.id);
-    const url = URL.createObjectURL(download);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = blob.name;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const formatBytes = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
-
   if (loading) {
     return (
       <div className="px-4 py-6">
@@ -514,7 +418,7 @@ export default function Data() {
 
       {/* Tab switcher */}
       <div className="mb-6 flex space-x-2">
-        {(['tables', 'files', 'grafana'] as const).map((tab) => (
+        {(['tables', 'grafana'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -853,95 +757,6 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
                   </button>
                   <button onClick={handleDeleteTable} disabled={deletingTable} className="rounded-md bg-red-600 px-4 py-2 text-white hover:bg-red-700 disabled:opacity-50">
                     {deletingTable ? t('common.deleting') : t('common.delete')}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Files tab */}
-      {activeTab === 'files' && (
-        <div>
-          <div className="mb-4 flex items-center justify-between">
-            <p className="text-sm text-gray-600">Upload and manage binary files (blobs) for this tenant.</p>
-            {canWriteData && (
-              <label className="btn-primary text-sm cursor-pointer">
-                {uploadingBlob ? 'Uploading…' : 'Upload File'}
-                <input type="file" className="hidden" onChange={handleFileUpload} disabled={uploadingBlob} />
-              </label>
-            )}
-          </div>
-
-          {blobsLoading ? (
-            <div className="card animate-pulse"><div className="h-4 bg-gray-200 rounded-sm w-1/3"></div></div>
-          ) : blobs.length === 0 ? (
-            <div className="card text-center py-12">
-              <p className="text-gray-500 mb-2">No files uploaded yet.</p>
-              {canWriteData && (
-                <p className="text-sm text-gray-400">Use the Upload File button to add files.</p>
-              )}
-            </div>
-          ) : (
-            <div className="card overflow-hidden">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Uploaded</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {blobs.map((blob) => (
-                    <tr key={blob.id}>
-                      <td className="px-6 py-4 text-sm font-medium text-gray-900">{blob.name}</td>
-                      <td className="px-6 py-4 text-sm text-gray-500">{blob.contentType}</td>
-                      <td className="px-6 py-4 text-sm text-gray-500">{formatBytes(blob.sizeBytes)}</td>
-                      <td className="px-6 py-4 text-sm text-gray-500">{new Date(blob.createdAt).toLocaleString()}</td>
-                      <td className="px-6 py-4 text-right text-sm">
-                        <button onClick={() => handleDownloadBlob(blob)} className="text-blue-600 hover:text-blue-800 mr-3">
-                          Download
-                        </button>
-                        {canWriteData && (
-                          confirmDeleteBlobId === blob.id ? (
-                            <span className="space-x-2">
-                              <span className="text-gray-500 text-xs">Delete?</span>
-                              <button onClick={() => handleDeleteBlob(blob.id)} disabled={deletingBlobId === blob.id} className="text-red-600 hover:text-red-800">
-                                {deletingBlobId === blob.id ? '…' : 'Yes'}
-                              </button>
-                              <button onClick={() => setConfirmDeleteBlobId(null)} className="text-gray-500 hover:text-gray-700">No</button>
-                            </span>
-                          ) : (
-                            <button onClick={() => setConfirmDeleteBlobId(blob.id)} className="text-red-600 hover:text-red-800">
-                              Delete
-                            </button>
-                          )
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="flex items-center justify-between border-t border-gray-200 px-4 py-3">
-                <span className="text-sm text-gray-500">Page {blobPage + 1}</span>
-                <div className="flex gap-2">
-                  <button
-                    className="btn-secondary text-sm"
-                    disabled={blobsLoading || blobPage === 0}
-                    onClick={() => tenantId && fetchBlobs(tenantId, blobPage - 1)}
-                  >
-                    Previous
-                  </button>
-                  <button
-                    className="btn-secondary text-sm"
-                    disabled={blobsLoading || !blobHasMore}
-                    onClick={() => tenantId && fetchBlobs(tenantId, blobPage + 1)}
-                  >
-                    Next
                   </button>
                 </div>
               </div>

@@ -7,7 +7,16 @@ extraction, etc.) — far more than one session can implement. This document is
 the durable cross-session record of what's done, what's in flight, and what's
 broken, so work can resume without re-deriving context.
 
-Last updated: 2026-08-20 (WebSocket idle-timeout and PipelineConsumerDlqIT root causes both found
+Last updated: 2026-09-27 (pull-input connector types — FILE/FTP/SFTP/EMAIL — added to the UI with
+inbox-ledger retry and secret-reference handling; **unstructured blob storage removed end-to-end**
+per STR-08, so the platform now stores records rather than payloads and FR-022 is no longer a gap;
+both specifications updated for metadata, fire-and-forget, queue redundancy and §14a as an example
+only; full backend suite re-verified fresh at 318 tests, 0 failures, 0 errors, 22 skipped, plus
+frontend typecheck, 38 vitest tests and eslint 0 errors. See the 2026-09-27 session entry below for
+detail, including the CI Java-21-vs-Java-25 discrepancy found but not yet fixed. The preceding
+2026-08-20 summary follows.)
+
+## Previous update: 2026-08-20 (WebSocket idle-timeout and PipelineConsumerDlqIT root causes both found
 and fixed; connector two-replica lease fencing verified under real concurrent PostgreSQL
 transactions; CI now builds+pushes images to GHCR and captures real digests for the kustomize
 transformer; OpenTelemetry dependency added, disabled by default; two real secret-leak log-redaction
@@ -1311,18 +1320,107 @@ untrusted/possibly-corrupted stored or request value" pattern) rather than assum
 — two more real instances (Argon2 sibling, `PipelineResource.update()`) were found this way and would
 otherwise still be open.
 
+## 2026-09-27 session - pull-input connector UI added; unstructured blob storage removed end-to-end
+
+**1. Pull-input connector types implemented in the UI (FILE, FTP, SFTP, EMAIL).** These four
+connector types are now creatable and editable in `frontend/src/pages/Connectors.tsx`, with a
+polling interval, operator-visible last/next run, and an inbox ledger for pulled items so a retry
+cannot double-apply. Sensitive fields (`password`, `privateKey`, `passphrase`) go through the
+secrets API and are stored as an opaque reference; the backend rejects inline credentials, and a
+blank secret field on edit means "keep the stored secret" rather than "clear it", so a user can
+change a host or path without re-entering a password they cannot see. 5 new frontend tests.
+
+**2. Unstructured blob storage removed (STR-08) — the platform stores records, not payloads.**
+This is a deliberate product decision, not a gap: the original FR-022 asked for authenticated
+blob upload/download plus migration to S3/MinIO, and it has been dropped. Files, mails, FTP/SFTP
+items, attachments and binary protocol frames are all parsed at the ingest boundary, and only the
+parsed records are persisted; the source item stays where the remote system put it. Removed:
+
+- `DataBlobRecord.kt` (deleted) and the whole blob block in `DataResource.kt` — configuration,
+  endpoints, SQL, helpers and now-unused `File`/`ByteBuffer` imports.
+- The `data_blobs` table, its primary key, indexes and foreign keys from `V1__baseline.sql`.
+  Per the project policy at the top of this file, no forward `DROP TABLE` migration is needed:
+  there is no production data and no live instance to protect.
+- `dataturntable.data.blob-dir` and the rest of `data.blob` from `application.yaml`.
+- Blob tests/routes in `DataResourceTest.kt` and `CrossTenantIsolationTest.kt`.
+- `DataBlob`, the blob API methods and the whole Files tab from `frontend/src/types/index.ts`,
+  `frontend/src/services/api.ts` and `frontend/src/pages/Data.tsx`.
+- The blob archive/restore steps from `scripts/backup/backup.sh` / `restore.sh` — the scripts are
+  now database-only, which is also why `docs/operations/backup-restore.md` no longer has a file-tree
+  check to run and "two databases" is the entirety of the durable state.
+- CI's schema check now asserts `data_table_registry` and `connectors` instead of `data_blobs`.
+- Documentation: `README.md`, `docs/operations/backup-restore.md`, and the FR-022 row in
+  `docs/operations/support-matrix.md` (now "Implemented — deliberately out of scope"). S3-compatible
+  object storage is still used, but only for lakehouse data files. `source-function-reference.md`
+  was regenerated via its generator rather than hand-edited.
+- Both specifications updated: `requirements-specification.md` (scope, STR-08/09, IMP-10–13,
+  CON-01/13–16, new §4.15 `MET-01`–`MET-10`, NFR-R7–R9, M5, traceability) and
+  `functional-specification.md` (§3.1–3.4, §4.9 fire-and-forget, §7.2/7.5, §8 structured-only,
+  §13.4 metadata enrichment, §13.5 §14a as an **example only**, §17.1 Compose-not-redundant).
+
+**3. Verification.** Per the "re-verify, don't trust the prior session's number" lesson below, this
+session re-ran everything fresh rather than citing the earlier count: full backend suite in
+`maven:3.9.16-eclipse-temurin-25` = **318 tests, 0 failures, 0 errors, 22 skipped** (the skips are
+Docker-only tests, which have no daemon inside the Maven container); targeted
+`CrossTenantIsolationTest` + `DataResourceTest` = 23 tests green. `npx tsc --noEmit -p .` clean,
+`npx vitest run` = 8 files / 38 tests green, `npx eslint src` = 0 errors / 21 pre-existing
+warnings. Note the local `JAVA_HOME` is JDK 17 and PATH Java is 21 while the project targets Java
+25, so host-Maven runs are not representative; the Docker JDK 25 image is the reliable runner.
+
+**Discrepancy found and now fixed:** `.github/workflows/ci.yml` configured `java-version: '21'`
+while `backend/pom.xml` sets `maven.compiler.release=25`. All three `setup-java` steps (backend,
+openapi, postgresql jobs) now use 25. The workflow also had a pre-existing YAML indentation defect
+in the migration check, and the check itself used a column that does not exist and asserted
+`data_blobs` **exists**; it now checks real connector columns and fails if `data_blobs` ever
+returns. Verified by a real `maven:3.9.16-eclipse-temurin-25` run: **321 tests, 0 failures, 0 errors,
+22 Docker-only skips**, plus a real PostgreSQL migration run.
+
+**Live Compose smoke test - three further defects found, all fixed.** Bringing the stack up for real
+(exactly the step the previous notes left as the remaining verification) paid for itself:
+
+1. *The backend could not start in any container.* `quarkus.datasource.jdbc.url` was defined only
+   under `%dev`, and no deployed profile includes `dev` - Compose uses `<role>`, the k8s manifests
+   use `prod,<role>`. Every role failed with `Failed to load config value ...
+   quarkus.datasource.jdbc.url`. The URL moved to the root `quarkus.datasource` block; `%prod` still
+   forces mandatory credentials and `%test` still uses H2. This also fixed one of the two
+   Kubernetes blockers, though the k8s topology remains unbootable for want of JWT keys.
+2. *JWT signing keys were provided by nothing*, in Compose or k8s, so no token could be verified.
+   `scripts/dev/generate-dev-keys.sh` generates a throwaway pair into the gitignored
+   `secrets/dev-keys/`; Compose mounts it read-only into all four roles. `control-api` and
+   `public-api` now both reach `healthy` on role-only profiles, and setup/login/`/me` succeed.
+   The k8s manifests still need the equivalent Secret mount.
+3. *Inline-credential bypass.* A connector or alert config sent as a JSON **string** (a serialized
+   object inside a string field) skipped secret validation entirely and persisted a plaintext
+   password, because the tree walk treated a scalar root as nothing to inspect. Both resources now
+   require an object root; nested scalars (`"port": 22`) stay legal. Confirmed live: connector create
+   and PATCH and alert-channel create all return 400 "must be a JSON object" for a string config,
+   while a valid `secretRefs` object still returns 201/200.
+
+The three new regression tests were checked for vacuity by deleting the guard and confirming all
+three fail (200/201 rather than 400).
+
+`README.md` also documented an unusable start command (`cd docker && docker-compose -f
+docker-compose.dev.yml up -d`: wrong path from the repo root plus deprecated v1 syntax); it now
+generates keys first and runs `docker compose -f docker/docker-compose.dev.yml up -d`.
+
+Still outstanding: a browser-level Vite/Playwright pass (the API was exercised over HTTP instead),
+and the Kubernetes JWT key wiring described above.
+
 ## Next steps (recommended order)
 
 1. Add hostile-module integration coverage for the Kubernetes execution backend (needs a local
    cluster/Dev-Services equivalent — larger infra lift, no existing precedent in this repo). The
    same "needs a live cluster" blocker applies to actually running the backup/restore drill
    (`docs/operations/backup-restore.md`) against `docker/k8s`/`docker/k8s-ha` — the Compose-topology
-   drill is done and verified, the Kubernetes one is not.
+   drill is done and verified, the Kubernetes one is not. Note the drill's own record predates the
+   blob removal: the backup is now two database dumps only, and the file-tree step it described no
+   longer exists.
 2. FR-029 (microservice/API Gateway split) is the single largest remaining architectural gap —
    user explicitly deferred a real extraction attempt on 2026-08-20 (see that session entry); do
-   not start one without the user opting into a specific scope first. FR-022 (S3/MinIO blob
-   storage) is the other large remaining architectural gap. See
-   `docs/operations/support-matrix.md` for the honest current state of every FR/NFR.
+   not start one without the user opting into a specific scope first. FR-022 is **no longer a gap**:
+   the blob/S3-MinIO storage requirement was dropped outright on 2026-09-27, so neither the storage
+   nor the migration to it is outstanding. See `docs/operations/support-matrix.md` for the honest
+   current state of every FR/NFR.
 3. FR-010 graph-schema migration functions for old fixtures remain unwritten — reasonable to defer
    since there's only ever been schema version 1 in this project's history (no live data yet); write
    the migration-function framework when a real version 2 is actually introduced, not speculatively.
@@ -1330,6 +1428,14 @@ otherwise still be open.
    default), but span attributes don't yet carry this platform's own request/correlation/run/
    execution IDs, and there's no real collector to verify actual traces against. Needs a real
    deployment/observability-stack session, not more blind code.
+5. Wire the JWT signing/verification keys into `docker/k8s/backend/deployment.yaml` (a
+   `dataturntable-jwt-keys` Secret mounted at `/keys` in all four deployments, matching the
+   existing out-of-band `app-db-credentials` pattern). Without this the Kubernetes topology still
+   cannot boot even now that the JDBC URL is fixed, and it has never been deployed to a live
+   cluster, so the wiring is unverifiable in this environment. Also update
+   `docs/production-ready-spec.json` — it is a static record of the original review and still
+   describes blob services, `BlobMetadata` and an S3/MinIO migration phase, so it now contradicts
+   the rescoped product decision.
 
 Resolved this session, no longer open: WebSocket idle-timeout root cause, `PipelineConsumerDlqIT`
 root cause, connector two-replica fencing under real concurrent Postgres transactions

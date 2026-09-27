@@ -187,6 +187,64 @@ class ConnectorResourceTest {
     }
 
     @Test
+    fun testCreateConnectorRejectsConfigSentAsJsonString() {
+        // Regression: `config` sent as a JSON *string* instead of an object skipped the recursive
+        // secretRefs walk entirely (a String hits the `else -> null` branch), so a plaintext
+        // password was accepted and persisted. A config is always an object, so reject the shape.
+        val token = TestAuthHelpers.createAdminToken()
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "String Config Connector",
+                "connectorType" to "FTP",
+                "direction" to "INPUT",
+                "config" to """{"host":"ftp.example.com","username":"svc","password":"plaintext-secret"}"""
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Connector config must be a JSON object"))
+    }
+
+    @Test
+    fun testUpdateConnectorRejectsConfigSentAsJsonString() {
+        // The same bypass existed on the update path, which shares the validator.
+        val token = TestAuthHelpers.createAdminToken()
+        val id = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Update Shape Connector",
+                "connectorType" to "SFTP",
+                "direction" to "INPUT",
+                "config" to mapOf("host" to "sftp.example.com", "username" to "svc")
+            ))
+            .`when`()
+            .post("/api/internal/v1/connectors")
+            .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "config" to """{"host":"sftp.example.com","password":"plaintext-secret"}"""
+            ))
+        .`when`()
+            .patch("/api/internal/v1/connectors/$id")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Connector config must be a JSON object"))
+    }
+
+    @Test
     fun testCreateConnectorRejectsInlineCredentials() {
         val token = TestAuthHelpers.createAdminToken()
 

@@ -160,7 +160,9 @@ The import layer sits at the boundary between the outside world and the pipeline
 
 **Passive (push to us):** The platform exposes protocol endpoints. External systems push data to DataTurntable. No modification to the external system is needed beyond pointing it at the endpoint.
 
-**Active (we pull):** The platform fetches data from an external source through an INPUT connector (e.g. REST polling, file watch, broker subscription) and hands it to the IMPORT module for parsing.
+**Active (we pull):** The platform fetches data from an external source through an INPUT connector (REST polling, file watch, FTP/SFTP, mailbox) and hands it to the IMPORT module for parsing.
+
+**Fire-and-forget (every input):** A sender transmits a record and is done. It does not register for a response, does not poll for a result and needs no retry logic, because the senders this platform is built for — meters, PLCs, SCADA components, mail servers, FTP servers — cannot do any of that. A 2xx acknowledgement means the record is durably accepted (written to the bus, or to the local ingest spool if the bus refused it) and will be processed exactly once if it carries an identity (IMP-10, NFR-R9). It does **not** mean the pipeline has finished. This applies to the pushed protocols and to the pull inputs equally: a mailbox or FTP server only has to leave a file where it can be found.
 
 **Pass-through IMPORT:** An IMPORT node without a module forwards each record as received. Connector deliveries are unwrapped to their payload and platform metadata (`_runId`, `_ingestedAt`, …) is removed. Structured measurements (JSON from devices, gateways or other systems) therefore reach built-in rules, sinks and modules without any code. A Python IMPORT module is only needed to parse or reshape other formats. New IMPORT nodes default to pass-through in the pipeline editor.
 
@@ -171,7 +173,7 @@ The import layer sits at the boundary between the outside world and the pipeline
 | REST (HTTP/HTTPS) | `POST /api/ingest/v1/ingest/{pipelineId}`; `POST /api/ingest/v1/ingest/connector/{connectorId}` | Any JSON body; batch form (array of records) for throughput |
 | MQTT | Topics configured on an INPUT connector (bundled or external broker) | v3.1.1 and v5.0 |
 | WebSocket | Server endpoint configured on an INPUT connector | Each frame is one message |
-| UDP | Configurable port per connector (V2) | Raw datagrams |
+| UDP | Configurable port per connector (V2) | Raw datagrams; no acknowledgement is possible (IMP-10 exception) |
 
 All passive endpoints authenticate the caller with an API key scoped to the pipeline or connector (IMP-09). Unauthenticated requests are rejected.
 
@@ -187,11 +189,38 @@ class ImportModule:
         ...
 ```
 
-Polling is configured on the connector (REST and FILE connectors).
+Polling is configured on the connector (CON-13).
+
+#### 3.3.1 Pull input types
+
+| Type | Source | Typical configuration |
+| ---- | ------ | --------------------- |
+| FILE | A directory watched by the platform | path, filename pattern, record format, post-read action (keep/move/delete), `minAge` |
+| FTP | FTP or FTPS server | host, port, TLS mode (none/implicit/explicit), username, password, path, filename pattern, record format, post-read action, `minAge` |
+| SFTP | SFTP server | host, port, username, password **or** private key (+ passphrase), host key fingerprint, path, pattern, format, post-read action, `minAge` |
+| EMAIL | IMAP mailbox | host, port, TLS mode, username, password, folder, content selection (body/attachments), pattern, post-read action (keep/move/delete), `minAge` |
+| REST | HTTP endpoint | URL, method, headers, response mapping |
+
+#### 3.3.2 Inbox ledger
+
+Every pull input keeps a per-connector ledger of the items it has seen, so an operator can see what arrived, why an item failed, and requeue it:
+
+- `GET /api/internal/v1/connectors/{id}/inbox?limit=50` — recent items with their state (`SEEN`, `PROCESSED`, `FAILED`, …) and, for failures, the error.
+- `POST /api/internal/v1/connectors/{id}/inbox/{itemId}/retry` — requeue a single failed item.
+
+Because the ledger, not the source system, is the record of truth, a failed item can be retried without waiting for the next poll and without depending on the remote system remembering anything.
+
+#### 3.3.3 Guarding against half-written items
+
+`minAge` is the mechanism for a file or mail that is still being written by the remote system. An item whose age is below the threshold is not read yet and is picked up on a later poll. Combined with the post-read action (keep/move/delete for files, keep/move/delete for mails), a re-run can neither duplicate nor silently skip an item (CON-15, CON-16).
+
+#### 3.3.4 No unstructured storage
+
+A pulled file, mail attachment or FTP file is parsed into structured records at ingest time. The platform stores the records, not the payload: there is no blob store, no upload endpoint and no Files tab (STR-08, IMP-13). The source item remains where the remote system put it, and the ledger records that the platform has consumed it.
 
 ### 3.4 No Schema Enforcement
 
-Inbound data is forwarded as-is into the pipeline and retained unmodified in the tenant's bronze table (LAK-03). No parsing, validation, or transformation is applied at the ingestion boundary. All format handling is the responsibility of the IMPORT module or the first PROCESSING module.
+Inbound data is forwarded as-is into the pipeline and retained unmodified in the tenant's bronze table (LAK-03). No parsing, validation, or transformation is applied at the ingestion boundary. All format handling is the responsibility of the IMPORT module or the first PROCESSING module. For a pull input, the connector's own record format setting is what tells the platform how to read the item; the item's bytes themselves are never stored (STR-08).
 
 ---
 
@@ -291,7 +320,8 @@ Ingestion pods and pipeline workers are stateless and scale automatically: inges
 | ----- | --------- |
 | HTTP / WebSocket ingest | The record is written to Kafka (`acks=all`, idempotent producer, 3 replicas, `min.insync.replicas=2` on Kubernetes HA) before the client gets `202` (WebSocket: `{"status":"accepted"}`). Ingest does not use PostgreSQL, so a database outage does not refuse data. Only when Kafka has lost its write quorum does the client get `503` + `Retry-After` (WebSocket: `"retry": true`). |
 | MQTT connectors | Persistent session (`clean_session=false`, stable client id, QoS 1). The PUBACK is sent only after the record is in Kafka; on failure the connection is dropped and the broker redelivers. On Kubernetes HA the session queues are RabbitMQ quorum queues. When the ingest replica holding the connector lease dies, another replica takes the lease and resumes the session. A redelivered message is recognised through `deduplicateBy`. |
-| Polling connectors | A poll whose records could not be queued is recorded as failed and fetched again on the next cycle. |
+| Polling connectors | A poll whose records could not be queued is recorded as failed in the inbox ledger and fetched again on the next cycle, or retried immediately by an operator (`POST …/inbox/{itemId}/retry`). The connector's item ledger — not the remote system — is the record of what was consumed, so a retry cannot duplicate or skip an item. |
+| Pull inputs (FILE/FTP/SFTP/EMAIL) | The remote system only has to leave an item where it can be found; the platform owns the transfer, the `minAge` guard and the post-read action. The sender is never asked to confirm anything (IMP-10). |
 | Executors | The executor creates the run when it claims the record and records the Kafka partition and offset. Offsets are committed only after the run finished. A redelivered record of a finished run is skipped; a second copy of a run (resend) is skipped; the record of a run whose executor died is run again. Lost database connections (e.g. a PostgreSQL failover) are retried for up to 10 minutes (`dataturntable.pipeline.max-infra-retry`) while the partition waits; only then the record goes to the DLQ. |
 | Built-in alert rules | Rule state lives in PostgreSQL with row locks and remembers the run that last changed it, so a run executed again does not change the state twice (§9.2). |
 | Alerts | Transactional outbox: alerts are stored in the same transaction as the rule state or claim that raised them, keyed by run, node and record, and delivered afterwards. Failed deliveries are retried (10 s … 1 h, 12 attempts); an alert claimed by a replica that died while sending is delivered by another. Webhook and REST channels receive the alert id as `Idempotency-Key`. |
@@ -300,6 +330,13 @@ Ingestion pods and pipeline workers are stateless and scale automatically: inges
 | Runs started from the UI | Created as PENDING right away. If the instance dies before Kafka acknowledged the run, it is marked failed as "never queued" after 30 minutes (`dataturntable.pipeline.max-pending-age`); should its record still arrive, it is processed normally. |
 
 **Where exactly-once ends.** Channels and sinks outside the platform can see a repeat when the platform crashed after they accepted something but before it recorded that: an alert or REST export (they carry an `Idempotency-Key` receivers can use to drop it), e-mail and Slack messages, and MQTT, WebSocket, UDP and file exports (no key possible). The window is the time between the receiver's acknowledgement and the platform's commit — milliseconds.
+
+**Queue redundancy (NFR-R7).** Fire-and-forget is only safe if an acknowledgement means "durably accepted". Two things provide that:
+
+- **Replicated bus.** On the Kubernetes HA deployment Kafka runs with replication factor 3 and `min.insync.replicas=2`, so losing one broker node neither loses an acknowledged record nor costs the write quorum. Combined with `acks=all`, a `503` is only returned when the quorum itself is gone.
+- **Ingest spool.** When the bus refuses a record, the ingest node writes it to a local, fsync'd spool first and only then answers. The spool drains into the bus when it is available again. On Kubernetes the ingest edge is a StatefulSet with a persistent volume claim for the spool, so the records survive the pod, and the node, being restarted.
+
+**Compose is not redundant (NFR-R8).** The single-node Docker Compose reference stack runs one broker and one database. It cannot satisfy the failover or redundancy requirements, and it is documented as a development and evaluation topology that accepts losing in-flight data with the node. Only the Kubernetes deployment is offered as meeting NFR-R5 and NFR-R7.
 
 **Verified** on a local 3-broker Kafka cluster with two application instances under continuous ingest (16 parallel clients, every record with an `Idempotency-Key`): `kill -9` of a broker and of an application instance — 6,000 records acknowledged, 6,000 runs, no duplicates, none lost; PostgreSQL stopped for 15 s — 16,000 of 16,000 accepted with no client error during the outage, all processed once after the database returned. Built-in rule alerts with the receiver down: retried and delivered once each when it came back.
 
@@ -424,10 +461,19 @@ External systems are reached through **connections**, owned by the system plane:
 | `REST` | INPUT / OUTPUT | `baseUrl`, `path`, `method`, `headers`, `authType`, `apiKey`, polling interval |
 | `WEBSOCKET` | INPUT / OUTPUT | `url`, `path`, `headers`, `tls` |
 | `UDP` | INPUT / OUTPUT | `host`, `port`, `bindAddress` |
-| `FILE` | INPUT / OUTPUT | `path`, `format` (`csv`, `json`, `parquet`), `watchMode` |
+| `FILE` | INPUT | `path`, `pattern`, `format`, `afterRead` (keep/move/delete), `minAge` |
+| `FTP` | INPUT | `host`, `port`, `tls` (none/implicit/explicit), `username`, `password`, `path`, `pattern`, `format`, `afterRead`, `minAge` |
+| `SFTP` | INPUT | `host`, `port`, `username`, `password` or `privateKey` (+ `passphrase`), `hostKeyFingerprint`, `path`, `pattern`, `format`, `afterRead`, `minAge` |
+| `EMAIL` | INPUT | `host`, `port`, `tls`, `username`, `password`, `folder`, `content` (body/attachments), `pattern`, `afterRead` (keep/move/delete), `minAge` |
 | `CUSTOM` | INPUT / OUTPUT | User-defined key/value pairs |
 
+Pull inputs are INPUT-only and expose a polling interval and an operator-visible last/next run (CON-13). Every credential field is stored as a secret reference; the backend rejects inline credentials, and leaving a secret field blank on edit keeps the stored reference (§7.5).
+
 A system used in both directions is used through two connectors on the same connection (CON-02).
+
+### 7.5 Connector Secrets
+
+Sensitive fields (`password`, `privateKey`, `passphrase`, API keys) are never stored in the connector config. The UI writes them through the secrets API, which returns an opaque reference that is stored in the config; the plaintext is never returned by a read. On edit, an empty secret field means "keep the stored secret" rather than "clear it", so a user can change a host or a path without having to re-enter a password they cannot see. This is why the UI marks a field as stored instead of pre-filling it.
 
 ### 7.3 Connection and Connector Lifecycle
 
@@ -456,6 +502,8 @@ Single node: Mosquitto. Kubernetes HA: RabbitMQ with the MQTT plugins. Broker cr
 | PostgreSQL | Platform metadata, module source, roles, alert configuration and history, audit trail, lakehouse catalog | Yes |
 | TimescaleDB | Hot tier: recent time-series data (hypertables, compression, continuous aggregates), low-latency lookups (`DB_LOAD`) | Yes |
 | S3-compatible object storage (SeaweedFS by default; external S3 optional) | Lakehouse table files, batch files, backups | Yes |
+
+**Structured data only (STR-08).** There is no blob store, no file upload endpoint and no binary retention tier. Everything the platform ingests is reduced to records — readings, locations, metadata — that live in the hot tier or a lakehouse table. A pulled file, a mail with attachments, a binary protocol frame: all are parsed at the ingest boundary and then only the parsed records are stored. This has three consequences that matter operationally: one copy of every value instead of a payload plus its parsed form, no second backup/restore path for a file tree, and no retention question for "how long do we keep the uploaded file". The source item stays where the remote system put it.
 
 ### 8.2 Data Schema (Core Tables — PostgreSQL)
 
@@ -495,9 +543,9 @@ alert_channels(id, tenant_id, name, channel_type CHECK IN ('MQTT','WEBHOOK','RES
 alert_history(id, tenant_id, channel_id, pipeline_id, dedup_key, severity, title, message,
               payload, status, sent_at)
 
--- API keys (hashed), tenant data table registry, uploaded batch files, Grafana sync state,
+-- API keys (hashed), tenant data table registry, Grafana sync state,
 -- connector runtime leases (multi-instance ownership)
-api_keys(...), data_table_registry(...), data_blobs(...), grafana_sync_states(...), connector_runtime_leases(...)
+api_keys(...), data_table_registry(...), grafana_sync_states(...), connector_runtime_leases(...)
 
 -- Target additions: connections, connection_grants, connection_requests, audit_events, audit_notes
 ```
@@ -878,6 +926,43 @@ Intentionally minimal — for quick sanity checks:
     or reads a table as of last month's snapshot (time travel).
 ```
 
+### 13.4 Metadata Enrichment
+
+```text
+1.  A metadata object exists for a device (type Device, attributes: serial, model, location,
+    commissionedAt) and for a datapoint (type Datapoint, attributes: unit, min, max, precision).
+2.  A reading arrives — pushed over MQTT, or pulled from a mailbox/FTP file (IMP-10).
+3.  The pipeline's "Enrich with metadata" PROCESSING node looks up the matching objects by
+    deviceId / datapoint key and attaches them to the record (MET-03).
+4.  Downstream, an ALERT node can now compare the reading against the datapoint's max with
+    the right unit, and a DB_SAVE node can store the enriched record.
+5.  A "Save to metadata" EXPORT node can write the meter's current reading back onto the
+    metadata object itself (MET-04).
+```
+
+Because metadata objects are as-of versioned (MET-05), re-running an old pipeline run enriches it with the metadata that was effective at that time, not with today's.
+
+### 13.5 Worked Example: §14a (Example Only)
+
+§14a of BK6-22-300 (EnWG) is used here as a **worked example** of the platform. Nothing in the product is specific to it; the same building blocks serve any metering or grid-data use case.
+
+```text
+1.  LoRaWAN: a field gateway pushes meter readings to the MQTT connector. Fire-and-forget —
+    the gateway publishes and moves on; a 2xx-class acknowledgement is the broker PUBACK and
+    nothing more is asked of it.
+2.  SAP: meter master data and consumption data is pulled on a schedule from a mailbox (IMAP)
+    or an SFTP drop. The platform reads the item, parses it into records, and applies the
+    post-read action so the item is consumed exactly once (CON-16).
+3.  Internal: market locations are held as metadata objects (type Location) and enriched
+    onto both streams by the same "Enrich with metadata" step (MET-03).
+4.  Metering system: the enriched, validated consumption records are exported via a REST
+    connector, carrying an Idempotency-Key.
+5.  Grid calculation: the time series and rollups are read from the lakehouse by the grid
+    calculation system, either through the query API or an Iceberg table.
+```
+
+The point of the example is the shape, not the domain: many sources of different kinds, all of them unable to participate in a request/response protocol, converging on structured records that are enriched, stored once, and delivered to more than one consumer.
+
 ---
 
 ## 14. Technology Stack
@@ -1050,6 +1135,8 @@ docker/docker-compose.dev.yml
 ├── grafana, dashboard-grafana
 └── prometheus, loki, alloy, exporters
 ```
+
+This stack is a **development and evaluation topology, not an HA one** (NFR-R8). It runs one broker and one database, so it cannot meet NFR-R5 or NFR-R7: if the node fails, in-flight data is lost with it. It is offered because it is cheap to run and complete, not because it is production-grade. Anything that depends on redundancy — the replicated bus, the durable ingest spool on a persistent volume, automatic failover — is a Kubernetes property.
 
 ### 17.2 Kubernetes
 

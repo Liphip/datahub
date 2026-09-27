@@ -3,14 +3,30 @@ import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api, { type ApiError } from '../services/api';
-import type { Connector, BrokerCredential, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, StatusCheck } from '../types';
+import { hasSecret, withSecretRefs } from '../lib/secrets';
+import type {
+  Connector,
+  BrokerCredential,
+  ConnectorImpactSummary,
+  ConnectorInboxItem,
+  ConnectorReferenceSummary,
+  ConnectorStatus,
+  StatusCheck,
+} from '../types';
 
-const connectorTypes = ['MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'CUSTOM'] as const;
+const connectorTypes = ['MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'FTP', 'SFTP', 'EMAIL', 'CUSTOM'] as const;
 const directions = ['INPUT', 'OUTPUT'] as const;
 /**
  * Defines the type `ConnectorType`, the contract implemented by this source unit.
  */
 type ConnectorType = typeof connectorTypes[number];
+
+/** Pull connectors polled as inboxes: the platform reads items and acknowledges them at the source. */
+const inboxTypes = ['FILE', 'FTP', 'SFTP', 'EMAIL'] as const;
+const pollingTypes = ['REST', ...inboxTypes] as const;
+
+const isInbox = (type: ConnectorType) => (inboxTypes as readonly string[]).includes(type);
+const supportsPolling = (type: ConnectorType) => (pollingTypes as readonly string[]).includes(type);
 
 /**
  * Defines the type `ConnectorConfigField`, the contract implemented by this source unit.
@@ -18,11 +34,24 @@ type ConnectorType = typeof connectorTypes[number];
 type ConnectorConfigField = {
   key: string;
   label: string;
-  type?: 'text' | 'url' | 'number' | 'password';
+  type?: 'text' | 'url' | 'number' | 'password' | 'select' | 'textarea';
   placeholder?: string;
   required?: boolean;
   hint?: string;
+  /** Fixed choices for `select`; the first entry is the platform default. */
+  options?: readonly string[];
+  /** The value is stored as a secret and the connector keeps only a reference. */
+  sensitive?: boolean;
 };
+
+const afterReadOptions = ['move', 'delete', 'keep'] as const;
+const formatOptions = ['auto', 'csv', 'json', 'jsonl', 'text', 'binary'] as const;
+
+/** Fields shared by the file-like inboxes: which items are read and what happens afterwards. */
+const inboxItemFields: ConnectorConfigField[] = [
+  { key: 'pattern', label: 'File Name Pattern', placeholder: '*.csv', hint: 'Glob on the item name. Empty reads every file.' },
+  { key: 'format', label: 'Format', type: 'select', options: formatOptions, hint: 'auto decides by file extension and content. CSV and JSON lines become records.' },
+];
 
 const connectorConfigSchema: Record<ConnectorType, ConnectorConfigField[]> = {
   MQTT: [
@@ -33,26 +62,76 @@ const connectorConfigSchema: Record<ConnectorType, ConnectorConfigField[]> = {
     },
     { key: 'clientId', label: 'Client ID', placeholder: 'dt-edge-ingest' },
     { key: 'username', label: 'Username' },
-    { key: 'password', label: 'Password', type: 'password' },
+    { key: 'password', label: 'Password', type: 'password', sensitive: true },
   ],
   REST: [
     { key: 'baseUrl', label: 'Base URL', type: 'url', required: true, placeholder: 'https://api.example.com' },
     { key: 'path', label: 'Path', placeholder: '/ingest' },
     { key: 'method', label: 'Method', placeholder: 'POST' },
-    { key: 'authToken', label: 'Auth Token', type: 'password' },
+    { key: 'authToken', label: 'Auth Token', type: 'password', sensitive: true },
   ],
   WEBSOCKET: [
     { key: 'url', label: 'WebSocket URL', type: 'url', required: true, placeholder: 'wss://stream.example.com/events' },
     { key: 'path', label: 'Path', placeholder: '/socket' },
-    { key: 'authToken', label: 'Auth Token', type: 'password' },
+    { key: 'authToken', label: 'Auth Token', type: 'password', sensitive: true },
   ],
   UDP: [
     { key: 'host', label: 'Host', required: true, placeholder: 'udp-gateway.internal' },
     { key: 'port', label: 'Port', type: 'number', required: true, placeholder: '5140' },
   ],
   FILE: [
-    { key: 'path', label: 'File Path', required: true, placeholder: '/var/data/input.ndjson' },
-    { key: 'format', label: 'Format', placeholder: 'jsonl' },
+    {
+      key: 'path', label: 'Directory', required: true, placeholder: 'inbox',
+      hint: 'Directory below the file connector base directory. Point it at a subfolder of that directory, not at a single file.',
+    },
+    ...inboxItemFields,
+    { key: 'afterRead', label: 'After Read', type: 'select', options: afterReadOptions, hint: 'move files into .processed, delete them, or keep them.' },
+    { key: 'minAgeSeconds', label: 'Minimum Age (s)', type: 'number', placeholder: '10', hint: 'Skip files modified less than this ago, so half-written files are not read.' },
+  ],
+  FTP: [
+    { key: 'host', label: 'Host', required: true, placeholder: 'ftp.example.com' },
+    { key: 'port', label: 'Port', type: 'number', placeholder: '21' },
+    { key: 'tls', label: 'TLS', type: 'select', options: ['explicit', 'implicit', 'none'], hint: 'FTPS verifies the server certificate against the JVM truststore.' },
+    { key: 'username', label: 'Username', required: true, placeholder: 'anonymous' },
+    { key: 'password', label: 'Password', type: 'password', sensitive: true },
+    { key: 'path', label: 'Remote Directory', required: true, placeholder: '/upload' },
+    ...inboxItemFields,
+    { key: 'afterRead', label: 'After Read', type: 'select', options: afterReadOptions },
+    { key: 'minAgeSeconds', label: 'Minimum Age (s)', type: 'number', placeholder: '10' },
+  ],
+  SFTP: [
+    { key: 'host', label: 'Host', required: true, placeholder: 'sftp.example.com' },
+    { key: 'port', label: 'Port', type: 'number', placeholder: '22' },
+    { key: 'username', label: 'Username', required: true },
+    { key: 'password', label: 'Password', type: 'password', sensitive: true },
+    {
+      key: 'privateKey', label: 'Private Key', type: 'textarea', sensitive: true,
+      placeholder: '-----BEGIN OPENSSH PRIVATE KEY-----',
+      hint: 'OpenSSH or PEM key text. Leave key and password empty to authenticate with neither.',
+    },
+    { key: 'passphrase', label: 'Key Passphrase', type: 'password', sensitive: true },
+    {
+      key: 'hostKeyFingerprint', label: 'Host Key Fingerprint', placeholder: 'SHA256:base64…',
+      hint: 'Required. The server key is trusted only when it matches; the first connection reports the fingerprint the server presented.',
+    },
+    { key: 'path', label: 'Remote Directory', required: true, placeholder: '/upload' },
+    ...inboxItemFields,
+    { key: 'afterRead', label: 'After Read', type: 'select', options: afterReadOptions },
+    { key: 'minAgeSeconds', label: 'Minimum Age (s)', type: 'number', placeholder: '10' },
+  ],
+  EMAIL: [
+    { key: 'host', label: 'IMAP Host', required: true, placeholder: 'imap.example.com' },
+    { key: 'port', label: 'Port', type: 'number', placeholder: '993' },
+    { key: 'tls', label: 'TLS', type: 'select', options: ['implicit', 'starttls', 'none'], hint: 'implicit = port 993, starttls = port 143.' },
+    { key: 'username', label: 'Username', required: true },
+    { key: 'password', label: 'Password', type: 'password', sensitive: true },
+    { key: 'folder', label: 'Folder', placeholder: 'INBOX' },
+    {
+      key: 'content', label: 'Read', type: 'select', options: ['attachments', 'body'],
+      hint: 'attachments parses every attachment (filtered by the pattern); body takes the plain text part.',
+    },
+    { key: 'pattern', label: 'Attachment Pattern', placeholder: '*.csv' },
+    { key: 'afterRead', label: 'After Read', type: 'select', options: ['seen', 'move', 'delete', 'keep'], hint: 'Messages are read with PEEK; only this step changes the mailbox.' },
   ],
   CUSTOM: [
     { key: 'handler', label: 'Handler ID', placeholder: 'custom.transform.v1' },
@@ -66,9 +145,9 @@ const connectorConfigSchema: Record<ConnectorType, ConnectorConfigField[]> = {
 const initialConfigByType = (type: ConnectorType, existing?: Record<string, unknown>) => {
   const fields = connectorConfigSchema[type] || [];
   return fields.reduce<Record<string, string>>((acc, field) => {
-    if (field.type === 'password') {
-      // Never pre-fill password fields — the API masks them as "********".
-      // Leave blank: backend will preserve the stored value when the field is empty.
+    if (field.sensitive) {
+      // Never pre-fill credential fields — the backend stores them as secrets and never
+      // returns them. Leave blank: an empty value keeps the secret that is already stored.
       acc[field.key] = '';
     } else {
       const value = existing?.[field.key];
@@ -77,6 +156,10 @@ const initialConfigByType = (type: ConnectorType, existing?: Record<string, unkn
     return acc;
   }, {});
 };
+
+/** Config fields whose values must be stored as secrets. */
+const sensitiveKeysOf = (type: ConnectorType) =>
+  (connectorConfigSchema[type] || []).filter((field) => field.sensitive).map((field) => field.key);
 
 export default function Connectors() {
   const { t } = useTranslation();
@@ -152,6 +235,10 @@ export default function Connectors() {
   const [loadingModalStatus, setLoadingModalStatus] = useState(false);
   const [disconnectImpactModal, setDisconnectImpactModal] = useState<ConnectorImpactSummary | null>(null);
   const [pendingDisconnectConnector, setPendingDisconnectConnector] = useState<Connector | null>(null);
+  const [inboxModal, setInboxModal] = useState<Connector | null>(null);
+  const [inboxItems, setInboxItems] = useState<ConnectorInboxItem[]>([]);
+  const [loadingInbox, setLoadingInbox] = useState(false);
+  const [retryingInboxItemId, setRetryingInboxItemId] = useState<string | null>(null);
   const [brokerForm, setBrokerForm] = useState({
     name: '',
     username: '',
@@ -437,7 +524,7 @@ export default function Connectors() {
     const config = Object.entries(formData.config).reduce<Record<string, unknown>>((acc, [key, value]) => {
       const trimmed = value.trim();
       if (!trimmed) return acc;
-      if (key === 'port') {
+      if (key === 'port' || key === 'minAgeSeconds') {
         const parsed = Number(trimmed);
         acc[key] = Number.isFinite(parsed) ? parsed : trimmed;
       } else {
@@ -451,6 +538,18 @@ export default function Connectors() {
       delete config.password;
     }
     return config;
+  };
+
+  /**
+   * Moves every credential out of the config and into a secret. The backend rejects inline
+   * credentials, so the connector keeps only `secretRefs`. An empty field keeps the secret
+   * that the edited connector already has.
+   */
+  const buildConnectorConfigWithSecrets = async (tid: string): Promise<Record<string, unknown>> => {
+    const plain = buildConnectorConfig();
+    const sensitiveKeys = sensitiveKeysOf(formData.connectorType);
+    if (sensitiveKeys.length === 0) return plain;
+    return withSecretRefs(tid, plain, sensitiveKeys, editingConnector?.config, `connector.${formData.name || formData.connectorType}`);
   };
 
   /**
@@ -469,15 +568,15 @@ export default function Connectors() {
 
       if (editingConnector) {
         const requiredMissing = connectorConfigSchema[formData.connectorType]
-          // Password fields are intentionally left blank when editing (backend preserves existing value)
-          .filter((field) => field.required && field.type !== 'password' && !formData.config[field.key]?.trim())
+          // Credential fields stay blank when editing; the stored secret is kept.
+          .filter((field) => field.required && !field.sensitive && !formData.config[field.key]?.trim())
           .map((field) => field.label);
         if (requiredMissing.length > 0) {
           setError(`Missing required config fields: ${requiredMissing.join(', ')}`);
           return;
         }
 
-        const parsedConfig = buildConnectorConfig();
+        const parsedConfig = await buildConnectorConfigWithSecrets(tenantId);
 
         const updatePayload: Partial<Connector> = {
           name: formData.name,
@@ -499,7 +598,7 @@ export default function Connectors() {
           return;
         }
 
-        const config = buildConnectorConfig();
+        const config = await buildConnectorConfigWithSecrets(tenantId);
 
         await api.createConnector(
           tenantId,
@@ -741,6 +840,46 @@ export default function Connectors() {
   };
 
   /**
+   * Opens the ledger of items an inbox connector has read, newest first.
+   */
+  const handleViewInbox = async (connector: Connector) => {
+    setInboxModal(connector);
+    setInboxItems([]);
+    setLoadingInbox(true);
+    try {
+      setInboxItems(await api.getConnectorInboxItems(connector.id));
+    } catch (caught) {
+      const err = caught as ApiError;
+      setInboxModal(null);
+      setError(err?.response?.data?.error || 'Failed to load inbox items');
+    } finally {
+      setLoadingInbox(false);
+    }
+  };
+
+  /**
+   * Forgets a failed item so the next poll reads it again, e.g. after the format was fixed.
+   */
+  const handleRetryInboxItem = async (item: ConnectorInboxItem) => {
+    if (!inboxModal) return;
+    if (!canWriteConnectors) {
+      showToast('You do not have permission to manage connectors', 'error');
+      return;
+    }
+    setRetryingInboxItemId(item.id);
+    try {
+      await api.retryConnectorInboxItem(inboxModal.id, item.id);
+      setInboxItems((prev) => prev.filter((row) => row.id !== item.id));
+      showToast(`${item.name} will be read again on the next poll`, 'success');
+    } catch (caught) {
+      const err = caught as ApiError;
+      showToast(err?.response?.data?.error || 'Failed to retry inbox item', 'error');
+    } finally {
+      setRetryingInboxItemId(null);
+    }
+  };
+
+  /**
    * Processes the named request, event, or operation.
    */
   const handleEdit = (connector: Connector) => {
@@ -788,6 +927,9 @@ export default function Connectors() {
       case 'WEBSOCKET': return 'bg-purple-100 text-purple-800';
       case 'UDP': return 'bg-orange-100 text-orange-800';
       case 'FILE': return 'bg-gray-100 text-gray-800';
+      case 'FTP': return 'bg-cyan-100 text-cyan-800';
+      case 'SFTP': return 'bg-teal-100 text-teal-800';
+      case 'EMAIL': return 'bg-amber-100 text-amber-800';
       default: return 'bg-yellow-100 text-yellow-800';
     }
   };
@@ -856,7 +998,7 @@ export default function Connectors() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{t('connectors.title')}</h1>
           <p className="mt-1 text-sm text-gray-600">
-            Manage protocol interface definitions (MQTT, REST, WebSocket, UDP, etc.)
+            Manage protocol interface definitions (MQTT, REST, WebSocket, UDP, FTP, SFTP, e-mail, directories)
           </p>
         </div>
         {canWriteConnectors && (
@@ -967,6 +1109,15 @@ export default function Connectors() {
                   Broker User ID: <code>{connector.config.brokerCredentialId}</code>
                 </p>
               )}
+
+              {(isInbox(connector.connectorType) || Boolean((connector.config?.secretRefs as Record<string, unknown> | undefined))) && (
+                <p className="text-xs text-slate-600 mb-2">
+                  {isInbox(connector.connectorType) && <>Reads waiting items, then acknowledges them at the source.</>}
+                  {Boolean((connector.config?.secretRefs as Record<string, unknown> | undefined)) && (
+                    <>{(isInbox(connector.connectorType) ? ' ' : '')}Credentials are stored as secrets.</>
+                  )}
+                </p>
+              )}
               
               <div className="text-xs text-gray-500 mb-3">
                 Created: {new Date(connector.createdAt).toLocaleDateString()}
@@ -997,6 +1148,14 @@ export default function Connectors() {
                 >
                   {loadingImpactId === connector.id ? 'Loading...' : 'Impact'}
                 </button>
+                {isInbox(connector.connectorType) && connector.direction === 'INPUT' && (
+                  <button
+                    onClick={() => handleViewInbox(connector)}
+                    className="text-sky-700 hover:text-sky-900 text-sm"
+                  >
+                    Items
+                  </button>
+                )}
                 {canWriteConnectors && (
                   <button
                     onClick={() => handleToggleConnection(connector)}
@@ -1358,6 +1517,85 @@ export default function Connectors() {
         </div>
       )}
 
+      {inboxModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-4xl w-full mx-4">
+            <div className="flex items-start justify-between mb-4 gap-3">
+              <div>
+                <h2 className="text-xl font-bold">Read Items — {inboxModal.name}</h2>
+                <p className="text-sm text-gray-600">
+                  Every item this connector has read, newest first. An item is acknowledged at the source
+                  only after its data is in the queue, so nothing is lost. FAILED items stay at the source
+                  and can be read again after the settings were fixed.
+                </p>
+              </div>
+              <button className="btn-secondary" onClick={() => setInboxModal(null)}>Close</button>
+            </div>
+            {loadingInbox ? (
+              <p className="text-sm text-gray-500">Loading items…</p>
+            ) : inboxItems.length === 0 ? (
+              <p className="text-sm text-gray-500">
+                Nothing read yet. Items appear here after the first poll finds something at the source.
+              </p>
+            ) : (
+              <div className="overflow-x-auto max-h-96">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left border-b border-gray-200">
+                      <th className="py-2 pr-3">Item</th>
+                      <th className="py-2 pr-3">Size</th>
+                      <th className="py-2 pr-3">State</th>
+                      <th className="py-2 pr-3">Chunks</th>
+                      <th className="py-2 pr-3">Records</th>
+                      <th className="py-2 pr-3">Seen</th>
+                      <th className="py-2 pr-3">Acknowledged</th>
+                      <th className="py-2 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inboxItems.map((item) => (
+                      <tr key={item.id} className="border-b border-gray-100 last:border-0 align-top">
+                        <td className="py-2 pr-3">
+                          <div className="font-medium text-gray-900 break-all">{item.name}</div>
+                          {item.error && <div className="text-xs text-red-700 break-all">{item.error}</div>}
+                        </td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{item.size != null ? `${item.size} B` : '—'}</td>
+                        <td className="py-2 pr-3">
+                          <span className={`px-2 py-0.5 rounded-sm text-xs ${
+                            item.status === 'DONE' ? 'bg-emerald-100 text-emerald-800'
+                              : item.status === 'FAILED' ? 'bg-red-100 text-red-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            {item.status}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3">{item.chunks}</td>
+                        <td className="py-2 pr-3">{item.records ?? '—'}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{new Date(item.firstSeenAt).toLocaleString()}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap">
+                          {item.acknowledgedAt ? new Date(item.acknowledgedAt).toLocaleString() : '—'}
+                        </td>
+                        <td className="py-2 text-right">
+                          {item.status === 'FAILED' && (
+                            <button
+                              className="text-indigo-700 hover:text-indigo-900 text-xs disabled:opacity-40"
+                              disabled={!canWriteConnectors || retryingInboxItemId === item.id}
+                              onClick={() => void handleRetryInboxItem(item)}
+                            >
+                              {retryingInboxItemId === item.id ? 'Retrying…' : 'Retry on next poll'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {canManageBrokerUsers && (
         <div className="card mt-6">
           <div className="flex items-start justify-between mb-3 gap-3">
@@ -1445,10 +1683,11 @@ export default function Connectors() {
             <form onSubmit={handleSubmit}>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="connector-name" className="block text-sm font-medium text-gray-700 mb-1">
                     Name
                   </label>
                   <input
+                    id="connector-name"
                     type="text"
                     required
                     value={formData.name}
@@ -1459,35 +1698,41 @@ export default function Connectors() {
                 </div>
                 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="connector-type" className="block text-sm font-medium text-gray-700 mb-1">
                     Type
                   </label>
                   <select
+                    id="connector-type"
                     value={formData.connectorType}
                     onChange={(e) => {
                       const nextType = e.target.value as ConnectorType;
                       setFormData({
                         ...formData,
                         connectorType: nextType,
+                        // Inbox types only read; they have no output side.
+                        direction: isInbox(nextType) ? 'INPUT' : formData.direction,
                         config: initialConfigByType(nextType, formData.config),
                       });
                     }}
                     className="input"
                   >
                     {connectorTypes.map((type) => (
-                      <option key={type} value={type}>{type}</option>
+                      <option key={type} value={type}>{type}{isInbox(type) ? ' (inbox)' : ''}</option>
                     ))}
                   </select>
                 </div>
                 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="connector-direction" className="block text-sm font-medium text-gray-700 mb-1">
                     Direction
                   </label>
                   <select
+                    id="connector-direction"
                     value={formData.direction}
                     onChange={(e) => setFormData({ ...formData, direction: e.target.value as Connector['direction'] })}
                     className="input"
+                    disabled={isInbox(formData.connectorType)}
+                    title={isInbox(formData.connectorType) ? 'Inbox connectors only receive data' : undefined}
                   >
                     {directions.map((dir) => (
                       <option key={dir} value={dir}>{dir}</option>
@@ -1569,39 +1814,83 @@ export default function Connectors() {
                     </div>
                   )}
                   <div className="grid grid-cols-1 gap-3">
-                    {(connectorConfigSchema[formData.connectorType] || []).map((field) => (
-                      <div key={field.key}>
-                        <label className="block text-sm text-slate-600 dark:text-slate-300 mb-1">
-                          {field.label}{field.required ? ' *' : ''}
-                        </label>
-                        <input
-                          type={field.type || 'text'}
-                          value={formData.config[field.key] || ''}
-                          onChange={(e) => setFormData({
-                            ...formData,
-                            config: { ...formData.config, [field.key]: e.target.value },
-                          })}
-                          className="input"
-                          placeholder={
-                            field.type === 'password' && editingConnector
-                              ? 'leave blank to keep existing'
-                              : field.placeholder
-                          }
-                          required={field.required && !editingConnector}
-                          disabled={
-                            formData.connectorType === 'MQTT'
-                            && Boolean((formData.config.brokerCredentialId || '').trim())
-                            && (field.key === 'username' || field.key === 'password')
-                          }
-                        />
-                        {field.hint && <p className="text-xs text-slate-500 mt-1">{field.hint}</p>}
-                      </div>
-                    ))}
+                    {(connectorConfigSchema[formData.connectorType] || []).map((field) => {
+                      const locked =
+                        formData.connectorType === 'MQTT'
+                        && Boolean((formData.config.brokerCredentialId || '').trim())
+                        && (field.key === 'username' || field.key === 'password');
+                      const stored = Boolean(field.sensitive) && hasSecret(editingConnector?.config, field.key);
+                      const placeholder = stored
+                        ? 'stored as a secret — leave empty to keep'
+                        : field.placeholder;
+                      return (
+                        <div key={field.key}>
+                          <div className="flex items-baseline gap-1 mb-1">
+                            <label htmlFor={`connector-${field.key}`} className="block text-sm text-slate-600 dark:text-slate-300">
+                              {field.label}
+                            </label>
+                            {field.required && <span className="text-sm text-red-600" title="required">*</span>}
+                            {stored && <span className="text-xs text-emerald-700">secret stored</span>}
+                          </div>
+                          {field.type === 'select' ? (
+                            <select
+                              id={`connector-${field.key}`}
+                              value={formData.config[field.key] || ''}
+                              onChange={(e) => setFormData({
+                                ...formData,
+                                config: { ...formData.config, [field.key]: e.target.value },
+                              })}
+                              className="input"
+                            >
+                              <option value="">platform default</option>
+                              {(field.options || []).map((option) => (
+                                <option key={option} value={option}>{option}</option>
+                              ))}
+                            </select>
+                          ) : field.type === 'textarea' ? (
+                            <textarea
+                              id={`connector-${field.key}`}
+                              rows={4}
+                              value={formData.config[field.key] || ''}
+                              onChange={(e) => setFormData({
+                                ...formData,
+                                config: { ...formData.config, [field.key]: e.target.value },
+                              })}
+                              className="input font-mono text-xs"
+                              placeholder={placeholder}
+                              disabled={locked}
+                            />
+                          ) : (
+                            <input
+                              id={`connector-${field.key}`}
+                              type={field.type || 'text'}
+                              value={formData.config[field.key] || ''}
+                              onChange={(e) => setFormData({
+                                ...formData,
+                                config: { ...formData.config, [field.key]: e.target.value },
+                              })}
+                              className="input"
+                              placeholder={placeholder}
+                              required={field.required && !editingConnector}
+                              disabled={locked}
+                            />
+                          )}
+                          {field.hint && <p className="text-xs text-slate-500 mt-1">{field.hint}</p>}
+                        </div>
+                      );
+                    })}
                   </div>
                   <p className="mt-2 text-xs text-slate-500">
                     Direction: <strong>{formData.direction}</strong> — INPUT connectors receive data; OUTPUT connectors deliver data.
                   </p>
-                  {formData.direction === 'INPUT' && (formData.connectorType === 'REST' || formData.connectorType === 'FILE') && (
+                  {isInbox(formData.connectorType) && formData.direction === 'INPUT' && (
+                    <p className="mt-2 text-xs text-blue-800 dark:text-blue-300">
+                      Fire-and-forget: every waiting item is queued first and acknowledged at the source afterwards,
+                      so a sender that only drops a file or sends a mail loses nothing. Failed items are listed in
+                      the item ledger of this connector.
+                    </p>
+                  )}
+                  {formData.direction === 'INPUT' && supportsPolling(formData.connectorType) && (
                     <div className="mt-3 space-y-2">
                       <div className="flex items-center gap-3">
                         <label className="flex items-center gap-2 text-sm cursor-pointer">
@@ -1613,7 +1902,11 @@ export default function Connectors() {
                           />
                           <span className="font-medium text-gray-700">Enable polling</span>
                         </label>
-                        <span className="text-xs text-slate-400">(platform periodically fetches from this connector)</span>
+                        <span className="text-xs text-slate-400">
+                          {isInbox(formData.connectorType)
+                            ? '(platform reads the waiting items on this interval)'
+                            : '(platform periodically fetches from this connector)'}
+                        </span>
                       </div>
                       {formData.pollingEnabled && (
                         <div>

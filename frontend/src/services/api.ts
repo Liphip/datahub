@@ -1,5 +1,5 @@
 import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertHistory, DataSummaryResponse, DataBlob, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential, MetadataType, MetadataTemplate, SecretReference, AuthorizationExplanation, MetadataObjectSummary, MetadataObjectDetail, SaveMetadataMapping } from '../types';
+import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertHistory, DataSummaryResponse, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorInboxItem, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential, MetadataType, MetadataTemplate, SecretReference, AuthorizationExplanation, MetadataObjectSummary, MetadataObjectDetail, SaveMetadataMapping } from '../types';
 
 /** Error shape returned by backend endpoints (`{ error, missing }` JSON bodies). */
 export type ApiError = AxiosError<{ error?: string; message?: string; code?: string; details?: { missing?: string[] } & Record<string, unknown> }>;
@@ -971,6 +971,21 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Items an inbox connector has read, newest first.
+   */
+  async getConnectorInboxItems(id: string, limit = 50): Promise<ConnectorInboxItem[]> {
+    const response = await this.client.get<ConnectorInboxItem[]>(`/connectors/${id}/inbox?limit=${limit}`);
+    return response.data;
+  }
+
+  /**
+   * Reads a FAILED inbox item again on the next poll.
+   */
+  async retryConnectorInboxItem(id: string, itemId: string): Promise<void> {
+    await this.client.post(`/connectors/${id}/inbox/${itemId}/retry`, {});
+  }
+
   // Roles
   /**
    * Retrieves or enumerates the requested state.
@@ -1014,48 +1029,6 @@ class ApiService {
    */
   async deleteRole(id: string): Promise<void> {
     await this.client.delete(`/roles/${id}`);
-  }
-
-  // Data blobs
-  /**
-   * Retrieves or enumerates the requested state.
-   */
-  async getDataBlobs(tenantId: string, page = 0, limit = 50): Promise<{ blobs: DataBlob[]; page: number; limit: number; hasMore: boolean }> {
-    const response = await this.publicClient.get<{ blobs: DataBlob[]; page: number; limit: number; hasMore: boolean }>(`/data/${tenantId}/blobs`, {
-      params: { page, limit },
-    });
-    return response.data;
-  }
-
-  /**
-   * Implements `uploadDataBlob` for this source unit.
-   */
-  async uploadDataBlob(tenantId: string, file: File): Promise<{ id: string; name: string; sizeBytes: number }> {
-    const formData = new FormData();
-    formData.append('name', file.name);
-    formData.append('file', file);
-    formData.append('contentType', file.type || 'application/octet-stream');
-    const response = await this.publicClient.post<{ id: string; name: string; sizeBytes: number }>(`/data/${tenantId}/blobs`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    return response.data;
-  }
-
-  /**
-   * Retrieves or enumerates the requested state.
-   */
-  async downloadDataBlob(tenantId: string, blobId: string): Promise<Blob> {
-    const response = await this.publicClient.get(`/data/${tenantId}/blobs/${encodeURIComponent(blobId)}/download`, {
-      responseType: 'blob',
-    });
-    return response.data as Blob;
-  }
-
-  /**
-   * Removes, stops, or releases the requested state.
-   */
-  async deleteDataBlob(tenantId: string, blobId: string): Promise<void> {
-    await this.publicClient.delete(`/data/${tenantId}/blobs/${encodeURIComponent(blobId)}`);
   }
 
   // ── Secrets (write-only values; the API returns references) ─────────────────

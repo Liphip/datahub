@@ -156,6 +156,27 @@ class AlertResourceTest {
     }
 
     @Test
+    fun `alert channel rejects a config sent as a JSON string`() {
+        // Regression: `config` sent as a JSON *string* instead of an object skipped the recursive
+        // secretRefs walk entirely (a String hits the `else -> null` branch), so a plaintext
+        // credential was accepted and persisted.
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "String config",
+                "channelType" to "WEBHOOK",
+                "config" to """{"url":"https://example.com/hook","password":"plaintext-secret"}"""
+            ))
+        .`when`().post("/api/v1/alerts/channels?tenantId=$tenantId")
+        .then().statusCode(400)
+            .body("error", equalTo("Channel config must be a JSON object"))
+    }
+
+    @Test
     fun testUpdateChannelSupportsNameAndIsActive() {
         val token = TestAuthHelpers.createAdminToken()
         val tenantId = resolveTenantId(token)

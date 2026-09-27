@@ -19,3 +19,11 @@ frontend/*.config.d.ts
 !scripts/backup/
 !scripts/backup/backup.sh
 !scripts/backup/restore.sh
+!scripts/dev/
+!scripts/dev/generate-dev-keys.sh
+
+# Throwaway development JWT keypair written by scripts/dev/generate-dev-keys.sh. These are
+# generated locally and must never be committed - a repository-bundled signing key is a security
+# defect, not a convenience. Anchored to the repository root so it does not also swallow any
+# nested `secrets/` directory (e.g. docker/secrets/).
+/secrets/

@@ -52,9 +52,11 @@ DataTurntable covers:
 
 Everything runs inside the installation: all components are bundled, deployed and managed by the platform, and are free and open-source software (or at least freeware).
 
-The data focus is measurements, time series and structured data. Text, documents and binary files (PDF, images, etc.) are not a focus.
+The data focus is measurements, time series and other structured data. A metadata layer enriches those records with a per-device, per-datapoint, per-endpoint context (see 4.15). Unstructured payloads — documents, images, archives, arbitrary binary files — are **not** stored: a pulled file, mail or FTP item is parsed into records, and only the resulting records are persisted.
 
-Out of scope: DataTurntable is **not** an AI/LLM platform, a general BI suite, a document store, or a replacement for purpose-built message brokers (it uses them as infrastructure).
+Out of scope: DataTurntable is **not** an AI/LLM platform, a general BI suite, a document or blob store, or a replacement for purpose-built message brokers (it uses them as infrastructure).
+
+§14a of BK6-22-300 (EnWG) is used throughout this specification as a worked **example** of the platform's capabilities — LoRaWAN readings, meter data from an ERP system, and internal location data delivered to a metering system and a grid-calculation system. It is an example, not a scope limit: nothing in the platform is specific to that use case.
 
 ### 1.4 Definitions & Abbreviations
 
@@ -71,7 +73,10 @@ Out of scope: DataTurntable is **not** an AI/LLM platform, a general BI suite, a
 | Module | A user-written or official Python component; types: IMPORT, DB_LOAD, PROCESSING, MERGE, ALERT, EXPORT, DB_SAVE |
 | Pipeline | A directed acyclic graph (DAG) of module nodes from data source(s) to data sink(s) |
 | Connection | A system-managed definition of how to reach an external system (endpoint, credentials) |
-| Connector | A tenant-usable protocol interface (MQTT, REST, WebSocket, UDP, File, Custom) based on a connection, referenced by IMPORT/EXPORT pipeline nodes |
+| Connector | A tenant-usable protocol interface (MQTT, REST, WebSocket, UDP, FILE, FTP, SFTP, EMAIL, Custom) based on a connection, referenced by IMPORT/EXPORT pipeline nodes |
+| Fire-and-forget | An input mode in which the sender transmits a record and requires no response, no result polling and no retry protocol; a 2xx acknowledgement means the record is durably accepted (IMP-10) |
+| Ingest spool | A local, fsync'd disk area on an ingest node that holds records the message bus refused, and drains them into the bus once it recovers (NFR-R7) |
+| Metadata object | A tenant-scoped, typed, versioned description of a device, datapoint, endpoint, location or meter that enriches the records about that subject (MET) |
 | Hot tier | TimescaleDB/PostgreSQL storage for recent data with low-latency access |
 | Lakehouse | Apache Iceberg tables on S3-compatible object storage, with the platform's own catalog and SQL engine |
 | Bronze / Silver / Gold | Raw ingested data / cleaned pipeline output / aggregated or curated data |
@@ -113,14 +118,15 @@ The platform occupies two positions relative to external systems:
 12. Record every action with impact in a searchable audit trail with notes
 13. Allow all modules and connectors to be installed, updated, and toggled at runtime
 14. Let system administrators operate the installation (health, upgrades, backups, scaling) from the same UI
+15. Maintain metadata objects per device, datapoint and endpoint, and enrich pipeline records with them (MET)
 
 ### 2.3 Assumptions and Dependencies
 
-- Kafka is used as the internal message bus and pipeline backbone; it is a required, bundled component.
+- Delivery is exactly once for records that carry an identity (PIP-14). Every input must be usable in a **fire-and-forget** mode in which the sender neither registers a response nor retries on a 2xx acknowledgement (IMP-10).
+- Kafka is used as the internal message bus and pipeline backbone; it is a required, bundled component. In a Kubernetes HA deployment it is replicated (replication factor 3, minimum in-sync replicas 2) and paired with a durable on-disk ingest spool; the single-node Docker Compose reference stack runs a single broker and therefore cannot be redundant (NFR-R7).
 - A container runtime is required for running user Python modules (Docker on a single node, Kubernetes pods in a cluster).
 - Dashboards are built with the bundled Grafana, embedded in the UI behind the common login.
-- At-least-once delivery with deduplication of system-generated duplicates is the target; exactly-once is not guaranteed.
-- Supported deployment targets are a single node (Docker Compose) and Kubernetes. The only external prerequisites are the host or cluster (with a storage class) and a backup destination.
+- Supported deployment targets are a single node (Docker Compose) and Kubernetes. The only external prerequisites are the host or cluster (with a storage class) and a backup destination. Only the Kubernetes target can satisfy the redundancy and failover requirements in 5.2; Docker Compose is a reference and development topology.
 - All bundled components are FOSS or freeware; no component requires a paid licence or licence key (NFR-L1).
 
 ---
@@ -157,6 +163,10 @@ Requirements are tagged: `MVP` = required for initial release; `V2` = planned po
 | IMP-07 | Inbound endpoints shall support both live (streaming) and batch data modes. | MVP |
 | IMP-08 | All inbound protocol endpoints shall be hot-pluggable; enabling or disabling one shall not affect other pipelines. | MVP |
 | IMP-09 | Inbound endpoints shall authenticate callers with API keys scoped to the pipeline or connector; unauthenticated ingestion shall be rejected. | MVP |
+| IMP-10 | **Fire-and-forget.** Every input (REST, MQTT, WebSocket, UDP, FILE, FTP, SFTP, EMAIL) shall accept a record without the sender registering for a response and without the sender having to poll for a result. A 2xx acknowledgement means the record is durably accepted (bus write or spool) and will be processed exactly once if it carries an identity; it does not mean the pipeline has finished. Senders shall never be required to implement a response or retry protocol, because typical field devices and plant systems (SCADA, meters, PLCs, mail servers, FTP servers) cannot. | MVP |
+| IMP-11 | Pull inputs shall be polled by the platform: a connector of type FILE, FTP, SFTP or EMAIL fetches new items on a configurable interval and feeds the parsed records into the pipeline. The platform, not the sender, initiates and owns the transfer. | MVP |
+| IMP-12 | A pull input shall keep a per-connector ledger of the items it has seen, with their processing state, so that an operator can inspect what arrived and requeue a failed item individually. | MVP |
+| IMP-13 | Unstructured payloads shall never be stored. A pulled file, mail attachment or FTP file is parsed into structured records at ingest time; only those records, and their metadata, are persisted (STR-08). | MVP |
 
 ### 4.2 Processing Pipeline
 
@@ -233,7 +243,7 @@ Connections describe how to reach an external system (endpoint, credentials). Th
 
 | ID | Requirement | Priority |
 | -- | ----------- | -------- |
-| CON-01 | The system shall allow tenants to define named connector entities for each supported protocol: MQTT, REST, WebSocket, UDP, File, Custom. | MVP |
+| CON-01 | The system shall allow tenants to define named connector entities for each supported protocol: MQTT, REST, WebSocket, UDP, FILE, FTP (incl. FTPS), SFTP, EMAIL (IMAP) and Custom. | MVP |
 | CON-02 | A connection shall be usable for input, output, or both; each connector declares its direction (INPUT or OUTPUT), so a bidirectional system is used through two connectors on the same connection. | MVP |
 | CON-03 | IMPORT pipeline nodes shall reference an INPUT connector. | MVP |
 | CON-04 | EXPORT pipeline nodes shall reference an OUTPUT connector. | MVP |
@@ -245,6 +255,10 @@ Connections describe how to reach an external system (endpoint, credentials). Th
 | CON-10 | Connections shall be granted to tenants with a scope (e.g. topic prefix, path, rate limit) and an optional validity period. | MVP |
 | CON-11 | Tenant administrators shall be able to request a new connection in the UI; the request, its processing by system administrators and the resulting grant shall be tracked in the UI and audited. | MVP |
 | CON-12 | Broker credentials managed by the platform shall be provisioned on the bundled MQTT broker, so that anonymous access can be disabled. | MVP |
+| CON-13 | Polling connectors (REST, FILE, FTP, SFTP, EMAIL) shall expose a configurable polling interval and an operator-visible last-run/next-run state. | MVP |
+| CON-14 | The UI shall configure every pull input type with the fields the source actually needs (host, port, TLS mode, path, filename pattern, record format, mail folder, content selection, post-read action, minimum age) and shall validate them before the connector can be enabled. | MVP |
+| CON-15 | A pull input shall support a `minAge` guard so that files or mails still being written by the remote system are not read half-finished. | MVP |
+| CON-16 | After a successful read, the platform shall apply the connector's post-read action (keep, move, or delete the file; keep, move, or delete the mail) so that a re-run cannot duplicate or skip items. | MVP |
 
 ### 4.7 Storage
 
@@ -257,6 +271,8 @@ Connections describe how to reach an external system (endpoint, credentials). Th
 | STR-05 | Storage targets (hot-tier table, lakehouse table) shall be selectable per pipeline node. | MVP |
 | STR-06 | The platform shall expose a data query API for stored time-series and relational data. | MVP |
 | STR-07 | Data retention policies shall be configurable per tenant/workspace and per storage tier. | MVP |
+| STR-08 | The platform shall **not** store unstructured payloads. There is no blob/file store, no upload endpoint and no binary retention tier. Every input — a pushed JSON document, a CSV file, a mail with attachments, a binary protocol frame — is reduced to structured records (readings, locations, metadata) that are written to the hot tier or a lakehouse table. This removes a whole class of capacity, backup and retention concerns: there is exactly one copy of every value, and it is queryable. | MVP |
+| STR-09 | Every stored record shall be attributable: the connector, endpoint and (for pull inputs) the source item it came from, plus ingest time, shall be recorded with it. | MVP |
 
 ### 4.8 Lakehouse
 
@@ -375,6 +391,23 @@ Connections describe how to reach an external system (endpoint, credentials). Th
 | OPS-06 | Module containers, connectors and platform services shall be restarted automatically after failures (see NFR-R4). | MVP |
 | OPS-07 | Operational history (runs, node logs, alert deliveries, DLQ records) shall have configurable retention: details for a limited period (default 14 days), aggregated counts per pipeline and hour beyond it. | MVP |
 
+### 4.15 Metadata (MET)
+
+A metadata object describes something the data is *about*: a device, a datapoint, an endpoint, a market location, a meter. Metadata is what turns a bare measurement into something a pipeline, an alert or a downstream system can act on — "sensor 4711 in building B, reading 21.4 °C" instead of "21.4". It enriches records on the way through a pipeline and is itself stored, versioned and queryable.
+
+| ID | Requirement | Priority |
+| -- | ----------- | -------- |
+| MET-01 | The system shall support metadata objects of user-defined types (for example Device, Datapoint, Endpoint, Location, Meter), each with a tenant-scoped set of typed attributes. | MVP |
+| MET-02 | Metadata objects shall be tenant-scoped and follow the same isolation and permission model as other tenant data; a tenant cannot read or reference another tenant's objects. | MVP |
+| MET-03 | Metadata objects shall be enriched into a pipeline through a dedicated PROCESSING step ("Enrich with metadata") that attaches the matching object to each record, so that a module does not have to implement the lookup itself. | MVP |
+| MET-04 | A pipeline shall be able to write data back to metadata through a dedicated EXPORT step ("Save to metadata"), so that an incoming reading can update the state of the object it describes (for example a meter's current reading). | MVP |
+| MET-05 | Metadata objects shall be versioned with an effective-dating (as-of) model: a change creates a new version rather than overwriting, and a record enriched at a known time receives the version effective at that time. This keeps enrichment reproducible on replay (LAK-03). | MVP |
+| MET-06 | The UI shall provide a metadata page to list, search, inspect (with version history and an as-of view), create, edit and import metadata objects (including CSV import), and to manage types and templates. | MVP |
+| MET-07 | The pipeline editor shall offer metadata enrichment and metadata export as node types, and shall show the configured metadata type and key of each such node in the graph. | MVP |
+| MET-08 | The query API shall be able to filter and join records on metadata attributes without the caller having to denormalise them at write time. | MVP |
+| MET-09 | Metadata attributes shall be typed and validated against their type definition, so a typo in a key is rejected at write time rather than silently producing empty enrichment. | MVP |
+| MET-10 | Metadata shall be enrichable from a pull input as well as a push input: a record read from a file, mailbox or FTP server is matched to its metadata object in the same way as a pushed record. | MVP |
+
 ---
 
 ## 5. Non-Functional Requirements
@@ -401,6 +434,9 @@ Connections describe how to reach an external system (endpoint, credentials). Th
 | NFR-R4 | Failed module container instances shall be detected and restarted automatically within 30 seconds. |
 | NFR-R5 | Recovery objectives of the Kubernetes HA deployment: RPO 0 for acknowledged records and committed metadata on single-node failure; automatic failover of every stateful component within 2 minutes; restore from backup after total loss with RPO ≤ 24 h. |
 | NFR-R6 | Ingestion shall keep accepting data while the metadata database is unavailable; only the loss of the message bus write quorum may refuse data. |
+| NFR-R7 | **Queue redundancy.** The message bus shall be replicated in the HA deployment: replication factor 3 with a minimum of 2 in-sync replicas, so that the loss of one broker node neither loses an acknowledged record nor reduces the write quorum. Durability of a record that the bus refuses shall be guaranteed by a local, fsync'd ingest spool on the ingest node, which is drained into the bus once it is available again. In Kubernetes the ingest edge runs as a StatefulSet with a persistent volume claim for that spool. |
+| NFR-R8 | Redundancy is a property of the **Kubernetes** deployment. The single-node Docker Compose reference stack runs one broker and one database and therefore cannot satisfy NFR-R5 or NFR-R7; it is documented as a development and evaluation topology that accepts the risk of losing in-flight data with the node. The UI and the health endpoints shall state this rather than implying HA. |
+| NFR-R9 | Fire-and-forget shall not weaken the durability guarantee: a 2xx acknowledgement (IMP-10) shall only be sent after the record is durably accepted by the bus or the spool, so a sender that never retries cannot lose data. |
 
 ### 5.3 Security
 
@@ -541,7 +577,10 @@ Permissions are additive; an auth user may hold role assignments in multiple ten
 
 ### MVP (v1) — Must Have
 
-- Inbound endpoints: REST (`/api/ingest/v1/`), MQTT, WebSocket; authenticated with API keys
+- Inbound endpoints: REST (`/api/ingest/v1/`), MQTT, WebSocket; authenticated with API keys; every input usable fire-and-forget (IMP-10)
+- Pull inputs: FILE, FTP/FTPS, SFTP, EMAIL (IMAP) with polling, a per-connector item ledger and requeue (IMP-11/12, CON-13 – CON-16)
+- Structured data only: no blob or file store; every payload is parsed into records (STR-08)
+- Metadata objects: user-defined types, as-of versioning, pipeline enrich/export steps, dedicated UI page (MET-01 – MET-10)
 - Custom IMPORT and EXPORT Python modules; DB_LOAD/DB_SAVE storage nodes
 - Module types: IMPORT, DB_LOAD, PROCESSING, MERGE, ALERT, EXPORT, DB_SAVE
 - Graph pipeline editor with fan-out and fan-in; horizontally scaling processing; dead-letter queue
@@ -574,6 +613,7 @@ The MVP list above is the scope of release 1.0; nothing in it is optional. The m
 | M2 — Lakehouse | LAK-01 – LAK-12, STR-03/04/05/07, EXP-05/06, INT-01, INT-07, DAT-04 – DAT-06, DAT-08, DAT-09 | Bronze retention, rollups, SQL workspace and catalog in the UI. |
 | M3 — Identity & audit | IAM-01 – IAM-12, AUD-01 – AUD-09, API-03 – API-06, API-08, UI-15 – UI-17, CON-09 – CON-12 | Single login via the auth proxy and OIDC; every impactful action audited. |
 | M4 — Operations | OPS-01 – OPS-06, UI-18, UI-19, DEP-03, DEP-05, NFR-S1, NFR-R5 verified on a cluster | Installation, upgrade, backup and restore run from the UI and the Helm chart. |
+| M5 — Pull inputs, metadata and redundancy | IMP-10 – IMP-13, CON-13 – CON-16, MET-01 – MET-10, STR-08/09, NFR-R7 – NFR-R9 | A meter reading arrives from a mailbox or FTP server without the sender doing anything but sending, is enriched with its device metadata, and survives a broker node failure. |
 
 ### V2 — Planned
 
@@ -603,6 +643,7 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | IMP-05 | ~ | The platform fetches via connectors and the module parses (security: no credentials in containers, CON-05). | Done |
 | IMP-06 – IMP-08 | = | | Done |
 | IMP-09 | + | Ingestion is currently unauthenticated (security review). | Open |
+| IMP-10 – IMP-13 | + | Fire-and-forget for every input, platform-owned pull inputs, per-connector item ledger, and no unstructured storage (decision of 2026-09-27). | Partial (FILE/FTP/SFTP/EMAIL poller, ledger and retry API done; UI forms done; EMail/FTP/SFTP sources usable) |
 | PIP-01, PIP-02 | = | | Done |
 | PIP-03 | ~ | Fan-in is implemented by the dedicated MERGE node type. | Done |
 | PIP-04 | ~ | Additional node types (DB_LOAD, MERGE, DB_SAVE). | Done |
@@ -637,18 +678,21 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | EXP-05 | ~ | MongoDB/MinIO replaced by hot tier + lakehouse (data focus, MinIO no longer distributed). | Partial (hot tier) |
 | EXP-06 | ~ | SimpleJSON endpoint replaced by permission-checked query API, Grafana data source and Iceberg REST catalog. | Open |
 | EXP-07, EXP-08 | = | | Done |
-| CON-01 | = | | Done |
+| CON-01 | ~ | File split into FILE, FTP/FTPS, SFTP and EMAIL (IMAP) pull inputs. | Done |
 | CON-02 | ~ | "BOTH" realised through connections usable in both directions. | Partial |
 | CON-03, CON-04 | ~ | Follows CON-02. | Done |
 | CON-05 | ~ | Credentials are no longer injected into containers. | Done |
 | CON-06 – CON-08 | = | | Done |
 | CON-09 – CON-12 | + | Persona model: IT provisions connections, departments use them. | Open |
+| CON-13 – CON-16 | + | Polling controls, per-type configuration forms, `minAge` guard and post-read action for pull inputs (decision of 2026-09-27). | Partial (backend sources done; UI forms done) |
 | STR-01, STR-02 | = | | Done |
 | STR-03 | ~ | MongoDB replaced by schema evolution in the lakehouse (focus on structured data). | Open |
 | STR-04 | ~ | Object storage bundled and used for the lakehouse; MinIO excluded (no longer distributed). | Open |
 | STR-05 | ~ | Targets are hot tier and lakehouse. | Partial |
 | STR-06 | = | | Done |
 | STR-07 | ~ | Moved to MVP: required to operate 1B/day. | Open |
+| STR-08 | + | Unstructured blob storage dropped: data_blobs table, blob endpoints, Files tab and blob config removed (decision of 2026-09-27). | Done |
+| STR-09 | + | Every record attributable to its connector/endpoint and source item. | Done |
 | LAK-01 – LAK-12 | + | Lakehouse. | Open |
 | UI-01 | ~ | React 19. | Done |
 | UI-02 | = | | Done |
@@ -683,6 +727,7 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | AUD-01 – AUD-10 | + | Paper-trail requirement (extends NFR-S5). | Open |
 | OPS-01 – OPS-06 | + | System administrator persona. | Open |
 | OPS-07 | + | Run history grows by one row per record (review 2026-09-27). | Open |
+| MET-01 – MET-10 | + | New requirements group: a metadata component per device, datapoint, endpoint and location that enriches pipelines (decision of 2026-09-27). | Done (types, templates, as-of versioning, enrich/export node types, `/metadata` UI) |
 | NFR-P1 | ~ | Scoped to multi-node autoscaling Kubernetes with a benchmark. | Open |
 | NFR-P2 | ~ | Applies to the hot tier; lakehouse visibility bounded by the commit interval. | Open (measured p99 14.8 s under backlog on one node) |
 | NFR-P3 | = | | Partial (p95 < 10 ms for lists; run summary 215 ms at 10,000 runs) |
@@ -693,6 +738,9 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | NFR-R1, NFR-R2 | ~ | Tied to the Kubernetes HA deployment; R2 exactly once. | Partial (verified with a local 3-broker cluster and two instances; not on Kubernetes) |
 | NFR-R5 | + | Measurable recovery objectives. | Partial (synchronous replication configured; not measured on a cluster) |
 | NFR-R6 | + | Ingest independent of the metadata database. | Done |
+| NFR-R7 | + | Queue redundancy: Kafka RF3 / min ISR 2 plus the durable ingest spool (decision of 2026-09-27). | Partial (fsync'd ingest spool implemented and verified; replicated-broker values specified but not yet exercised on a cluster) |
+| NFR-R8 | + | Docker Compose is a single-node reference stack and cannot be redundant; stated as such instead of implying HA. | Done |
+| NFR-R9 | + | Fire-and-forget must not weaken durability: 2xx only after bus or spool acceptance. | Done |
 | NFR-R3, NFR-R4 | = | | Partial |
 | NFR-S1 | = | | Open |
 | NFR-S2 | ~ | Client-side SHA-256 pre-hashing dropped: over TLS it adds no protection (the hash becomes the password). BCrypt storage kept; minimum length added. | Done |

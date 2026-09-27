@@ -14,9 +14,8 @@ import java.time.Instant
 /**
  * FR-031: every listed data class needs an explicit configurable retention rule or explicit
  * indefinite retention. Each `*-retention-days` property defaults to `-1` (indefinite — no
- * cleanup) so nothing is deleted unless a deployment opts in explicitly; this matches the
- * blob-recovery precedent (`DataResource.failedBlobRetentionDays`) rather than inventing a new
- * pattern. Deleting old `pipeline_runs` rows cascades to `pipeline_run_node_logs` via its existing
+ * cleanup) so nothing is deleted unless a deployment opts in explicitly. Deleting old
+ * `pipeline_runs` rows cascades to `pipeline_run_node_logs` via its existing
  * `ON DELETE CASCADE` FK, covering "run metadata" and "node logs" with one rule. Execution
  * output/logs and intermediate results are not separately persisted outside `pipeline_runs`/
  * `pipeline_run_node_logs` and the ephemeral `Execution` row, so no separate category exists for

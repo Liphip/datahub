@@ -115,6 +115,13 @@ class AlertResource {
 
     /** Alert channel credentials are represented by secretRefs, never persisted inline. */
     private fun validateChannelConfig(value: Any?): String? {
+        // The root must be a JSON object. A scalar root - notably a JSON *string* holding the
+        // config - reaches the `else -> null` branch of the walk below and skips it entirely, which
+        // silently bypassed this check and let a plaintext credential be persisted. Scalars nested
+        // *inside* a config ("port": 25) stay legal; only the root shape is constrained.
+        if (value != null && value !is Map<*, *>) {
+            return "Channel config must be a JSON object"
+        }
         val sensitiveNames = setOf("password", "token", "authtoken", "apikey", "authorization", "secret", "clientsecret", "privatekey", "passphrase")
         fun validate(node: Any?, insideSecretRefs: Boolean = false): String? = when (node) {
             is Map<*, *> -> node.entries.firstNotNullOfOrNull { (rawKey, child) ->

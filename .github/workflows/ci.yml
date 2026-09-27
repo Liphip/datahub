@@ -20,8 +20,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
+          # Must match maven.compiler.release in backend/pom.xml; a lower JDK
+          # cannot compile a release-25 target and the build fails first.
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
           cache: maven
       - name: Run backend test suite
         run: mvn --batch-mode test
@@ -66,8 +68,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
+          # Must match maven.compiler.release in backend/pom.xml; a lower JDK
+          # cannot compile a release-25 target and the build fails first.
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
           cache: maven
       - name: Generate OpenAPI contract
         working-directory: backend
@@ -235,8 +239,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
+          # Must match maven.compiler.release in backend/pom.xml; a lower JDK
+          # cannot compile a release-25 target and the build fails first.
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
           cache: maven
       - uses: actions/setup-node@v4
         with:
@@ -288,5 +294,7 @@ jobs:
           PGUSER: dataturntable
           PGPASSWORD: dataturntable-ci
         run: |
-          psql --set ON_ERROR_STOP=1 --command "SELECT to_regclass('public.event_outbox'), to_regclass('public.secrets'), to_regclass('public.audit_events'), to_regclass('public.data_blobs');"
-          psql --set ON_ERROR_STOP=1 --command "SELECT status, updated_at FROM data_blobs LIMIT 0;"
+          psql --set ON_ERROR_STOP=1 --command "SELECT to_regclass('public.event_outbox'), to_regclass('public.secrets'), to_regclass('public.audit_events'), to_regclass('public.data_table_registry');"
+          psql --set ON_ERROR_STOP=1 --command "SELECT id, is_active, updated_at FROM connectors LIMIT 0;"
+          # Unstructured storage was dropped (STR-08): the table must not come back.
+          psql --set ON_ERROR_STOP=1 --command "DO \$\$ BEGIN IF to_regclass('public.data_blobs') IS NOT NULL THEN RAISE EXCEPTION 'data_blobs must not exist (STR-08)'; END IF; END \$\$;"
