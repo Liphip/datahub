@@ -4,6 +4,8 @@ import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
 import com.dataturntable.PanacheBase
+import com.dataturntable.authorization.Ability
+import com.dataturntable.security.AbilityEvaluator
 import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanionBase
 import jakarta.persistence.*
 import java.time.Instant
@@ -32,8 +34,14 @@ open class User : PanacheBase() {
     @Column(name = "last_name")
     var lastName: String? = null
     
+    @Column(name = "is_platform_admin")
+    var isSuperadmin: Boolean = false
+    
     @Column(name = "is_active")
     var isActive: Boolean = true
+
+    @Column(name = "authorization_version", nullable = false)
+    var authorizationVersion: Long = 0
     
     @Column(name = "last_login_at")
     var lastLoginAt: Instant? = null
@@ -49,6 +57,14 @@ open class User : PanacheBase() {
     
     @OneToMany(mappedBy = "authUser", cascade = [CascadeType.ALL], orphanRemoval = true)
     var memberships: MutableList<Membership> = mutableListOf()
+
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+        name = "user_abilities",
+        joinColumns = [JoinColumn(name = "user_id")],
+        inverseJoinColumns = [JoinColumn(name = "ability_value")]
+    )
+    var grantedAbilities: MutableSet<Ability> = mutableSetOf()
     
     companion object : PanacheCompanionBase<User, UUID> {
         override fun findById(id: UUID): User? =
@@ -125,10 +141,7 @@ open class User : PanacheBase() {
      * Evaluates the named capability or state predicate.
      */
     fun isSuperAdmin(): Boolean {
-        // Superadmin is defined as having TenantAdmin role in the root tenant
-        return loadMemberships().any { membership ->
-            membership.role?.name == "Tenant Admin" && membership.tenant?.parent == null
-        }
+        return isSuperadmin
     }
     
     /**
@@ -136,15 +149,14 @@ open class User : PanacheBase() {
      */
     fun hasAbility(ability: String): Boolean {
         if (isSuperAdmin()) return true
-        if (abilities?.contains("*") == true) return true
-        // BUG: Permission checks use substring matching
-        // Details: A stored value such as `report:read` also matches a request for `read`. Parse the serialized ability list once and compare exact tokens, as is already done for role abilities below.
-        if (abilities?.contains(ability) == true) return true
-        
-        val roleAbilities = loadMemberships().map { it.role }.filterNotNull().flatMap { it.getAbilitiesList() }
-        if (roleAbilities.contains("*") || roleAbilities.contains(ability)) return true
-        
-        return abilities?.contains(ability) == true
+        if (grantedAbilities.any { it.value == "*" || it.value == ability }) return true
+        if (AbilityEvaluator.hasAbility(abilities, ability)) return true
+
+        return loadMemberships().any { membership ->
+            membership.grantedAbilities.any { it.value == "*" || it.value == ability } ||
+                AbilityEvaluator.hasAbility(membership.abilities, ability) ||
+                membership.role?.hasAbility(ability) == true
+        }
     }
     
     /**
@@ -152,28 +164,20 @@ open class User : PanacheBase() {
      */
     fun getAllAbilities(): Set<String> {
         val result = mutableSetOf<String>()
-        if (isSuperAdmin() || abilities?.contains("*") == true) {
+        val directAbilities = AbilityEvaluator.parse(abilities) + grantedAbilities.map { it.value }
+        if (isSuperAdmin() || "*" in directAbilities) {
             result.add("*")
             return result
         }
+
+        result.addAll(directAbilities)
         
         loadMemberships().forEach { membership ->
             membership.role?.getAbilitiesList()?.forEach { result.add(it) }
+            membership.grantedAbilities.forEach { result.add(it.value) }
+            result.addAll(AbilityEvaluator.parse(membership.abilities))
         }
-        
-        try {
-            abilities?.let {
-                val start = it.indexOf('[')
-                val end = it.indexOf(']')
-                if (start >= 0 && end > start) {
-                    val arr = it.substring(start + 1, end)
-                    arr.split(",").forEach { s -> 
-                        result.add(s.trim().removeSurrounding("\"")) 
-                    }
-                }
-            }
-        } catch (e: Exception) { }
-        
+
         return result
     }
     

@@ -1,0 +1,1995 @@
+{
+    "template_id": "requirements-to-plan-schema-v1",
+    "version": "1.0",
+    "generated_at": "2026-08-17T15:24:00+02:00",
+    "project_name": "DataTurntable Production Ready v1",
+    "project_type": "new-version",
+    "executive_summary": "Build the production-ready major version of DataTurntable, evolving the existing functional MVP into a secure, reproducible, highly observable, horizontally scalable multi-tenant operational data and event-processing platform. Preserve the existing product primitives and monorepo, but incrementally migrate the backend from one Quarkus application with runtime roles toward domain-oriented microservices. Security invariants and the user-code execution boundary are addressed before broad service extraction so that existing vulnerabilities and unreliable distributed behavior are not replicated across the new architecture.",
+    "existing_system_context": {
+        "applies": true,
+        "current_state": "DataTurntable currently consists of a React 18/Vite/TypeScript SPA and Kotlin 2.3.0/Quarkus 3.32.2 backend. It already provides hierarchical tenants, users/roles/memberships, JWT authentication, versioned Python modules, a React Flow DAG pipeline editor, pipeline runs and node logs, lineage, MQTT/REST/WebSocket/UDP/File/Custom connectors, Kafka-backed execution, PostgreSQL/TimescaleDB, Redis integration, alert channels/history and backend alert rules, tenant data/table/blob APIs, Grafana reconciliation, Prometheus/Loki/Grafana monitoring, Docker Compose/Swarm/Kubernetes deployment assets, and runtime-role deployment for control/public/ingest/executor responsibilities. Known findings include substring-based permission checking, a repository-bundled JWT private key, unauthenticated WebSocket ingest, hardcoded/default credentials, optional connector encryption, predictable reset credentials, client-side SHA-256 plus server-side BCrypt password handling, public monitoring surfaces, insufficiently proven tenant isolation, Docker-coupled user-code execution, in-memory connector runtime state, coarse pipeline states, JSON serialized into text fields, legacy pipeline arrays beside graphDefinition, incomplete alert-rule UI, broken browser blob downloads, frontend bundle warnings, floating image tags, H2-heavy testing, invalid/unrecognized Quarkus configuration, inconsistent API errors, and several explicit DataResource/AlertResource/WebSocket BUG/TODO/FIXME items. The supplied repository analysis is the primary implementation source. ",
+        "must_preserve": [
+            "Hierarchical multi-tenancy and tenant-scoped resources.",
+            "Users, roles, memberships, tenant switching, and current administrative workflows while authorization internals are replaced.",
+            "CodeModule and ModuleVersion concepts and existing module types.",
+            "Visual DAG editing, cycle validation, connector-direction validation, and module compatibility validation.",
+            "Pipeline runs, retry/cancellation concepts, per-node logs, lineage, and run history.",
+            "Existing connector abstraction and currently implemented connector types.",
+            "Kafka as the central asynchronous transport.",
+            "PostgreSQL/TimescaleDB as the primary durable metadata and time-series platform.",
+            "Grafana, Prometheus, and Loki instead of building replacements.",
+            "The React SPA as one frontend even after backend microservice extraction.",
+            "The monorepo.",
+            "Existing supported internal/public/ingest API URL families where practical by routing them through the future API Gateway.",
+            "Docker Compose as the primary contributor/development environment.",
+            "Docker execution support for development and trusted single-node installations."
+        ],
+        "migration_considerations": "Use an incremental strangler migration rather than a rewrite. First harden the existing backend. Then extract Execution, Ingest, and Connector Runtime because these are the strongest security/scaling boundaries. Preserve frontend-facing URLs through gateway routing while implementations move. Migrate ability text/JSON to canonical relational permissions, document-shaped text JSON to JSONB, Pipeline to immutable PipelineVersion execution, mutable connector configuration to ConnectorRevision plus secret references, legacy pipeline module arrays to graphDefinition-only authority, and run records to exact immutable version references. Treat the committed JWT private signing key as compromised and rotate it. Migrate legacy BCrypt(SHA256(password)) accounts to Argon2id on successful login. Run Flyway migration tests against PostgreSQL/TimescaleDB rather than relying on H2. Preserve existing IDs and historical records; old runs lacking sufficient reproducibility information must be marked legacy/incomplete rather than populated with invented metadata.",
+        "deployment_status_note": "As of 2026-08-18, DataTurntable has NO production deployment and NO live instances — it remains pre-production under active development. Per explicit direction from the project owner, this currently relaxes (not removes) the migration-safety posture described above: backward-compatibility shims, dual-read/dual-write paths, deprecated-field fallbacks, and data-migration-for-existing-rows work are NOT required while no live instance/real tenant data exists. Flyway schema/DDL migrations still apply and are still required to run in strict numeric order against a real PostgreSQL/TimescaleDB database (NFR-014); what is relaxed is specifically the need to preserve or backfill data in already-deployed rows, since none exist. The `must_preserve`, `migration_considerations`, NFR-013 (historical ID/record preservation), and every other backward-compatibility-flavored requirement in this document describe the discipline this project must have BY THE TIME it reaches actual production readiness with real tenant data — implementers should not block or complicate current pre-production work (e.g. schema simplification, removing now-unused legacy fields outright) by pre-emptively applying that discipline before it is needed. Revisit and remove this note once a real production deployment with live tenant data exists."
+    },
+    "goals_and_success_criteria": [
+        {
+            "goal": "Eliminate production-blocking security weaknesses",
+            "success_criteria": "No production release contains substring permission checks, an active repository signing key, default/predictable administrator credentials, anonymous ingestion, optional plaintext secret storage, or unrestricted user-code execution."
+        },
+        {
+            "goal": "Make tenant isolation a proven system invariant",
+            "success_criteria": "Automated tests cover every tenant-owned resource and nested reference; Tenant A cannot read, modify, execute, delete, or reference Tenant B resources."
+        },
+        {
+            "goal": "Create a safe user-code execution plane",
+            "success_criteria": "Pipeline orchestration delegates through ExecutionBackend; Docker and Kubernetes backends enforce non-root execution, resource limits, timeouts, filesystem/network isolation, and no Docker socket in user workloads."
+        },
+        {
+            "goal": "Make Kafka-driven processing deterministic",
+            "success_criteria": "Duplicate events do not produce duplicate logical executions or platform-controlled outputs; DB/Kafka changes use durable outbox/inbox patterns where required; retries are bounded and poison events are operable through a DLQ."
+        },
+        {
+            "goal": "Make executions reproducible and auditable",
+            "success_criteria": "Every new production run references immutable PipelineVersion, ModuleVersion, connector/config revisions, runtime/artifact digests, inputs/outputs, and other execution metadata sufficient to explain what executed."
+        },
+        {
+            "goal": "Support horizontal high availability",
+            "success_criteria": "Stateless services scale independently; persistent connectors have lease/fencing ownership and failover; shared cooldown/coordination does not rely solely on one process's memory."
+        },
+        {
+            "goal": "Complete incomplete product workflows",
+            "success_criteria": "Alert rules can be fully managed in the UI, blobs can be securely downloaded, permissions can be explained, alert history is bounded/paginated, and navigation is workflow-oriented."
+        },
+        {
+            "goal": "Move to bounded microservices without creating a distributed monolith",
+            "success_criteria": "Production uses domain-oriented Identity, Module, Pipeline, Ingest, Connector, Execution, Data, Alert, Secret, Audit, Blob, and Grafana Integration services with explicit contracts and data ownership while remaining in one monorepo."
+        },
+        {
+            "goal": "Make deployments reproducible and supportable",
+            "success_criteria": "Production uses immutable image digests, validated configuration, real PostgreSQL migration tests, documented backup/restore, explicit Compose/Swarm/Kubernetes support levels, and Kubernetes execution does not require a Docker socket."
+        }
+    ],
+    "requirements": {
+        "functional": [
+            {
+                "id": "FR-001",
+                "requirement": "Replace raw/sub-string ability evaluation with one canonical exact-token authorization model and normalize permissions into Ability, RoleAbility, and MembershipAbility records.",
+                "priority": "must-have",
+                "acceptance_criteria": "No production authorization decision uses String.contains/substrings against serialized abilities; exact grants succeed while similar/prefix/suffix permissions do not; existing valid grants migrate without loss."
+            },
+            {
+                "id": "FR-002",
+                "requirement": "Separate explicit platform-administrator status from root-tenant administration and expose authorization explanation.",
+                "priority": "must-have",
+                "acceptance_criteria": "A root-tenant administrator without platform-admin status cannot use platform-admin-only operations; an authorized admin can request an explanation showing effective permission and its role/membership sources."
+            },
+            {
+                "id": "FR-003",
+                "requirement": "Use raw-password-over-TLS authentication with server-side Argon2id and migrate legacy BCrypt(SHA256(password)) credentials on successful login.",
+                "priority": "must-have",
+                "acceptance_criteria": "The browser no longer SHA-256 hashes passwords; new credentials use Argon2id; a legacy account authenticates with its original password and is transparently rehashed to Argon2id."
+            },
+            {
+                "id": "FR-004",
+                "requirement": "Support short-lived access tokens and authorization/session invalidation following user deactivation, password/security changes, role changes, or permission revocation.",
+                "priority": "must-have",
+                "acceptance_criteria": "A removed permission or deactivated account ceases authorizing requests within the documented access-token lifetime or immediately after the configured authorization-version/session invalidation path."
+            },
+            {
+                "id": "FR-005",
+                "requirement": "Externalize and rotate JWT signing keys, remove production default credentials, remove predictable reset credentials, and require production encryption key material.",
+                "priority": "must-have",
+                "acceptance_criteria": "No active private signing key is tracked or packaged; the old committed key is retired; production startup rejects known default credentials and missing mandatory encryption/signing material; reset tooling requires an explicit secret or produces a random one-time credential."
+            },
+            {
+                "id": "FR-006",
+                "requirement": "Authenticate and authorize HTTP and WebSocket ingestion using tenant/resource-scoped ingest credentials.",
+                "priority": "must-have",
+                "acceptance_criteria": "Anonymous ingest is rejected; a Tenant A credential cannot target Tenant B; credentials can be constrained to pipeline/connector and expiry."
+            },
+            {
+                "id": "FR-007",
+                "requirement": "Apply ingest payload-size, message-rate, connection-count, idle-session, and concurrency protections and make WebSocket session handling thread-safe.",
+                "priority": "must-have",
+                "acceptance_criteria": "Oversized/rate-limited traffic is rejected, connection limits and idle timeout are enforced, concurrent WebSocket tests do not corrupt session state, and downstream submission failure is represented as rejected/failed rather than an ambiguous accepted run."
+            },
+            {
+                "id": "FR-008",
+                "requirement": "Make ModuleVersion executable content immutable and identify executable artifacts by content, dependency, and runtime-image digests.",
+                "priority": "must-have",
+                "acceptance_criteria": "Existing executable version content cannot be edited; changes create another version; every production-executable version records content fingerprint, artifact digest, dependency digest, and runtime-image digest."
+            },
+            {
+                "id": "FR-009",
+                "requirement": "Introduce immutable PipelineVersion and make versioned graphDefinition the only authoritative executable pipeline representation.",
+                "priority": "must-have",
+                "acceptance_criteria": "Editing creates a new PipelineVersion; all new runs reference one exact PipelineVersion; legacy import/processing/export arrays no longer affect execution."
+            },
+            {
+                "id": "FR-010",
+                "requirement": "Version and strongly validate the DAG graph schema and provide explicit graph migrations.",
+                "priority": "must-have",
+                "acceptance_criteria": "Every graph contains schemaVersion and validates node IDs, edges, cycles, node/module compatibility, connector direction, referenced-resource existence, and tenant ownership; old graph fixtures migrate through tested migration functions."
+            },
+            {
+                "id": "FR-011",
+                "requirement": "Implement the formal run/node state machine PENDING, QUEUED, RUNNING, CANCELLING, CANCELLED, SUCCESS, FAILED, and TIMED_OUT.",
+                "priority": "must-have",
+                "acceptance_criteria": "Only documented state transitions succeed; stale/illegal transitions are rejected; terminal states cannot return to execution states; cancellation/completion races have deterministic tested behavior."
+            },
+            {
+                "id": "FR-012",
+                "requirement": "Introduce an independently deployable Execution Service with ExecutionRequest, ExecutionResult, ExecutionEnvironment, ExecutionLimits, and ExecutionBackend contracts.",
+                "priority": "must-have",
+                "acceptance_criteria": "Pipeline orchestration performs no direct Docker Engine operations and submits/statuses/cancels executions only through the execution contract."
+            },
+            {
+                "id": "FR-013",
+                "requirement": "Provide hardened DockerExecutionBackend and KubernetesJobExecutionBackend implementations.",
+                "priority": "must-have",
+                "acceptance_criteria": "Docker remains functional for development/trusted installs; Kubernetes creates native Jobs with runAsNonRoot, no privilege escalation, dropped capabilities, RuntimeDefault seccomp, resource limits, deadline, cleanup, restricted network, no default service-account token, and no Docker socket."
+            },
+            {
+                "id": "FR-014",
+                "requirement": "Enforce CPU, memory, PID, temporary-disk, timeout, log/output, network, and concurrency quotas for user-code execution.",
+                "priority": "must-have",
+                "acceptance_criteria": "Infinite loops time out, memory/PID abuse is bounded, output/log growth is capped, blocked network targets are unreachable, and one tenant cannot exceed its configured execution allocation."
+            },
+            {
+                "id": "FR-015",
+                "requirement": "Define a versioned Kafka event envelope and propagate eventId, type, schemaVersion, tenantId, correlationId, causationId, and run/node/execution identifiers.",
+                "priority": "must-have",
+                "acceptance_criteria": "Migrated durable events validate against versioned schemas and critical request/event flows preserve correlation identifiers end-to-end."
+            },
+            {
+                "id": "FR-016",
+                "requirement": "Implement application-level Kafka idempotency, transactional outbox, consumer inbox/deduplication, bounded retries, DLQs, explicit partition keys, and retry-safe outputs.",
+                "priority": "must-have",
+                "acceptance_criteria": "Publishing the same execution event twice produces one logical execution and one effective platform-controlled output; DB-committed events are not lost on broker failure; poison messages reach an inspectable finite-retry DLQ."
+            },
+            {
+                "id": "FR-017",
+                "requirement": "Introduce ConnectorRevision and separate connector control management from independently scalable persistent Connector Runtime.",
+                "priority": "must-have",
+                "acceptance_criteria": "Connector updates create revisions; old revisions remain available for authorized historical use; persistent connections can run separately from CRUD/control APIs."
+            },
+            {
+                "id": "FR-018",
+                "requirement": "Implement persistent connector ownership with PostgreSQL leases, heartbeats, expiry, database time, and fencing tokens.",
+                "priority": "must-have",
+                "acceptance_criteria": "Two replicas produce one valid owner; after owner loss another acquires a higher fencing token; a stale owner cannot overwrite current authoritative state."
+            },
+            {
+                "id": "FR-019",
+                "requirement": "Introduce versioned encrypted Secret/SecretVersion storage and replace embedded connector/channel passwords with secret references.",
+                "priority": "must-have",
+                "acceptance_criteria": "Production cannot store tenant secrets without encryption; normal GET responses never expose plaintext; secret rotation creates another version; connector/channel configs reference secret IDs rather than containing passwords/API keys."
+            },
+            {
+                "id": "FR-020",
+                "requirement": "Migrate naturally document-shaped data to PostgreSQL JSONB while normalizing permissions, secrets, and immutable version identities.",
+                "priority": "must-have",
+                "acceptance_criteria": "Pipeline graphs, connector non-secret configuration, module configuration, alert conditions, settings/quotas, and appropriate metrics are valid JSONB after migration; permissions and secrets remain structured entities."
+            },
+            {
+                "id": "FR-021",
+                "requirement": "Correct Data Service behavior for failure propagation, tenant-safe dynamic SQL, identifier validation, and relational schema mutation.",
+                "priority": "must-have",
+                "acceptance_criteria": "A database/table-list failure does not return successful empty data; SQL values are parameterized; identifiers use centralized validation; cross-tenant schemas are rejected; column rename rejects invalid/conflicting identifiers and is transactionally tested on PostgreSQL/TimescaleDB."
+            },
+            {
+                "id": "FR-022",
+                "requirement": "Provide reliable authenticated blob upload/download/delete and migrate scalable payload storage to S3-compatible storage such as MinIO/S3.",
+                "priority": "must-have",
+                "acceptance_criteria": "The existing browser download works with authentication; production authorization can issue a short-lived object-specific signed URL or authenticated stream; metadata/object operations expose pending/available/failed/delete states and failed operations do not create silent permanent orphans."
+            },
+            {
+                "id": "FR-023",
+                "requirement": "Complete AlertRule management with nested AND/OR rule building, typed operators, multiple actions/channels, safe rule testing, bounded history, deterministic pagination, and replica-safe cooldown.",
+                "priority": "must-have",
+                "acceptance_criteria": "The SPA can fully create/edit/delete/test rules; nested conditions round-trip; test mode does not send actions by default; history enforces bounded pagination; two replicas observe one shared cooldown decision."
+            },
+            {
+                "id": "FR-024",
+                "requirement": "Provide an append-oriented Audit Service for security-sensitive administrative and operational actions.",
+                "priority": "must-have",
+                "acceptance_criteria": "Authentication/security changes, tenant changes, users/memberships/roles/abilities, module/pipeline versions, connectors/secrets, alert changes, and run retry/cancel/forced termination create actor/tenant/resource/request/outcome audit records without secret contents."
+            },
+            {
+                "id": "FR-025",
+                "requirement": "Provide structured logs, metrics, Prometheus, Loki, Grafana, OpenTelemetry tracing, and strict public-monitoring contracts.",
+                "priority": "must-have",
+                "acceptance_criteria": "Critical flows can be followed using request/correlation/run/execution IDs; metrics cover APIs, Kafka, pipeline, execution, connector, alert, and storage health; unauthenticated monitoring responses pass a forbidden-field/allowlist contract test."
+            },
+            {
+                "id": "FR-026",
+                "requirement": "Reorganize the SPA around Overview, Build, Connect, Data, Operate, and Admin and lazy-load Monaco, React Flow, data, and monitoring-heavy routes.",
+                "priority": "must-have",
+                "acceptance_criteria": "Existing core workflows remain reachable in the new information architecture; login/overview does not download Monaco or React Flow until needed; route/permission behavior remains correct."
+            },
+            {
+                "id": "FR-027",
+                "requirement": "Provide an administrator permission-debugging interface showing tenant, membership, role, inherited grants, explicit grants, effective permissions, and permission provenance.",
+                "priority": "must-have",
+                "acceptance_criteria": "An authorized admin can select a user/tenant and see why a specified permission/resource decision is allowed or denied; cross-tenant diagnostics obey authorization."
+            },
+            {
+                "id": "FR-028",
+                "requirement": "Standardize API error envelopes and generate/validate versioned OpenAPI contracts.",
+                "priority": "must-have",
+                "acceptance_criteria": "Representative 400/401/403/404/409/quota/dependency/execution/500 errors return machine code, safe message, requestId, and optional safe details; no stack traces are returned; OpenAPI validation runs in CI."
+            },
+            {
+                "id": "FR-029",
+                "requirement": "Migrate to domain-oriented microservices behind a stable API Gateway and enforce logical data ownership and authenticated service-to-service communication.",
+                "priority": "must-have",
+                "acceptance_criteria": "Production has independently buildable Identity & Access, Module Registry, Pipeline, Ingest, Connector, Execution, Data, Alert, Secret, Audit, Blob, and Grafana Integration services; no service directly queries another service's private tables; protected internal APIs reject invalid workload identity; supported existing frontend URLs route through the gateway."
+            },
+            {
+                "id": "FR-030",
+                "requirement": "Support Docker Compose development, optional Docker Swarm, and Kubernetes reference HA deployments using immutable service/runtime images.",
+                "priority": "must-have",
+                "acceptance_criteria": "Compose starts the development stack; Swarm is either explicitly tested/supported or marked limited; Kubernetes runs the HA microservice topology and Kubernetes Job executor; production manifests resolve immutable digests and not `latest`."
+            },
+            {
+                "id": "FR-031",
+                "requirement": "Provide configurable retention policies for run metadata, node logs, execution output/logs, intermediate results, blobs, alert history, audit events, operational logs, and time-series data.",
+                "priority": "must-have",
+                "acceptance_criteria": "Every listed data class has an explicit configurable retention rule or explicit indefinite retention and a tested cleanup/tombstone path where deletion applies."
+            },
+            {
+                "id": "FR-032",
+                "requirement": "Resolve all identified minor repository findings before the Production Ready v1 gate.",
+                "priority": "must-have",
+                "acceptance_criteria": "The duplicate H2 dependency is removed; identified Quarkus Kafka/Micrometer invalid/unrecognized settings are corrected; Vite dev proxy no longer breaks `/api`; alert pagination/limit TODOs are resolved; DataResource false-empty-success/orphan/delete/column-rename issues are resolved; WebSocket thread-safety/failure issues are resolved; Kubernetes execution no longer depends on unavailable Docker runtime; production floating tags are gone; PostgreSQL migration tests replace H2 as production proof; inconsistent errors use the common envelope; authorization-sensitive ad-hoc queries are centralized/tenant-safe; documentation distinguishes implemented versus planned behavior."
+            }
+        ],
+        "non_functional": [
+            {
+                "id": "NFR-001",
+                "category": "security",
+                "requirement": "Tenant isolation is a mandatory security invariant.",
+                "acceptance_criteria": "Automated cross-tenant tests cover all tenant-owned resource families and nested IDs with zero known production failures."
+            },
+            {
+                "id": "NFR-002",
+                "category": "security",
+                "requirement": "User-defined Python is treated as hostile by default.",
+                "acceptance_criteria": "Workers cannot access Docker socket, host filesystem, platform signing key, broad DB/Kafka credentials, or unrestricted network; resource/time limits are enforced."
+            },
+            {
+                "id": "NFR-003",
+                "category": "security",
+                "requirement": "Production must never silently fall back to insecure secrets/defaults.",
+                "acceptance_criteria": "Known default credentials, missing encryption/signing keys, or invalid security configuration cause startup/readiness failure."
+            },
+            {
+                "id": "NFR-004",
+                "category": "security",
+                "requirement": "Configurable REST/WebSocket connectors and execution egress must mitigate SSRF/internal-network access.",
+                "acceptance_criteria": "Default production policy blocks prohibited metadata/control-plane/internal targets and schemes; exceptions are explicit and tested."
+            },
+            {
+                "id": "NFR-005",
+                "category": "security",
+                "requirement": "Secrets must not leak through API serialization, logs, monitoring, audit, errors, or execution metadata.",
+                "acceptance_criteria": "Automated marker-secret tests inspect all supported outputs and fail if the marker appears unmasked."
+            },
+            {
+                "id": "NFR-006",
+                "category": "security",
+                "requirement": "Browser authentication/session design must minimize XSS credential impact.",
+                "acceptance_criteria": "Strong CSP/security headers are configured; raw passwords are never persisted; long-lived privileged credentials are not unnecessarily exposed to JavaScript; the selected token-storage/refresh design is documented."
+            },
+            {
+                "id": "NFR-007",
+                "category": "reliability",
+                "requirement": "Kafka processing must remain correct under at-least-once delivery.",
+                "acceptance_criteria": "Duplicate request/result/event tests produce one logical protected side effect."
+            },
+            {
+                "id": "NFR-008",
+                "category": "reliability",
+                "requirement": "Pipeline and execution state must remain deterministic during crashes, duplicates, timeouts, and cancellation races.",
+                "acceptance_criteria": "Failure-injection tests always end in one documented legal state and stale updates cannot resurrect terminal work."
+            },
+            {
+                "id": "NFR-009",
+                "category": "reliability",
+                "requirement": "Persistent connectors must fail over without split brain.",
+                "acceptance_criteria": "With default 10-second heartbeat and 30-second lease TTL, standby ownership occurs within 45 seconds under nominal DB connectivity and stale fencing generations are rejected."
+            },
+            {
+                "id": "NFR-010",
+                "category": "scalability",
+                "requirement": "Ingest, connector runtime, pipeline orchestration, execution workers, and stateless APIs must be independently horizontally scalable.",
+                "acceptance_criteria": "Kubernetes replica counts can be changed independently without requiring all services to scale together."
+            },
+            {
+                "id": "NFR-011",
+                "category": "maintainability",
+                "requirement": "Microservices must remain in one monorepo with explicit versioned contracts and small shared libraries.",
+                "acceptance_criteria": "Shared libraries do not contain a giant shared mutable persistence model that recreates a distributed monolith."
+            },
+            {
+                "id": "NFR-012",
+                "category": "compatibility",
+                "requirement": "Service extraction must preserve supported application/API behavior during migration.",
+                "acceptance_criteria": "Supported SPA URLs/API paths continue to work through gateway/compatibility routing at every cutover."
+            },
+            {
+                "id": "NFR-013",
+                "category": "compatibility",
+                "requirement": "Historical IDs and records must be preserved through migration.",
+                "acceptance_criteria": "Representative current-MVP migration keeps identities and data; runs lacking exact provenance are retained and explicitly marked legacy/incomplete."
+            },
+            {
+                "id": "NFR-014",
+                "category": "reliability",
+                "requirement": "Production persistence migrations must be tested on PostgreSQL/TimescaleDB.",
+                "acceptance_criteria": "CI migrates a representative previous/current schema on PostgreSQL/TimescaleDB and boots the affected services successfully."
+            },
+            {
+                "id": "NFR-015",
+                "category": "performance",
+                "requirement": "Heavy editor dependencies must not inflate initial SPA load unnecessarily.",
+                "acceptance_criteria": "Monaco and React Flow are absent from initial login/overview route loads and bundle-regression checks are part of release validation."
+            },
+            {
+                "id": "NFR-016",
+                "category": "reliability",
+                "requirement": "A reference HA deployment must tolerate loss of one stateless replica.",
+                "acceptance_criteria": "Deleting one replica of each designated multi-replica stateless service does not make the corresponding user-facing service unavailable after normal readiness routing."
+            },
+            {
+                "id": "NFR-017",
+                "category": "reliability",
+                "requirement": "Backup and restore must be operationally proven.",
+                "acceptance_criteria": "A clean restore reproduces representative identity, pipeline/version/run, data, and blob state and passes documented integrity checks."
+            },
+            {
+                "id": "NFR-018",
+                "category": "maintainability",
+                "requirement": "Production artifacts and configuration must be immutable, validated, traceable, and scanned.",
+                "acceptance_criteria": "Release artifacts have digests/SBOMs, production deploys exact digests, CI scans secrets/dependencies/images, and identified unsupported configuration warnings are absent."
+            },
+            {
+                "id": "NFR-019",
+                "category": "maintainability",
+                "requirement": "Documentation must not present planned or untested behavior as implemented production functionality.",
+                "acceptance_criteria": "Release documentation classifies features/deployment targets as Implemented, Experimental, Deprecated, or Planned and publishes an explicit support matrix."
+            },
+            {
+                "id": "NFR-020",
+                "category": "reliability",
+                "requirement": "Operational telemetry must permit one request/event/run to be followed across service boundaries.",
+                "acceptance_criteria": "Request/correlation/run/execution identifiers link gateway or ingest through Kafka, pipeline orchestration, execution, data output, and alerts in logs/traces."
+            }
+        ]
+    },
+    "explored_and_rejected": [
+        {
+            "option": "Keep the final production backend as only one modular monolith with runtime roles.",
+            "reason_rejected": "Earlier this was the preferred near-term architecture, but the later user request explicitly requires a move to microservices. Runtime roles remain useful during migration."
+        },
+        {
+            "option": "Big-bang microservice rewrite.",
+            "reason_rejected": "It would mix security fixes, schema migration, service extraction, and product changes into one high-risk release. The migration is incremental."
+        },
+        {
+            "option": "One microservice per entity/table.",
+            "reason_rejected": "It would create a service explosion and distributed monolith without corresponding security/scaling value."
+        },
+        {
+            "option": "Mount `/var/run/docker.sock` into Kubernetes executor pods.",
+            "reason_rejected": "Docker socket access is effectively host-level privilege and undermines worker isolation; Kubernetes uses native Jobs."
+        },
+        {
+            "option": "Give user Python broad DB/Kafka/platform credentials or unrestricted default network access.",
+            "reason_rejected": "User code is hostile by default; workers receive scoped data/secrets and controlled egress."
+        },
+        {
+            "option": "Retain client-side SHA-256 plus server-side BCrypt.",
+            "reason_rejected": "TLS already protects transit and the client hash becomes a reusable password-equivalent; the replacement is Argon2id on the server."
+        },
+        {
+            "option": "Store connector passwords/API keys inline in connector JSON.",
+            "reason_rejected": "Secrets need independent rotation, masking, encryption, and version references."
+        },
+        {
+            "option": "Normalize every JSON document and every DAG node/edge into relational tables.",
+            "reason_rejected": "Graphs, nested conditions, and heterogeneous configuration are naturally document-shaped; use validated JSONB and normalize only domains requiring relational semantics."
+        },
+        {
+            "option": "Build a custom dashboard/Grafana replacement.",
+            "reason_rejected": "Grafana already solves visualization; DataTurntable should focus on integration, processing, lineage, and operations."
+        },
+        {
+            "option": "Replace Kafka or build a custom broker.",
+            "reason_rejected": "Kafka is appropriate; the missing work is explicit reliability semantics."
+        },
+        {
+            "option": "Build a general-purpose identity provider.",
+            "reason_rejected": "DataTurntable needs local identity/access and later external OIDC integration, not a replacement for established IdPs."
+        },
+        {
+            "option": "Prioritize many new connector types.",
+            "reason_rejected": "Existing connectors need security, revisioning, HA, and operational hardening first."
+        },
+        {
+            "option": "Add AI features merely for marketing.",
+            "reason_rejected": "They do not address current production-readiness gaps."
+        },
+        {
+            "option": "Make Kubernetes mandatory for every installation.",
+            "reason_rejected": "It is the reference HA architecture, while Compose and trusted smaller installations remain valid."
+        },
+        {
+            "option": "Build a custom object-storage implementation.",
+            "reason_rejected": "Use S3-compatible infrastructure such as MinIO/S3."
+        },
+        {
+            "option": "Implement many execution backends immediately.",
+            "reason_rejected": "Only Docker and Kubernetes Job backends are needed now; future remote/edge backends remain possible through the interface."
+        },
+        {
+            "option": "Use Redis as the sole durable source of connector ownership/core metadata.",
+            "reason_rejected": "Redis is optional ephemeral infrastructure; durable platform state remains in PostgreSQL/Kafka/object storage."
+        },
+        {
+            "option": "Use floating `latest` production image tags.",
+            "reason_rejected": "Production deployment must be reproducible and auditable."
+        }
+    ],
+    "tech_stack": {
+        "decided": [
+            {
+                "layer": "frontend",
+                "technology": "React 18, TypeScript 5.x, Vite, React Router, Zustand, Tailwind CSS, Axios, i18next, React Flow, Monaco Editor",
+                "rationale": "Existing working frontend stack; retain it and improve information architecture, remote-data handling where needed, and lazy loading."
+            },
+            {
+                "layer": "backend",
+                "technology": "Kotlin 2.3.0 and Quarkus 3.32.2 initially for extracted services",
+                "rationale": "Reuse the current implementation and expertise rather than introducing a simultaneous framework rewrite."
+            },
+            {
+                "layer": "database",
+                "technology": "PostgreSQL, TimescaleDB, Flyway, Hibernate ORM/Panache where useful",
+                "rationale": "Existing suitable metadata/time-series platform; logical ownership moves to individual services."
+            },
+            {
+                "layer": "messaging",
+                "technology": "Apache Kafka",
+                "rationale": "Retain as asynchronous backbone with explicit at-least-once/idempotency semantics."
+            },
+            {
+                "layer": "cache",
+                "technology": "Redis optional",
+                "rationale": "Use for rate limits, caches, cooldowns, or ephemeral coordination rather than durable source of truth."
+            },
+            {
+                "layer": "authentication",
+                "technology": "Identity & Access Service, short-lived bearer tokens, Argon2id password hashing",
+                "rationale": "Simplifies current custom password protocol and enables explicit authorization invalidation."
+            },
+            {
+                "layer": "execution",
+                "technology": "Python 3.11+ modules through DockerExecutionBackend and KubernetesJobExecutionBackend",
+                "rationale": "Preserve custom Python modules while creating a safe execution abstraction."
+            },
+            {
+                "layer": "object-storage",
+                "technology": "S3-compatible API, MinIO for development/reference self-hosting",
+                "rationale": "Scalable blob/input/output handling without implementing storage infrastructure."
+            },
+            {
+                "layer": "observability",
+                "technology": "Prometheus, Loki, Grafana, OpenTelemetry",
+                "rationale": "Retain strong existing monitoring and add distributed tracing."
+            },
+            {
+                "layer": "deployment",
+                "technology": "Docker Compose development, Docker Swarm optional, Kubernetes reference HA",
+                "rationale": "Support practical on-prem development/smaller installs while providing a robust HA reference."
+            },
+            {
+                "layer": "repository",
+                "technology": "Monorepo",
+                "rationale": "Services, frontend, contracts, tests, runtime images, deployment, observability, and docs remain closely coordinated."
+            }
+        ],
+        "constraints": "Do not perform a ground-up rewrite. The final target must use domain-oriented microservices but preserve current product behavior and migrate incrementally. DataTurntable remains self-hosted/on-prem capable. User Python and tenants are treated as hostile by default for the production reference threat model. Kafka, PostgreSQL/TimescaleDB, Grafana/Prometheus/Loki, and S3-compatible storage are reused rather than replaced. Kubernetes is the reference HA architecture, not a mandatory requirement for every installation. Existing supported API route families should remain stable through gateway routing where practical."
+    },
+    "architecture_plan": {
+        "high_level": "Incrementally evolve the runtime-role backend into domain-oriented microservices behind an API Gateway. Target services are Identity & Access, Module Registry, Pipeline, Ingest, Connector Control/Runtime, Execution, Data, Alert, Secret, Audit, Blob/Object, and Grafana Integration. Kafka is the asynchronous event backbone. PostgreSQL/TimescaleDB provide durable data with service-owned logical schemas. Redis is optional ephemeral infrastructure. S3/MinIO stores blobs and large artifacts. User Python executes only through the Execution Service. The React SPA remains one application.",
+        "data_model": [
+            {
+                "entity": "User",
+                "key_fields": [
+                    "id: UUID",
+                    "email: string",
+                    "passwordHash: string",
+                    "passwordAlgorithmVersion: string",
+                    "isActive: boolean",
+                    "isPlatformAdmin: boolean",
+                    "authorizationVersion: long"
+                ],
+                "relationships": [
+                    "has many Membership",
+                    "has AuthenticationSession"
+                ]
+            },
+            {
+                "entity": "Tenant",
+                "key_fields": [
+                    "id: UUID",
+                    "name: string",
+                    "parentTenantId: UUID?",
+                    "settings: JSONB",
+                    "quota: JSONB"
+                ],
+                "relationships": [
+                    "hierarchical parent/children",
+                    "owns tenant-scoped resources"
+                ]
+            },
+            {
+                "entity": "Membership",
+                "key_fields": [
+                    "id: UUID",
+                    "userId: UUID",
+                    "tenantId: UUID",
+                    "roleId: UUID?"
+                ],
+                "relationships": [
+                    "belongs to User and Tenant",
+                    "has MembershipAbility"
+                ]
+            },
+            {
+                "entity": "Role",
+                "key_fields": [
+                    "id: UUID",
+                    "tenantId: UUID?",
+                    "name: string",
+                    "isSystem: boolean"
+                ],
+                "relationships": [
+                    "has RoleAbility",
+                    "assigned through Membership"
+                ]
+            },
+            {
+                "entity": "Ability",
+                "key_fields": [
+                    "id: UUID",
+                    "name: string UNIQUE"
+                ],
+                "relationships": [
+                    "mapped through RoleAbility and MembershipAbility"
+                ]
+            },
+            {
+                "entity": "CodeModule",
+                "key_fields": [
+                    "id: UUID",
+                    "tenantId: UUID",
+                    "name: string",
+                    "moduleType: enum",
+                    "defaultVersionId: UUID?"
+                ],
+                "relationships": [
+                    "has many ModuleVersion"
+                ]
+            },
+            {
+                "entity": "ModuleVersion",
+                "key_fields": [
+                    "id: UUID",
+                    "moduleId: UUID",
+                    "version: int",
+                    "contentFingerprint: string",
+                    "artifactDigest: string",
+                    "runtimeImageDigest: string",
+                    "dependencyDigest: string",
+                    "config: JSONB"
+                ],
+                "relationships": [
+                    "belongs to CodeModule",
+                    "referenced immutably from pipeline/run history"
+                ]
+            },
+            {
+                "entity": "Pipeline",
+                "key_fields": [
+                    "id: UUID",
+                    "tenantId: UUID",
+                    "name: string",
+                    "activeVersionId: UUID?"
+                ],
+                "relationships": [
+                    "has many PipelineVersion",
+                    "has many PipelineRun"
+                ]
+            },
+            {
+                "entity": "PipelineVersion",
+                "key_fields": [
+                    "id: UUID",
+                    "pipelineId: UUID",
+                    "version: int",
+                    "graphSchemaVersion: int",
+                    "graphDefinition: JSONB",
+                    "fingerprint: string"
+                ],
+                "relationships": [
+                    "belongs to Pipeline",
+                    "references exact ModuleVersion and ConnectorRevision IDs"
+                ]
+            },
+            {
+                "entity": "PipelineRun",
+                "key_fields": [
+                    "id: UUID",
+                    "pipelineId: UUID",
+                    "pipelineVersionId: UUID",
+                    "status: enum",
+                    "retryOfRunId: UUID?",
+                    "metrics: JSONB",
+                    "legacyReproducibility: boolean"
+                ],
+                "relationships": [
+                    "belongs to PipelineVersion",
+                    "has PipelineNodeAttempt"
+                ]
+            },
+            {
+                "entity": "PipelineNodeAttempt",
+                "key_fields": [
+                    "id: UUID",
+                    "runId: UUID",
+                    "nodeId: string",
+                    "attempt: int",
+                    "executionId: UUID UNIQUE",
+                    "status: enum",
+                    "moduleVersionId: UUID?"
+                ],
+                "relationships": [
+                    "belongs to PipelineRun",
+                    "maps to one logical execution attempt"
+                ]
+            },
+            {
+                "entity": "Connector",
+                "key_fields": [
+                    "id: UUID",
+                    "tenantId: UUID",
+                    "name: string",
+                    "type: enum",
+                    "direction: enum",
+                    "activeRevisionId: UUID?"
+                ],
+                "relationships": [
+                    "has many ConnectorRevision",
+                    "may have ConnectorLease"
+                ]
+            },
+            {
+                "entity": "ConnectorRevision",
+                "key_fields": [
+                    "id: UUID",
+                    "connectorId: UUID",
+                    "revision: int",
+                    "config: JSONB"
+                ],
+                "relationships": [
+                    "belongs to Connector",
+                    "references Secret IDs"
+                ]
+            },
+            {
+                "entity": "ConnectorLease",
+                "key_fields": [
+                    "connectorId: UUID PK",
+                    "ownerInstanceId: string",
+                    "fencingToken: long",
+                    "leaseExpiresAt: Instant",
+                    "lastHeartbeatAt: Instant"
+                ],
+                "relationships": [
+                    "one current durable ownership record per persistent connector"
+                ]
+            },
+            {
+                "entity": "Secret",
+                "key_fields": [
+                    "id: UUID",
+                    "tenantId: UUID",
+                    "name: string",
+                    "type: string",
+                    "activeVersionId: UUID"
+                ],
+                "relationships": [
+                    "has many SecretVersion"
+                ]
+            },
+            {
+                "entity": "SecretVersion",
+                "key_fields": [
+                    "id: UUID",
+                    "secretId: UUID",
+                    "encryptedPayload: bytes/text",
+                    "createdAt: Instant"
+                ],
+                "relationships": [
+                    "belongs to Secret"
+                ]
+            },
+            {
+                "entity": "AlertRule",
+                "key_fields": [
+                    "id: UUID",
+                    "tenantId: UUID",
+                    "condition: JSONB",
+                    "severity: enum",
+                    "cooldownSeconds: int",
+                    "enabled: boolean"
+                ],
+                "relationships": [
+                    "has many AlertAction",
+                    "has AlertHistory"
+                ]
+            },
+            {
+                "entity": "AlertAction",
+                "key_fields": [
+                    "id: UUID",
+                    "ruleId: UUID",
+                    "channelId: UUID",
+                    "actionConfig: JSONB"
+                ],
+                "relationships": [
+                    "belongs to AlertRule and AlertChannel"
+                ]
+            },
+            {
+                "entity": "BlobMetadata",
+                "key_fields": [
+                    "id: UUID",
+                    "tenantId: UUID",
+                    "objectKey: string",
+                    "filename: string",
+                    "size: long",
+                    "checksum: string?",
+                    "status: enum"
+                ],
+                "relationships": [
+                    "payload stored in S3-compatible storage"
+                ]
+            },
+            {
+                "entity": "AuditEvent",
+                "key_fields": [
+                    "id: UUID",
+                    "timestamp: Instant",
+                    "actorId: UUID?",
+                    "tenantId: UUID?",
+                    "action: string",
+                    "resourceType: string",
+                    "resourceId: string?",
+                    "requestId: string",
+                    "outcome: string",
+                    "metadata: JSONB"
+                ],
+                "relationships": [
+                    "append-oriented security/admin history"
+                ]
+            },
+            {
+                "entity": "OutboxEvent",
+                "key_fields": [
+                    "id: UUID",
+                    "eventType: string",
+                    "payload: JSONB",
+                    "createdAt: Instant",
+                    "publishedAt: Instant?"
+                ],
+                "relationships": [
+                    "owned by the service committing the related domain change"
+                ]
+            },
+            {
+                "entity": "InboxEvent",
+                "key_fields": [
+                    "consumer: string",
+                    "eventId: UUID",
+                    "processedAt: Instant"
+                ],
+                "relationships": [
+                    "deduplicates consumed at-least-once events"
+                ]
+            }
+        ],
+        "integrations": [
+            "Apache Kafka",
+            "PostgreSQL",
+            "TimescaleDB",
+            "Redis where useful",
+            "Docker Engine through dedicated Execution Service/backend",
+            "Kubernetes API through narrowly scoped execution identity",
+            "S3-compatible object storage such as MinIO/S3",
+            "MQTT brokers including existing Mosquitto integration",
+            "External REST and WebSocket endpoints",
+            "Grafana",
+            "Prometheus",
+            "Loki",
+            "OpenTelemetry tracing backend",
+            "Future external OIDC providers"
+        ],
+        "deployment_target": "Self-hosted/on-prem capable. Docker Compose is the default development/demo environment and may serve small trusted single-node installations. Docker Swarm may remain optional if there is an actual deployment need. Kubernetes is the reference production HA/microservice architecture and must execute custom code through Kubernetes Jobs rather than Docker socket access."
+    },
+    "implementation_plan": {
+        "phases": [
+            {
+                "phase_number": 1,
+                "phase_name": "Security Baseline and Contract Foundation",
+                "goal": "Remove P0 security/correctness defects from the existing application before service extraction.",
+                "tasks": [
+                    {
+                        "task_id": "P1-T1",
+                        "task": "Introduce one canonical exact-token authorization evaluator and replace every substring/raw-string ability decision.",
+                        "depends_on": [],
+                        "acceptance_criteria": "Search all authorization paths and remove substring/contains permission decisions; exact-token tests pass and similar permission names do not grant access.",
+                        "complexity": "medium",
+                        "related_requirements": [
+                            "FR-001",
+                            "NFR-001"
+                        ]
+                    },
+                    {
+                        "task_id": "P1-T2",
+                        "task": "Normalize abilities into relational Ability/RoleAbility/MembershipAbility records, separate explicit platform-admin status, and expose authorization explanation.",
+                        "depends_on": [
+                            "P1-T1"
+                        ],
+                        "acceptance_criteria": "Flyway migrates existing valid grants; authorization reads the new mappings; root-tenant admin alone is not platform admin; backend explanation API returns effective permission and provenance.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-001",
+                            "FR-002",
+                            "NFR-013",
+                            "NFR-014"
+                        ]
+                    },
+                    {
+                        "task_id": "P1-T3",
+                        "task": "Create the initial comprehensive cross-tenant authorization regression suite.",
+                        "depends_on": [
+                            "P1-T2"
+                        ],
+                        "acceptance_criteria": "Tenant A receives the designed deny response for Tenant B users/roles/memberships/modules/versions/pipelines/runs/logs/connectors/credentials/data/tables/blobs/alerts and nested foreign IDs such as moduleVersionId inside graphDefinition.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "NFR-001",
+                            "FR-001",
+                            "FR-010"
+                        ]
+                    },
+                    {
+                        "task_id": "P1-T4",
+                        "task": "Rotate/remove repository JWT private keys, externalize production key material, eliminate default/reset credentials, enforce connector encryption, and add secret scanning.",
+                        "depends_on": [],
+                        "acceptance_criteria": "No active private signing key is packaged/tracked; old key is retired; production rejects missing required keys and known default credentials; reset credentials are random/explicit; CI catches a seeded committed secret.",
+                        "complexity": "medium",
+                        "related_requirements": [
+                            "FR-005",
+                            "NFR-003",
+                            "NFR-018"
+                        ]
+                    },
+                    {
+                        "task_id": "P1-T5",
+                        "task": "Replace browser SHA-256 password preprocessing with Argon2id server-side hashing and implement legacy credential migration plus authorization/session invalidation.",
+                        "depends_on": [
+                            "P1-T2"
+                        ],
+                        "acceptance_criteria": "New accounts use Argon2id; legacy BCrypt(SHA256(password)) fixture migrates after one successful login; frontend sends the raw password only over TLS; user deactivation/permission removal invalidates authorization as designed.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-003",
+                            "FR-004",
+                            "NFR-006"
+                        ]
+                    },
+                    {
+                        "task_id": "P1-T6",
+                        "task": "Secure current HTTP/WebSocket ingestion with scoped credentials, limits, thread-safe session handling, and explicit submission-failure semantics.",
+                        "depends_on": [
+                            "P1-T3"
+                        ],
+                        "acceptance_criteria": "Anonymous ingest fails; Tenant A cannot ingest to Tenant B; size/rate/connection/idle limits are tested; concurrent sessions remain consistent; forced downstream failure is not recorded as ambiguous success.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-006",
+                            "FR-007",
+                            "NFR-001"
+                        ]
+                    },
+                    {
+                        "task_id": "P1-T7",
+                        "task": "Harden monitoring, logging, connector destinations, and secret redaction.",
+                        "depends_on": [
+                            "P1-T4"
+                        ],
+                        "acceptance_criteria": "Anonymous monitoring uses allowlisted DTOs; marker secrets do not appear in APIs/logs/errors/monitoring; REST/WebSocket connector configuration rejects default-prohibited metadata/control-plane/internal targets.",
+                        "complexity": "medium",
+                        "related_requirements": [
+                            "FR-025",
+                            "NFR-004",
+                            "NFR-005"
+                        ]
+                    },
+                    {
+                        "task_id": "P1-T8",
+                        "task": "Define the common API error envelope and generate the baseline OpenAPI contract.",
+                        "depends_on": [],
+                        "acceptance_criteria": "Representative endpoints return machine code, safe message, requestId and safe details; no stack trace is returned; OpenAPI generation and validation run in CI.",
+                        "complexity": "medium",
+                        "related_requirements": [
+                            "FR-028"
+                        ]
+                    },
+                    {
+                        "task_id": "P1-T9",
+                        "task": "Resolve immediate repository hygiene issues: Vite API proxy, duplicate H2 dependency, and identified invalid/unrecognized Quarkus Kafka/Micrometer settings.",
+                        "depends_on": [],
+                        "acceptance_criteria": "Local `/api/internal/v1`, `/api/v1`, and `/api/ingest/v1` routes work through Vite; Maven has the intended single H2 test dependency; known configuration warnings identified in the analysis are absent.",
+                        "complexity": "low",
+                        "related_requirements": [
+                            "FR-032",
+                            "NFR-018"
+                        ]
+                    }
+                ]
+            },
+            {
+                "phase_number": 2,
+                "phase_name": "Execution Plane Extraction",
+                "goal": "Turn user-code execution into an independent hardened service and remove Docker coupling from pipeline orchestration.",
+                "tasks": [
+                    {
+                        "task_id": "P2-T1",
+                        "task": "Define ExecutionRequest, ExecutionResult, ExecutionEnvironment, ExecutionLimits, ExecutionStatus, and ExecutionBackend contracts and scaffold the Execution Service.",
+                        "depends_on": [
+                            "P1-T8"
+                        ],
+                        "acceptance_criteria": "Service builds independently, persists execution identity/state, exposes authenticated submit/status/cancel operations, and the orchestration-facing contract contains no Docker/Kubernetes-specific assumptions.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-012",
+                            "FR-029"
+                        ]
+                    },
+                    {
+                        "task_id": "P2-T2",
+                        "task": "Implement DockerExecutionBackend and harden the container sandbox.",
+                        "depends_on": [
+                            "P2-T1",
+                            "P1-T7"
+                        ],
+                        "acceptance_criteria": "A sample module executes in Docker as non-root/unprivileged with dropped capabilities, isolated workspace, no host PID/IPC, no user Docker socket, controlled network, and configured CPU/memory/PID/disk/log limits.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-013",
+                            "FR-014",
+                            "NFR-002"
+                        ]
+                    },
+                    {
+                        "task_id": "P2-T3",
+                        "task": "Implement execution timeout, cancellation, terminal-state protection, and tenant/global quotas.",
+                        "depends_on": [
+                            "P2-T2"
+                        ],
+                        "acceptance_criteria": "Infinite loop reaches TIMED_OUT; cancellation terminates a running fixture; oversized output is bounded; configured concurrency/resource quota rejects excess work with explicit quota information.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-014",
+                            "NFR-008"
+                        ]
+                    },
+                    {
+                        "task_id": "P2-T4",
+                        "task": "Implement KubernetesJobExecutionBackend.",
+                        "depends_on": [
+                            "P2-T3"
+                        ],
+                        "acceptance_criteria": "Generated Jobs enforce non-root, no privilege escalation, dropped capabilities, seccomp, no Docker socket, no automatic service-account token by default, requests/limits, deadline, temporary-storage limits, NetworkPolicy-compatible networking, and cleanup TTL.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-013",
+                            "FR-030",
+                            "NFR-002"
+                        ]
+                    },
+                    {
+                        "task_id": "P2-T5",
+                        "task": "Migrate existing PipelineConsumer/DockerService execution calls to Execution Service.",
+                        "depends_on": [
+                            "P2-T2",
+                            "P2-T3"
+                        ],
+                        "acceptance_criteria": "A deterministic existing pipeline produces the same logical result through Execution Service and pipeline orchestration no longer launches module containers directly.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-012",
+                            "NFR-012"
+                        ]
+                    },
+                    {
+                        "task_id": "P2-T6",
+                        "task": "Add hostile/faulty Python module integration tests.",
+                        "depends_on": [
+                            "P2-T4",
+                            "P2-T5"
+                        ],
+                        "acceptance_criteria": "Tests cover infinite loop, memory/PID pressure where safely testable, filesystem escape attempt, blocked egress, non-zero exit, oversized logs, and cancellation without compromising adjacent workers.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-013",
+                            "FR-014",
+                            "NFR-002",
+                            "NFR-008"
+                        ]
+                    }
+                ]
+            },
+            {
+                "phase_number": 3,
+                "phase_name": "Pipeline State and Kafka Reliability",
+                "goal": "Make pipeline orchestration deterministic under at-least-once delivery, retries, crashes, cancellation, and duplicate messages.",
+                "tasks": [
+                    {
+                        "task_id": "P3-T1",
+                        "task": "Migrate PipelineRun/node attempts to the formal state machine and conditional state transitions.",
+                        "depends_on": [
+                            "P2-T5"
+                        ],
+                        "acceptance_criteria": "Existing runs migrate; success/failure/timeout/cancel flows reach legal terminal states; stale or illegal transition updates are rejected.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-011",
+                            "NFR-008",
+                            "NFR-013"
+                        ]
+                    },
+                    {
+                        "task_id": "P3-T2",
+                        "task": "Define versioned Kafka event envelope schemas and correlation/causation propagation.",
+                        "depends_on": [
+                            "P2-T1"
+                        ],
+                        "acceptance_criteria": "Required event envelope fields are schema-validated and representative ingest/pipeline/execution events preserve correlation IDs.",
+                        "complexity": "medium",
+                        "related_requirements": [
+                            "FR-015",
+                            "NFR-020"
+                        ]
+                    },
+                    {
+                        "task_id": "P3-T3",
+                        "task": "Implement durable execution idempotency and unique run/node/attempt identity.",
+                        "depends_on": [
+                            "P3-T1",
+                            "P3-T2"
+                        ],
+                        "acceptance_criteria": "Publishing the same execution request twice creates one logical node attempt and one Execution Service submission.",
+                        "complexity": "medium",
+                        "related_requirements": [
+                            "FR-016",
+                            "NFR-007"
+                        ]
+                    },
+                    {
+                        "task_id": "P3-T4",
+                        "task": "Implement transactional outbox and consumer inbox/deduplication for pipeline/execution side effects.",
+                        "depends_on": [
+                            "P3-T2",
+                            "P3-T3"
+                        ],
+                        "acceptance_criteria": "A DB commit followed by simulated broker failure still eventually publishes the event; replaying one consumed event does not repeat the protected side effect.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-016",
+                            "NFR-007"
+                        ]
+                    },
+                    {
+                        "task_id": "P3-T5",
+                        "task": "Implement finite retries, DLQ inspection/retry, partition keys, and retry-safe outputs.",
+                        "depends_on": [
+                            "P3-T4"
+                        ],
+                        "acceptance_criteria": "Retryable poison fixture performs finite attempts then enters DLQ with original event/error/attempt/correlation data; operator can explicitly retry; run events use documented partition key; platform DB outputs are idempotent/upsert-safe.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-016",
+                            "FR-025",
+                            "NFR-007"
+                        ]
+                    },
+                    {
+                        "task_id": "P3-T6",
+                        "task": "Create duplicate, crash, broker-interruption, timeout, stale-result, and cancellation-race tests.",
+                        "depends_on": [
+                            "P3-T5"
+                        ],
+                        "acceptance_criteria": "All injected failures produce one documented final logical state and no unintended duplicate platform-controlled output.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-011",
+                            "FR-016",
+                            "NFR-007",
+                            "NFR-008"
+                        ]
+                    }
+                ]
+            },
+            {
+                "phase_number": 4,
+                "phase_name": "Ingest and Connector Runtime HA",
+                "goal": "Separate the exposed ingest edge and persistent connector runtime and make connector ownership safe under multiple replicas.",
+                "tasks": [
+                    {
+                        "task_id": "P4-T1",
+                        "task": "Extract the secured ingest implementation into an independently deployable Ingest Service while preserving `/api/ingest/v1` routes.",
+                        "depends_on": [
+                            "P1-T6",
+                            "P3-T2",
+                            "P3-T4"
+                        ],
+                        "acceptance_criteria": "Existing HTTP/WS ingest paths route to the new service, retain scoped auth/limits, and publish normalized Kafka events.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-006",
+                            "FR-007",
+                            "FR-029",
+                            "NFR-010",
+                            "NFR-012"
+                        ]
+                    },
+                    {
+                        "task_id": "P4-T2",
+                        "task": "Add ConnectorRevision and split connector control management from persistent Connector Runtime.",
+                        "depends_on": [
+                            "P3-T2"
+                        ],
+                        "acceptance_criteria": "Existing connectors receive an initial revision; updates create new revisions; old revisions remain readable; persistent MQTT/WebSocket/polling runtime can scale independently from CRUD APIs.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-017",
+                            "FR-029"
+                        ]
+                    },
+                    {
+                        "task_id": "P4-T3",
+                        "task": "Implement PostgreSQL connector leases, heartbeat, expiry, database-time comparison, and fencing tokens.",
+                        "depends_on": [
+                            "P4-T2"
+                        ],
+                        "acceptance_criteria": "Two replicas racing for one connector result in one owner; reacquisition produces a higher fencing token and stale-generation state updates are rejected.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-018",
+                            "NFR-009"
+                        ]
+                    },
+                    {
+                        "task_id": "P4-T4",
+                        "task": "Integrate lease ownership with MQTT/WebSocket/polling lifecycle and runtime status.",
+                        "depends_on": [
+                            "P4-T3"
+                        ],
+                        "acceptance_criteria": "Only the valid owner connects/polls; standby takes over after expiry; stale resumed owner cannot publish authoritative state; status exposes safe ownership/health diagnostics.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-017",
+                            "FR-018",
+                            "FR-025"
+                        ]
+                    },
+                    {
+                        "task_id": "P4-T5",
+                        "task": "Add two-replica connector failover/split-brain tests.",
+                        "depends_on": [
+                            "P4-T4"
+                        ],
+                        "acceptance_criteria": "Owner kill leads to standby ownership within 45 seconds using default lease settings under nominal DB connectivity, and simulated stale owner cannot supersede the newer fencing generation.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-018",
+                            "NFR-009",
+                            "NFR-016"
+                        ]
+                    }
+                ]
+            },
+            {
+                "phase_number": 5,
+                "phase_name": "Reproducibility, Data Model, Secrets, and Blob Storage",
+                "goal": "Make definitions immutable, migrate configuration/data safely, and establish secret/object-storage boundaries.",
+                "tasks": [
+                    {
+                        "task_id": "P5-T1",
+                        "task": "Enforce ModuleVersion immutability and build immutable module artifact metadata.",
+                        "depends_on": [
+                            "P2-T1"
+                        ],
+                        "acceptance_criteria": "Executable fields cannot be changed in-place; altered code/dependencies create a new version; executable artifact, runtime, content, and dependency digests are recorded and verified.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-008"
+                        ]
+                    },
+                    {
+                        "task_id": "P5-T2",
+                        "task": "Introduce PipelineVersion, typed/versioned graph schema, graph migrations, and eliminate legacy array authority.",
+                        "depends_on": [
+                            "P3-T1",
+                            "P1-T3"
+                        ],
+                        "acceptance_criteria": "All existing pipelines receive an initial version; edits create immutable versions; graph validation includes tenant ownership; execution uses graphDefinition only; legacy arrays are migrated/deprecated.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-009",
+                            "FR-010",
+                            "NFR-013",
+                            "NFR-014"
+                        ]
+                    },
+                    {
+                        "task_id": "P5-T3",
+                        "task": "Capture reproducibility metadata for every new run and mark legacy histories appropriately.",
+                        "depends_on": [
+                            "P5-T1",
+                            "P5-T2",
+                            "P4-T2"
+                        ],
+                        "acceptance_criteria": "New runs record exact pipeline/module versions and digests, connector/config revisions, runtime/backend details, attempts, input/output references/checksums where practical; old incomplete runs are explicitly marked legacy.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-008",
+                            "FR-009",
+                            "NFR-013"
+                        ]
+                    },
+                    {
+                        "task_id": "P5-T4",
+                        "task": "Migrate document-shaped text JSON to JSONB and fix DataResource/Data Service correctness and tenant-safe query behavior.",
+                        "depends_on": [
+                            "P5-T2",
+                            "P1-T3",
+                            "P1-T8"
+                        ],
+                        "acceptance_criteria": "Selected config/graph/condition/settings fields become validated JSONB; table-list failures return errors; dynamic identifiers use centralized validation; values are parameterized; relational rename and cross-tenant schema tests pass on PostgreSQL/TimescaleDB.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-020",
+                            "FR-021",
+                            "FR-032",
+                            "NFR-014"
+                        ]
+                    },
+                    {
+                        "task_id": "P5-T5",
+                        "task": "Implement the Secret Service and migrate connector/alert sensitive fields to secret references.",
+                        "depends_on": [
+                            "P1-T4",
+                            "P1-T7",
+                            "P4-T2"
+                        ],
+                        "acceptance_criteria": "Secret Service starts independently; secrets are encrypted/versioned/masked; missing production master key fails; known sensitive config fields migrate to refs without breaking connector/channel functionality.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-019",
+                            "FR-029",
+                            "NFR-003",
+                            "NFR-005"
+                        ]
+                    },
+                    {
+                        "task_id": "P5-T6",
+                        "task": "Fix browser blob download, then implement Blob/Object Service using S3/MinIO with consistent metadata states and orphan cleanup.",
+                        "depends_on": [
+                            "P1-T3",
+                            "P1-T8"
+                        ],
+                        "acceptance_criteria": "Current authenticated browser download works; new service authorizes short-lived signed URLs or streaming; upload/delete failure leaves explicit cleanup-eligible state; cross-tenant blob access remains denied.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-022",
+                            "FR-029",
+                            "NFR-001"
+                        ]
+                    },
+                    {
+                        "task_id": "P5-T7",
+                        "task": "Implement configurable retention policies and cleanup jobs.",
+                        "depends_on": [
+                            "P5-T3",
+                            "P5-T6"
+                        ],
+                        "acceptance_criteria": "Run/log/output/blob/alert/audit/operational/time-series data each have a configured retention rule or explicit indefinite setting; cleanup can dry-run and does not delete still-referenced immutable metadata.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-031"
+                        ]
+                    }
+                ]
+            },
+            {
+                "phase_number": 6,
+                "phase_name": "Complete Existing Product Workflows",
+                "goal": "Finish alerting, RBAC diagnostics, auditability, and frontend usability before final broad service extraction.",
+                "tasks": [
+                    {
+                        "task_id": "P6-T1",
+                        "task": "Complete alert backend model/API: multiple actions, safe rule testing, bounded history, deterministic pagination, retention, and shared cooldown.",
+                        "depends_on": [
+                            "P5-T5",
+                            "P5-T7",
+                            "P3-T2"
+                        ],
+                        "acceptance_criteria": "Rules support multiple actions; history has bounded page size/stable filtering; rule test returns evaluated conditions/actions without dispatch by default; two replicas respect one shared cooldown.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-023",
+                            "FR-032"
+                        ]
+                    },
+                    {
+                        "task_id": "P6-T2",
+                        "task": "Build the nested AND/OR alert-rule editor in React.",
+                        "depends_on": [
+                            "P6-T1"
+                        ],
+                        "acceptance_criteria": "Authorized user can list/create/edit/delete/enable/test rules with nested groups, typed operators, values, severity, cooldown, and actions; E2E test passes.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-023"
+                        ]
+                    },
+                    {
+                        "task_id": "P6-T3",
+                        "task": "Build the permission-debugging/admin UI.",
+                        "depends_on": [
+                            "P1-T2",
+                            "P1-T3"
+                        ],
+                        "acceptance_criteria": "UI displays tenant/membership/role/inherited/explicit/effective permission data and can explain a selected permission/resource decision.",
+                        "complexity": "medium",
+                        "related_requirements": [
+                            "FR-002",
+                            "FR-027"
+                        ]
+                    },
+                    {
+                        "task_id": "P6-T4",
+                        "task": "Implement the independently deployable Audit Service and integrate security/admin event producers.",
+                        "depends_on": [
+                            "P3-T2",
+                            "P5-T5",
+                            "P1-T7"
+                        ],
+                        "acceptance_criteria": "Representative identity/RBAC/tenant/module/pipeline/connector/secret/alert/run administrative actions create redacted audit records; sensor events/full stdout/routine telemetry do not.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-024",
+                            "FR-029",
+                            "NFR-005"
+                        ]
+                    },
+                    {
+                        "task_id": "P6-T5",
+                        "task": "Reorganize SPA navigation and lazy-load Monaco, React Flow, Data, and monitoring-heavy routes.",
+                        "depends_on": [
+                            "P6-T2",
+                            "P6-T3",
+                            "P6-T4",
+                            "P1-T9"
+                        ],
+                        "acceptance_criteria": "Core screens are grouped under Overview/Build/Connect/Data/Operate/Admin; permission route guards remain correct; initial app does not load Monaco/React Flow; production bundle regression check is recorded.",
+                        "complexity": "medium",
+                        "related_requirements": [
+                            "FR-026",
+                            "NFR-015"
+                        ]
+                    },
+                    {
+                        "task_id": "P6-T6",
+                        "task": "Update documentation to classify implemented, experimental, deprecated, and planned behavior.",
+                        "depends_on": [
+                            "P6-T5"
+                        ],
+                        "acceptance_criteria": "Known planned/deprecated graph/deployment behavior is clearly labeled; docs build passes and does not claim untested production support.",
+                        "complexity": "low",
+                        "related_requirements": [
+                            "FR-032",
+                            "NFR-019"
+                        ]
+                    }
+                ]
+            },
+            {
+                "phase_number": 7,
+                "phase_name": "Complete Domain-Oriented Microservice Migration",
+                "goal": "Finish the requested microservice architecture while avoiding shared-table coupling and preserving frontend/API compatibility.",
+                "tasks": [
+                    {
+                        "task_id": "P7-T1",
+                        "task": "Create the final monorepo service/contracts layout and API Gateway routing layer, integrating already extracted services.",
+                        "depends_on": [
+                            "P2-T1",
+                            "P4-T1",
+                            "P4-T2",
+                            "P5-T5",
+                            "P5-T6",
+                            "P6-T4",
+                            "P1-T8"
+                        ],
+                        "acceptance_criteria": "Repository has clear services/contracts/runtimes/tests/deploy/observability ownership; service builds are independent; gateway can route existing supported URL families to old/new implementations during cutover.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-029",
+                            "NFR-011",
+                            "NFR-012"
+                        ]
+                    },
+                    {
+                        "task_id": "P7-T2",
+                        "task": "Extract Pipeline Service ownership of Pipeline/PipelineVersion/runs/node attempts/orchestration/lineage.",
+                        "depends_on": [
+                            "P7-T1",
+                            "P5-T3",
+                            "P3-T6"
+                        ],
+                        "acceptance_criteria": "Pipeline APIs route to the service; create/edit/run/retry/cancel/log/lineage E2E passes; it owns its schema and calls Execution Service rather than Docker/private executor code.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-009",
+                            "FR-011",
+                            "FR-012",
+                            "FR-029"
+                        ]
+                    },
+                    {
+                        "task_id": "P7-T3",
+                        "task": "Extract Identity & Access Service ownership of users, tenants, memberships, roles, abilities, sessions/tokens, platform-admin, and authorization explanation.",
+                        "depends_on": [
+                            "P7-T1",
+                            "P1-T5",
+                            "P1-T3"
+                        ],
+                        "acceptance_criteria": "Existing auth/setup/tenant-switch/admin behavior works through gateway; cross-tenant/RBAC suites still pass; legacy backend no longer mutates identity-owned tables.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-001",
+                            "FR-002",
+                            "FR-003",
+                            "FR-004",
+                            "FR-029"
+                        ]
+                    },
+                    {
+                        "task_id": "P7-T4",
+                        "task": "Extract Module Registry Service.",
+                        "depends_on": [
+                            "P7-T1",
+                            "P5-T1",
+                            "P7-T3"
+                        ],
+                        "acceptance_criteria": "Module/version APIs and SPA workflows pass; Pipeline Service resolves immutable module identities through service contracts/events rather than private table joins.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-008",
+                            "FR-029"
+                        ]
+                    },
+                    {
+                        "task_id": "P7-T5",
+                        "task": "Extract Data Service and Alert Service.",
+                        "depends_on": [
+                            "P7-T1",
+                            "P5-T4",
+                            "P6-T1",
+                            "P7-T3"
+                        ],
+                        "acceptance_criteria": "Data/table/query and alert-rule/channel/history APIs route to their owning services; tenant/query/cooldown tests pass; neither service relies on another service's private tables.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-021",
+                            "FR-023",
+                            "FR-029"
+                        ]
+                    },
+                    {
+                        "task_id": "P7-T6",
+                        "task": "Extract Grafana Integration Service and migrate Grafana reconciliation state to explicit identity/service events.",
+                        "depends_on": [
+                            "P7-T1",
+                            "P7-T3"
+                        ],
+                        "acceptance_criteria": "Existing tenant/user/membership Grafana synchronization continues; failures are retryable/observable; Grafana integration no longer queries Identity private tables.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-025",
+                            "FR-029"
+                        ]
+                    },
+                    {
+                        "task_id": "P7-T7",
+                        "task": "Enforce final logical database ownership and remove cross-service private-table queries.",
+                        "depends_on": [
+                            "P7-T2",
+                            "P7-T3",
+                            "P7-T4",
+                            "P7-T5",
+                            "P7-T6"
+                        ],
+                        "acceptance_criteria": "Every table/schema has one owning service; code search/review finds no private cross-service ORM/SQL access; required cross-domain reads use APIs/events/projections.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-029",
+                            "NFR-011"
+                        ]
+                    },
+                    {
+                        "task_id": "P7-T8",
+                        "task": "Implement production workload/service authentication and finalize gateway/OpenAPI compatibility.",
+                        "depends_on": [
+                            "P7-T7"
+                        ],
+                        "acceptance_criteria": "Protected internal service endpoints reject missing/invalid workload identity; supported SPA/API paths route to final services; OpenAPI contract-diff tests identify breaking changes.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-028",
+                            "FR-029",
+                            "NFR-012"
+                        ]
+                    },
+                    {
+                        "task_id": "P7-T9",
+                        "task": "Remove duplicate authoritative domain handlers/writers from the legacy runtime-role backend.",
+                        "depends_on": [
+                            "P7-T8"
+                        ],
+                        "acceptance_criteria": "No production domain has two authoritative writers; migrated service APIs own their data and remaining compatibility code is explicitly temporary/documented.",
+                        "complexity": "medium",
+                        "related_requirements": [
+                            "FR-029",
+                            "NFR-011"
+                        ]
+                    }
+                ]
+            },
+            {
+                "phase_number": 8,
+                "phase_name": "CI/CD, Observability, and Production Deployment",
+                "goal": "Make the final microservice topology reproducibly buildable, observable, recoverable, and deployable.",
+                "tasks": [
+                    {
+                        "task_id": "P8-T1",
+                        "task": "Build the final CI pipeline including backend/frontend checks, OpenAPI/event contracts, cross-tenant tests, PostgreSQL/TimescaleDB migration tests, integration tests, and selected browser E2E.",
+                        "depends_on": [
+                            "P7-T9",
+                            "P6-T5"
+                        ],
+                        "acceptance_criteria": "CI fails on representative compile/type/schema/migration/cross-tenant/E2E regressions; H2 is not used as proof of production migration behavior.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-028",
+                            "FR-032",
+                            "NFR-001",
+                            "NFR-014"
+                        ]
+                    },
+                    {
+                        "task_id": "P8-T2",
+                        "task": "Add dependency/container scanning, SBOM generation, immutable release images, and production digest pinning.",
+                        "depends_on": [
+                            "P8-T1",
+                            "P1-T4"
+                        ],
+                        "acceptance_criteria": "Maven/npm/container/runtime artifacts are scanned; release generates SBOMs; one immutable digest is produced per service/runtime; production deployment contains no floating `latest` identity.",
+                        "complexity": "medium",
+                        "related_requirements": [
+                            "FR-030",
+                            "NFR-018"
+                        ]
+                    },
+                    {
+                        "task_id": "P8-T3",
+                        "task": "Update Docker Compose, optional Swarm, and Kubernetes manifests for the final microservice architecture.",
+                        "depends_on": [
+                            "P8-T2",
+                            "P7-T8",
+                            "P2-T4"
+                        ],
+                        "acceptance_criteria": "Compose starts a complete development stack; Swarm support is tested or explicitly marked limited; Kubernetes starts reference HA services, enforces relevant NetworkPolicies/workload identities, and executes a sample module through Kubernetes Job without Docker socket.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-030",
+                            "NFR-010",
+                            "NFR-016"
+                        ]
+                    },
+                    {
+                        "task_id": "P8-T4",
+                        "task": "Standardize structured logging/OpenTelemetry and build Prometheus/Grafana operational dashboards and alerts.",
+                        "depends_on": [
+                            "P7-T8",
+                            "P3-T5",
+                            "P4-T4"
+                        ],
+                        "acceptance_criteria": "One sample request/event can be traced end-to-end; dashboards expose API, Kafka lag/DLQ, pipeline, execution, connector, alert, and storage health; synthetic failure triggers representative operational alert.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-025",
+                            "NFR-020"
+                        ]
+                    },
+                    {
+                        "task_id": "P8-T5",
+                        "task": "Implement and rehearse PostgreSQL/TimescaleDB plus object-storage backup and restore.",
+                        "depends_on": [
+                            "P8-T3",
+                            "P5-T6"
+                        ],
+                        "acceptance_criteria": "Restore into a clean environment preserves representative identity, pipeline versions, run history, data, secret metadata with correct key handling, and blob availability.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "NFR-017"
+                        ]
+                    },
+                    {
+                        "task_id": "P8-T6",
+                        "task": "Apply uniform production startup/config validation and publish deployment/support/upgrade/rollback documentation.",
+                        "depends_on": [
+                            "P8-T3",
+                            "P8-T5",
+                            "P6-T6"
+                        ],
+                        "acceptance_criteria": "Each service fails startup/readiness on missing required security material, known defaults, invalid critical configuration, or incompatible schema; support matrix and upgrade/rollback/backup/DLQ/failover documentation match the tested release.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-005",
+                            "FR-030",
+                            "FR-032",
+                            "NFR-003",
+                            "NFR-019"
+                        ]
+                    }
+                ]
+            },
+            {
+                "phase_number": 9,
+                "phase_name": "Production Validation and Release Gate",
+                "goal": "Prove end-to-end security, correctness, HA, migration, and reproducibility before applying the Production Ready v1 label.",
+                "tasks": [
+                    {
+                        "task_id": "P9-T1",
+                        "task": "Run deterministic full-path E2E in Compose and Kubernetes.",
+                        "depends_on": [
+                            "P8-T3",
+                            "P8-T4"
+                        ],
+                        "acceptance_criteria": "Authenticated/manual input flows through Kafka, Pipeline Service, Execution Service, two deterministic modules, Data Service, logs/lineage, and SPA run detail; expected output appears once and run is SUCCESS with exact version metadata.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-008",
+                            "FR-009",
+                            "FR-011",
+                            "FR-012",
+                            "FR-015",
+                            "FR-016"
+                        ]
+                    },
+                    {
+                        "task_id": "P9-T2",
+                        "task": "Run the final cross-tenant and secret-isolation suite through gateway/microservice APIs.",
+                        "depends_on": [
+                            "P9-T1",
+                            "P7-T9"
+                        ],
+                        "acceptance_criteria": "Tenant A cannot access any Tenant B identity/module/pipeline/run/connector/revision/secret/data/blob/alert/Grafana resource or nested reference; marker secrets remain absent from public/normal outputs.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "NFR-001",
+                            "NFR-005"
+                        ]
+                    },
+                    {
+                        "task_id": "P9-T3",
+                        "task": "Run final distributed failure and HA tests.",
+                        "depends_on": [
+                            "P9-T1",
+                            "P3-T6",
+                            "P4-T5",
+                            "P8-T3"
+                        ],
+                        "acceptance_criteria": "Duplicate Kafka events/results, service restart, worker failure/timeout, cancellation race, DB/object-store interruption, connector owner loss, and stateless replica loss produce documented bounded behavior; connector failover meets target and no split brain occurs.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "NFR-007",
+                            "NFR-008",
+                            "NFR-009",
+                            "NFR-016"
+                        ]
+                    },
+                    {
+                        "task_id": "P9-T4",
+                        "task": "Perform a complete current-MVP-to-Production-Ready-v1 upgrade rehearsal.",
+                        "depends_on": [
+                            "P8-T1",
+                            "P8-T6",
+                            "P9-T1"
+                        ],
+                        "acceptance_criteria": "Representative current data migrates through abilities, JSONB, PipelineVersion, ConnectorRevision, secrets, blobs, and run history without losing IDs; legacy incomplete reproducibility is labeled honestly; migrated SPA workflows function.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "NFR-013",
+                            "NFR-014",
+                            "FR-001",
+                            "FR-009",
+                            "FR-017",
+                            "FR-019",
+                            "FR-020"
+                        ]
+                    },
+                    {
+                        "task_id": "P9-T5",
+                        "task": "Execute the Production Ready v1 acceptance gate and archive evidence.",
+                        "depends_on": [
+                            "P9-T2",
+                            "P9-T3",
+                            "P9-T4",
+                            "P8-T5"
+                        ],
+                        "acceptance_criteria": "Every must-have FR and every NFR has passing evidence or an explicitly approved non-P0 exception; all items of FR-032 are closed; no P0 security/correctness issue remains open; release evidence records exact image/runtime digests and tested deployment environments.",
+                        "complexity": "high",
+                        "related_requirements": [
+                            "FR-032",
+                            "NFR-018",
+                            "NFR-019"
+                        ]
+                    }
+                ]
+            }
+        ],
+        "suggested_sequencing_rationale": "Security is repaired first because extracting vulnerable authorization, keys, ingest, or secret behavior would multiply cleanup work. Execution is extracted next because arbitrary Python is the strongest security boundary and the current Docker coupling blocks a proper Kubernetes architecture. Pipeline state and Kafka reliability follow before more services begin depending on asynchronous contracts. Ingest and connector runtime are then separated because they have distinct exposure and HA behavior. Immutable versions, JSONB, secrets, data correctness, and object storage are established before broad domain extraction so services inherit stable models. Existing product workflows are completed before their backends move. The remaining domain services are then extracted behind gateway compatibility routes with explicit database ownership and service identity. CI/CD, observability, deployment, backup, and support documentation are finalized against the real service topology, followed by full production validation. Replay/run comparison and other product expansion remain deferred until the immutable history built here is trustworthy."
+    },
+    "testing_strategy": {
+        "approach": "Mixed, risk-driven testing. Unit tests cover authorization, authentication migration, state machines, schemas, and validation. Integration tests use real PostgreSQL/TimescaleDB, Kafka, S3/MinIO, and execution backends where practical. Contract tests validate OpenAPI and Kafka event schemas. Browser E2E covers critical React workflows. Security testing focuses on cross-tenant isolation, secret leakage, ingest authentication, SSRF, and sandbox boundaries. Failure-injection and HA tests cover duplicate events, crashes, timeouts, cancellation races, service loss, and connector failover. H2 may remain for narrow unit tests but is not proof of production persistence behavior.",
+        "critical_paths_to_test": [
+            "Exact RBAC and similar-looking permission tokens.",
+            "Cross-tenant isolation for every resource and nested reference.",
+            "Legacy password migration to Argon2id and permission/session invalidation.",
+            "HTTP/WebSocket ingest authentication, scoping, limits, and concurrent sessions.",
+            "Hostile Python timeout, memory/PID/disk/log limits, filesystem isolation, blocked egress, and no Docker socket.",
+            "Pipeline state-machine transitions and cancellation races.",
+            "Kafka duplicate delivery, outbox recovery, inbox deduplication, retries, DLQ, and retry-safe outputs.",
+            "Connector lease acquisition, failover, fencing, and stale-owner recovery.",
+            "ModuleVersion/PipelineVersion immutability and graph migrations.",
+            "Secret encryption/rotation/masking and marker-secret leakage tests.",
+            "Data failure propagation, identifier safety, cross-tenant schemas, and relational rename on PostgreSQL/TimescaleDB.",
+            "Blob authenticated download, object-store states, signed URLs, orphan cleanup, and cross-tenant denial.",
+            "Nested alert-rule builder, test mode, pagination, and replica-safe cooldown.",
+            "Audit coverage and exclusion of high-volume telemetry.",
+            "Public monitoring allowlist contracts.",
+            "Gateway/API compatibility through microservice extraction.",
+            "Service-to-service workload authentication.",
+            "Frontend workflow navigation, lazy loading, permission debugger, blob, and alert E2E.",
+            "Full current-MVP schema/data migration.",
+            "Kubernetes native Job execution and stateless replica loss.",
+            "PostgreSQL/TimescaleDB/object-storage backup and restore."
+        ],
+        "acceptance_testing": "Production Ready v1 is accepted only after Phase 9. The deterministic full pipeline must pass in Compose and the Kubernetes reference deployment; the cross-tenant suite must have zero known failures; duplicate/failure tests must show deterministic state and one effective protected output; connector failover must meet the default <=45-second target without split brain; the current-MVP upgrade rehearsal and backup/restore must succeed; and every must-have functional plus non-functional requirement must have recorded evidence. No P0 security/correctness exception is permitted."
+    },
+    "risks_and_open_questions": [
+        {
+            "type": "open-question",
+            "description": "Who may ultimately author executable Python: platform admins, trusted tenant engineers, or arbitrary third-party users?",
+            "impact": "Determines whether the specified container baseline is sufficient or whether gVisor/Kata/dedicated nodes/VM isolation becomes mandatory.",
+            "recommendation": "Do not block Phase 1. Implement hostile-by-default isolation. If arbitrary mutually untrusted external authors are confirmed, require stronger sandbox isolation before public production."
+        },
+        {
+            "type": "open-question",
+            "description": "Are tenants mutually hostile in every deployment or are some installations intentionally single-organization/trusted?",
+            "impact": "Affects deployment-profile labeling and how much Docker/Swarm execution may be considered production-safe.",
+            "recommendation": "Use mutually hostile tenants for the reference security model and document any weaker trusted profile separately."
+        },
+        {
+            "type": "open-question",
+            "description": "Should Docker Swarm remain production-supported long-term?",
+            "impact": "Affects CI, HA-test, documentation, and manifest maintenance effort.",
+            "recommendation": "Keep Kubernetes as the reference HA architecture. Retain Swarm only if an actual deployment needs it; otherwise mark it limited during P8."
+        },
+        {
+            "type": "open-question",
+            "description": "Which immutable module artifact format should be standard: packaged source/lock artifact plus common runtime image, per-version OCI image, or both?",
+            "impact": "Affects module build latency, supply-chain scanning, storage, cold start, and reproducibility.",
+            "recommendation": "Default to an immutable packaged module artifact plus pinned runtime image unless existing build mechanics strongly favor OCI-per-version. Always retain both artifact and runtime digests."
+        },
+        {
+            "type": "open-question",
+            "description": "Which existing ingress/API-gateway product should be used?",
+            "impact": "Affects Phase 7 routing/TLS/rate-limit configuration but not domain APIs.",
+            "recommendation": "Reuse existing infrastructure if available; do not build a gateway inside DataTurntable."
+        },
+        {
+            "type": "open-question",
+            "description": "Which workload identity mechanism should be standard outside Kubernetes?",
+            "impact": "Affects Compose/Swarm bootstrap and service-to-service authentication.",
+            "recommendation": "Use audience/scoped short-lived workload tokens as the contract. Prefer projected Kubernetes ServiceAccount tokens or an equivalent established workload identity in Kubernetes; use generated dev credentials for Compose."
+        },
+        {
+            "type": "open-question",
+            "description": "What default retention periods are required?",
+            "impact": "Affects storage sizing and compliance.",
+            "recommendation": "Implement configurable policy first. Choose deployment-specific defaults before production and configure audit retention independently."
+        },
+        {
+            "type": "open-question",
+            "description": "Should production self-hosting bundle MinIO by default or expect external S3-compatible storage?",
+            "impact": "Affects operational ownership, not the Blob API.",
+            "recommendation": "Bundle MinIO for development/reference self-hosting and support external S3-compatible storage."
+        },
+        {
+            "type": "risk",
+            "description": "Microservices may become a distributed monolith through shared tables or chatty synchronous calls.",
+            "impact": "Coupled releases, high latency, and fragile failures.",
+            "recommendation": "Enforce service-owned schemas, events/APIs/projections, and small shared contract libraries."
+        },
+        {
+            "type": "risk",
+            "description": "Dynamic Python dependency installation is itself code execution and supply-chain exposure.",
+            "impact": "Malicious package build/install code could execute before the module itself.",
+            "recommendation": "Resolve/build dependencies in an isolated controlled build path, pin/lock them, scan artifacts, and avoid unconstrained install at run time."
+        },
+        {
+            "type": "risk",
+            "description": "REST/WebSocket connectors and permitted module egress can provide lateral network access.",
+            "impact": "SSRF, metadata-service access, credential theft, and internal scanning.",
+            "recommendation": "Enforce destination validation plus execution/connector egress controls and test prohibited targets."
+        },
+        {
+            "type": "risk",
+            "description": "Historical runs lack the metadata needed for true reproduction.",
+            "impact": "Old history cannot honestly gain reproducibility through migration.",
+            "recommendation": "Preserve it and mark provenance completeness instead of inventing values."
+        },
+        {
+            "type": "risk",
+            "description": "Long service extraction can leave duplicate writers.",
+            "impact": "Data corruption and ambiguous ownership.",
+            "recommendation": "Use gateway cutovers/feature flags and ensure one authoritative writer at every migration point."
+        },
+        {
+            "type": "risk",
+            "description": "Repository documentation contains forward-looking statements beyond proven code.",
+            "impact": "Coding agents and operators may incorrectly assume planned features/deployments are already supported.",
+            "recommendation": "Treat code/tests as current implementation truth and complete the documentation-status/support-matrix tasks."
+        }
+    ],
+    "scope_boundaries": {
+        "in_scope": [
+            "All identified major and minor production-readiness/security findings.",
+            "Exact RBAC, normalized abilities, explicit platform administration, and permission debugging.",
+            "Argon2id authentication migration and session/authorization invalidation.",
+            "Authenticated/rate-limited HTTP and WebSocket ingestion.",
+            "Execution Service with Docker and Kubernetes Job backends and resource isolation.",
+            "Execution and ingestion quotas.",
+            "Formal pipeline/node state machines.",
+            "Kafka event schemas, idempotency, outbox/inbox, retries, DLQ, ordering, and retry-safe outputs.",
+            "Connector revisioning and HA leases/fencing.",
+            "Immutable ModuleVersion and PipelineVersion plus DAG schema migrations.",
+            "Run reproducibility metadata.",
+            "JSONB migration for document-shaped fields.",
+            "Secret Service and secret references.",
+            "Data correctness, identifier validation, relational rename semantics, and PostgreSQL/TimescaleDB migration testing.",
+            "Authenticated blob handling and S3/MinIO Blob Service.",
+            "Alert rule builder, multi-action/test workflow, pagination, and shared cooldown.",
+            "Audit Service.",
+            "Prometheus/Loki/Grafana/OpenTelemetry observability.",
+            "Workflow-oriented SPA navigation and lazy loading.",
+            "Common API errors and OpenAPI contracts.",
+            "Domain-oriented microservice migration and API Gateway compatibility.",
+            "Logical database ownership and service workload authentication.",
+            "Docker Compose, optional Swarm, Kubernetes reference HA deployment.",
+            "CI/CD security/dependency/container scanning, SBOMs, and immutable image digests.",
+            "Retention, backup/restore, migration rehearsal, and production acceptance testing.",
+            "Resolution of duplicate H2 dependency, invalid config, dev-proxy issue, alert pagination TODOs, DataResource BUGs, WebSocket TODOs, floating tags, H2 production-test limitation, inconsistent error handling, authorization-sensitive ad-hoc query concerns, and inaccurate forward-looking documentation."
+        ],
+        "out_of_scope": [
+            "Ground-up rewrite.",
+            "One service per entity/table.",
+            "Repository-per-service split.",
+            "Kafka replacement.",
+            "PostgreSQL/TimescaleDB replacement.",
+            "Grafana replacement or custom general-purpose dashboard builder.",
+            "Custom message broker.",
+            "Custom object-storage implementation.",
+            "General-purpose identity provider.",
+            "Many new connector types without a concrete production need.",
+            "AI features added merely for marketing.",
+            "Nomad/ECS/serverless/SSH execution backends in Production Ready v1.",
+            "Normalizing every JSON document or DAG node into relational tables.",
+            "Making Kubernetes mandatory for every installation.",
+            "Docker socket mounting into Kubernetes execution pods.",
+            "Broad platform/database/Kafka credentials or unrestricted default egress inside user-code workers."
+        ],
+        "deferred_to_future": [
+            "Pipeline replay using original immutable versions and historical inputs, with side effects suppressed by default.",
+            "Comparative replay against a newer PipelineVersion.",
+            "Run/version comparison UI for output, schema, checksums, timings, warnings, and resource use.",
+            "External enterprise OIDC/SAML/SSO integrations beyond preparing the architecture.",
+            "Advanced per-tenant usage analytics/billing.",
+            "gVisor/Kata/dedicated-node/VM execution if confirmed hostile third-party code requirements demand stronger isolation.",
+            "Remote/edge ExecutionBackend implementations.",
+            "Additional connector types driven by real customer requirements.",
+            "AI-assisted pipeline/debugging features after the production foundation is trustworthy."
+        ]
+    },
+    "handoff_to_coding_agent": {
+        "suggested_first_message": "You are implementing DataTurntable Production Ready v1. Treat this requirements-to-plan JSON as authoritative, especially `existing_system_context`, `requirements`, `explored_and_rejected`, and `implementation_plan`. Do not redesign the settled architecture or jump ahead to microservice extraction. Start with Phase 1 Task P1-T1. Inspect the current Kotlin/Quarkus repository for every user/role/membership ability decision, introduce one canonical exact-token permission evaluator, replace substring/raw-string permission checks, and add exact-vs-similar-token regression tests. Preserve current valid permission behavior and tenant APIs. Do not begin P1-T2 until P1-T1 acceptance criteria pass. After each task, run its relevant tests, record changed files/migrations, and verify the next task's `depends_on` entries before proceeding.",
+        "environment_setup_needed": [
+            "Open the existing DataTurntable monorepo and read the root/backend/frontend/deployment documentation before edits.",
+            "Use the repository's declared Java/Maven, Node/npm, and Docker versions/tooling and record the baseline build/test status.",
+            "Be able to start the existing Docker Compose dependencies used by integration tests.",
+            "Create a dedicated Production Ready v1/security-baseline branch.",
+            "Do not use the committed JWT signing private key for real work; create non-committed local development key material.",
+            "For P1-T1, search all ability/permission strings and `contains`/substring logic and identify existing authorization tests before editing.",
+            "Back up/use fixture copies of existing databases before destructive Flyway migration testing.",
+            "Do not install new microservice/gateway/Kubernetes infrastructure before the phase that requires it."
+        ],
+        "first_task_to_execute": "P1-T1"
+    },
+    "reasoning_log": {
+        "conflicting_signals": [
+            "The earlier architecture review favored a modular monolith with independently deployable runtime roles and explicitly warned against premature microservices. The later user request explicitly required the production specification to include a move to microservices. The later request wins: domain-oriented microservices are the target, while runtime roles/modular boundaries remain the migration path.",
+            "The earlier review said Kubernetes should not automatically be required and Docker/Swarm could remain reasonable for internal/trusted deployments. The later production specification selected Kubernetes as the reference HA target while retaining that nuance. Kubernetes is therefore the reference, not a universal installation requirement.",
+            "The repository describes ModuleVersion as immutable-ish. Production semantics supersede this: executable ModuleVersion content is immutable.",
+            "The current pipeline graphDefinition coexists with legacy module-version arrays. Production makes PipelineVersion.graphDefinition the sole execution authority.",
+            "The current authentication uses browser SHA-256 plus backend BCrypt. The production plan replaces it; to eliminate implementation ambiguity, new hashes are specified as Argon2id and BCrypt(SHA256(password)) remains only as a migration verifier."
+        ],
+        "inferences_made": [
+            "User code and tenants are treated as hostile by default because arbitrary Python plus multi-tenancy makes that the safer production baseline even though the user has not yet answered the trust-level questions.",
+            "Root-tenant administration is separated from platform-wide administration because organization hierarchy should not implicitly determine global privilege.",
+            "Connector SSRF, user-code egress, dependency-install supply-chain risk, log-based secret leakage, JWT privilege staleness, and browser-token/XSS concerns are architecture-derived rather than all being explicit source BUG comments.",
+            "Transactional outbox/inbox is required where Kafka and DB state must remain consistent because naive publish-before/after-commit cannot provide the requested reliability.",
+            "Logical service-owned schemas are required so the requested microservice architecture does not become a distributed monolith; multiple logical schemas may initially share one physical PostgreSQL cluster.",
+            "MinIO is a practical reference self-hosted implementation of the specified S3-compatible Blob Service while external S3-compatible storage remains configurable.",
+            "A 10-second connector heartbeat and 30-second lease TTL imply a measurable <=45-second nominal failover target.",
+            "Replay/run comparison and external OIDC are deferred because they depend on the immutable/auditable foundation but are not necessary to label Production Ready v1."
+        ],
+        "annotation": "Confidence is high on the current architecture, major/minor findings, and target direction because they come from the user-supplied repository analysis and the subsequent review/specification conversation. The plan deliberately permits implementation to start without resolving later architectural choices: P1-T1 requires no unanswered strategic decision. Python-author trust, long-term Swarm support, exact module-artifact packaging, gateway product, non-Kubernetes workload identity, object-store packaging, and retention defaults should be resolved before their dependent later tasks. The supplied repository analysis notes that some oversized files/tests were sampled, so each coding task must verify the exact current code paths before changing them rather than treating inferred implementation locations as guaranteed."
+    },
+    "value_provenance": "Primary implementation facts come from the user-supplied structured DataTurntable repository analysis, which was explicitly designated the primary source of truth and covered backend/frontend code, domain entities, APIs, deployment assets, tests, documentation, and explicit BUG/TODO/FIXME notes.  The first planning request required a comprehensive architecture/security/product/production review across RBAC, JWT keys, ingestion, user Python, Kafka reliability, pipeline states, data modeling, versioning, connector HA, alerts, blobs, frontend, audit, secrets, authentication, observability, deployment, testing, CI/CD, and product strategy. The later request explicitly changed the authoritative target to a production-ready specification including every finding, including minor findings, plus a move to microservices. Service boundaries, implementation order, and detailed acceptance tests are derived from those accepted recommendations and from the distributed-systems/security requirements necessary to make the requested guarantees executable. Rejected approaches are retained explicitly to prevent a coding agent from reintroducing them."
+}

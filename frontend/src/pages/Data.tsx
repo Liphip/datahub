@@ -156,6 +156,8 @@ export default function Data() {
   // Files tab state
   const [blobs, setBlobs] = useState<DataBlob[]>([]);
   const [blobsLoading, setBlobsLoading] = useState(false);
+  const [blobPage, setBlobPage] = useState(0);
+  const [blobHasMore, setBlobHasMore] = useState(false);
   const [uploadingBlob, setUploadingBlob] = useState(false);
   const [deletingBlobId, setDeletingBlobId] = useState<string | null>(null);
   const [confirmDeleteBlobId, setConfirmDeleteBlobId] = useState<string | null>(null);
@@ -219,14 +221,17 @@ export default function Data() {
   /**
    * Implements `fetchBlobs` for this source unit.
    */
-  const fetchBlobs = async (tenant: string) => {
+  const fetchBlobs = async (tenant: string, page = 0) => {
     setBlobsLoading(true);
     try {
-      const result = await api.getDataBlobs(tenant);
-      setBlobs(result);
+      const result = await api.getDataBlobs(tenant, page);
+      setBlobs(result.blobs);
+      setBlobPage(result.page);
+      setBlobHasMore(result.hasMore);
     } catch (err) {
       console.error('Error fetching blobs:', err);
       setBlobs([]);
+      setBlobHasMore(false);
     } finally {
       setBlobsLoading(false);
     }
@@ -412,7 +417,7 @@ export default function Data() {
     setUploadingBlob(true);
     try {
       await api.uploadDataBlob(tenantId, file);
-      await fetchBlobs(tenantId);
+      await fetchBlobs(tenantId, 0);
       showToast('File uploaded', 'success');
     } catch {
       showToast('Failed to upload file', 'error');
@@ -431,7 +436,7 @@ export default function Data() {
     setDeletingBlobId(blobId);
     try {
       await api.deleteDataBlob(tenantId, blobId);
-      setBlobs((prev) => prev.filter((b) => b.id !== blobId));
+      await fetchBlobs(tenantId, blobPage);
       setConfirmDeleteBlobId(null);
       showToast('File deleted', 'success');
     } catch {
@@ -444,12 +449,15 @@ export default function Data() {
   /**
    * Processes the named request, event, or operation.
    */
-  const handleDownloadBlob = (blobId: string) => {
+  const handleDownloadBlob = async (blob: DataBlob) => {
     if (!tenantId) return;
-    // BUG: New-tab downloads omit the required Authorization header
-    // Details: DataResource.downloadBlob is authenticated, but window.open() only navigates to a URL and cannot use Axios's bearer-token interceptor. Download through the authenticated API client and create an object URL, or introduce a short-lived server-issued download token.
-    const url = api.getDataBlobUrl(tenantId, blobId);
-    window.open(url, '_blank');
+    const download = await api.downloadDataBlob(tenantId, blob.id);
+    const url = URL.createObjectURL(download);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = blob.name;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   const formatBytes = (bytes: number): string => {
@@ -895,7 +903,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
                       <td className="px-6 py-4 text-sm text-gray-500">{formatBytes(blob.sizeBytes)}</td>
                       <td className="px-6 py-4 text-sm text-gray-500">{new Date(blob.createdAt).toLocaleString()}</td>
                       <td className="px-6 py-4 text-right text-sm">
-                        <button onClick={() => handleDownloadBlob(blob.id)} className="text-blue-600 hover:text-blue-800 mr-3">
+                        <button onClick={() => handleDownloadBlob(blob)} className="text-blue-600 hover:text-blue-800 mr-3">
                           Download
                         </button>
                         {canWriteData && (
@@ -918,6 +926,25 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
                   ))}
                 </tbody>
               </table>
+              <div className="flex items-center justify-between border-t border-gray-200 px-4 py-3">
+                <span className="text-sm text-gray-500">Page {blobPage + 1}</span>
+                <div className="flex gap-2">
+                  <button
+                    className="btn-secondary text-sm"
+                    disabled={blobsLoading || blobPage === 0}
+                    onClick={() => tenantId && fetchBlobs(tenantId, blobPage - 1)}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    className="btn-secondary text-sm"
+                    disabled={blobsLoading || !blobHasMore}
+                    onClick={() => tenantId && fetchBlobs(tenantId, blobPage + 1)}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>

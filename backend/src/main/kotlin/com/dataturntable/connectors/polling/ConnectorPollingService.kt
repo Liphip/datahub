@@ -9,6 +9,7 @@ import com.dataturntable.connectors.inbox.INBOX_TYPES
 import com.dataturntable.connectors.inbox.InboxPoller
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineRun
+import com.dataturntable.pipeline.PipelineVersionService
 import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.security.EncryptionUtils
@@ -52,7 +53,7 @@ import java.util.concurrent.TimeUnit
 class ConnectorPollingService {
 
     private val LOG = Logger.getLogger(ConnectorPollingService::class.java)
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
 
     @Inject
     lateinit var connectorRuntime: ConnectorRuntimeService
@@ -82,6 +83,8 @@ class ConnectorPollingService {
     private val scheduledTasks = ConcurrentHashMap<UUID, ScheduledFuture<*>>()
     private val connectorIntervals = ConcurrentHashMap<UUID, Int>()
     private val connectorTypes = ConcurrentHashMap<UUID, Connector.ConnectorType>()
+    /** Fencing generation captured by each scheduled poll task. */
+    private val leaseTokens = ConcurrentHashMap<UUID, Long>()
     private var reconcileTask: ScheduledFuture<*>? = null
 
     // ── Poll run tracking (populated by executePoll wrapper) ─────────────────
@@ -170,10 +173,14 @@ class ConnectorPollingService {
                 !connector.isActive ||
                 !connector.pollingEnabled) {
                 cancelConnector(connectorId)
-            } else if (!connectorLeaseService.tryAcquireOrRenew(connectorId)) {
-                cancelConnector(connectorId, releaseLease = false)
             } else {
-                scheduleConnector(connector)
+                val claim = connectorLeaseService.acquireOrRenew(connectorId)
+                if (claim == null) {
+                cancelConnector(connectorId, releaseLease = false)
+                } else {
+                    leaseTokens[connectorId] = claim.fencingToken
+                    scheduleConnector(connector, claim.fencingToken)
+                }
             }
         } catch (e: Exception) {
             LOG.errorf("onConnectorChanged failed for %s: %s", connectorId, e.message)
@@ -187,6 +194,7 @@ class ConnectorPollingService {
         scheduledTasks.remove(connectorId)?.cancel(false)
         connectorIntervals.remove(connectorId)
         connectorTypes.remove(connectorId)
+        leaseTokens.remove(connectorId)
         LOG.infof("Cancelled polling for connector %s", connectorId)
         if (releaseLease) {
             connectorLeaseService.release(connectorId)
@@ -212,12 +220,14 @@ class ConnectorPollingService {
             if (connector.connectorType !in POLLABLE_TYPES) continue
             try {
                 val connectorId = connector.id ?: continue
-                if (!connectorLeaseService.tryAcquireOrRenew(connectorId)) {
+                val claim = connectorLeaseService.acquireOrRenew(connectorId)
+                if (claim == null) {
                     cancelConnector(connectorId, releaseLease = false)
                     continue
                 }
                 ownedConnectorIds += connectorId
-                scheduleConnector(connector)
+                leaseTokens[connectorId] = claim.fencingToken
+                scheduleConnector(connector, claim.fencingToken)
             } catch (e: Exception) {
                 LOG.errorf("Failed to schedule connector %s: %s", connector.id, e.message)
             }
@@ -230,7 +240,7 @@ class ConnectorPollingService {
     /**
      * Implements `scheduleConnector` for this source unit.
      */
-    private fun scheduleConnector(connector: Connector) {
+    private fun scheduleConnector(connector: Connector, fencingToken: Long) {
         val connectorId = connector.id ?: return
         val intervalSec = connector.pollingIntervalSeconds.coerceAtLeast(5).toLong()
 
@@ -239,7 +249,7 @@ class ConnectorPollingService {
         connectorTypes[connectorId] = connector.connectorType ?: return
 
         val future = scheduler.scheduleAtFixedRate(
-            { executePoll(connectorId) },
+            { executePoll(connectorId, fencingToken) },
             intervalSec, // initial delay = one interval (avoid thundering herd on startup)
             intervalSec,
             TimeUnit.SECONDS
@@ -253,10 +263,18 @@ class ConnectorPollingService {
     /**
      * Processes the named request, event, or operation.
      */
-    private fun executePoll(connectorId: UUID) {
+    private fun executePoll(connectorId: UUID, fencingToken: Long) {
         try {
+            if (!connectorLeaseService.owns(connectorId, fencingToken)) {
+                cancelConnector(connectorId, releaseLease = false)
+                return
+            }
             // Inboxes run outside one long transaction: every item has its own ledger steps.
-            if (connectorTypes[connectorId] in INBOX_TYPES) inboxPoller.poll(connectorId) else pollExecutor.executePoll(connectorId)
+            if (connectorTypes[connectorId] in INBOX_TYPES) {
+                inboxPoller.poll(connectorId) { connectorLeaseService.owns(connectorId, fencingToken) }
+            } else {
+                pollExecutor.executePoll(connectorId, fencingToken)
+            }
             lastRunTimes[connectorId] = Instant.now()
             lastRunSuccesses[connectorId] = true
             lastRunErrors.remove(connectorId)
@@ -279,7 +297,7 @@ class ConnectorPollingService {
 class PollTransactionExecutor {
 
     private val LOG = Logger.getLogger(PollTransactionExecutor::class.java)
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
 
     @Inject
     lateinit var connectorRuntime: ConnectorRuntimeService
@@ -290,6 +308,12 @@ class PollTransactionExecutor {
     @Inject
     lateinit var directory: PipelineDirectory
 
+    @Inject
+    lateinit var pipelineVersions: PipelineVersionService
+
+    @Inject
+    lateinit var connectorLeaseService: ConnectorLeaseService
+
     @PersistenceContext
     lateinit var em: EntityManager
 
@@ -297,7 +321,8 @@ class PollTransactionExecutor {
     /**
      * Processes the named request, event, or operation.
      */
-    fun executePoll(connectorId: UUID) {
+    fun executePoll(connectorId: UUID, fencingToken: Long) {
+        if (!connectorLeaseService.owns(connectorId, fencingToken)) return
         val connector = em.find(Connector::class.java, connectorId) ?: return
         if (!connector.isActive || !connector.pollingEnabled) return
 
@@ -315,6 +340,10 @@ class PollTransactionExecutor {
             LOG.debugf("Connector %s returned null data on poll — skipping trigger", connectorId)
             return
         }
+
+        // Fetching may block long enough for a newer owner to take over. Do not
+        // create runs or publish outputs from a stale polling generation.
+        if (!connectorLeaseService.owns(connectorId, fencingToken)) return
 
         // Find all active pipelines using this connector on an IMPORT node
         val pipelines = findPipelinesUsingConnector(connectorId)

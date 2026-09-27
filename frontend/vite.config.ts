@@ -5,8 +5,9 @@ import path from 'node:path'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  // TODO: Split the production bundle by route or feature
-  // Details: `npm run build` produces a main JavaScript chunk above Vite's 500 kB warning threshold. Lazy-load editor/monitoring features or configure intentional vendor chunks to improve initial load time.
+  build: {
+    manifest: true,
+  },
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),

@@ -54,6 +54,7 @@ class InboxPollerTest {
 
     @Inject lateinit var poller: InboxPoller
     @Inject lateinit var restPoll: PollTransactionExecutor
+    @Inject lateinit var leases: com.dataturntable.connectors.ConnectorLeaseService
     @Inject lateinit var directory: PipelineDirectory
     @Inject lateinit var em: EntityManager
     @Inject @AnyBean lateinit var messaging: InMemoryConnector
@@ -375,10 +376,11 @@ class InboxPollerTest {
                 }
             }
             directory.refresh()
-            restPoll.executePoll(id)
+            val token = leases.acquireOrRenew(id)!!.fencingToken
+            restPoll.executePoll(id, token)
             val first = drain()
             assertEquals(2, first.size)
-            restPoll.executePoll(id)
+            restPoll.executePoll(id, token)
             assertEquals(first.map { it.first }.toSet(), drain().map { it.first }.toSet(), "the same records get the same run ids")
         } finally {
             server.stop(0)

@@ -7,6 +7,7 @@ import com.dataturntable.connectors.websocket.WebSocketConnectionManager
 import com.dataturntable.security.EncryptionUtils
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
+import com.dataturntable.security.SensitiveDataRedactor
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
 import com.dataturntable.connectors.inbox.FileSandbox
@@ -52,7 +53,7 @@ class ConnectorRuntimeService {
     lateinit var fileBaseDir: String
 
     private val LOG = Logger.getLogger(ConnectorRuntimeService::class.java)
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
     private val httpClient: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(10))
         .build()
@@ -68,6 +69,11 @@ class ConnectorRuntimeService {
 
     @PersistenceContext
     lateinit var em: EntityManager
+    @Inject
+    lateinit var secretReferenceResolver: ConnectorSecretReferenceResolver
+
+    @Inject
+    lateinit var redactor: SensitiveDataRedactor
 
     // ── Public API ───────────────────────────────────────────────────────────
 
@@ -186,12 +192,13 @@ class ConnectorRuntimeService {
         } catch (_: Exception) {
             connector.config
         }
-        return try {
+        val config = try {
             @Suppress("UNCHECKED_CAST")
             objectMapper.readValue(raw, Map::class.java) as Map<String, Any?>
         } catch (_: Exception) {
             emptyMap()
         }
+        return secretReferenceResolver.resolve(connector, config)
     }
 
     /**
@@ -237,13 +244,13 @@ class ConnectorRuntimeService {
 
         applyRestHeaders(requestBuilder, config)
 
-        LOG.infof("REST INPUT fetch: GET %s", url)
+        LOG.infof("REST INPUT fetch: GET %s", redactor.text(url))
         return try {
             val response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString())
             LOG.infof("REST INPUT response: HTTP %d, body length %d", response.statusCode(), response.body().length)
             parseResponseBody(response.body())
         } catch (e: Exception) {
-            LOG.errorf("REST INPUT fetch failed: %s", e.message)
+            LOG.errorf("REST INPUT fetch failed: %s", redactor.text(e.message))
             throw RuntimeException("REST connector fetch failed: ${e.message}", e)
         }
     }
@@ -290,7 +297,7 @@ class ConnectorRuntimeService {
             }
             if (attempt < REST_ATTEMPTS) Thread.sleep(1000L * attempt * attempt)
         }
-        throw RuntimeException("REST connector delivery to $url failed: $lastError")
+        throw RuntimeException("REST connector delivery to ${redactor.text(url)} failed: ${redactor.text(lastError)}")
     }
 
     /**

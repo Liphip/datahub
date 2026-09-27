@@ -1,6 +1,7 @@
 package com.dataturntable.api
 
 import com.dataturntable.auth.User
+import com.dataturntable.audit.AuditEvent
 import com.dataturntable.test.TestAuthHelpers
 import io.quarkus.narayana.jta.QuarkusTransaction
 import io.quarkus.test.junit.QuarkusTest
@@ -10,16 +11,33 @@ import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import org.hamcrest.CoreMatchers.equalTo
 import org.hamcrest.CoreMatchers.notNullValue
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertEquals
 import io.quarkus.elytron.security.common.BcryptUtil
+import java.util.UUID
 
 @QuarkusTest
-// FIXME: Alert endpoint contract is out of date
-// Details: AlertResource is intentionally exposed at /api/v1/alerts for the public API, but this test class calls /api/v1/alerts and consequently receives 404 responses. Update these request paths or deliberately add an internal route.
 class AlertResourceTest {
 
     @PersistenceContext
     lateinit var em: EntityManager
+
+    @AfterEach
+    fun cleanupAdHocUsers() {
+        QuarkusTransaction.requiringNew().run {
+            val userIds = em.createQuery("SELECT u.id FROM User u WHERE u.email LIKE 'alerts-outsider-%@example.com'", UUID::class.java).resultList
+            if (userIds.isEmpty()) return@run
+            em.createNativeQuery("SET REFERENTIAL_INTEGRITY FALSE").executeUpdate()
+            try {
+                em.createQuery("DELETE FROM Membership m WHERE m.authUser.id IN :ids").setParameter("ids", userIds).executeUpdate()
+                em.createQuery("DELETE FROM User u WHERE u.id IN :ids").setParameter("ids", userIds).executeUpdate()
+            } finally {
+                em.createNativeQuery("SET REFERENTIAL_INTEGRITY TRUE").executeUpdate()
+            }
+        }
+    }
 
     private fun createNonMemberToken(): String {
         val email = "alerts-outsider-${java.util.UUID.randomUUID()}@example.com"
@@ -94,6 +112,47 @@ class AlertResourceTest {
         .then()
             .statusCode(400)
             .body("error", equalTo("Invalid channel type"))
+    }
+
+    @Test
+    fun `alert channel mutation writes a redacted audit record`() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+        val channelId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Audited channel",
+                "channelType" to "WEBHOOK",
+                "config" to mapOf("url" to "https://example.com/hook", "secretRefs" to mapOf("authorization" to mapOf("id" to UUID.randomUUID().toString(), "version" to 1)))
+            ))
+        .`when`().post("/api/v1/alerts/channels?tenantId=$tenantId")
+        .then().statusCode(201).extract().jsonPath().getString("id")
+
+        val audit = QuarkusTransaction.requiringNew().call {
+            em.createQuery(
+                "SELECT e FROM AuditEvent e WHERE e.action = :action AND e.resourceId = :resourceId",
+                AuditEvent::class.java
+            ).setParameter("action", "alert.channel.created")
+                .setParameter("resourceId", channelId)
+                .singleResult
+        }
+        assertEquals("alert_channel", audit.resourceType)
+        assertFalse(audit.metadata.orEmpty().contains("audit-marker-secret"))
+    }
+
+    @Test
+    fun `alert channel rejects inline credentials in favor of secret references`() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("name" to "Inline credential", "channelType" to "WEBHOOK", "config" to mapOf("url" to "https://example.com/hook", "authorization" to "must-not-persist")))
+        .`when`().post("/api/v1/alerts/channels?tenantId=$tenantId")
+        .then().statusCode(400)
+            .body("error", equalTo("Channel credentials must use secretRefs"))
     }
 
     @Test

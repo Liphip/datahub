@@ -141,7 +141,7 @@ class AuthResourceTest {
                 "password": "$password"
             }
         """.trimIndent()
-        
+
         given()
             .contentType(ContentType.JSON)
             .body(loginBody)
@@ -179,7 +179,7 @@ class AuthResourceTest {
             .statusCode(200)
             .body("token", notNullValue())
     }
-    
+
     @Test
     fun testLoginWithInvalidCredentials() {
         val loginBody = """

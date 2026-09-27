@@ -2,6 +2,7 @@ package com.dataturntable.engine
 
 import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
+import com.dataturntable.execution.ExecutionLimits
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
@@ -14,6 +15,23 @@ import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+
+private val isWindows = System.getProperty("os.name")?.startsWith("Windows", ignoreCase = true) == true
+
+/**
+ * Builds a `KEY=value` argument for `docker run -e`. On Windows, `java.lang.ProcessBuilder`
+ * launches the child process via `CreateProcess`, whose argument re-quoting silently drops
+ * embedded double quotes that aren't escaped first (verified: an unescaped `-e
+ * INPUT_DATA={"value":1}` arrives at the container as `{value:1}`, invalid JSON, so a module's
+ * `json.loads()` silently fails and it sees an empty payload instead of failing loudly). This
+ * affects every `-e` value that can contain a `"` — JSON payloads and, worse, arbitrary user
+ * module source code. POSIX `exec` (Linux prod/CI) passes argv literally and needs no escaping.
+ * Shared by DockerService and WarmContainerPool, the two places that shell out to `docker run`.
+ */
+internal fun envArg(key: String, value: String): String {
+    val safeValue = if (isWindows) value.replace("\"", "\\\"") else value
+    return "$key=$safeValue"
+}
 
 /**
  * Defines the class `ModuleExecutionOutput`, the contract implemented by this source unit.
@@ -54,7 +72,7 @@ private data class RawContainerResult(
 class DockerService {
 
     private val LOG = Logger.getLogger(DockerService::class.java)
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
 
     // Thread pool for blocking I/O reads from warm containers
     private val io = Executors.newCachedThreadPool { r ->
@@ -81,6 +99,12 @@ class DockerService {
     
     @ConfigProperty(name = "dataturntable.docker.timeout-seconds", defaultValue = "300")
     var timeoutSeconds: Int = 300
+
+    @ConfigProperty(name = "dataturntable.docker.resources.pids-limit", defaultValue = "128")
+    var pidsLimit: Int = 128
+
+    @ConfigProperty(name = "dataturntable.docker.resources.max-output-bytes", defaultValue = "1048576")
+    var maxOutputBytes: Int = 1_048_576
     
     /**
      * Processes the named request, event, or operation.
@@ -92,7 +116,9 @@ class DockerService {
         runId: String,
         moduleType: ModuleType,
         /** Non-sensitive connector metadata (name, type, topic, etc.) for informational use in module. No credentials. */
-        connectorMeta: Map<String, Any?>? = null
+        connectorMeta: Map<String, Any?>? = null,
+        /** Per-request limits bypass the reusable pool so no job inherits another job's policy. */
+        limits: ExecutionLimits? = null
     ): ModuleExecutionOutput {
         val code         = moduleVersion.code ?: throw IllegalStateException("Module code is empty")
         val requirements = moduleVersion.requirements ?: ""
@@ -100,7 +126,7 @@ class DockerService {
         val envMap       = buildEnvMap(inputData, moduleType, connectorMeta, moduleVersion.config)
 
         // ── Try warm pool first ────────────────────────────────────────────────
-        val warm = warmPool.acquire(requirements)
+        val warm = if (limits == null) warmPool.acquire(requirements) else null
         if (warm != null) {
             LOG.debugf("Warm container hit: %s (module: %s)", warm.name, moduleVersion.module?.name)
             return try {
@@ -128,6 +154,7 @@ class DockerService {
                 scriptB64 = scriptB64,
                 requirements = requirements,
                 envMap = envMap,
+                limits = limits ?: configuredLimits(),
             )
             cleanupContainer(containerName)
 
@@ -247,6 +274,7 @@ class DockerService {
         scriptB64: String,
         requirements: String,
         envMap: Map<String, String>,
+        limits: ExecutionLimits,
     ): RawContainerResult {
         val dockerArgs = mutableListOf(
             "docker", "run",
@@ -254,22 +282,17 @@ class DockerService {
             "--name", containerName
         )
 
-        // Containers that need pip install require network access to reach PyPI.
-        // Containers with no requirements run fully isolated.
-        val needsNetwork = requirements.isNotBlank()
-        dockerArgs.addAll(listOf("--network", if (needsNetwork) "bridge" else "none"))
+        // Network access is opt-in at deployment level; dependency installation must use
+        // prebuilt artifacts in the secure default profile rather than opening egress.
+        dockerArgs.addAll(listOf("--network", networkMode(limits)))
+
+        dockerArgs.addAll(sandboxArguments(limits))
 
         dockerArgs.addAll(listOf(
-            "--user", "1000:1000",
-            "--read-only",
-            "--tmpfs", "/tmp:size=256m",
-            "--tmpfs", "/.cache",          // pip cache dir (user 1000 can't write to / otherwise)
-            "--cpu-shares", (cpuLimit.toDouble() * 1024).toInt().toString(),
-            "--memory", memoryLimit,
-            "-e", "MODULE_CODE=$scriptB64",
-            "-e", "MODULE_REQUIREMENTS=$requirements",
+            "-e", envArg("MODULE_CODE", scriptB64),
+            "-e", envArg("MODULE_REQUIREMENTS", requirements),
         ))
-        envMap.forEach { (key, value) -> dockerArgs.addAll(listOf("-e", "$key=$value")) }
+        envMap.forEach { (key, value) -> dockerArgs.addAll(listOf("-e", envArg(key, value))) }
         
         // Bootstrap: optionally install requirements, then exec the module script.
         // Packages are installed to /tmp/packages (the only writable space under --read-only).
@@ -315,7 +338,7 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
                 val thread = Thread {
                     var line: String? = reader.readLine()
                     while (line != null) {
-                        sink.append(line).append("\n")
+                        appendBoundedOutput(sink, line, limits.maxOutputBytes)
                         line = reader.readLine()
                     }
                 }
@@ -329,11 +352,11 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
             val stderrThread = startCollector(stderrReader, stderrBuilder)
 
             val startedAt = System.currentTimeMillis()
-            val finished = process.waitFor(timeoutSeconds.toLong(), TimeUnit.SECONDS)
+            val finished = process.waitFor(limits.timeoutSeconds.toLong(), TimeUnit.SECONDS)
 
             if (!finished) {
                 process.destroyForcibly()
-                throw ModuleExecutionException("Module execution timed out after $timeoutSeconds seconds")
+                throw ModuleExecutionException("Module execution timed out after ${limits.timeoutSeconds} seconds")
             }
 
             stdoutThread.join(1000)
@@ -365,6 +388,40 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
             throw ModuleExecutionException("Failed to run container: ${e.message}", cause = e)
         }
     }
+
+    internal fun networkMode(limits: ExecutionLimits): String =
+        if (allowNetwork && limits.allowNetwork) networkName else "none"
+
+    /** Pure policy seam: assert the security-critical Docker flags without a daemon. */
+    internal fun sandboxArguments(limits: ExecutionLimits): List<String> = listOf(
+            "--user", "1000:1000",
+            "--read-only",
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true",
+            "--pids-limit", limits.maxPids.toString(),
+            "--ulimit", "nofile=1024:1024",
+            "--tmpfs", "/tmp:size=${limits.temporaryDiskMiB}m",
+            "--tmpfs", "/.cache",          // pip cache dir (user 1000 can't write to / otherwise)
+            "--cpus", limits.cpuCores.toString(),
+            "--memory", "${limits.memoryMiB}m"
+        )
+
+    /** Keeps captured process output within the caller's hard cap, including newlines. */
+    internal fun appendBoundedOutput(sink: StringBuilder, line: String, maxOutputBytes: Int) {
+        val remaining = maxOutputBytes - sink.length
+        if (remaining <= 0) return
+        sink.append(line.take(remaining))
+        if (sink.length < maxOutputBytes) sink.append('\n')
+    }
+
+    private fun configuredLimits() = ExecutionLimits(
+        timeoutSeconds = timeoutSeconds,
+        cpuCores = cpuLimit.toDoubleOrNull() ?: 1.0,
+        memoryMiB = memoryLimit.trim().removeSuffix("m").removeSuffix("M").toIntOrNull() ?: 512,
+        maxPids = pidsLimit,
+        maxOutputBytes = maxOutputBytes,
+        allowNetwork = allowNetwork
+    )
     
     /**
      * Implements `buildModuleScript` for this source unit.

@@ -8,6 +8,7 @@ import io.quarkus.mailer.Mail
 import io.quarkus.mailer.Mailer
 import com.dataturntable.auth.User
 import com.dataturntable.pipeline.Pipeline
+import com.dataturntable.security.SensitiveDataRedactor
 import com.dataturntable.tenant.Tenant
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
@@ -34,7 +35,7 @@ import java.net.http.HttpResponse
 class AlertDispatcher {
 
     private val LOG = Logger.getLogger(AlertDispatcher::class.java)
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
     private val httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
     
     @ConfigProperty(name = "dataturntable.alerts.enabled", defaultValue = "true")
@@ -59,6 +60,12 @@ class AlertDispatcher {
     @Inject
     lateinit var runtimeRoleConfig: RuntimeRoleConfig
 
+    @Inject
+    lateinit var secretReferenceResolver: AlertChannelSecretReferenceResolver
+
+    @Inject
+    lateinit var redactor: SensitiveDataRedactor
+
     /** Delivery attempts before an alert is marked FAILED (about 13 h with the default backoff). */
     @ConfigProperty(name = "dataturntable.alerts.max-attempts", defaultValue = "12")
     var maxAttempts: Int = 12
@@ -71,7 +78,7 @@ class AlertDispatcher {
      * Delivers or routes the named data to its configured destination.
      */
     private fun dispatchWebhookAlert(channel: AlertChannel, alert: AlertHistory) {
-        val config = parseConfig(channel.config)
+        val config = resolveChannelConfig(channel)
         val url = config["url"]?.toString()?.takeIf { it.isNotBlank() }
             ?: throw IllegalArgumentException("Webhook URL not configured")
         sendJson(url, config["method"]?.toString(), config["authToken"]?.toString(), buildAlertPayload(alert), alert.id?.toString())
@@ -81,7 +88,7 @@ class AlertDispatcher {
      * Delivers or routes the named data to its configured destination.
      */
     private fun dispatchRestAlert(channel: AlertChannel, alert: AlertHistory) {
-        val config = parseConfig(channel.config)
+        val config = resolveChannelConfig(channel)
         val baseUrl = config["baseUrl"]?.toString()?.trimEnd('/')?.takeIf { it.isNotBlank() }
             ?: throw IllegalArgumentException("REST base URL not configured")
         val path = config["path"]?.toString()?.trim().orEmpty()
@@ -114,7 +121,7 @@ class AlertDispatcher {
      * Delivers or routes the named data to its configured destination.
      */
     private fun dispatchMqttAlert(channel: AlertChannel, alert: AlertHistory) {
-        val config = parseConfig(channel.config)
+        val config = resolveChannelConfig(channel)
         val connectorId = config["connectorId"]?.toString()
             ?.let { runCatching { java.util.UUID.fromString(it) }.getOrNull() }
             ?: throw IllegalArgumentException("MQTT alert channel needs connectorId (an MQTT OUTPUT connector)")
@@ -134,7 +141,7 @@ class AlertDispatcher {
      * Delivers or routes the named data to its configured destination.
      */
     private fun dispatchEmailAlert(channel: AlertChannel, alert: AlertHistory) {
-        val config = parseConfig(channel.config)
+        val config = resolveChannelConfig(channel)
         val recipients = config["recipient"]?.toString()
             ?.split(',', ';')?.map { it.trim() }?.filter { it.isNotEmpty() }
             ?.takeIf { it.isNotEmpty() }
@@ -150,7 +157,7 @@ class AlertDispatcher {
      * Delivers or routes the named data to its configured destination.
      */
     private fun dispatchSlackAlert(channel: AlertChannel, alert: AlertHistory) {
-        val config = parseConfig(channel.config)
+        val config = resolveChannelConfig(channel)
         val webhookUrl = config["webhookUrl"]?.toString()?.takeIf { it.isNotBlank() }
             ?: throw IllegalArgumentException("Slack webhook URL not configured")
         
@@ -385,7 +392,7 @@ class AlertDispatcher {
         } catch (e: Exception) {
             QuarkusTransaction.requiringNew().run {
                 val alert = em.find(AlertHistory::class.java, alertId) ?: return@run
-                alert.lastError = e.message?.take(2000)
+                alert.lastError = redactor.text(e.message)?.take(2000)
                 if (alert.attempts >= maxAttempts) {
                     alert.status = AlertStatus.FAILED
                 } else {
@@ -393,7 +400,7 @@ class AlertDispatcher {
                     alert.nextAttemptAt = Instant.now().plus(backoff(alert.attempts))
                 }
             }
-            LOG.warnf("Alert %s delivery failed (%s), will retry unless attempts are exhausted", alertId, e.message)
+            LOG.warnf("Alert %s delivery failed (%s), will retry unless attempts are exhausted", alertId, redactor.text(e.message))
             false
         }
     }
@@ -419,7 +426,7 @@ class AlertDispatcher {
         try {
             deliverDue()
         } catch (e: Exception) {
-            LOG.warnf("Alert outbox delivery failed: %s", e.message)
+            LOG.warnf("Alert outbox delivery failed: %s", redactor.text(e.message))
         }
     }
 
@@ -466,4 +473,8 @@ class AlertDispatcher {
             SLACK -> dispatchSlackAlert(channel, alert)
         }
     }
+
+    /** Channel config with its `secretRefs` resolved to the secret values (in memory only). */
+    private fun resolveChannelConfig(channel: AlertChannel): Map<String, Any> =
+        secretReferenceResolver.resolve(channel, parseConfig(channel.config))
 }

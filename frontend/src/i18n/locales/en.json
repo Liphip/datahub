@@ -100,7 +100,8 @@
     "deleteFailed": "Delete failed",
     "previous": "Previous",
     "saveFailed": "Save failed",
-    "saved": "Saved"
+    "saved": "Saved",
+    "secretStored": "Stored — leave empty to keep"
   },
   "nav": {
     "dashboard": "Dashboard",

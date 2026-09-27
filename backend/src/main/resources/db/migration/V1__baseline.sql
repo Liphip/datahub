@@ -54,15 +54,18 @@ CREATE INDEX idx_alert_history_due ON alert_history (status, next_attempt_at);
 
 CREATE TABLE api_keys (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    tenant_id uuid,
+    tenant_id uuid NOT NULL,
     user_id uuid,
     name varchar(255) NOT NULL,
+    -- SHA-256 of the key; the key itself is shown once and never stored.
     key_hash varchar(255) NOT NULL,
-    abilities text DEFAULT '[]',
+    -- Exact grants, e.g. ingest:pipeline:<uuid>.
+    abilities text DEFAULT '[]' NOT NULL,
     expires_at timestamptz,
     last_used_at timestamptz,
-    is_active boolean DEFAULT true,
-    created_at timestamptz DEFAULT now()
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamptz DEFAULT now(),
+    CONSTRAINT api_keys_tenant_name_key UNIQUE (tenant_id, name)
 );
 
 -- broker_credentials (table)
@@ -114,6 +117,8 @@ CREATE TABLE connector_runtime_leases (
     runtime_role varchar(64) NOT NULL,
     owner_instance_id varchar(255) NOT NULL,
     lease_until timestamptz NOT NULL,
+    -- Increases with every change of owner; a poll from an older generation is discarded.
+    fencing_token bigint DEFAULT 0 NOT NULL,
     updated_at timestamptz DEFAULT now()
 );
 
@@ -147,7 +152,11 @@ CREATE TABLE data_blobs (
     size_bytes bigint NOT NULL,
     storage_path text NOT NULL,
     uploaded_by uuid,
-    created_at timestamptz DEFAULT now()
+    created_at timestamptz DEFAULT now(),
+    status varchar(32) DEFAULT 'AVAILABLE' NOT NULL,
+    last_error text,
+    updated_at timestamptz DEFAULT now() NOT NULL,
+    CONSTRAINT chk_data_blobs_status CHECK (status IN ('PENDING', 'AVAILABLE', 'MISSING', 'DELETE_FAILED'))
 );
 
 -- data_table_registry (table)
@@ -203,6 +212,9 @@ CREATE TABLE module_versions (
     version integer NOT NULL,
     version_tag varchar(100),
     content_fingerprint varchar(128) NOT NULL,
+    artifact_digest varchar(128),
+    dependency_digest varchar(128),
+    runtime_image_digest varchar(512),
     code text NOT NULL,
     requirements text DEFAULT '',
     config text DEFAULT '{}',
@@ -243,7 +255,7 @@ CREATE TABLE pipeline_runs (
     queued_at timestamptz,
     record_partition integer,
     record_offset bigint,
-    CONSTRAINT pipeline_runs_status_check CHECK (status IN ('PENDING', 'RUNNING', 'SUCCESS', 'FAILED', 'CANCELLED')),
+    CONSTRAINT pipeline_runs_status_check CHECK (status IN ('PENDING', 'QUEUED', 'RUNNING', 'CANCELLING', 'CANCELLED', 'SUCCESS', 'FAILED', 'TIMED_OUT')),
     CONSTRAINT pipeline_runs_trigger_type_check CHECK (trigger_type IN ('MANUAL', 'SCHEDULED', 'EVENT', 'DATA'))
 );
 
@@ -299,6 +311,8 @@ CREATE TABLE users (
     last_name varchar(100),
     abilities text DEFAULT '[]',
     is_active boolean DEFAULT true,
+    is_platform_admin boolean DEFAULT false NOT NULL,
+    authorization_version bigint DEFAULT 0 NOT NULL,
     last_login_at timestamptz,
     created_at timestamptz DEFAULT now(),
     updated_at timestamptz DEFAULT now()
@@ -899,4 +913,134 @@ INSERT INTO roles (id, tenant_id, name, description, abilities, is_default, is_s
 ('00000000-0000-0000-0000-000000000001', NULL, 'Superadmin', 'Full access to every tenant', '["*"]', FALSE, TRUE),
 ('00000000-0000-0000-0000-000000000002', NULL, 'Viewer', 'Read-only access', '["module:read", "pipeline:read", "data:read", "alert:read", "connector:read", "metadata:read", "user:read"]', TRUE, TRUE),
 ('00000000-0000-0000-0000-000000000003', NULL, 'Editor', 'Build and run pipelines and modules', '["module:read", "module:write", "pipeline:read", "pipeline:write", "pipeline:execute", "data:read", "data:write", "alert:read", "connector:read", "connector:write", "metadata:read", "metadata:write", "user:read"]', FALSE, TRUE),
-('00000000-0000-0000-0000-000000000004', NULL, 'Tenant Admin', 'Tenant administrator', '["module:read", "module:write", "module:delete", "pipeline:read", "pipeline:write", "pipeline:execute", "data:read", "data:write", "data:export", "alert:read", "alert:configure", "connector:read", "connector:write", "connector:delete", "metadata:read", "metadata:write", "user:read", "user:write", "user:delete", "tenant:manage"]', FALSE, TRUE);
+('00000000-0000-0000-0000-000000000004', NULL, 'Tenant Admin', 'Tenant administrator', '["module:read", "module:write", "module:delete", "pipeline:read", "pipeline:write", "pipeline:execute", "data:read", "data:write", "data:export", "alert:read", "alert:configure", "connector:read", "connector:write", "connector:delete", "metadata:read", "metadata:write", "secret:manage", "user:read", "user:write", "user:delete", "tenant:manage"]', FALSE, TRUE);
+
+-- ── Authorization: grants as relations (the JSON columns above remain the editable source) ──
+
+CREATE TABLE abilities (
+    ability_key varchar(255) PRIMARY KEY
+);
+CREATE TABLE role_abilities (
+    role_id uuid NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    ability_value varchar(255) NOT NULL REFERENCES abilities(ability_key) ON DELETE RESTRICT,
+    PRIMARY KEY (role_id, ability_value)
+);
+CREATE TABLE membership_abilities (
+    membership_id uuid NOT NULL REFERENCES memberships(id) ON DELETE CASCADE,
+    ability_value varchar(255) NOT NULL REFERENCES abilities(ability_key) ON DELETE RESTRICT,
+    PRIMARY KEY (membership_id, ability_value)
+);
+CREATE TABLE user_abilities (
+    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ability_value varchar(255) NOT NULL REFERENCES abilities(ability_key) ON DELETE RESTRICT,
+    PRIMARY KEY (user_id, ability_value)
+);
+CREATE INDEX idx_role_abilities_ability ON role_abilities (ability_value);
+CREATE INDEX idx_membership_abilities_ability ON membership_abilities (ability_value);
+CREATE INDEX idx_user_abilities_ability ON user_abilities (ability_value);
+
+INSERT INTO abilities (ability_key)
+SELECT DISTINCT token.value FROM roles r
+CROSS JOIN LATERAL jsonb_array_elements_text(r.abilities::jsonb) AS token(value)
+ON CONFLICT DO NOTHING;
+INSERT INTO role_abilities (role_id, ability_value)
+SELECT r.id, token.value FROM roles r
+CROSS JOIN LATERAL jsonb_array_elements_text(r.abilities::jsonb) AS token(value);
+
+-- ── Pipeline versions: every saved graph is an immutable version; runs record the one they ran ──
+
+CREATE TABLE pipeline_versions (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    pipeline_id uuid NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+    version integer NOT NULL,
+    graph_definition text NOT NULL,
+    schema_version integer DEFAULT 1 NOT NULL,
+    content_fingerprint varchar(128) NOT NULL,
+    created_at timestamptz DEFAULT now() NOT NULL,
+    CONSTRAINT pipeline_versions_pipeline_version_key UNIQUE (pipeline_id, version)
+);
+ALTER TABLE pipeline_runs ADD COLUMN pipeline_version_id uuid REFERENCES pipeline_versions(id);
+CREATE INDEX idx_pipeline_runs_version ON pipeline_runs (pipeline_version_id);
+
+-- ── Connector revisions (restorable history of connector configurations) ──
+
+CREATE TABLE connector_revisions (
+    id uuid PRIMARY KEY,
+    connector_id uuid NOT NULL REFERENCES connectors(id) ON DELETE CASCADE,
+    revision integer NOT NULL,
+    snapshot text NOT NULL,
+    created_by uuid REFERENCES users(id),
+    created_at timestamptz DEFAULT now() NOT NULL,
+    CONSTRAINT uq_connector_revisions_connector_revision UNIQUE (connector_id, revision)
+);
+CREATE INDEX idx_connector_revisions_connector_revision ON connector_revisions (connector_id, revision DESC);
+
+-- ── Secrets: versioned, encrypted, write-only; configurations hold references ──
+
+CREATE TABLE secrets (
+    id uuid PRIMARY KEY,
+    tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    name varchar(128) NOT NULL,
+    created_at timestamptz DEFAULT now() NOT NULL,
+    deleted_at timestamptz,
+    CONSTRAINT uq_secrets_tenant_name UNIQUE (tenant_id, name)
+);
+CREATE TABLE secret_versions (
+    id uuid PRIMARY KEY,
+    secret_id uuid NOT NULL REFERENCES secrets(id) ON DELETE CASCADE,
+    version integer NOT NULL,
+    value_encrypted text NOT NULL,
+    created_at timestamptz DEFAULT now() NOT NULL,
+    CONSTRAINT uq_secret_versions_secret_version UNIQUE (secret_id, version)
+);
+CREATE INDEX idx_secrets_tenant ON secrets (tenant_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_secret_versions_latest ON secret_versions (secret_id, version DESC);
+
+-- ── Audit trail ──
+
+CREATE TABLE audit_events (
+    id uuid PRIMARY KEY,
+    occurred_at timestamptz DEFAULT now() NOT NULL,
+    actor_id uuid REFERENCES users(id),
+    tenant_id uuid REFERENCES tenants(id),
+    action varchar(128) NOT NULL,
+    resource_type varchar(128) NOT NULL,
+    resource_id varchar(255),
+    outcome varchar(32) NOT NULL,
+    request_id varchar(128),
+    metadata text
+);
+CREATE INDEX idx_audit_events_tenant_occurred ON audit_events (tenant_id, occurred_at DESC);
+CREATE INDEX idx_audit_events_resource ON audit_events (resource_type, resource_id, occurred_at DESC);
+
+-- ── Module executions outside pipelines (execution API) and their quota coordination ──
+
+CREATE TABLE executions (
+    id uuid PRIMARY KEY,
+    tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    module_version_id uuid NOT NULL REFERENCES module_versions(id),
+    status varchar(32) NOT NULL,
+    backend varchar(64) NOT NULL,
+    runtime_image varchar(512) NOT NULL,
+    runtime_image_digest varchar(512),
+    correlation_id varchar(255),
+    created_at timestamptz DEFAULT now() NOT NULL,
+    updated_at timestamptz DEFAULT now() NOT NULL
+);
+CREATE INDEX idx_executions_tenant_created ON executions (tenant_id, created_at DESC);
+CREATE TABLE execution_quota_locks (
+    scope varchar(64) PRIMARY KEY,
+    updated_at timestamptz DEFAULT now() NOT NULL
+);
+INSERT INTO execution_quota_locks (scope) VALUES ('global');
+
+-- ── Pipeline messages the executor could not use (redacted) ──
+
+CREATE TABLE consumer_dead_letters (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    channel varchar(128) NOT NULL,
+    payload text NOT NULL,
+    error text NOT NULL,
+    created_at timestamptz DEFAULT now() NOT NULL
+);
+CREATE INDEX idx_consumer_dead_letters_created ON consumer_dead_letters (created_at DESC);

@@ -1,3 +1,17 @@
+"%test":
+  quarkus:
+    datasource:
+      db-kind: h2
+      username: sa
+      password: test
+      jdbc:
+        url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;USER=sa;PASSWORD=test
+    hibernate-orm:
+      database:
+        generation: drop-and-create
+      log:
+        sql: false
+
 quarkus:
   datasource:
     db-kind: h2
@@ -16,6 +30,19 @@ mp:
       publickey:
         location: publicKey.pem
       issuer: https://dataturntable.io
+    token:
+      verification:
+        key:
+          location: publicKey.pem
+      generation:
+        key:
+          location: privateKey.pem
+
+smallrye:
+  jwt:
+    sign:
+      key:
+        location: privateKey.pem
 
 dataturntable:
   ingest:

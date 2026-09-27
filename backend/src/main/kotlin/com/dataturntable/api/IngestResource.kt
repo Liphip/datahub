@@ -4,6 +4,8 @@ import com.dataturntable.engine.PipelineQueueUnavailableException
 import com.dataturntable.engine.PipelineDirectory
 import com.dataturntable.engine.PipelineRunQueue
 import com.dataturntable.pipeline.TriggerType
+import com.dataturntable.security.IngestAuthorizationService
+import com.dataturntable.security.IngestRateLimiter
 import jakarta.inject.Inject
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
@@ -31,16 +33,22 @@ class IngestResource {
     @Inject
     lateinit var directory: PipelineDirectory
 
+    @Inject
+    lateinit var ingestAuthorization: IngestAuthorizationService
+
+    @Inject
+    lateinit var ingestRateLimiter: IngestRateLimiter
+
     /**
      * Queues [payload] for one pipeline. `X-Partition-Key` (e.g. a device id) lets one
-     * pipeline's load spread over all executors while keeping per-key order.
+     * pipeline's load spread over all executors while keeping per-key order. Requires an API
+     * key (`X-API-Key`) granted `ingest:pipeline:<id>`.
      */
     @POST
     @Path("/ingest/{pipelineId}")
     fun ingest(
         @PathParam("pipelineId") pipelineId: String,
         @HeaderParam("X-API-Key") apiKey: String?,
-        @HeaderParam("X-Tenant-Id") tenantId: String?,
         @HeaderParam("X-Partition-Key") partitionKey: String?,
         @HeaderParam("Idempotency-Key") idempotencyKey: String?,
         payload: Map<String, Any>
@@ -48,11 +56,15 @@ class IngestResource {
         val pipelineUuid = runCatching { UUID.fromString(pipelineId) }.getOrNull()
             ?: return error(400, "Invalid pipelineId")
         val pipeline = directory.get(pipelineUuid) ?: return error(404, "Pipeline not found")
+        if (!ingestAuthorization.authorize(apiKey, pipeline.tenantId, "pipeline", pipelineUuid)) {
+            return error(401, "Invalid, expired, or insufficient ingestion credential")
+        }
+        if (!ingestRateLimiter.tryAcquire(apiKey)) return error(429, "Ingestion rate limit exceeded")
         if (!pipeline.active) return error(400, "Pipeline is not active")
 
         val data = payload.toMutableMap<String, Any?>()
         data["_ingestedAt"] = Instant.now().toString()
-        tenantId?.let { data["_tenantId"] = it }
+        data["_tenantId"] = pipeline.tenantId?.toString()
         val key = idempotencyKey?.trim()?.takeIf { it.isNotEmpty() } ?: PipelineDirectory.recordKey(payload, pipeline.deduplicateBy)
 
         return try {
@@ -87,14 +99,22 @@ class IngestResource {
     ): Response {
         val connectorUuid = runCatching { UUID.fromString(connectorId) }.getOrNull()
             ?: return error(400, "Invalid connectorId")
-        val pipelines = directory.activeForConnector(connectorUuid)
-        if (pipelines.isEmpty()) return error(404, "No active pipelines found for connector $connectorId")
+        val candidates = directory.activeForConnector(connectorUuid)
+        if (candidates.isEmpty()) return error(404, "No active pipelines found for connector $connectorId")
+        // A connector and its pipelines belong to one tenant; the key must be granted this connector.
+        val tenant = candidates.first().tenantId
+        if (!ingestAuthorization.authorize(apiKey, tenant, "connector", connectorUuid)) {
+            return error(401, "Invalid, expired, or insufficient ingestion credential")
+        }
+        if (!ingestRateLimiter.tryAcquire(apiKey)) return error(429, "Ingestion rate limit exceeded")
+        val pipelines = candidates.filter { it.tenantId == tenant }
 
         val triggeredRuns = mutableListOf<Map<String, Any?>>()
         val errors = mutableListOf<String>()
         for (pipeline in pipelines) {
             val data = payload.toMutableMap<String, Any?>()
             data["_connectorId"] = connectorId
+            data["_tenantId"] = tenant?.toString()
             data["_ingestedAt"] = Instant.now().toString()
             val key = idempotencyKey?.trim()?.takeIf { it.isNotEmpty() } ?: PipelineDirectory.recordKey(payload, pipeline.deduplicateBy)
             try {

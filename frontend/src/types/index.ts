@@ -27,6 +27,16 @@ export interface Membership {
   abilities?: string[] | string;
 }
 
+/** Provenance returned by the administrator permission explanation endpoint. */
+export interface AuthorizationExplanation {
+  userId: string;
+  tenantId: string;
+  ability: string;
+  granted: boolean;
+  sources: Record<'platformAdmin' | 'user' | 'membership' | 'role', string[]>;
+  effectiveAbilities: string[];
+}
+
 /**
  * Defines the interface `AuthResponse`, the contract implemented by this source unit.
  */
@@ -660,4 +670,11 @@ export interface EnrichConfig {
   timestampField?: string;
   outputs: { as: string; path?: string[] }[];
   onMissing?: 'keep' | 'drop' | 'fail';
+}
+
+/** Reference to a stored secret; the value itself is never returned. */
+export interface SecretReference {
+  id: string;
+  name?: string;
+  version: number;
 }

@@ -5,6 +5,7 @@ import com.dataturntable.grafana.GrafanaSyncScopeType
 import com.dataturntable.grafana.GrafanaSyncState
 import com.dataturntable.grafana.GrafanaSyncStatus
 import com.dataturntable.grafana.GrafanaTargetInstance
+import com.dataturntable.security.SensitiveDataRedactor
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
@@ -31,7 +32,7 @@ import java.util.Base64
 class GrafanaProvisioningService {
 
     private val log = Logger.getLogger(GrafanaProvisioningService::class.java)
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
     private val httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(10))
         .build()
@@ -39,6 +40,9 @@ class GrafanaProvisioningService {
 
     @Inject
     lateinit var grafanaInstanceConfig: GrafanaInstanceConfig
+
+    @Inject
+    lateinit var redactor: SensitiveDataRedactor
 
     @PersistenceContext
     lateinit var em: EntityManager
@@ -89,9 +93,10 @@ class GrafanaProvisioningService {
                 em.merge(state)
                 synced += 1
             } catch (e: Exception) {
-                log.errorf("Grafana sync failed for state %s: %s", state.id, e.message)
+                val safeMessage = redactor.text(e.message)
+                log.errorf("Grafana sync failed for state %s: %s", state.id, safeMessage)
                 state.syncStatus = GrafanaSyncStatus.FAILED
-                state.lastError = e.message?.take(4000)
+                state.lastError = safeMessage?.take(4000)
                 state.updatedAt = Instant.now()
                 em.merge(state)
                 failed += 1
@@ -314,8 +319,12 @@ class GrafanaProvisioningService {
         )
         val createResponse = send(config, "POST", "/api/admin/users", createPayload)
         if (createResponse.statusCode() !in 200..299 && createResponse.statusCode() != 409) {
+            // The submitted payload includes a freshly generated provisioning password; a
+            // validation-error response from Grafana could plausibly echo submitted fields back,
+            // so redact before this ever reaches a log line or the persisted lastError column
+            // (which is exposed via GrafanaSyncResource's JSON API).
             throw IllegalStateException(
-                "Failed to create Grafana user $email: HTTP ${createResponse.statusCode()} ${createResponse.body().take(300)}"
+                "Failed to create Grafana user $email: HTTP ${createResponse.statusCode()} ${redactor.text(createResponse.body().take(300))}"
             )
         }
         return findUserByEmail(config, email)

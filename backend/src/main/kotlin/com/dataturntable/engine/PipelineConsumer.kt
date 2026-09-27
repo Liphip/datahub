@@ -2,7 +2,10 @@ package com.dataturntable.engine
 
 import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
+import com.dataturntable.events.ConsumerDeadLetterService
 import com.dataturntable.pipeline.Pipeline
+import com.dataturntable.pipeline.PipelineRun
+import com.dataturntable.security.SensitiveDataRedactor
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.alert.AlertDispatcher
 import com.dataturntable.alert.AlertRuleConfig
@@ -63,7 +66,7 @@ class PipelineConsumer {
     }
 
     private val LOG = Logger.getLogger(PipelineConsumer::class.java)
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
 
     /**
      * Implements `trimLog` for this source unit.
@@ -108,6 +111,13 @@ class PipelineConsumer {
     @Inject
     lateinit var metadataNodes: MetadataNodes
 
+    @Inject
+    lateinit var redactor: SensitiveDataRedactor
+
+    /** Poison messages (unparseable, unknown target) are kept for inspection. */
+    @Inject
+    lateinit var deadLetters: ConsumerDeadLetterService
+
     @PersistenceContext
     lateinit var em: EntityManager
 
@@ -138,6 +148,22 @@ class PipelineConsumer {
     /**
      * Parses external or persisted input into the required representation.
      */
+    private fun deadLetter(message: String, runId: String, pipelineId: String, reason: String): PipelineEvent {
+        LOG.errorf("Run %s of pipeline %s moved to the dead letters: %s", runId, pipelineId, reason)
+        deadLetters.record("pipeline-input", message, reason)
+        return PipelineEvent(runId, pipelineId, "init", false, error = reason)
+    }
+
+    /**
+     * Graph a run executes: the immutable snapshot of the version the run is pinned to, so an
+     * edit made while the record waited in the queue does not change what runs. Pipelines
+     * without versions execute their current graph.
+     */
+    internal fun resolveExecutionGraphJson(pipeline: Pipeline, runUuid: UUID?): String {
+        val pinnedVersion = runUuid?.let { em.find(PipelineRun::class.java, it) }?.pipelineVersion
+        return pinnedVersion?.graphDefinition ?: pipeline.graphDefinition ?: "{}"
+    }
+
     private fun parseUuid(value: String?): UUID? {
         if (value.isNullOrBlank()) return null
         return try {
@@ -150,9 +176,9 @@ class PipelineConsumer {
     /**
      * Implements `resolveConnectorsByNodeId` for this source unit.
      */
-    private fun resolveConnectorsByNodeId(pipeline: Pipeline): Map<String, ResolvedConnector> {
+    private fun resolveConnectorsByNodeId(pipeline: Pipeline, graphJson: String): Map<String, ResolvedConnector> {
         val tenantId = pipeline.tenant?.id ?: return emptyMap()
-        val graph = parseJsonMap(pipeline.graphDefinition)
+        val graph = parseJsonMap(graphJson)
         val nodes = graph["nodes"] as? List<*> ?: return emptyMap()
         val resolved = mutableMapOf<String, ResolvedConnector>()
 
@@ -223,7 +249,8 @@ class PipelineConsumer {
                 queuedAt = tree.path("queuedAt").asText(null),
             )
         } catch (e: Exception) {
-            LOG.errorf("Discarding unparseable pipeline message: %s", e.message)
+            LOG.errorf("Unparseable pipeline message moved to the dead letters: %s", redactor.text(e.message))
+            deadLetters.record("pipeline-input", message, "Invalid JSON: ${e.message}")
             return PipelineEvent("unknown", "unknown", "parse", false, error = e.message)
         }
         val pipelineId = trigger.pipelineId
@@ -231,15 +258,14 @@ class PipelineConsumer {
         @Suppress("UNCHECKED_CAST")
         val dataPayload = trigger.data as? Map<String, Any>
         val pipelineUuid = parseUuid(pipelineId)
-            ?: return PipelineEvent(runId, pipelineId, "init", false, error = "Invalid pipeline ID")
+            ?: return deadLetter(message, runId, pipelineId, "Invalid pipeline ID")
         val runUuid = parseUuid(runId)
-            ?: return PipelineEvent(runId, pipelineId, "init", false, error = "Invalid run ID")
+            ?: return deadLetter(message, runId, pipelineId, "Invalid run ID")
 
         val pipeline = Pipeline.findById(pipelineUuid)
         if (pipeline == null) {
-            LOG.errorf("Pipeline not found: %s", pipelineId)
-            logWriter.markFailed(runUuid, "Pipeline not found", null)
-            return PipelineEvent(runId, pipelineId, "init", false, error = "Pipeline not found")
+            // Deleted pipeline: nothing to run it against; kept for inspection.
+            return deadLetter(message, runId, pipelineId, "Pipeline not found")
         }
 
         // Exactly once: the run row is the record of what happened. Finished runs and second
@@ -251,6 +277,7 @@ class PipelineConsumer {
             triggerType = runCatching { TriggerType.valueOf(trigger.triggerType) }.getOrDefault(TriggerType.DATA),
             queuedAt = trigger.queuedAt?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() },
             retryOfRunId = parseUuid(dataPayload?.get("_retryOfRunId")?.toString()),
+            pipelineVersionId = parseUuid(dataPayload?.get("_pipelineVersionId")?.toString()),
             source = source,
         )
         if (!claimed) {
@@ -303,7 +330,7 @@ class PipelineConsumer {
                 result = result["result"]
             )
         } catch (e: Exception) {
-            LOG.errorf("Pipeline execution failed: %s", e.message)
+            LOG.errorf("Pipeline execution failed: %s", redactor.text(e.message))
             val executionMs = System.currentTimeMillis() - executionStartedAt
 
             // Record Prometheus metrics (histogram timers via PipelineMetrics for _bucket support)
@@ -357,7 +384,8 @@ class PipelineConsumer {
         val results = mutableMapOf<String, Any?>()
         val moduleLogs = mutableListOf<Map<String, Any?>>()
         val executionLog = mutableListOf<String>()
-        val connectorsByNodeId = resolveConnectorsByNodeId(pipeline)
+        val graphJson = resolveExecutionGraphJson(pipeline, runUuid)
+        val connectorsByNodeId = resolveConnectorsByNodeId(pipeline, graphJson)
         val pipelineId = pipeline.id.toString()
 
         /**
@@ -702,7 +730,7 @@ class PipelineConsumer {
         }
 
         // ── Parse graph ──────────────────────────────────────────────────────
-        val graph = parseJsonMap(pipeline.graphDefinition)
+        val graph = parseJsonMap(graphJson)
         val graphNodesRaw = graph["nodes"] as? List<*> ?: emptyList<Any>()
         val graphEdgesRaw = graph["edges"] as? List<*> ?: emptyList<Any>()
 

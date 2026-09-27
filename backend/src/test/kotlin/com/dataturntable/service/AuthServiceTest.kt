@@ -1,9 +1,12 @@
 package com.dataturntable.service
 
+import com.dataturntable.auth.ApiKey
 import com.dataturntable.auth.User
 import com.dataturntable.dto.LoginRequest
 import com.dataturntable.dto.SetupRequest
 import com.dataturntable.tenant.Tenant
+import com.dataturntable.tenant.Membership
+import com.dataturntable.tenant.Role
 import io.quarkus.test.junit.QuarkusTest
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager

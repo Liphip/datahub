@@ -33,7 +33,7 @@ object TestAuthHelpers {
                 ?: User().apply { email = "admin@example.com"; passwordHash = hash }.also { em.persist(it) }
             // Setup in other test classes can leave more than one admin@example.com behind;
             // login may pick any of them.
-            em.createQuery("UPDATE User u SET u.passwordHash = :h, u.isActive = true WHERE u.email = 'admin@example.com'")
+            em.createQuery("UPDATE User u SET u.passwordHash = :h, u.isActive = true, u.isSuperadmin = true WHERE u.email = 'admin@example.com'")
                 .setParameter("h", hash).executeUpdate()
             val member = em.createQuery("SELECT count(m) FROM Membership m WHERE m.authUser = :u AND m.tenant = :t AND m.role = :r", java.lang.Long::class.java)
                 .setParameter("u", user).setParameter("t", root).setParameter("r", adminRole).singleResult.toLong() > 0
@@ -62,6 +62,26 @@ object TestAuthHelpers {
             throw IllegalStateException("Unable to initialize test admin: $setupError")
         }
 
+        if (setupError != null && !adminExists()) {
+            // Some other test left behind an unrelated User row, tripping the
+            // production single-use setup guard before this admin account could
+            // be created. Clear that stray state and retry setup once.
+            deleteNonAdminUsers()
+            val retryResponse = given()
+                .contentType(ContentType.JSON)
+                .body(setupBody)
+            .`when`()
+                .post("/api/internal/v1/auth/setup")
+            .then()
+                .extract()
+                .body()
+                .jsonPath()
+            val retryError = retryResponse.getString("error")
+            if (retryError != null && !retryError.contains("already completed", ignoreCase = true)) {
+                throw IllegalStateException("Unable to initialize test admin after clearing stray users: $retryError")
+            }
+        }
+
         return given()
             .contentType(ContentType.JSON)
             .body(mapOf("email" to "admin@example.com", "password" to password))
@@ -73,5 +93,29 @@ object TestAuthHelpers {
             .body()
             .jsonPath()
             .getString("token")
+    }
+
+    private fun adminExists(): Boolean = QuarkusTransaction.requiringNew().call {
+        val em = Arc.container().instance(EntityManager::class.java).get()
+        em.createQuery("SELECT count(u) FROM User u WHERE u.email = 'admin@example.com'", java.lang.Long::class.java)
+            .singleResult.toLong() > 0
+    }
+
+    private fun deleteNonAdminUsers() {
+        QuarkusTransaction.requiringNew().run {
+            val em = Arc.container().instance(EntityManager::class.java).get()
+            val strayIds = em.createQuery(
+                "SELECT u.id FROM User u WHERE u.email <> 'admin@example.com'",
+                java.util.UUID::class.java
+            ).resultList
+            if (strayIds.isEmpty()) return@run
+            em.createNativeQuery("SET REFERENTIAL_INTEGRITY FALSE").executeUpdate()
+            try {
+                em.createQuery("DELETE FROM Membership m WHERE m.authUser.id IN :ids").setParameter("ids", strayIds).executeUpdate()
+                em.createQuery("DELETE FROM User u WHERE u.id IN :ids").setParameter("ids", strayIds).executeUpdate()
+            } finally {
+                em.createNativeQuery("SET REFERENTIAL_INTEGRITY TRUE").executeUpdate()
+            }
+        }
     }
 }

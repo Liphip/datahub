@@ -1,0 +1,9 @@
+# FR-028: lints the OpenAPI contract generated at build time (backend/target/generated-openapi,
+# see backend/src/main/resources/application.yaml's quarkus.smallrye-openapi.store-schema-directory)
+# for real structural correctness — broken $refs, malformed schemas, duplicate operations — not an
+# opinionated house style. `minimal` deliberately does not enforce operationId/description
+# completeness; several of this API's endpoints (ingest, health, auth bootstrap, public monitoring)
+# are intentionally unauthenticated by design, which the stricter default ruleset's
+# security-defined rule doesn't understand, so `recommended` is not used here.
+extends:
+  - minimal

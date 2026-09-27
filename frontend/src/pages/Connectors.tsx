@@ -641,7 +641,7 @@ export default function Connectors() {
       }
     } catch (caught) {
       const err = caught as ApiError;
-      const missing = err?.response?.data?.missing;
+      const missing = err?.response?.data?.details?.missing;
       if (Array.isArray(missing) && missing.length > 0) {
         showToast(`Missing config: ${missing.join(', ')}`, 'error');
       } else {

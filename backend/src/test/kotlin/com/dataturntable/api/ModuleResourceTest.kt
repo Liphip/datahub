@@ -7,6 +7,7 @@ import io.quarkus.test.junit.QuarkusTest
 import io.restassured.http.ContentType
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import io.quarkus.elytron.security.common.BcryptUtil
 
@@ -19,6 +20,21 @@ class ModuleResourceTest {
 
     @PersistenceContext
     lateinit var em: EntityManager
+
+    @AfterEach
+    fun cleanupAdHocUsers() {
+        QuarkusTransaction.requiringNew().run {
+            val userIds = em.createQuery("SELECT u.id FROM User u WHERE u.email = 'module-viewer@example.com'", UUID::class.java).resultList
+            if (userIds.isEmpty()) return@run
+            em.createNativeQuery("SET REFERENTIAL_INTEGRITY FALSE").executeUpdate()
+            try {
+                em.createQuery("DELETE FROM Membership m WHERE m.authUser.id IN :ids").setParameter("ids", userIds).executeUpdate()
+                em.createQuery("DELETE FROM User u WHERE u.id IN :ids").setParameter("ids", userIds).executeUpdate()
+            } finally {
+                em.createNativeQuery("SET REFERENTIAL_INTEGRITY TRUE").executeUpdate()
+            }
+        }
+    }
 
     fun createNonMemberToken(): String {
         val email = "module-viewer@example.com"

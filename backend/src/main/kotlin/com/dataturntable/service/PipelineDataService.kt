@@ -39,12 +39,12 @@ class PipelineDataService(
     private val configuredPassword: Optional<String>,
     @ConfigProperty(name = "quarkus.datasource.jdbc.url")
     private val defaultJdbcUrl: String,
-    @ConfigProperty(name = "quarkus.datasource.username")
+    @ConfigProperty(name = "quarkus.datasource.username", defaultValue = "")
     private val defaultUsername: String,
-    @ConfigProperty(name = "quarkus.datasource.password")
+    @ConfigProperty(name = "quarkus.datasource.password", defaultValue = "")
     private val defaultPassword: String,
 ) {
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
     private val identifierRegex = Regex("^[A-Za-z_][A-Za-z0-9_]*$")
 
     /**
@@ -182,9 +182,15 @@ class PipelineDataService(
             val keyColumns = ((config["keyColumns"] as? List<*>)?.mapNotNull { it?.toString() } ?: emptyList())
                 .map { requireIdentifier(it, "keyColumns") }
             require(keyColumns.isNotEmpty()) { "DB_SAVE upsert mode requires keyColumns" }
-            val updateColumns = columns.filterNot { it in keyColumns }
-            val updateSql = updateColumns.joinToString(", ") { "${quoteIdentifier(it)} = EXCLUDED.${quoteIdentifier(it)}" }
-            "INSERT INTO ${quoteIdentifier(schema)}.${quoteIdentifier(table)} ($columnSql) VALUES ($placeholders) ON CONFLICT (${keyColumns.joinToString(", ") { quoteIdentifier(it) }}) DO UPDATE SET $updateSql"
+            if (isH2(connection)) {
+                // H2 has no ON CONFLICT extension; MERGE INTO ... KEY (...) VALUES (...) is its
+                // upsert equivalent, matching the column order used for positional binding below.
+                "MERGE INTO ${quoteIdentifier(schema)}.${quoteIdentifier(table)} ($columnSql) KEY (${keyColumns.joinToString(", ") { quoteIdentifier(it) }}) VALUES ($placeholders)"
+            } else {
+                val updateColumns = columns.filterNot { it in keyColumns }
+                val updateSql = updateColumns.joinToString(", ") { "${quoteIdentifier(it)} = EXCLUDED.${quoteIdentifier(it)}" }
+                "INSERT INTO ${quoteIdentifier(schema)}.${quoteIdentifier(table)} ($columnSql) VALUES ($placeholders) ON CONFLICT (${keyColumns.joinToString(", ") { quoteIdentifier(it) }}) DO UPDATE SET $updateSql"
+            }
         } else if (keyed) {
             "INSERT INTO ${quoteIdentifier(schema)}.${quoteIdentifier(table)} ($columnSql) VALUES ($placeholders) ON CONFLICT (${quoteIdentifier(RECORD_KEY_COLUMN)}) DO NOTHING"
         } else {
@@ -231,17 +237,19 @@ class PipelineDataService(
         sampleRow: Map<String, Any?>,
         config: Map<String, Any?>,
     ) {
+        val h2 = isH2(connection)
         val explicitColumns = asMap(config["columnModel"])
         val columns = if (explicitColumns.isNotEmpty()) {
-            explicitColumns.mapValues { (_, value) -> mapExplicitType(value?.toString()) }
+            explicitColumns.mapValues { (_, value) -> mapExplicitType(value?.toString(), h2) }
         } else {
-            sampleRow.mapValues { (_, value) -> inferSqlType(value) }
+            sampleRow.mapValues { (_, value) -> inferSqlType(value, h2) }
         }
+        val timestampType = if (h2) "TIMESTAMP WITH TIME ZONE" else "TIMESTAMPTZ"
         val ddl = buildString {
             append("CREATE TABLE IF NOT EXISTS ${quoteIdentifier(schema)}.${quoteIdentifier(table)} (")
             append(columns.entries.joinToString(", ") { (column, type) -> "${quoteIdentifier(requireIdentifier(column, "column"))} $type" })
             if ("created_at" !in columns.keys) {
-                append(", created_at TIMESTAMPTZ DEFAULT NOW()")
+                append(", created_at $timestampType DEFAULT NOW()")
             }
             append(")")
         }
@@ -320,6 +328,9 @@ class PipelineDataService(
      */
     private fun quoteIdentifier(value: String): String = "\"$value\""
 
+    private fun isH2(connection: Connection): Boolean =
+        runCatching { connection.metaData.databaseProductName.contains("H2", ignoreCase = true) }.getOrDefault(false)
+
     /**
      * Initializes, connects, or acquires the named runtime resource.
      */
@@ -333,28 +344,28 @@ class PipelineDataService(
     /**
      * Implements `inferSqlType` for this source unit.
      */
-    private fun inferSqlType(value: Any?): String =
+    private fun inferSqlType(value: Any?, h2: Boolean): String =
         when (value) {
             null -> "TEXT"
             is Int, is Long -> "BIGINT"
             is Float, is Double -> "DOUBLE PRECISION"
             is Boolean -> "BOOLEAN"
-            is Instant, is OffsetDateTime, is Timestamp -> "TIMESTAMPTZ"
-            is Map<*, *>, is List<*> -> "JSONB"
+            is Instant, is OffsetDateTime, is Timestamp -> if (h2) "TIMESTAMP WITH TIME ZONE" else "TIMESTAMPTZ"
+            is Map<*, *>, is List<*> -> if (h2) "CLOB" else "JSONB"
             else -> "TEXT"
         }
 
     /**
      * Implements `mapExplicitType` for this source unit.
      */
-    private fun mapExplicitType(value: String?): String =
+    private fun mapExplicitType(value: String?, h2: Boolean): String =
         when (value?.trim()?.uppercase()) {
             "TEXT", "VARCHAR", "VARCHAR(255)" -> "TEXT"
             "BIGINT", "INTEGER", "INT" -> "BIGINT"
             "DOUBLE", "DOUBLE PRECISION", "FLOAT", "NUMERIC" -> "DOUBLE PRECISION"
             "BOOLEAN", "BOOL" -> "BOOLEAN"
-            "TIMESTAMPTZ", "TIMESTAMP" -> "TIMESTAMPTZ"
-            "JSONB", "JSON" -> "JSONB"
+            "TIMESTAMPTZ", "TIMESTAMP" -> if (h2) "TIMESTAMP WITH TIME ZONE" else "TIMESTAMPTZ"
+            "JSONB", "JSON" -> if (h2) "CLOB" else "JSONB"
             else -> "TEXT"
         }
 

@@ -1,12 +1,14 @@
 package com.dataturntable.service
 
 import com.dataturntable.auth.User
+import com.dataturntable.authorization.AuthorizationGrantService
 import com.dataturntable.dto.UserDto
 import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.inject.Inject
 import jakarta.transaction.Transactional
 import io.quarkus.elytron.security.common.BcryptUtil
 import java.util.UUID
@@ -16,8 +18,10 @@ import java.util.UUID
  * Defines the class `UserService`, the contract implemented by this source unit.
  */
 class UserService {
+    @Inject
+    lateinit var authorizationGrantService: AuthorizationGrantService
     
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
     
     /**
      * Retrieves or enumerates the requested state.
@@ -74,6 +78,7 @@ class UserService {
         }
         membership.persist()
         user.memberships.add(membership)
+        authorizationGrantService.replaceMembershipAbilities(membership, abilities ?: emptyList())
         
         return toDto(user)
     }
@@ -112,6 +117,7 @@ class UserService {
                 val membership = user.getMembershipForTenant(primaryTenantId)
                 if (membership != null) {
                     membership.abilities = objectMapper.writeValueAsString(it)
+                    authorizationGrantService.replaceMembershipAbilities(membership, it)
                     membership.persist()
                 }
             }

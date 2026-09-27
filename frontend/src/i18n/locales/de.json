@@ -100,7 +100,8 @@
     "deleteFailed": "Löschen fehlgeschlagen",
     "previous": "Zurück",
     "saveFailed": "Speichern fehlgeschlagen",
-    "saved": "Gespeichert"
+    "saved": "Gespeichert",
+    "secretStored": "Gespeichert – leer lassen, um beizubehalten"
   },
   "nav": {
     "dashboard": "Dashboard",

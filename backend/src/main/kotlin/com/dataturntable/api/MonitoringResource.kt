@@ -1,14 +1,18 @@
 package com.dataturntable.api
 
 import com.dataturntable.engine.WarmContainerPool
+import com.dataturntable.auth.User
 import com.dataturntable.monitoring.MonitoringSnapshotService
 import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.PipelineRunNodeLog
 import com.dataturntable.pipeline.PipelineRunStatus
+import com.dataturntable.security.SensitiveDataRedactor
 import com.fasterxml.jackson.databind.ObjectMapper
+import io.quarkus.security.Authenticated
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
+import org.eclipse.microprofile.jwt.JsonWebToken
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
@@ -27,6 +31,9 @@ import java.util.UUID
  */
 class MonitoringResource {
 
+    @Inject
+    lateinit var jwt: JsonWebToken
+
     @PersistenceContext
     lateinit var em: EntityManager
 
@@ -36,7 +43,22 @@ class MonitoringResource {
     @Inject
     lateinit var monitoringSnapshotService: MonitoringSnapshotService
 
-    private val objectMapper = ObjectMapper()
+    @Inject
+    lateinit var redactor: SensitiveDataRedactor
+
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
+
+    /**
+     * Detailed operational data is platform-wide.  It must not become a
+     * cross-tenant data-discovery API merely because the caller is logged in.
+     * The public summary below is deliberately limited to aggregate snapshots.
+     */
+    private fun requirePlatformAdministrator(): Response? {
+        val subject = jwt.subject ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val user = runCatching { em.find(User::class.java, UUID.fromString(subject)) }.getOrNull()
+            ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        return if (user.isSuperAdmin()) null else Response.status(403).entity(mapOf("error" to "Platform administrator access required")).build()
+    }
 
     /**
      * GET /monitoring/pipeline-stats
@@ -46,10 +68,12 @@ class MonitoringResource {
      */
     @GET
     @Path("/pipeline-stats")
+    @Authenticated
     fun pipelineStats(
         @QueryParam("sinceHours") sinceHours: Int?,
         @QueryParam("pipelineId") pipelineId: String?,
     ): Response {
+        requirePlatformAdministrator()?.let { return it }
         val since = Instant.now().minus((sinceHours ?: 24).toLong(), ChronoUnit.HOURS)
 
         val conditions = mutableListOf("r.startedAt >= :since")
@@ -119,7 +143,7 @@ class MonitoringResource {
                     "pipelineId" to run.pipeline?.id,
                     "pipelineName" to run.pipeline?.name,
                     "status" to run.status.name,
-                    "errorMessage" to run.errorMessage,
+                    "errorMessage" to redactor.text(run.errorMessage),
                     "startedAt" to run.startedAt,
                     "completedAt" to run.completedAt,
                 )
@@ -134,9 +158,11 @@ class MonitoringResource {
      */
     @GET
     @Path("/module-stats")
+    @Authenticated
     fun moduleStats(
         @QueryParam("sinceHours") sinceHours: Int?,
     ): Response {
+        requirePlatformAdministrator()?.let { return it }
         val since = Instant.now().minus((sinceHours ?: 24).toLong(), ChronoUnit.HOURS)
 
         @Suppress("UNCHECKED_CAST")
@@ -172,7 +198,9 @@ class MonitoringResource {
      */
     @GET
     @Path("/container-pool")
+    @Authenticated
     fun containerPool(): Response {
+        requirePlatformAdministrator()?.let { return it }
         return Response.ok(mapOf(
             "poolEnabled" to warmPool.poolEnabled,
             "basePoolTarget" to warmPool.basePoolSize,
@@ -196,10 +224,12 @@ class MonitoringResource {
      */
     @GET
     @Path("/recent-logs")
+    @Authenticated
     fun recentLogs(
         @QueryParam("limit") limit: Int?,
         @QueryParam("status") status: String?,
     ): Response {
+        requirePlatformAdministrator()?.let { return it }
         val maxRows = (limit ?: 50).coerceIn(1, 200)
         val successFilter = when (status?.lowercase()) {
             "success" -> true
@@ -223,9 +253,9 @@ class MonitoringResource {
                 "stage" to log.nodeType,
                 "moduleName" to log.moduleName,
                 "success" to log.success,
-                "stdout" to log.stdout?.take(500),
-                "stderr" to log.stderr?.take(500),
-                "error" to log.errorMessage,
+                "stdout" to redactor.text(log.stdout?.take(500)),
+                "stderr" to redactor.text(log.stderr?.take(500)),
+                "error" to redactor.text(log.errorMessage),
                 "durationMs" to log.durationMs,
                 "executedAt" to log.executedAt,
             )
@@ -241,10 +271,12 @@ class MonitoringResource {
      */
     @GET
     @Path("/pipeline-timeseries")
+    @Authenticated
     fun pipelineTimeseries(
         @QueryParam("sinceHours") sinceHours: Int?,
         @QueryParam("bucketMinutes") bucketMinutes: Int?,
     ): Response {
+        requirePlatformAdministrator()?.let { return it }
         val hours = (sinceHours ?: 24).coerceIn(1, 168)
         val bucket = (bucketMinutes ?: 60).coerceIn(5, 1440)
         val since = Instant.now().minus(hours.toLong(), ChronoUnit.HOURS)

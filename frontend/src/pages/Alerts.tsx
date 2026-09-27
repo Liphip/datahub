@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
+import { hasSecret, withSecretRefs } from '../lib/secrets';
 import type { AlertChannel, AlertHistory, Connector } from '../types';
 
 /**
@@ -119,12 +120,12 @@ export default function Alerts() {
 
       try {
         const [channelsData, historyData, connectorsData] = await Promise.all([
-          api.getAlertChannels(tenantId),
+          api.getAlertChannels(tenantId, 0, 200),
           api.getAlertHistory(tenantId, 20),
           api.getConnectors(tenantId).catch(() => [] as Connector[]),
         ]);
-        setChannels(channelsData);
-        setHistory(historyData);
+        setChannels(channelsData.items);
+        setHistory(historyData.items);
         setMqttConnectors(connectorsData.filter((c) => c.connectorType === 'MQTT' && c.direction === 'OUTPUT'));
         setError('');
       } catch (err) {
@@ -159,7 +160,7 @@ export default function Alerts() {
         return;
       }
 
-      const config = Object.entries(newChannelConfig).reduce<Record<string, unknown>>((acc, [key, value]) => {
+      const plainConfig = Object.entries(newChannelConfig).reduce<Record<string, unknown>>((acc, [key, value]) => {
         const trimmed = value.trim();
         if (!trimmed) return acc;
         if (key === 'qos') {
@@ -170,6 +171,9 @@ export default function Alerts() {
         }
         return acc;
       }, {});
+      // Credentials are stored as secrets; the channel keeps only references.
+      const sensitiveKeys = channelConfigSchema[newChannelType].filter((f) => f.type === 'password').map((f) => f.key);
+      const config = await withSecretRefs(tenantId, plainConfig, sensitiveKeys, editingChannel?.config, `alert.${newChannelName}`);
 
       if (editingChannel) {
         const updated = await api.updateAlertChannel(editingChannel.id, {
@@ -508,7 +512,9 @@ export default function Alerts() {
                           value={newChannelConfig[field.key] || ''}
                           onChange={(e) => setNewChannelConfig((prev) => ({ ...prev, [field.key]: e.target.value }))}
                           className="input w-full"
-                          placeholder={field.placeholderKey ? t(field.placeholderKey) : ''}
+                          placeholder={field.type === 'password' && hasSecret(editingChannel?.config, field.key)
+                            ? t('common.secretStored')
+                            : field.placeholderKey ? t(field.placeholderKey) : ''}
                           required={field.required}
                         />
                       )}

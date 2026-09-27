@@ -3,6 +3,9 @@ package com.dataturntable.api
 import com.dataturntable.alert.AlertChannel
 import com.dataturntable.alert.AlertChannelType
 import com.dataturntable.alert.AlertHistory
+import com.dataturntable.alert.AlertSeverity
+import com.dataturntable.alert.AlertDispatcher
+import com.dataturntable.audit.AuditService
 import com.dataturntable.auth.User
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.security.SecurityUtils
@@ -33,13 +36,20 @@ import java.util.UUID
  */
 class AlertResource {
 
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
 
     @Inject
     lateinit var jwt: JsonWebToken
 
     @PersistenceContext
     lateinit var em: EntityManager
+
+    @Inject
+    lateinit var alertDispatcher: AlertDispatcher
+
+    @Inject
+    lateinit var audit: AuditService
+
 
     /** Resolves the authenticated JWT subject to its persisted user, or `null` for an invalid subject. */
     /**
@@ -103,6 +113,24 @@ class AlertResource {
         return objectMapper.writeValueAsString(value)
     }
 
+    /** Alert channel credentials are represented by secretRefs, never persisted inline. */
+    private fun validateChannelConfig(value: Any?): String? {
+        val sensitiveNames = setOf("password", "token", "authtoken", "apikey", "authorization", "secret", "clientsecret", "privatekey", "passphrase")
+        fun validate(node: Any?, insideSecretRefs: Boolean = false): String? = when (node) {
+            is Map<*, *> -> node.entries.firstNotNullOfOrNull { (rawKey, child) ->
+                val key = rawKey?.toString()?.replace(Regex("[^A-Za-z0-9]"), "")?.lowercase().orEmpty()
+                when {
+                    key == "secretrefs" -> validate(child, true)
+                    !insideSecretRefs && key in sensitiveNames -> "Channel credentials must use secretRefs"
+                    else -> validate(child, insideSecretRefs)
+                }
+            }
+            is Collection<*> -> node.firstNotNullOfOrNull { validate(it, insideSecretRefs) }
+            else -> null
+        }
+        return validate(value)
+    }
+
     /** Accepts either a JSON string or a map and returns a condition object suitable for validation. */
     /**
      * Parses external or persisted input into the required representation.
@@ -121,6 +149,16 @@ class AlertResource {
                 raw as? Map<String, Any>
             }
             else -> null
+        }
+    }
+
+    /** Parses a requested rule severity, rejecting unrecognized values rather than silently defaulting. */
+    private fun parseRuleSeverity(raw: Any?): AlertSeverity? {
+        val name = raw?.toString()?.trim()?.uppercase() ?: return null
+        return try {
+            AlertSeverity.valueOf(name)
+        } catch (_: IllegalArgumentException) {
+            null
         }
     }
 
@@ -201,19 +239,33 @@ class AlertResource {
     /**
      * Retrieves or enumerates the requested state.
      */
-    fun listChannels(@QueryParam("tenantId") tenantId: String): Response {
+    fun listChannels(
+        @QueryParam("tenantId") tenantId: String,
+        @QueryParam("limit") limit: Int?,
+        @QueryParam("page") page: Int?
+    ): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseUuid(tenantId, "tenantId")
         requireTenantAccess(currentUser, tenantUuid.toString(), "alert:read")?.let { return it }
-        // TODO: Paginate and order alert channel listings
-        // Details: The list endpoint returns every tenant record without a stable order, while history is bounded. Add validated limit/cursor parameters and deterministic ordering before tenant alert configuration grows large.
+        val effectiveLimit = limit ?: 50
+        val effectivePage = page ?: 0
+        if (effectiveLimit !in 1..200 || effectivePage < 0) {
+            return Response.status(400).entity(mapOf("error" to "limit must be between 1 and 200 and page must be non-negative")).build()
+        }
         val channels = em.createQuery(
-            "SELECT c FROM AlertChannel c WHERE c.tenant.id = :tenantId",
+            "SELECT c FROM AlertChannel c WHERE c.tenant.id = :tenantId ORDER BY c.createdAt DESC, c.id DESC",
             AlertChannel::class.java
         )
             .setParameter("tenantId", tenantUuid)
+            .setFirstResult(effectivePage * effectiveLimit)
+            .setMaxResults(effectiveLimit + 1)
             .resultList
-        return Response.ok(channels.map { toChannelDto(it) }).build()
+        return Response.ok(mapOf(
+            "items" to channels.take(effectiveLimit).map { toChannelDto(it) },
+            "page" to effectivePage,
+            "limit" to effectiveLimit,
+            "hasMore" to (channels.size > effectiveLimit)
+        )).build()
     }
     
     @POST
@@ -233,6 +285,7 @@ class AlertResource {
         val channelType = request["channelType"] as? String ?: return Response.status(400).entity(mapOf("error" to "Channel type is required")).build()
         val parsedChannelType = parseChannelType(channelType)
             ?: return Response.status(400).entity(mapOf("error" to "Invalid channel type")).build()
+        validateChannelConfig(request["config"])?.let { return Response.status(400).entity(mapOf("error" to it)).build() }
         
         val tenant = em.find(Tenant::class.java, tenantUuid)
             ?: return Response.status(400).entity(mapOf("error" to "Tenant not found")).build()
@@ -248,6 +301,8 @@ class AlertResource {
             this.updatedAt = java.time.Instant.now()
         }
         channel.persist()
+        audit.record(currentUser.id, tenantUuid, "alert.channel.created", "alert_channel", channel.id.toString(),
+            mapOf("name" to channel.name, "channelType" to parsedChannelType.name))
         return Response.status(201).entity(toChannelDto(channel)).build()
     }
 
@@ -274,6 +329,7 @@ class AlertResource {
             channel.channelType = parsed
         }
         request["config"]?.let {
+            validateChannelConfig(it)?.let { error -> return Response.status(400).entity(mapOf("error" to error)).build() }
             channel.config = serializeJsonValue(it)
         }
         request["isActive"]?.let {
@@ -281,6 +337,8 @@ class AlertResource {
         }
         channel.updatedAt = java.time.Instant.now()
         channel.persist()
+        audit.record(currentUser.id, channel.tenant?.id, "alert.channel.updated", "alert_channel", channel.id.toString(),
+            mapOf("name" to channel.name, "channelType" to channel.channelType?.name, "active" to channel.isActive))
 
         return Response.ok(toChannelDto(channel)).build()
     }
@@ -299,6 +357,8 @@ class AlertResource {
             val tenantId = channel.tenant?.id?.toString()
                 ?: return Response.status(400).entity(mapOf("error" to "Channel tenant not found")).build()
             requireTenantAccess(currentUser, tenantId, "alert:configure")?.let { return it }
+            audit.record(currentUser.id, channel.tenant?.id, "alert.channel.deleted", "alert_channel", channel.id.toString(),
+                mapOf("name" to channel.name, "channelType" to channel.channelType?.name))
             channel.delete()
             Response.noContent().build()
         } else {
@@ -315,19 +375,33 @@ class AlertResource {
     /**
      * Retrieves or enumerates the requested state.
      */
-    fun getHistory(@QueryParam("tenantId") tenantId: String, @QueryParam("limit") limit: Int?): Response {
+    fun getHistory(
+        @QueryParam("tenantId") tenantId: String,
+        @QueryParam("limit") limit: Int?,
+        @QueryParam("page") page: Int?
+    ): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseUuid(tenantId, "tenantId")
         requireTenantAccess(currentUser, tenantUuid.toString(), "alert:read")?.let { return it }
+        val pageSize = limit ?: 50
+        val pageIndex = page ?: 0
+        if (pageSize !in 1..200 || pageIndex < 0) {
+            return Response.status(400).entity(mapOf("error" to "limit must be 1..200 and page must be non-negative")).build()
+        }
         val history = em.createQuery(
-            "SELECT h FROM AlertHistory h WHERE h.tenant.id = :tenantId ORDER BY h.createdAt DESC",
+            "SELECT h FROM AlertHistory h WHERE h.tenant.id = :tenantId ORDER BY h.createdAt DESC, h.id DESC",
             AlertHistory::class.java
         )
             .setParameter("tenantId", tenantUuid)
-            // FIXME: Validate and cap the history limit
-            // Details: A negative limit can fail at the persistence layer and an arbitrarily large positive value can load an unbounded tenant history. Match the bounded limit handling used by the other list endpoints and return 400 for invalid input.
-            .setMaxResults(limit ?: 100)
+            .setFirstResult(pageIndex * pageSize)
+            .setMaxResults(pageSize + 1)
             .resultList
-        return Response.ok(history.map { toHistoryDto(it) }).build()
+        val hasMore = history.size > pageSize
+        return Response.ok(mapOf(
+            "items" to history.take(pageSize).map { toHistoryDto(it) },
+            "page" to pageIndex,
+            "limit" to pageSize,
+            "hasMore" to hasMore
+        )).build()
     }
 }

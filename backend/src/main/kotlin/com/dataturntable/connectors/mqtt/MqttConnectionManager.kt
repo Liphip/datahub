@@ -4,6 +4,7 @@ import com.dataturntable.config.RuntimeRoleConfig
 import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.ConnectorLeaseService
 import com.dataturntable.connectors.ConnectorMetrics
+import com.dataturntable.security.SensitiveDataRedactor
 import io.quarkus.runtime.StartupEvent
 import io.quarkus.runtime.ShutdownEvent
 import jakarta.enterprise.context.ApplicationScoped
@@ -53,6 +54,9 @@ class MqttConnectionManager {
     @Inject
     lateinit var connectorLeaseService: ConnectorLeaseService
 
+    @Inject
+    lateinit var redactor: SensitiveDataRedactor
+
     @ConfigProperty(name = "dataturntable.connectors.lease.reconcile-interval-seconds", defaultValue = "10")
     var leaseReconcileIntervalSeconds: Long = 20
 
@@ -67,6 +71,9 @@ class MqttConnectionManager {
 
     /** connectorId → time of last received message */
     private val lastMessageTimes = ConcurrentHashMap<UUID, Instant>()
+
+    /** Fencing generation captured by each live inbound client. */
+    private val leaseTokens = ConcurrentHashMap<UUID, Long>()
 
     /** In-memory routing table, rebuilt by messageRouter.buildRoutingTable() */
     @Volatile
@@ -154,12 +161,14 @@ class MqttConnectionManager {
             val ownedConnectorIds = mutableSetOf<UUID>()
             for (connectorId in connectorIds) {
                 try {
-                    if (!connectorLeaseService.tryAcquireOrRenew(connectorId)) {
+                    val claim = connectorLeaseService.acquireOrRenew(connectorId)
+                    if (claim == null) {
                         disconnectConnector(connectorId, releaseLease = false)
                         continue
                     }
                     ownedConnectorIds += connectorId
-                    connectAndSubscribe(connectorId)
+                    leaseTokens[connectorId] = claim.fencingToken
+                    connectAndSubscribe(connectorId, claim.fencingToken)
                 } catch (e: Exception) {
                     LOG.errorf("Failed to connect MQTT connector %s: %s", connectorId, e.message)
                 }
@@ -187,8 +196,10 @@ class MqttConnectionManager {
                 return
             }
             if (connector.connectorType != Connector.ConnectorType.MQTT) return
-            if (connector.direction == Connector.Direction.INPUT && connector.isActive && connectorLeaseService.tryAcquireOrRenew(connectorId)) {
-                connectAndSubscribe(connectorId)
+            val claim = if (connector.direction == Connector.Direction.INPUT && connector.isActive) connectorLeaseService.acquireOrRenew(connectorId) else null
+            if (claim != null) {
+                leaseTokens[connectorId] = claim.fencingToken
+                connectAndSubscribe(connectorId, claim.fencingToken)
             } else {
                 disconnectConnector(connectorId)
             }
@@ -207,6 +218,7 @@ class MqttConnectionManager {
             LOG.infof("Disconnected MQTT client for connector %s", connectorId)
         }
         subscribedTopicsMap.remove(connectorId)
+        leaseTokens.remove(connectorId)
         if (releaseLease) {
             connectorLeaseService.release(connectorId)
         }
@@ -234,7 +246,7 @@ class MqttConnectionManager {
             val msg = MqttMessage(payloadJson.toByteArray(Charsets.UTF_8)).apply { qos = 1 }
             client.publish(topic, msg)
             connectorMetrics.recordOperation("MQTT", "OUTPUT", "publish", "success", startedAt)
-            LOG.infof("MQTT OUTPUT: published %d bytes to topic '%s' on %s", payloadJson.length, topic, brokerUrl)
+            LOG.infof("MQTT OUTPUT: published %d bytes to topic '%s' on %s", payloadJson.length, topic, redactor.text(brokerUrl))
             LOG.infof(
                 "event=connector_publish component=mqtt connector_id=%s connector_type=mqtt direction=output outcome=success topic=%s bytes=%d",
                 connectorId,
@@ -243,7 +255,7 @@ class MqttConnectionManager {
             )
         } catch (e: Exception) {
             connectorMetrics.recordOperation("MQTT", "OUTPUT", "publish", "failure", startedAt)
-            LOG.errorf("MQTT OUTPUT publish failed for connector %s on topic '%s': %s", connectorId, topic, e.message)
+            LOG.errorf("MQTT OUTPUT publish failed for connector %s on topic '%s': %s", connectorId, topic, redactor.text(e.message))
             throw RuntimeException("MQTT publish failed: ${e.message}", e)
         } finally {
             try { client.disconnect(500) } catch (_: Exception) {}
@@ -256,7 +268,7 @@ class MqttConnectionManager {
     /**
      * Initializes, connects, or acquires the named runtime resource.
      */
-    private fun connectAndSubscribe(connectorId: UUID) {
+    private fun connectAndSubscribe(connectorId: UUID, fencingToken: Long) {
         val (connector, config) = messageRouter.resolveConnectorConfig(connectorId) ?: return
         val brokerUrl = normalizeBrokerUrl(config["broker"]?.toString())
             ?: run { LOG.warnf("MQTT connector %s has no broker URL — skipping", connectorId); return }
@@ -278,7 +290,7 @@ class MqttConnectionManager {
             .take(23) // Paho clientId max length is 23
 
         val client = MqttClient(brokerUrl, clientId, MemoryPersistence())
-        client.setCallback(buildCallback(connectorId, client, topics))
+        client.setCallback(buildCallback(connectorId, client, topics, fencingToken))
 
         val opts = buildConnectOptions(config)
         try {
@@ -289,14 +301,14 @@ class MqttConnectionManager {
             clientErrors.remove(connectorId)
             connectorMetrics.connectionCounter("mqtt", "success").increment()
             if (topics.isEmpty()) {
-                LOG.infof("MQTT connector %s connected to %s (no subscriptions yet — add mqttTopic to a pipeline IMPORT node)", connectorId, brokerUrl)
+                LOG.infof("MQTT connector %s connected to %s (no subscriptions yet — add mqttTopic to a pipeline IMPORT node)", connectorId, redactor.text(brokerUrl))
             } else {
-                LOG.infof("MQTT connector %s connected to %s, subscribed to: %s", connectorId, brokerUrl, topics)
+                LOG.infof("MQTT connector %s connected to %s, subscribed to: %s", connectorId, redactor.text(brokerUrl), topics)
             }
             LOG.infof(
                 "event=connector_connection component=mqtt connector_id=%s connector_type=mqtt direction=input outcome=success broker=%s subscriptions=%d",
                 connectorId,
-                brokerUrl,
+                redactor.text(brokerUrl),
                 topics.size
             )
         } catch (e: Exception) {
@@ -304,7 +316,7 @@ class MqttConnectionManager {
             clientErrors[connectorId] = e.message ?: "Connection failed"
             subscribedTopicsMap.remove(connectorId)
             connectorMetrics.connectionCounter("mqtt", "failure").increment()
-            LOG.errorf("MQTT connector %s failed to connect to %s: %s", connectorId, brokerUrl, e.message)
+            LOG.errorf("MQTT connector %s failed to connect to %s: %s", connectorId, redactor.text(brokerUrl), redactor.text(e.message))
             throw e
         }
     }
@@ -324,24 +336,35 @@ class MqttConnectionManager {
     private fun buildCallback(
         connectorId: UUID,
         client: MqttClient,
-        topics: List<String>
+        topics: List<String>,
+        fencingToken: Long
     ): MqttCallbackExtended {
         return object : MqttCallbackExtended {
             override fun connectComplete(reconnect: Boolean, serverURI: String?) {
+                if (!connectorLeaseService.owns(connectorId, fencingToken)) {
+                    clientErrors[connectorId] = "Lease ownership lost"
+                    disconnectConnector(connectorId, releaseLease = false)
+                    return
+                }
                 if (reconnect) {
-                    LOG.infof("MQTT connector %s reconnected to %s — re-subscribing to %s", connectorId, serverURI, topics)
+                    LOG.infof("MQTT connector %s reconnected to %s — re-subscribing to %s", connectorId, redactor.text(serverURI), topics)
                     try {
                         subscribeTopics(connectorId, client, topics)
                         subscribedTopicsMap[connectorId] = topics
                         clientErrors.remove(connectorId)
                     } catch (e: Exception) {
-                        clientErrors[connectorId] = "Re-subscribe failed: ${e.message}"
-                        LOG.errorf("MQTT connector %s re-subscribe failed: %s", connectorId, e.message)
+                        clientErrors[connectorId] = "Re-subscribe failed: ${redactor.text(e.message)}"
+                        LOG.errorf("MQTT connector %s re-subscribe failed: %s", connectorId, redactor.text(e.message))
                     }
                 }
             }
 
             override fun messageArrived(topic: String, message: MqttMessage) {
+                if (!connectorLeaseService.owns(connectorId, fencingToken)) {
+                    clientErrors[connectorId] = "Lease ownership lost"
+                    disconnectConnector(connectorId, releaseLease = false)
+                    return
+                }
                 val payload = message.payload?.toString(Charsets.UTF_8) ?: return
                 lastMessageTimes[connectorId] = Instant.now()
                 connectorMetrics.messageCounter("mqtt", "input", "received").increment()
@@ -353,16 +376,16 @@ class MqttConnectionManager {
                     // keeps the message in the persistent session and redelivers it after the
                     // automatic reconnect (at-least-once).
                     connectorMetrics.messageCounter("mqtt", "input", "failed").increment()
-                    LOG.errorf("MQTT connector %s message routing failed, message will be redelivered: %s", connectorId, e.message)
+                    LOG.errorf("MQTT connector %s message routing failed, message will be redelivered: %s", connectorId, redactor.text(e.message))
                     throw e
                 }
             }
 
             override fun connectionLost(cause: Throwable?) {
-                clientErrors[connectorId] = cause?.message ?: "Connection lost"
+                clientErrors[connectorId] = redactor.text(cause?.message) ?: "Connection lost"
                 subscribedTopicsMap.remove(connectorId)
                 connectorMetrics.connectionCounter("mqtt", "lost").increment()
-                LOG.warnf("MQTT connector %s connection lost: %s", connectorId, cause?.message)
+                LOG.warnf("MQTT connector %s connection lost: %s", connectorId, redactor.text(cause?.message))
                 // automaticReconnect=true handles reconnection; connectComplete() re-subscribes
             }
 
@@ -449,9 +472,9 @@ class MqttConnectionManager {
             }
             client.connect(opts)
             try { client.disconnect(1000) } catch (_: Exception) {}
-            true to "Connected to $brokerUrl"
+            true to "Connected to ${redactor.text(brokerUrl)}"
         } catch (e: Exception) {
-            false to (e.message ?: "Connection failed")
+            false to (redactor.text(e.message) ?: "Connection failed")
         } finally {
             try { client.close() } catch (_: Exception) {}
         }

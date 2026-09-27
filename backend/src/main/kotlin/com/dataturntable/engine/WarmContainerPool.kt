@@ -222,6 +222,10 @@ class WarmContainerPool {
             "--network", if (needsNetwork) "bridge" else "none",
             "--user", "1000:1000",
             "--read-only",
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true",
+            "--pids-limit", "128",
+            "--ulimit", "nofile=1024:1024",
             "--tmpfs", "/tmp:size=256m",   // pip --target /tmp/packages goes here
             "--tmpfs", "/.cache",          // pip cache dir (user 1000 can't write to / otherwise)
             "--cpu-shares", (cpuLimit.toDouble() * 1024).toInt().toString(),
@@ -229,7 +233,7 @@ class WarmContainerPool {
             "-e", "__DT_RUNNER__=$runnerB64",
         )
         if (needsNetwork) {
-            args.addAll(listOf("-e", "MODULE_REQUIREMENTS=$requirements"))
+            args.addAll(listOf("-e", envArg("MODULE_REQUIREMENTS", requirements)))
         }
         args.addAll(listOf(
             baseImage,

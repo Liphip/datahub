@@ -236,8 +236,8 @@ class MembershipResourceTest {
         .`when`()
             .delete("/api/internal/v1/tenants/$tenantBId/memberships/$membershipId")
         .then()
-            .statusCode(400)
-            .body("error", equalTo("Membership does not belong to tenant"))
+            .statusCode(404)
+            .body("error", equalTo("Membership not found"))
 
         given()
             .header("Authorization", "Bearer $token")

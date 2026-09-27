@@ -15,6 +15,7 @@ class EncryptionUtilsTest {
         val cipher = EncryptionUtils.encrypt(plain)
         assertNotNull(cipher)
         assertNotEquals(plain, cipher)
+        assertTrue(cipher.startsWith("v2:"))
 
         val decrypted = EncryptionUtils.decrypt(cipher)
         assertEquals(plain, decrypted)
@@ -26,5 +27,13 @@ class EncryptionUtilsTest {
         val plain = "simple-string"
         val out = EncryptionUtils.encrypt(plain)
         assertEquals(plain, out)
+    }
+
+    @Test
+    fun testAuthenticatedCiphertextRejectsTampering() {
+        System.setProperty("connector.config.key", Base64.getEncoder().encodeToString(ByteArray(32)))
+        val cipher = EncryptionUtils.encrypt("secret")
+        val tampered = cipher.dropLast(1) + if (cipher.last() == 'A') "B" else "A"
+        assertThrows(IllegalArgumentException::class.java) { EncryptionUtils.decrypt(tampered) }
     }
 }

@@ -16,6 +16,7 @@ import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import io.quarkus.elytron.security.common.BcryptUtil
@@ -46,6 +47,10 @@ class TenantResourceTest {
             em.createNativeQuery("SET REFERENTIAL_INTEGRITY TRUE").executeUpdate()
         }
     }
+
+    @AfterEach
+    @Transactional
+    fun cleanupAfter() = cleanup()
 
     fun createNonAdminToken(): String {
         val email = "viewer@example.com"
@@ -517,7 +522,7 @@ class TenantResourceTest {
         .then()
             .statusCode(409)
             .body("error", containsString("updated by another user"))
-            .body("currentVersion", notNullValue())
+            .body("details.currentVersion", notNullValue())
 
         given()
             .header("Authorization", "Bearer $managerToken")
@@ -581,7 +586,7 @@ class TenantResourceTest {
         .then()
             .statusCode(409)
             .body("error", containsString("updated by another user"))
-            .body("currentVersion", notNullValue())
+            .body("details.currentVersion", notNullValue())
 
         given()
             .header("Authorization", "Bearer $managerToken")

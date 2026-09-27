@@ -32,6 +32,9 @@ enum class Ability(val value: String) {
     CONNECTOR_WRITE("connector:write"),
     CONNECTOR_DELETE("connector:delete"),
 
+    // Secrets (credentials referenced by connectors and alert channels)
+    SECRET_MANAGE("secret:manage"),
+
     // Users
     USER_READ("user:read"),
     USER_WRITE("user:write"),

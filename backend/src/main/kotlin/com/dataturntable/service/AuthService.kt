@@ -153,6 +153,7 @@ class AuthService {
             this.firstName = "Admin"
             this.lastName = "User"
             this.isActive = true
+            this.isSuperadmin = true
             this.createdAt = java.time.Instant.now()
             this.updatedAt = java.time.Instant.now()
         }
@@ -209,6 +210,7 @@ class AuthService {
             .upn(user.email)
             .groups(groups)
             .claim("email", user.email)
+            .claim("authorizationVersion", user.authorizationVersion)
             .expiresIn(3600L)
         if (!tenantId.isNullOrBlank()) {
             jwtBuilder.claim("tenantId", tenantId)

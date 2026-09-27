@@ -1,0 +1,16 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dataturntable-execution-default-deny
+  labels:
+    app: dataturntable
+    component: pipeline-executor
+spec:
+  podSelector:
+    matchLabels:
+      app: dataturntable-execution
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress: []

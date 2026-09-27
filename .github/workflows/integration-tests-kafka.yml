@@ -1,0 +1,44 @@
+name: Kafka Integration Tests (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tests:
+        description: 'Groovy-style test pattern to run (Maven -Dtest). Default: EventOutboxReplayIT'
+        required: false
+        default: 'EventOutboxReplayIT'
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cache Maven local repository
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-m2-
+
+      - name: Run targeted integration tests (Docker required)
+        env:
+          MAVEN_OPTS: -DskipTests=false
+        run: |
+          echo "Running integration tests: ${{ github.event.inputs.tests }}"
+          mvn -f backend -DskipTests=false -Dtest=${{ github.event.inputs.tests }} test -DtrimStackTrace=false
+
+      - name: Upload test reports (if any)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-reports
+          path: backend/target/surefire-reports/**

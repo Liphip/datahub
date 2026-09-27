@@ -23,7 +23,7 @@ class ModuleService {
     @Inject
     lateinit var tenantService: TenantService
     
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
 
     /**
      * Implements `contentFingerprint` for this source unit.

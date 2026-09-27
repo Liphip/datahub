@@ -4,9 +4,11 @@ import com.dataturntable.config.RuntimeRoleConfig
 import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.ConnectorLeaseService
 import com.dataturntable.connectors.ConnectorMetrics
+import com.dataturntable.connectors.ConnectorSecretReferenceResolver
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.security.EncryptionUtils
+import com.dataturntable.security.SensitiveDataRedactor
 import com.dataturntable.engine.PipelineRunQueue
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.runtime.StartupEvent
@@ -51,7 +53,7 @@ import java.util.concurrent.TimeUnit
 class WebSocketConnectionManager {
 
     private val LOG = Logger.getLogger(WebSocketConnectionManager::class.java)
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
     private val httpClient: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(10))
         .build()
@@ -68,6 +70,9 @@ class WebSocketConnectionManager {
     @Inject
     lateinit var connectorLeaseService: ConnectorLeaseService
 
+    @Inject
+    lateinit var redactor: SensitiveDataRedactor
+
     @ConfigProperty(name = "dataturntable.connectors.lease.reconcile-interval-seconds", defaultValue = "10")
     var leaseReconcileIntervalSeconds: Long = 20
 
@@ -79,6 +84,9 @@ class WebSocketConnectionManager {
 
     /** connectorId → time of last received message */
     private val lastMessageTimes = ConcurrentHashMap<UUID, Instant>()
+
+    /** Fencing generation captured by each live inbound connection. */
+    private val leaseTokens = ConcurrentHashMap<UUID, Long>()
 
     private val reconcileExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private var reconcileTask: ScheduledFuture<*>? = null
@@ -155,20 +163,22 @@ class WebSocketConnectionManager {
             val ownedConnectorIds = mutableSetOf<UUID>()
             for (connectorId in connectorIds) {
                 try {
-                    if (!connectorLeaseService.tryAcquireOrRenew(connectorId)) {
+                    val claim = connectorLeaseService.acquireOrRenew(connectorId)
+                    if (claim == null) {
                         disconnectConnector(connectorId, releaseLease = false)
                         continue
                     }
                     ownedConnectorIds += connectorId
-                    connectConnector(connectorId)
+                    leaseTokens[connectorId] = claim.fencingToken
+                    connectConnector(connectorId, claim.fencingToken)
                 } catch (e: Exception) {
-                    LOG.errorf("Failed to connect WebSocket connector %s: %s", connectorId, e.message)
+                    LOG.errorf("Failed to connect WebSocket connector %s: %s", connectorId, redactor.text(e.message))
                 }
             }
             // Disconnect connectors no longer active or no longer leased here
             connections.keys.filter { it !in ownedConnectorIds }.forEach { disconnectConnector(it) }
         } catch (e: Exception) {
-            LOG.errorf("WebSocket refreshAll failed: %s", e.message)
+            LOG.errorf("WebSocket refreshAll failed: %s", redactor.text(e.message))
         }
     }
 
@@ -182,13 +192,15 @@ class WebSocketConnectionManager {
                 disconnectConnector(connectorId)
                 return
             }
-            if (connector.direction == Connector.Direction.INPUT && connector.isActive && connectorLeaseService.tryAcquireOrRenew(connectorId)) {
-                connectConnector(connectorId)
+            val claim = if (connector.direction == Connector.Direction.INPUT && connector.isActive) connectorLeaseService.acquireOrRenew(connectorId) else null
+            if (claim != null) {
+                leaseTokens[connectorId] = claim.fencingToken
+                connectConnector(connectorId, claim.fencingToken)
             } else {
                 disconnectConnector(connectorId)
             }
         } catch (e: Exception) {
-            LOG.errorf("Failed to refresh WebSocket connector %s: %s", connectorId, e.message)
+            LOG.errorf("Failed to refresh WebSocket connector %s: %s", connectorId, redactor.text(e.message))
         }
     }
 
@@ -200,6 +212,7 @@ class WebSocketConnectionManager {
             try { ws.sendClose(WebSocket.NORMAL_CLOSURE, "disconnected").get(2, TimeUnit.SECONDS) } catch (_: Exception) {}
             LOG.infof("Disconnected WebSocket connector %s", connectorId)
         }
+        leaseTokens.remove(connectorId)
         if (releaseLease) {
             connectorLeaseService.release(connectorId)
         }
@@ -251,7 +264,7 @@ class WebSocketConnectionManager {
                 .get(15, TimeUnit.SECONDS)
             done.get(10, TimeUnit.SECONDS)
             connectorMetrics.recordOperation("WEBSOCKET", "OUTPUT", "send", "success", startedAt)
-            LOG.infof("WebSocket OUTPUT: sent %d bytes to %s for connector %s", payloadJson.length, url, connectorId)
+            LOG.infof("WebSocket OUTPUT: sent %d bytes to %s for connector %s", payloadJson.length, redactor.text(url), connectorId)
             LOG.infof(
                 "event=connector_send component=websocket connector_id=%s connector_type=websocket direction=output outcome=success bytes=%d",
                 connectorId,
@@ -259,7 +272,7 @@ class WebSocketConnectionManager {
             )
         } catch (e: Exception) {
             connectorMetrics.recordOperation("WEBSOCKET", "OUTPUT", "send", "failure", startedAt)
-            LOG.errorf("WebSocket OUTPUT send failed for connector %s to %s: %s", connectorId, url, e.message)
+            LOG.errorf("WebSocket OUTPUT send failed for connector %s to %s: %s", connectorId, redactor.text(url), redactor.text(e.message))
             throw RuntimeException("WebSocket send failed: ${e.message}", e)
         }
     }
@@ -269,28 +282,34 @@ class WebSocketConnectionManager {
     /**
      * Initializes, connects, or acquires the named runtime resource.
      */
-    private fun connectConnector(connectorId: UUID) {
+    private fun connectConnector(connectorId: UUID, fencingToken: Long) {
         val (connector, config) = wsMessageRouter.resolveConnectorConfig(connectorId) ?: return
         val url = buildWsUrl(config)
             ?: run { LOG.warnf("WebSocket connector %s has no URL — skipping", connectorId); return }
 
-        disconnectConnector(connectorId)
+        // Replace only the socket; this caller already holds a fresh lease claim.
+        disconnectConnector(connectorId, releaseLease = false)
 
         val messageBuffer = StringBuilder()
         val listener = object : WebSocket.Listener {
             override fun onOpen(ws: WebSocket) {
-                LOG.infof("WebSocket connector %s connected to %s", connectorId, url)
+                LOG.infof("WebSocket connector %s connected to %s", connectorId, redactor.text(url))
                 connectionErrors.remove(connectorId)
                 connectorMetrics.connectionCounter("websocket", "success").increment()
                 LOG.infof(
                     "event=connector_connection component=websocket connector_id=%s connector_type=websocket direction=input outcome=success url=%s",
                     connectorId,
-                    url
+                    redactor.text(url)
                 )
                 ws.request(1)
             }
 
             override fun onText(ws: WebSocket, data: CharSequence, last: Boolean): CompletionStage<*>? {
+                if (!connectorLeaseService.owns(connectorId, fencingToken)) {
+                    connectionErrors[connectorId] = "Lease ownership lost"
+                    disconnectConnector(connectorId, releaseLease = false)
+                    return null
+                }
                 messageBuffer.append(data)
                 if (last) {
                     val msg = messageBuffer.toString()
@@ -301,7 +320,7 @@ class WebSocketConnectionManager {
                         wsMessageRouter.routeMessage(connectorId, msg)
                     } catch (e: Exception) {
                         connectorMetrics.messageCounter("websocket", "input", "failed").increment()
-                        LOG.errorf("WebSocket connector %s routing failed: %s", connectorId, e.message)
+                        LOG.errorf("WebSocket connector %s routing failed: %s", connectorId, redactor.text(e.message))
                     }
                 }
                 ws.request(1)
@@ -320,14 +339,18 @@ class WebSocketConnectionManager {
                 connectorMetrics.connectionCounter("websocket", "closed").increment()
                 // Schedule reconnect after 5s
                 Thread.sleep(5000)
-                try { connectConnector(connectorId) } catch (_: Exception) {}
+                val renewed = connectorLeaseService.acquireOrRenew(connectorId)
+                if (renewed != null) {
+                    leaseTokens[connectorId] = renewed.fencingToken
+                    try { connectConnector(connectorId, renewed.fencingToken) } catch (_: Exception) {}
+                }
                 return null
             }
 
             override fun onError(ws: WebSocket, error: Throwable) {
-                LOG.warnf("WebSocket connector %s error: %s", connectorId, error.message)
+                LOG.warnf("WebSocket connector %s error: %s", connectorId, redactor.text(error.message))
                 connections.remove(connectorId)
-                connectionErrors[connectorId] = error.message ?: "WebSocket error"
+                connectionErrors[connectorId] = redactor.text(error.message) ?: "WebSocket error"
                 connectorMetrics.connectionCounter("websocket", "failure").increment()
             }
         }
@@ -342,9 +365,9 @@ class WebSocketConnectionManager {
                 .get(15, TimeUnit.SECONDS)
             connections[connectorId] = ws
         } catch (e: Exception) {
-            connectionErrors[connectorId] = e.message ?: "Failed to connect"
+            connectionErrors[connectorId] = redactor.text(e.message) ?: "Failed to connect"
             connectorMetrics.connectionCounter("websocket", "failure").increment()
-            LOG.errorf("WebSocket connector %s failed to connect to %s: %s", connectorId, url, e.message)
+            LOG.errorf("WebSocket connector %s failed to connect to %s: %s", connectorId, redactor.text(url), redactor.text(e.message))
             throw e
         }
     }
@@ -367,10 +390,14 @@ class WebSocketConnectionManager {
 class WebSocketMessageRouter {
 
     private val LOG = Logger.getLogger(WebSocketMessageRouter::class.java)
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
 
     @Inject
     lateinit var runQueue: PipelineRunQueue
+
+
+    @Inject
+    lateinit var secretReferenceResolver: ConnectorSecretReferenceResolver
 
     @PersistenceContext
     lateinit var em: EntityManager
@@ -411,7 +438,7 @@ class WebSocketMessageRouter {
             @Suppress("UNCHECKED_CAST")
             objectMapper.readValue(raw, Map::class.java) as Map<String, Any?>
         } catch (_: Exception) { emptyMap() }
-        return connector to config
+        return connector to secretReferenceResolver.resolve(connector, config)
     }
 
     @Transactional

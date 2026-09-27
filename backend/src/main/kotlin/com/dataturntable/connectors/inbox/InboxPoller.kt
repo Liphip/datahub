@@ -107,10 +107,11 @@ class InboxPoller {
         else -> throw IllegalArgumentException("${connector.connectorType} is not an inbox connector")
     }
 
-    fun poll(connectorId: UUID): PollResult {
+    /** [owns]: false once another instance took over the connector (lease fencing); the poll stops. */
+    fun poll(connectorId: UUID, owns: () -> Boolean = { true }): PollResult {
         val (connector, config) = QuarkusTransaction.requiringNew().call {
             val c = em.find(Connector::class.java, connectorId) ?: return@call null
-            c to connectorRuntime.decryptConfig(c)
+            c to connectorRuntime.resolveRuntimeConfig(c)
         } ?: return PollResult(0, 0, 0, 0, 0)
         if (!connector.isActive) return PollResult(0, 0, 0, 0, 0)
         // Without a pipeline the items stay where they are.
@@ -125,6 +126,7 @@ class InboxPoller {
             val batch = items.take(maxItems)
             val ledger = ledgerFor(connectorId, batch.map { it.key })
             for (item in batch) {
+                if (!owns()) break
                 val row = ledger[item.key]
                 when (row?.status) {
                     "DONE", "FAILED" -> { skipped++; continue }

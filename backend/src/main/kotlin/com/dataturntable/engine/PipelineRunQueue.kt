@@ -165,11 +165,16 @@ class PipelineRunQueue {
 
     private fun createRun(runId: UUID, pipelineId: UUID, triggerType: TriggerType, retryOfRunId: UUID?, queuedAt: Instant) {
         QuarkusTransaction.requiringNew().run {
+            // Pinned to the current version: the run executes this graph even if the pipeline
+            // is edited while it waits in the queue.
+            val versionId = em.createQuery(
+                "SELECT v.id FROM PipelineVersion v WHERE v.pipeline.id = :p ORDER BY v.version DESC", UUID::class.java
+            ).setParameter("p", pipelineId).setMaxResults(1).resultList.firstOrNull()
             em.createNativeQuery(
-                "INSERT INTO pipeline_runs (id, pipeline_id, status, trigger_type, started_at, queued_at, retry_of_run_id) " +
-                    "VALUES (?1, ?2, 'PENDING', ?3, ?4, ?4, ?5) ON CONFLICT DO NOTHING"
+                "INSERT INTO pipeline_runs (id, pipeline_id, status, trigger_type, started_at, queued_at, retry_of_run_id, pipeline_version_id) " +
+                    "VALUES (?1, ?2, 'PENDING', ?3, ?4, ?4, ?5, ?6) ON CONFLICT DO NOTHING"
             ).setParameter(1, runId).setParameter(2, pipelineId).setParameter(3, triggerType.name)
-                .setParameter(4, java.sql.Timestamp.from(queuedAt)).setParameter(5, retryOfRunId)
+                .setParameter(4, java.sql.Timestamp.from(queuedAt)).setParameter(5, retryOfRunId).setParameter(6, versionId)
                 .executeUpdate()
         }
     }

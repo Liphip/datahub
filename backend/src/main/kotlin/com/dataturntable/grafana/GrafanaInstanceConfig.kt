@@ -14,9 +14,9 @@ class GrafanaInstanceConfig(
     @ConfigProperty(name = "dataturntable.grafana.dashboard.base-url", defaultValue = "")
     private val dashboardBaseUrl: String,
     @ConfigProperty(name = "dataturntable.grafana.dashboard.admin-user", defaultValue = "")
-    private val dashboardAdminUser: String,
+    private val dashboardAdminUser: Optional<String>,
     @ConfigProperty(name = "dataturntable.grafana.dashboard.admin-password", defaultValue = "")
-    private val dashboardAdminPassword: String,
+    private val dashboardAdminPassword: Optional<String>,
     @ConfigProperty(name = "dataturntable.grafana.dashboard.datasource.host", defaultValue = "")
     private val dashboardDatasourceHost: Optional<String>,
     @ConfigProperty(name = "dataturntable.grafana.dashboard.datasource.port", defaultValue = "5432")
@@ -34,9 +34,9 @@ class GrafanaInstanceConfig(
     @ConfigProperty(name = "dataturntable.grafana.monitoring.base-url", defaultValue = "")
     private val monitoringBaseUrl: String,
     @ConfigProperty(name = "dataturntable.grafana.monitoring.admin-user", defaultValue = "")
-    private val monitoringAdminUser: String,
+    private val monitoringAdminUser: Optional<String>,
     @ConfigProperty(name = "dataturntable.grafana.monitoring.admin-password", defaultValue = "")
-    private val monitoringAdminPassword: String,
+    private val monitoringAdminPassword: Optional<String>,
 ) {
 
     /**
@@ -82,8 +82,8 @@ class GrafanaInstanceConfig(
             GrafanaTargetInstance.DASHBOARD -> Target(
                 dashboardEnabled,
                 dashboardBaseUrl.trimEnd('/'),
-                dashboardAdminUser,
-                dashboardAdminPassword,
+                dashboardAdminUser.orElse(""),
+                dashboardAdminPassword.orElse(""),
                 DatasourceTarget(
                     dashboardDatasourceHost.orElse(""),
                     dashboardDatasourcePort,
@@ -96,8 +96,8 @@ class GrafanaInstanceConfig(
             GrafanaTargetInstance.MONITORING -> Target(
                 monitoringEnabled,
                 monitoringBaseUrl.trimEnd('/'),
-                monitoringAdminUser,
-                monitoringAdminPassword,
+                monitoringAdminUser.orElse(""),
+                monitoringAdminPassword.orElse(""),
                 null
             )
         }

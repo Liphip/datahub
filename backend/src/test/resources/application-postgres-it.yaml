@@ -1,0 +1,12 @@
+# The base configuration deliberately has no JDBC URL outside the production profile, so this
+# profile lets Quarkus Dev Services provide the ephemeral PostgreSQL connection before Flyway runs.
+quarkus:
+  datasource:
+    db-kind: postgresql
+    devservices:
+      enabled: true
+  hibernate-orm:
+    database:
+      generation: validate
+    log:
+      sql: false

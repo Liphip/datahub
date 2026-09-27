@@ -1,4 +1,4 @@
-import { Component, useEffect, useState } from 'react';
+import { Component, lazy, Suspense, useEffect, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
 import { useAuthStore } from './stores/auth';
@@ -61,18 +61,18 @@ class ErrorBoundary extends Component<
 }
 import Login from './pages/Login';
 import Setup from './pages/Setup';
-import Dashboard from './pages/Dashboard';
-import Modules from './pages/Modules';
-import ModuleEditor from './pages/ModuleEditor';
-import Pipelines from './pages/Pipelines';
-import PipelineEditor from './pages/PipelineEditor';
-import Connectors from './pages/Connectors';
-import Tenants from './pages/Tenants';
-import Users from './pages/Users';
-import Alerts from './pages/Alerts';
-import Metadata from './pages/Metadata';
-import Data from './pages/Data';
-import RunDetail from './pages/RunDetail';
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Modules = lazy(() => import('./pages/Modules'));
+const ModuleEditor = lazy(() => import('./pages/ModuleEditor'));
+const Pipelines = lazy(() => import('./pages/Pipelines'));
+const PipelineEditor = lazy(() => import('./pages/PipelineEditor'));
+const Connectors = lazy(() => import('./pages/Connectors'));
+const Tenants = lazy(() => import('./pages/Tenants'));
+const Users = lazy(() => import('./pages/Users'));
+const Alerts = lazy(() => import('./pages/Alerts'));
+const Metadata = lazy(() => import('./pages/Metadata'));
+const Data = lazy(() => import('./pages/Data'));
+const RunDetail = lazy(() => import('./pages/RunDetail'));
 import Layout from './components/Layout';
 
 /**
@@ -167,6 +167,7 @@ function App() {
           element={
             <ProtectedRoute>
               <Layout>
+                <Suspense fallback={<div className="min-h-[16rem] flex items-center justify-center text-sm text-slate-500">Loading workspace…</div>}>
                 <Routes>
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/modules" element={<Modules />} />
@@ -181,6 +182,7 @@ function App() {
                   <Route path="/data" element={<Data />} />
                   <Route path="/metadata" element={<Metadata />} />
                 </Routes>
+                </Suspense>
               </Layout>
             </ProtectedRoute>
           }

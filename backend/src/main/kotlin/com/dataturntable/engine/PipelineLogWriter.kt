@@ -55,15 +55,23 @@ class PipelineLogWriter {
         queuedAt: Instant? = null,
         retryOfRunId: UUID? = null,
         source: RecordSource? = null,
+        /** Version the record was queued for; null: the pipeline's latest version. */
+        pipelineVersionId: UUID? = null,
     ): Boolean {
         if (pipelineId != null) {
+            // The run executes the graph of this immutable version, even if the pipeline was
+            // edited while the record waited in the queue.
+            val versionId = pipelineVersionId ?: em.createQuery(
+                "SELECT v.id FROM PipelineVersion v WHERE v.pipeline.id = :p ORDER BY v.version DESC", UUID::class.java
+            ).setParameter("p", pipelineId).setMaxResults(1).resultList.firstOrNull()
             em.createNativeQuery(
-                "INSERT INTO pipeline_runs (id, pipeline_id, status, trigger_type, started_at, queued_at, retry_of_run_id) " +
-                    "VALUES (?1, ?2, 'PENDING', ?3, ?4, ?5, ?6) ON CONFLICT DO NOTHING"
+                "INSERT INTO pipeline_runs (id, pipeline_id, status, trigger_type, started_at, queued_at, retry_of_run_id, pipeline_version_id) " +
+                    "VALUES (?1, ?2, 'PENDING', ?3, ?4, ?5, ?6, ?7) ON CONFLICT DO NOTHING"
             ).setParameter(1, runId).setParameter(2, pipelineId).setParameter(3, triggerType.name)
                 .setParameter(4, java.sql.Timestamp.from(Instant.now()))
                 .setParameter(5, queuedAt?.let { java.sql.Timestamp.from(it) })
                 .setParameter(6, retryOfRunId)
+                .setParameter(7, versionId)
                 .executeUpdate()
         }
         val run = em.find(PipelineRun::class.java, runId, LockModeType.PESSIMISTIC_WRITE) ?: return false
@@ -93,8 +101,8 @@ class PipelineLogWriter {
      */
     fun markSuccess(runId: UUID, metrics: String?) {
         val run = em.find(PipelineRun::class.java, runId) ?: return
-        run.status = PipelineRunStatus.SUCCESS
-        run.completedAt = Instant.now()
+        if (com.dataturntable.pipeline.PipelineRunStateMachine.terminal(run.status)) return
+        run.markSuccess()
         run.metrics = metrics
         em.merge(run)
     }
@@ -105,8 +113,8 @@ class PipelineLogWriter {
      */
     fun markFailed(runId: UUID, errorMessage: String?, metrics: String?, input: String? = null) {
         val run = em.find(PipelineRun::class.java, runId) ?: return
-        run.status = PipelineRunStatus.FAILED
-        run.completedAt = Instant.now()
+        if (com.dataturntable.pipeline.PipelineRunStateMachine.terminal(run.status)) return
+        run.markFailed(errorMessage)
         run.errorMessage = errorMessage
         run.metrics = metrics
         run.inputPayload = input

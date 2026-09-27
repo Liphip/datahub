@@ -364,7 +364,7 @@ export default function PipelineEditor() {
           id === 'new' ? Promise.resolve(null) : api.getPipeline(id),
           api.getModules(tenantId),
           api.getConnectors(tenantId),
-          api.getAlertChannels(tenantId).catch(() => [] as AlertChannel[]),
+          api.getAlertChannels(tenantId, 0, 200).then((page) => page.items).catch(() => [] as AlertChannel[]),
           api.getMetadataTypes(tenantId).catch(() => [] as MetadataType[]),
         ]);
 

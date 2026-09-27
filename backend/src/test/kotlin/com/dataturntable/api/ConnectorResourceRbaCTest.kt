@@ -5,8 +5,6 @@ import io.restassured.RestAssured
 import org.junit.jupiter.api.Test
 
 @QuarkusTest
-// BUG: Tests omit the connector API base path
-// Details: ConnectorResource is mapped under /api/internal/v1/connectors, but these requests use /connectors. They currently receive 404 before authentication is evaluated, so the 403 assertions do not test RBAC.
 class ConnectorResourceRbaCTest {
 
     @Test

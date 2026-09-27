@@ -1,8 +1,8 @@
 import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertHistory, DataSummaryResponse, DataBlob, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential, MetadataType, MetadataTemplate, MetadataObjectSummary, MetadataObjectDetail, SaveMetadataMapping } from '../types';
+import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertHistory, DataSummaryResponse, DataBlob, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential, MetadataType, MetadataTemplate, SecretReference, AuthorizationExplanation, MetadataObjectSummary, MetadataObjectDetail, SaveMetadataMapping } from '../types';
 
 /** Error shape returned by backend endpoints (`{ error, missing }` JSON bodies). */
-export type ApiError = AxiosError<{ error?: string; missing?: string[] }>;
+export type ApiError = AxiosError<{ error?: string; message?: string; code?: string; details?: { missing?: string[] } & Record<string, unknown> }>;
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 const PUBLIC_API_BASE_URL = import.meta.env.VITE_PUBLIC_API_URL || '/api/v1';
@@ -376,6 +376,12 @@ class ApiService {
     await this.client.delete(`/tenants/${tenantId}/memberships/${membershipId}`);
   }
 
+  /** Explains why a user is or is not granted an ability within one tenant. */
+  async explainAuthorization(userId: string, tenantId: string, ability: string): Promise<AuthorizationExplanation> {
+    const response = await this.client.get<AuthorizationExplanation>('/authorization/explain', { params: { userId, tenantId, ability } });
+    return response.data;
+  }
+
   // Modules
   /**
    * Retrieves or enumerates the requested state.
@@ -636,8 +642,10 @@ class ApiService {
   /**
    * Retrieves or enumerates the requested state.
    */
-  async getAlertChannels(tenantId: string): Promise<AlertChannel[]> {
-    const response = await this.publicClient.get<AlertChannel[]>(`/alerts/channels?tenantId=${tenantId}`);
+  async getAlertChannels(tenantId: string, page = 0, limit = 50): Promise<{ items: AlertChannel[]; page: number; limit: number; hasMore: boolean }> {
+    const response = await this.publicClient.get<{ items: AlertChannel[]; page: number; limit: number; hasMore: boolean }>(`/alerts/channels`, {
+      params: { tenantId, page, limit },
+    });
     return response.data;
   }
 
@@ -672,11 +680,12 @@ class ApiService {
   /**
    * Retrieves or enumerates the requested state.
    */
-  async getAlertHistory(tenantId: string, limit?: number): Promise<AlertHistory[]> {
+  async getAlertHistory(tenantId: string, limit = 20, page = 0): Promise<{ items: AlertHistory[]; page: number; limit: number; hasMore: boolean }> {
     const params = new URLSearchParams({ tenantId });
-    if (limit) params.append('limit', limit.toString());
-    const response = await this.publicClient.get<AlertHistory[]>(`/alerts/history?${params}`);
-    return response.data;
+    params.append('limit', limit.toString());
+    params.append('page', page.toString());
+    const response = await this.publicClient.get<{ items: AlertHistory[] }>(`/alerts/history?${params}`);
+    return response.data as { items: AlertHistory[]; page: number; limit: number; hasMore: boolean };
   }
 
   // Data
@@ -1011,9 +1020,11 @@ class ApiService {
   /**
    * Retrieves or enumerates the requested state.
    */
-  async getDataBlobs(tenantId: string): Promise<DataBlob[]> {
-    const response = await this.publicClient.get<{ blobs: DataBlob[] }>(`/data/${tenantId}/blobs`);
-    return response.data.blobs;
+  async getDataBlobs(tenantId: string, page = 0, limit = 50): Promise<{ blobs: DataBlob[]; page: number; limit: number; hasMore: boolean }> {
+    const response = await this.publicClient.get<{ blobs: DataBlob[]; page: number; limit: number; hasMore: boolean }>(`/data/${tenantId}/blobs`, {
+      params: { page, limit },
+    });
+    return response.data;
   }
 
   /**
@@ -1033,8 +1044,11 @@ class ApiService {
   /**
    * Retrieves or enumerates the requested state.
    */
-  getDataBlobUrl(tenantId: string, blobId: string): string {
-    return `${PUBLIC_API_BASE_URL}/data/${tenantId}/blobs/${encodeURIComponent(blobId)}/download`;
+  async downloadDataBlob(tenantId: string, blobId: string): Promise<Blob> {
+    const response = await this.publicClient.get(`/data/${tenantId}/blobs/${encodeURIComponent(blobId)}/download`, {
+      responseType: 'blob',
+    });
+    return response.data as Blob;
   }
 
   /**
@@ -1042,6 +1056,16 @@ class ApiService {
    */
   async deleteDataBlob(tenantId: string, blobId: string): Promise<void> {
     await this.publicClient.delete(`/data/${tenantId}/blobs/${encodeURIComponent(blobId)}`);
+  }
+
+  // ── Secrets (write-only values; the API returns references) ─────────────────
+
+  async createSecret(tenantId: string, name: string, value: string): Promise<SecretReference> {
+    return (await this.client.post<SecretReference>('/secrets', { name, value }, { params: { tenantId } })).data;
+  }
+
+  async rotateSecret(tenantId: string, id: string, value: string): Promise<SecretReference> {
+    return (await this.client.post<SecretReference>(`/secrets/${id}/rotate`, { value }, { params: { tenantId } })).data;
   }
 
   // ── Metadata ──────────────────────────────────────────────────────────────
