@@ -1,5 +1,7 @@
 package com.dataturntable.api
 
+import com.dataturntable.connectors.inbox.INBOX_TYPES
+import com.dataturntable.connectors.inbox.InboxPoller
 import com.dataturntable.connectors.AfterCommit
 import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.Connector.Direction
@@ -57,6 +59,9 @@ class ConnectorResource {
 
     @Inject
     lateinit var mqttConnectionManager: MqttConnectionManager
+
+    @Inject
+    lateinit var inboxPoller: InboxPoller
 
     @Inject
     lateinit var afterCommit: AfterCommit
@@ -1272,6 +1277,9 @@ class ConnectorResource {
             ConnectorType.WEBSOCKET -> listOf("url")
             ConnectorType.UDP -> listOf("host", "port")
             ConnectorType.FILE -> listOf("path")
+            ConnectorType.FTP -> listOf("host", "path")
+            ConnectorType.SFTP -> listOf("host", "username", "path")
+            ConnectorType.EMAIL -> listOf("host", "username")
             ConnectorType.CUSTOM -> emptyList()
             null -> emptyList()
         }
@@ -1285,6 +1293,27 @@ class ConnectorResource {
             return Response.status(400).entity(
                 mapOf("error" to "Connector config missing required fields", "missing" to missing)
             ).build()
+        }
+
+        // Inboxes: log in and list what is waiting, without changing anything.
+        if (connector.connectorType in INBOX_TYPES && connector.direction == Direction.INPUT) {
+            val (ok, message) = try {
+                inboxPoller.open(connector, typedConfig).use { source ->
+                    val items = source.list()
+                    true to "Connected — ${items.size} item${if (items.size == 1) "" else "s"} waiting" +
+                        (items.firstOrNull()?.let { ", oldest: ${it.name}" } ?: "")
+                }
+            } catch (e: Exception) {
+                false to (e.message ?: e.javaClass.simpleName)
+            }
+            return Response.ok(mapOf(
+                "ok"            to ok,
+                "message"       to message,
+                "connectorId"   to connector.id,
+                "connectorType" to connector.connectorType?.name,
+                "direction"     to connector.direction?.name,
+                "isActive"      to connector.isActive,
+            )).build()
         }
 
         // For MQTT connectors, perform a real broker connectivity check
@@ -1308,6 +1337,39 @@ class ConnectorResource {
             "direction"     to connector.direction?.name,
             "isActive"      to connector.isActive,
         )).build()
+    }
+
+    // ── Inbox ledger ──────────────────────────────────────────────────────────
+
+    /** Items an inbox connector has read, newest first. */
+    @GET
+    @Path("/{id}/inbox")
+    fun inboxItems(@PathParam("id") id: String, @QueryParam("limit") @DefaultValue("50") limit: Int): Response {
+        val connector = parseUuid(id)?.let { em.find(Connector::class.java, it) }
+            ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
+        if (!canReadConnector(getCurrentUser(), connector.tenant?.id.toString())) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        return Response.ok(inboxPoller.recent(connector.id!!, limit.coerceIn(1, 500)).map {
+            mapOf("id" to it.id, "name" to it.name, "size" to it.size, "status" to it.status, "chunks" to it.chunks,
+                "records" to it.records, "error" to it.error, "firstSeenAt" to it.firstSeenAt, "queuedAt" to it.queuedAt,
+                "acknowledgedAt" to it.acknowledgedAt)
+        }).build()
+    }
+
+    /** Reads a FAILED item again on the next poll, e.g. after the parse settings were fixed. */
+    @POST
+    @Path("/{id}/inbox/{itemId}/retry")
+    @Consumes(MediaType.WILDCARD)
+    fun retryInboxItem(@PathParam("id") id: String, @PathParam("itemId") itemId: String): Response {
+        val connector = parseUuid(id)?.let { em.find(Connector::class.java, it) }
+            ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
+        if (!canWriteConnector(getCurrentUser(), connector.tenant?.id.toString())) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        val item = parseUuid(itemId) ?: return Response.status(400).entity(mapOf("error" to "Invalid item id")).build()
+        return if (inboxPoller.retry(connector.id!!, item)) Response.noContent().build()
+        else Response.status(409).entity(mapOf("error" to "Only failed items can be retried")).build()
     }
 
     // ── Status endpoints ──────────────────────────────────────────────────────

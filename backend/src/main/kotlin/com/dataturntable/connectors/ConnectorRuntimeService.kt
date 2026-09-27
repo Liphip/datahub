@@ -9,7 +9,9 @@ import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
+import com.dataturntable.connectors.inbox.FileSandbox
 import jakarta.inject.Inject
+import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.jboss.logging.Logger
 import java.net.URI
 import java.net.http.HttpClient
@@ -45,6 +47,9 @@ import java.time.Duration
  * Defines the class `ConnectorRuntimeService`, the contract implemented by this source unit.
  */
 class ConnectorRuntimeService {
+
+    @ConfigProperty(name = "dataturntable.connectors.file.base-dir", defaultValue = "/data/files")
+    lateinit var fileBaseDir: String
 
     private val LOG = Logger.getLogger(ConnectorRuntimeService::class.java)
     private val objectMapper = ObjectMapper()
@@ -86,7 +91,11 @@ class ConnectorRuntimeService {
         return try {
             val result = when (connector.connectorType) {
                 ConnectorType.REST     -> fetchRestInput(decryptedConfig)
-                ConnectorType.FILE     -> fetchFileInput(decryptedConfig)
+                // Inboxes are read by InboxPoller, which acknowledges items at the source.
+                ConnectorType.FILE,
+                ConnectorType.FTP,
+                ConnectorType.SFTP,
+                ConnectorType.EMAIL    -> null
                 // Push-based connectors: data was already delivered by the ingest trigger
                 ConnectorType.MQTT,
                 ConnectorType.WEBSOCKET,
@@ -143,6 +152,9 @@ class ConnectorRuntimeService {
                 ConnectorType.MQTT      -> deliverMqttOutput(decryptedConfig, data, connector)
                 ConnectorType.WEBSOCKET -> deliverWebSocketOutput(decryptedConfig, data, connector)
                 ConnectorType.UDP       -> deliverUdpOutput(decryptedConfig, data)
+                ConnectorType.FTP,
+                ConnectorType.SFTP,
+                ConnectorType.EMAIL     -> throw IllegalArgumentException("${connector.connectorType} connectors are input only")
                 ConnectorType.CUSTOM    -> LOG.infof("CUSTOM connector %s — no-op deliver", connector.id)
                 null                    -> Unit
             }
@@ -302,27 +314,15 @@ class ConnectorRuntimeService {
     // ── FILE ─────────────────────────────────────────────────────────────────
 
     /**
-     * Implements `fetchFileInput` for this source unit.
-     */
-    private fun fetchFileInput(config: Map<String, Any?>): Any? {
-        val path = config["path"]?.toString() ?: return null
-        return try {
-            val content = java.io.File(path).readText()
-            parseResponseBody(content)
-        } catch (e: Exception) {
-            LOG.errorf("FILE INPUT read failed at %s: %s", path, e.message)
-            throw RuntimeException("FILE connector read failed: ${e.message}", e)
-        }
-    }
-
-    /**
      * Implements `deliverFileOutput` for this source unit.
      */
     private fun deliverFileOutput(config: Map<String, Any?>, data: Any?) {
         val path = config["path"]?.toString() ?: return
         val body = if (data != null) objectMapper.writeValueAsString(data) else "{}"
         try {
-            java.io.File(path).writeText(body)
+            val file = FileSandbox(fileBaseDir).resolve(path)
+            java.nio.file.Files.createDirectories(file.parent)
+            java.nio.file.Files.writeString(file, body)
             LOG.infof("FILE OUTPUT wrote %d bytes to %s", body.length, path)
         } catch (e: Exception) {
             LOG.errorf("FILE OUTPUT write failed at %s: %s", path, e.message)

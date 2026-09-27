@@ -117,7 +117,7 @@ class Connector : PanacheBase() {
      * Defines the enum class `ConnectorType`, the contract implemented by this source unit.
      */
     enum class ConnectorType {
-        MQTT, REST, WEBSOCKET, UDP, FILE, CUSTOM
+        MQTT, REST, WEBSOCKET, UDP, FILE, FTP, SFTP, EMAIL, CUSTOM
     }
     
     /**

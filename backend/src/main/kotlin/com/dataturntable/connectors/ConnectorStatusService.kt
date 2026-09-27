@@ -40,7 +40,10 @@ class ConnectorStatusService {
             Connector.ConnectorType.MQTT      -> buildMqttChecks(connector, id, checks)
             Connector.ConnectorType.WEBSOCKET -> buildWebSocketChecks(connector, id, checks)
             Connector.ConnectorType.REST      -> buildRestChecks(connector, id, checks)
-            Connector.ConnectorType.FILE      -> buildFileChecks(connector, id, checks)
+            Connector.ConnectorType.FILE,
+            Connector.ConnectorType.FTP,
+            Connector.ConnectorType.SFTP,
+            Connector.ConnectorType.EMAIL     -> buildFileChecks(connector, id, checks)
             Connector.ConnectorType.UDP       -> buildUdpChecks(connector, checks)
             Connector.ConnectorType.CUSTOM    -> checks += ok("Custom handler", "Custom connector configured")
             null -> checks += unknown("Configuration", "Connector type not set")

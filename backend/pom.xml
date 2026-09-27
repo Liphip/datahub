@@ -113,6 +113,22 @@
             <artifactId>quarkus-mailer</artifactId>
         </dependency>
         
+        <!-- Pull inputs: FTP/FTPS, SFTP and IMAP inboxes (Apache-2.0, Apache-2.0, EPL-2.0/BSD-3) -->
+        <dependency>
+            <groupId>commons-net</groupId>
+            <artifactId>commons-net</artifactId>
+            <version>3.13.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.sshd</groupId>
+            <artifactId>sshd-sftp</artifactId>
+            <version>2.19.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.angus</groupId>
+            <artifactId>angus-mail</artifactId>
+        </dependency>
+
         <!-- Health -->
         <dependency>
             <groupId>io.quarkus</groupId>
@@ -178,6 +194,19 @@
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-test-h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Embedded servers for inbox tests -->
+        <dependency>
+            <groupId>com.icegreen</groupId>
+            <artifactId>greenmail</artifactId>
+            <version>2.1.14</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.ftpserver</groupId>
+            <artifactId>ftpserver-core</artifactId>
+            <version>1.2.1</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

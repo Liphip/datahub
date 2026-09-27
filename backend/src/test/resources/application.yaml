@@ -20,3 +20,6 @@ mp:
 dataturntable:
   ingest:
     spool-dir: target/test-spool
+  connectors:
+    file:
+      base-dir: target/test-files

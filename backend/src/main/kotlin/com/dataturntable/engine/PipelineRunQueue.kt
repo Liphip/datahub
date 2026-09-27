@@ -84,6 +84,8 @@ class PipelineRunQueue {
         partitionKey: String? = null,
         idempotencyKey: String? = null,
         persistRun: Boolean = false,
+        /** false: fail instead of spooling, for callers whose source keeps the data (pull inputs). */
+        allowSpool: Boolean = true,
     ): UUID {
         val runId = idempotencyKey?.takeIf { it.isNotBlank() }?.let { runIdFor(pipelineId, it) } ?: UUID.randomUUID()
         val queuedAt = Instant.now()
@@ -106,7 +108,7 @@ class PipelineRunQueue {
         val key = partitionKey?.takeIf { it.isNotBlank() }?.let { "$pipelineId:$it" } ?: pipelineId.toString()
         // Machine ingest never refuses because of Kafka: records go to the local spool when
         // Kafka cannot take them, and through the spool while it drains (keeps their order).
-        val spoolable = !persistRun && spoolEnabled
+        val spoolable = !persistRun && spoolEnabled && allowSpool
         if (spoolable && !spool.isEmpty()) {
             spoolOrFail(IngestSpool.Entry(key, message), null)
             return runId

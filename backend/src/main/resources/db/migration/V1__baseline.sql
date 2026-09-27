@@ -133,7 +133,7 @@ CREATE TABLE connectors (
     created_by uuid,
     polling_enabled boolean DEFAULT false NOT NULL,
     polling_interval_seconds integer DEFAULT 60,
-    CONSTRAINT connectors_connector_type_check CHECK (connector_type IN ('MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'CUSTOM')),
+    CONSTRAINT connectors_connector_type_check CHECK (connector_type IN ('MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'FTP', 'SFTP', 'EMAIL', 'CUSTOM')),
     CONSTRAINT connectors_direction_check CHECK (direction IN ('INPUT', 'OUTPUT'))
 );
 
@@ -874,6 +874,26 @@ CREATE TABLE metadata_relations (
 );
 CREATE INDEX idx_metadata_relations_from ON metadata_relations (from_object_id, relation);
 CREATE INDEX idx_metadata_relations_to ON metadata_relations (to_object_id, relation);
+
+-- Items read by pull connectors (directory, FTP, SFTP, IMAP): makes reading exactly-once
+-- although the source is changed only after the data is queued.
+CREATE TABLE connector_inbox_items (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    connector_id uuid NOT NULL REFERENCES connectors(id) ON DELETE CASCADE,
+    item_key varchar(1024) NOT NULL,
+    name varchar(1024),
+    size bigint,
+    status varchar(20) NOT NULL,
+    chunks integer NOT NULL DEFAULT 0,
+    records integer,
+    error text,
+    first_seen_at timestamptz NOT NULL DEFAULT now(),
+    queued_at timestamptz,
+    acknowledged_at timestamptz,
+    CONSTRAINT connector_inbox_items_status_check CHECK (status IN ('QUEUED', 'DONE', 'FAILED')),
+    CONSTRAINT connector_inbox_items_unique UNIQUE (connector_id, item_key)
+);
+CREATE INDEX idx_connector_inbox_items_recent ON connector_inbox_items (connector_id, first_seen_at DESC);
 
 INSERT INTO roles (id, tenant_id, name, description, abilities, is_default, is_system) VALUES
 ('00000000-0000-0000-0000-000000000001', NULL, 'Superadmin', 'Full access to every tenant', '["*"]', FALSE, TRUE),

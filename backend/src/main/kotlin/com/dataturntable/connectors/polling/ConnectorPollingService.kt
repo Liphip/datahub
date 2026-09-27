@@ -5,11 +5,14 @@ import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.ConnectorLeaseService
 import com.dataturntable.connectors.ConnectorMetrics
 import com.dataturntable.connectors.ConnectorRuntimeService
+import com.dataturntable.connectors.inbox.INBOX_TYPES
+import com.dataturntable.connectors.inbox.InboxPoller
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.security.EncryptionUtils
+import com.dataturntable.engine.PipelineDirectory
 import com.dataturntable.engine.PipelineRunQueue
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.runtime.StartupEvent
@@ -32,7 +35,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * ConnectorPollingService schedules periodic fetching for INPUT connectors that have
- * pollingEnabled=true. Only REST and FILE connectors support polling.
+ * pollingEnabled=true. REST connectors and inboxes (FILE, FTP, SFTP, EMAIL) support polling.
  *
  * Push-based connectors (MQTT, WebSocket, UDP) never poll — they receive data via their
  * respective connection managers and must not have pollingEnabled=true.
@@ -69,12 +72,16 @@ class ConnectorPollingService {
     @Inject
     lateinit var connectorLeaseService: ConnectorLeaseService
 
+    @Inject
+    lateinit var inboxPoller: InboxPoller
+
     @ConfigProperty(name = "dataturntable.connectors.lease.reconcile-interval-seconds", defaultValue = "10")
     var leaseReconcileIntervalSeconds: Long = 20
 
     private val scheduler: ScheduledExecutorService = Executors.newScheduledThreadPool(4)
     private val scheduledTasks = ConcurrentHashMap<UUID, ScheduledFuture<*>>()
     private val connectorIntervals = ConcurrentHashMap<UUID, Int>()
+    private val connectorTypes = ConcurrentHashMap<UUID, Connector.ConnectorType>()
     private var reconcileTask: ScheduledFuture<*>? = null
 
     // ── Poll run tracking (populated by executePoll wrapper) ─────────────────
@@ -83,7 +90,7 @@ class ConnectorPollingService {
     private val lastRunErrors   = ConcurrentHashMap<UUID, String>()
 
     /** Connector types that support polling. Push-based connectors are excluded. */
-    val POLLABLE_TYPES = setOf(Connector.ConnectorType.REST, Connector.ConnectorType.FILE)
+    val POLLABLE_TYPES = setOf(Connector.ConnectorType.REST) + INBOX_TYPES
 
     // ── Status info ───────────────────────────────────────────────────────────
 
@@ -179,6 +186,7 @@ class ConnectorPollingService {
     fun cancelConnector(connectorId: UUID, releaseLease: Boolean = true) {
         scheduledTasks.remove(connectorId)?.cancel(false)
         connectorIntervals.remove(connectorId)
+        connectorTypes.remove(connectorId)
         LOG.infof("Cancelled polling for connector %s", connectorId)
         if (releaseLease) {
             connectorLeaseService.release(connectorId)
@@ -228,6 +236,7 @@ class ConnectorPollingService {
 
         // Cancel existing schedule
         scheduledTasks.remove(connectorId)?.cancel(false)
+        connectorTypes[connectorId] = connector.connectorType ?: return
 
         val future = scheduler.scheduleAtFixedRate(
             { executePoll(connectorId) },
@@ -246,7 +255,8 @@ class ConnectorPollingService {
      */
     private fun executePoll(connectorId: UUID) {
         try {
-            pollExecutor.executePoll(connectorId)
+            // Inboxes run outside one long transaction: every item has its own ledger steps.
+            if (connectorTypes[connectorId] in INBOX_TYPES) inboxPoller.poll(connectorId) else pollExecutor.executePoll(connectorId)
             lastRunTimes[connectorId] = Instant.now()
             lastRunSuccesses[connectorId] = true
             lastRunErrors.remove(connectorId)
@@ -276,6 +286,9 @@ class PollTransactionExecutor {
 
     @Inject
     lateinit var runQueue: PipelineRunQueue
+
+    @Inject
+    lateinit var directory: PipelineDirectory
 
     @PersistenceContext
     lateinit var em: EntityManager
@@ -313,6 +326,27 @@ class PollTransactionExecutor {
         for (pipelineId in pipelines) {
             val pipeline = em.find(Pipeline::class.java, pipelineId) ?: continue
             if (!pipeline.isActive) continue
+
+            // With deduplicateBy on the IMPORT node, every record of the response is its own
+            // run keyed by its fields: records the source returns again are not processed twice.
+            val dedup = directory.get(pipelineId)?.deduplicateBy.orEmpty()
+            val records = (data as? List<*>)?.takeIf { dedup.isNotEmpty() }
+            if (records != null) {
+                var queued = 0
+                records.forEach { record ->
+                    val key = PipelineDirectory.recordKey(record, dedup)
+                    runQueue.enqueue(
+                        pipelineId = pipeline.id!!,
+                        triggerType = TriggerType.SCHEDULED,
+                        data = mapOf("_connectorId" to connectorId.toString(), "_triggerType" to "POLL", "payload" to record),
+                        partitionKey = "poll:$connectorId",
+                        idempotencyKey = key?.let { "poll|$connectorId|$it" },
+                    )
+                    queued++
+                }
+                LOG.debugf("Poll connector %s queued %d records for pipeline %s", connectorId, queued, pipeline.id)
+                continue
+            }
 
             val runId = runQueue.enqueue(
                 pipelineId = pipeline.id!!,
