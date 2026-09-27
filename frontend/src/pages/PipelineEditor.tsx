@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
 import { useAuthStore } from '../stores/auth';
 import api, { type ApiError } from '../services/api';
-import type { AlertChannel, Pipeline, CodeModule, Connector, ModuleVersion, PipelineRun } from '../types';
+import type { AlertChannel, Pipeline, CodeModule, Connector, EnrichConfig, MetadataType, ModuleVersion, PipelineRun, SaveMetadataMapping } from '../types';
+import { EnrichForm, SaveMetadataForm } from '../components/MetadataNodeForms';
+import { DEFAULT_ENRICH, DEFAULT_SAVE_METADATA, validateMetadataNode } from '../lib/metadataNodes';
 import AlertRuleForm from '../components/AlertRuleForm';
 import { DEFAULT_RULES, RULE_TYPES, validateAlertRule, type AlertRuleConfig } from '../lib/alertRules';
 import {
@@ -63,10 +65,14 @@ interface PipelineNodeData extends Record<string, unknown> {
   passThrough?: boolean;
   /** IMPORT nodes: fields that identify a record, so resent data is processed once */
   deduplicateBy?: string[];
+  /** PROCESSING nodes: built-in metadata enrichment instead of a Python module */
+  enrich?: EnrichConfig;
+  /** EXPORT nodes: records create or update metadata objects instead of going to a connector */
+  saveMetadata?: SaveMetadataMapping;
 }
 
-/** Nodes that run a Python module (as opposed to a built-in rule or pass-through). */
-const usesModule = (d: PipelineNodeData) => !d.alertRule && !d.passThrough;
+/** Nodes that run a Python module (as opposed to a built-in step or pass-through). */
+const usesModule = (d: PipelineNodeData) => !d.alertRule && !d.passThrough && !d.enrich && !d.saveMetadata;
 
 /**
  * Defines the type `ModuleVersionOption`, the contract implemented by this source unit.
@@ -236,6 +242,8 @@ function graphToFlow(
       alertRule: raw.alertRule as AlertRuleConfig | undefined,
       passThrough: raw.type === 'IMPORT' && !raw.moduleVersionId,
       deduplicateBy: Array.isArray(raw.deduplicateBy) ? (raw.deduplicateBy as string[]) : undefined,
+      enrich: raw.enrich as EnrichConfig | undefined,
+      saveMetadata: raw.saveMetadata as SaveMetadataMapping | undefined,
     } satisfies PipelineNodeData,
   }));
 
@@ -266,11 +274,13 @@ function flowToGraph(
         label: d.label,
         moduleId: usesModule(d) ? d.moduleId : undefined,
         moduleVersionId: usesModule(d) ? d.moduleVersionId : undefined,
-        connectorId: d.connectorId,
         mqttTopic: d.mqttTopic,
         alertChannel: d.alertChannel,
         alertRule: d.alertRule,
         deduplicateBy: d.nodeType === 'IMPORT' && d.deduplicateBy?.length ? d.deduplicateBy : undefined,
+        enrich: d.nodeType === 'PROCESSING' ? d.enrich : undefined,
+        saveMetadata: d.nodeType === 'EXPORT' ? d.saveMetadata : undefined,
+        connectorId: d.saveMetadata ? undefined : d.connectorId,
         position: n.position,
       };
     }),
@@ -309,6 +319,7 @@ export default function PipelineEditor() {
   const [moduleOptions, setModuleOptions] = useState<ModuleOption[]>([]);
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [alertChannels, setAlertChannels] = useState<AlertChannel[]>([]);
+  const [metadataTypes, setMetadataTypes] = useState<MetadataType[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
@@ -349,11 +360,12 @@ export default function PipelineEditor() {
     const fetchData = async () => {
       if (!id || !tenantId) { setLoading(false); return; }
       try {
-        const [pipelineData, modulesData, connectorsData, alertChannelsData] = await Promise.all([
+        const [pipelineData, modulesData, connectorsData, alertChannelsData, metadataTypesData] = await Promise.all([
           id === 'new' ? Promise.resolve(null) : api.getPipeline(id),
           api.getModules(tenantId),
           api.getConnectors(tenantId),
           api.getAlertChannels(tenantId).catch(() => [] as AlertChannel[]),
+          api.getMetadataTypes(tenantId).catch(() => [] as MetadataType[]),
         ]);
 
         const versionsByModule = await Promise.all(
@@ -371,6 +383,7 @@ export default function PipelineEditor() {
         setModuleVersionOptions(versionsByModule.flat());
         setConnectors(connectorsData);
         setAlertChannels(alertChannelsData);
+        setMetadataTypes(metadataTypesData);
 
         if (pipelineData) {
           setPipeline(pipelineData);
@@ -484,6 +497,11 @@ export default function PipelineEditor() {
    */
   const handleSave = async () => {
     if (!tenantId || !name || !canWritePipelines) return;
+    const invalidMetadataNode = nodes.find((n) => validateMetadataNode(n.data.enrich, n.data.saveMetadata));
+    if (invalidMetadataNode) {
+      showToast(`${invalidMetadataNode.data.label}: ${validateMetadataNode(invalidMetadataNode.data.enrich, invalidMetadataNode.data.saveMetadata)}`, 'error');
+      return;
+    }
     const invalidRuleNode = nodes.find((n) => n.data.alertRule && validateAlertRule(n.data.alertRule));
     if (invalidRuleNode) {
       showToast(`${invalidRuleNode.data.label}: ${validateAlertRule(invalidRuleNode.data.alertRule!)}`, 'error');
@@ -738,6 +756,7 @@ export default function PipelineEditor() {
               inputConnectors={inputConnectors}
               outputConnectors={outputConnectors}
               alertChannels={alertChannels}
+              metadataTypes={metadataTypes}
               canWrite={canWritePipelines}
               onChange={updateSelectedNodeData}
             />
@@ -763,6 +782,7 @@ function NodeConfigPanel({
   inputConnectors,
   outputConnectors,
   alertChannels,
+  metadataTypes,
   canWrite,
   onChange,
 }: {
@@ -773,6 +793,7 @@ function NodeConfigPanel({
   inputConnectors: Connector[];
   outputConnectors: Connector[];
   alertChannels: AlertChannel[];
+  metadataTypes: MetadataType[];
   canWrite: boolean;
   onChange: (patch: Partial<PipelineNodeData>) => void;
 }) {
@@ -834,6 +855,44 @@ function NodeConfigPanel({
         </div>
       )}
 
+      {(data.nodeType === 'PROCESSING' || data.nodeType === 'EXPORT') && (
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Step</label>
+          <div className="grid grid-cols-2 gap-1 text-xs" role="radiogroup">
+            {[
+              { builtin: false, label: 'Python module' },
+              { builtin: true, label: data.nodeType === 'PROCESSING' ? 'Enrich with metadata' : 'Save to metadata' },
+            ].map((option) => {
+              const active = Boolean(data.enrich || data.saveMetadata) === option.builtin;
+              return (
+                <button
+                  key={option.label}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  disabled={!canWrite}
+                  onClick={() => onChange(!option.builtin
+                    ? { enrich: undefined, saveMetadata: undefined }
+                    : data.nodeType === 'PROCESSING'
+                      ? { enrich: data.enrich ?? DEFAULT_ENRICH }
+                      : { saveMetadata: data.saveMetadata ?? DEFAULT_SAVE_METADATA })}
+                  className={`px-2 py-1 rounded-sm border ${active ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {data.enrich && (
+        <EnrichForm config={data.enrich} types={metadataTypes} disabled={!canWrite} onChange={(enrich) => onChange({ enrich })} />
+      )}
+      {data.saveMetadata && (
+        <SaveMetadataForm config={data.saveMetadata} types={metadataTypes} disabled={!canWrite} onChange={(saveMetadata) => onChange({ saveMetadata })} />
+      )}
+
       {data.nodeType === 'IMPORT' && (
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Processing</label>
@@ -886,7 +945,7 @@ function NodeConfigPanel({
 
       {data.nodeType === 'ALERT' && data.alertRule ? (
         <AlertRuleForm rule={data.alertRule} disabled={!canWrite} onChange={(alertRule) => onChange({ alertRule })} />
-      ) : data.passThrough ? null : (
+      ) : data.passThrough || data.enrich || data.saveMetadata ? null : (
         <>
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">
@@ -979,7 +1038,7 @@ function NodeConfigPanel({
         </div>
       )}
 
-      {data.nodeType === 'EXPORT' && (
+      {data.nodeType === 'EXPORT' && !data.saveMetadata && (
         <div className="space-y-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Output connector</label>

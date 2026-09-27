@@ -150,6 +150,31 @@ class MetadataService {
             .setParameter("t", tenantId).setParameter("k", typeKey).resultList.firstOrNull()
             ?: throw MetadataValidationException("Unknown metadata type '$typeKey'")
 
+    /**
+     * Converts values to the attribute types of the schema, so a CSV or SAP export with
+     * `"3"` or `"4,2"` stores numbers that pipelines can compute with. Blank values are null.
+     */
+    fun coerceAttributes(type: MetadataType, attributes: Map<String, Any?>): Map<String, Any?> {
+        val types = parseList(type.attributeSchema).associate { it["name"]?.toString() to it["type"]?.toString() }
+        return attributes.mapValues { (name, value) ->
+            val text = (value as? String)?.trim()
+            when {
+                value == null || text?.isEmpty() == true -> null
+                text == null -> value
+                types[name] == "number" -> (text.takeIf { '.' in it } ?: text.replace(',', '.')).let { n ->
+                    n.toLongOrNull() ?: n.toDoubleOrNull()
+                        ?: throw MetadataValidationException("Attribute '$name' must be a number, got '$text'")
+                }
+                types[name] == "boolean" -> when (text.lowercase()) {
+                    "true", "1", "yes", "ja", "x" -> true
+                    "false", "0", "no", "nein", "" -> false
+                    else -> throw MetadataValidationException("Attribute '$name' must be true or false, got '$text'")
+                }
+                else -> text
+            }
+        }
+    }
+
     fun upsert(tenantId: UUID, request: UpsertRequest): UpsertResult {
         val type = type(tenantId, request.typeKey)
         validateIdentifier(type, request.match.scheme, request.match.value)
@@ -171,7 +196,7 @@ class MetadataService {
         if (request.name != null && request.name != obj.name) { obj.name = request.name; changed = true }
 
         request.identifiers.forEach { (scheme, value) -> if (setIdentifier(tenantId, objectId, scheme, value, at, explicit)) changed = true }
-        if (request.attributes.isNotEmpty() && setAttributes(objectId, request.attributes, request.replaceAttributes, at, explicit, request.source)) changed = true
+        if (request.attributes.isNotEmpty() && setAttributes(objectId, coerceAttributes(type, request.attributes), request.replaceAttributes, at, explicit, request.source)) changed = true
         val relationSchema = parseList(type.relationSchema)
         request.relations.forEach { change ->
             val many = relationSchema.firstOrNull { it["relation"] == change.relation }?.get("many") == true

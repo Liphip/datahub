@@ -3,7 +3,7 @@
  * and the separator detected from the header line (`;` is common in German exports).
  */
 export function parseCsv(text: string): { columns: string[]; rows: Record<string, string>[] } {
-  const clean = text.replace(/^﻿/, '');
+  const clean = text.replace(/^\uFEFF/, '');
   const firstLine = clean.split(/\r?\n/, 1)[0] ?? '';
   const separator = [';', ',', '\t'].reduce((best, sep) =>
     firstLine.split(sep).length > firstLine.split(best).length ? sep : best, ',');

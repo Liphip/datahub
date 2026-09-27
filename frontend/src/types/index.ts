@@ -653,3 +653,11 @@ export interface SaveMetadataMapping {
   relations?: { relation: string; type?: string; scheme: string; field: string; create?: boolean }[];
   validFromField?: string;
 }
+
+/** Built-in PROCESSING step: adds metadata valid at the record's time to every record. */
+export interface EnrichConfig {
+  match: { scheme: string; field: string };
+  timestampField?: string;
+  outputs: { as: string; path?: string[] }[];
+  onMissing?: 'keep' | 'drop' | 'fail';
+}

@@ -186,6 +186,25 @@ class MetadataServiceTest {
     }
 
     @Test
+    fun attributeValuesFollowTheSchemaTypes() {
+        val meters = SaveMetadataConfig.parse(mapOf(
+            "type" to "meter",
+            "match" to mapOf("scheme" to "sap.equipment", "field" to "EQUNR"),
+            "attributes" to mapOf("phases" to "PHASEN", "manufacturer" to "HERST"),
+        ))
+        nodes.save(tenantId, meters, mapOf("EQUNR" to "10000001", "PHASEN" to "3", "HERST" to "0815"), "test")
+        val id = metadata.resolve(tenantId, "sap.equipment", "10000001", Instant.now())!!
+        val attributes = metadata.view(id, Instant.now())!!.attributes
+        assertEquals(3, (attributes["phases"] as Number).toInt())
+        // Strings stay strings, leading zeros included.
+        assertEquals("0815", attributes["manufacturer"])
+        val e = assertThrows(MetadataValidationException::class.java) {
+            nodes.save(tenantId, meters, mapOf("EQUNR" to "10000002", "PHASEN" to "drei"), "test")
+        }
+        assertTrue(e.message!!.contains("phases"), e.message)
+    }
+
+    @Test
     fun identifiersAreValidatedAgainstTheirScheme() {
         val badMalo = SaveMetadataConfig.parse(mapOf("type" to "market_location", "match" to mapOf("scheme" to "malo", "field" to "malo")))
         val e = assertThrows(MetadataValidationException::class.java) { nodes.save(tenantId, badMalo, mapOf("malo" to "12AB"), "test") }

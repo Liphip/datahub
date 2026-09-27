@@ -70,6 +70,7 @@ import Connectors from './pages/Connectors';
 import Tenants from './pages/Tenants';
 import Users from './pages/Users';
 import Alerts from './pages/Alerts';
+import Metadata from './pages/Metadata';
 import Data from './pages/Data';
 import RunDetail from './pages/RunDetail';
 import Layout from './components/Layout';
@@ -178,6 +179,7 @@ function App() {
                   <Route path="/users" element={<Users />} />
                   <Route path="/alerts" element={<Alerts />} />
                   <Route path="/data" element={<Data />} />
+                  <Route path="/metadata" element={<Metadata />} />
                 </Routes>
               </Layout>
             </ProtectedRoute>
