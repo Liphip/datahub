@@ -7,6 +7,7 @@ import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.security.EncryptionUtils
+import com.dataturntable.engine.PipelineDirectory
 import com.dataturntable.engine.PipelineRunQueue
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
@@ -36,6 +37,9 @@ class MqttMessageRouter {
     @Inject
     lateinit var runQueue: PipelineRunQueue
 
+    @Inject
+    lateinit var directory: PipelineDirectory
+
     @PersistenceContext
     lateinit var em: EntityManager
 
@@ -46,10 +50,10 @@ class MqttMessageRouter {
 
     /**
      * Called by MqttConnectionManager when a message arrives for a connector.
-     * Looks up all pipelines mapped to this connector/topic, creates a PipelineRun for each,
-     * and sends a trigger with the payload to Kafka.
+     * Queues the message for every active pipeline mapped to this connector/topic. No database
+     * access: the PUBACK does not wait for PostgreSQL. With `deduplicateBy` fields on the
+     * pipeline, a redelivered message (lost PUBACK) maps to the same run and runs once.
      */
-    @Transactional
     fun routeMessage(connectorId: UUID, topic: String, payloadStr: String, routingTable: Map<UUID, List<RouteEntry>>) {
         val entries = routingTable[connectorId] ?: return
         val matching = entries.filter { mqttTopicMatches(it.topicPattern, topic) }
@@ -66,11 +70,11 @@ class MqttMessageRouter {
         }
 
         for (entry in matching) {
-            val pipeline = em.find(Pipeline::class.java, entry.pipelineId)
-            if (pipeline == null || !pipeline.isActive) continue
+            val pipeline = directory.get(entry.pipelineId)
+            if (pipeline == null || !pipeline.active) continue
 
             val runId = runQueue.enqueue(
-                pipelineId = pipeline.id!!,
+                pipelineId = pipeline.id,
                 triggerType = TriggerType.DATA,
                 data = mapOf(
                     "_mqttTopic" to topic,
@@ -78,8 +82,9 @@ class MqttMessageRouter {
                     "payload" to payload
                 ),
                 partitionKey = topic,
+                idempotencyKey = PipelineDirectory.recordKey(payload, pipeline.deduplicateBy)?.let { "$topic|$it" },
             )
-            LOG.infof("MQTT message on topic '%s' triggered pipeline %s (run %s)", topic, pipeline.id, runId)
+            LOG.debugf("MQTT message on topic '%s' triggered pipeline %s (run %s)", topic, pipeline.id, runId)
         }
     }
 

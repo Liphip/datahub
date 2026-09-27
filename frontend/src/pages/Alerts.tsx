@@ -421,6 +421,7 @@ export default function Alerts() {
                       <span className={`px-2 py-1 text-xs rounded ${
                         alert.status === 'SENT' ? 'bg-green-100 text-green-800' :
                         alert.status === 'FAILED' ? 'bg-red-100 text-red-800' :
+                        alert.status === 'PENDING' || alert.status === 'SENDING' ? 'bg-amber-100 text-amber-800' :
                         'bg-gray-100 text-gray-800'
                       }`}>
                         {alert.status}
@@ -428,8 +429,14 @@ export default function Alerts() {
                     </div>
                     <p className="text-sm text-gray-500 mt-2">{alert.message}</p>
                     <p className="text-xs text-gray-400 mt-2">
-                      {new Date(alert.sentAt).toLocaleString()}
+                      {new Date(alert.createdAt).toLocaleString()}
+                      {alert.status === 'SUPPRESSED' && ` · ${t('alerts.suppressedHint')}`}
+                      {alert.status === 'PENDING' && (alert.attempts ?? 0) > 0 && alert.nextAttemptAt &&
+                        ` · ${t('alerts.retryAt', { attempts: alert.attempts, time: new Date(alert.nextAttemptAt).toLocaleTimeString() })}`}
                     </p>
+                    {alert.lastError && alert.status !== 'SENT' && (
+                      <p className="text-xs text-red-600 mt-1 break-words">{alert.lastError}</p>
+                    )}
                   </div>
                 ))
               ) : (

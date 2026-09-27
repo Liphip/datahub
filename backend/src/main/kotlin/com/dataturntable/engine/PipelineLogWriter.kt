@@ -3,6 +3,7 @@ package com.dataturntable.engine
 import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.PipelineRunNodeLog
 import com.dataturntable.pipeline.PipelineRunStatus
+import com.dataturntable.pipeline.TriggerType
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.persistence.EntityManager
 import jakarta.persistence.LockModeType
@@ -33,20 +34,56 @@ class PipelineLogWriter {
 
     // ── Run lifecycle ────────────────────────────────────────────────────────
 
+    /** Kafka coordinates of the record being processed; null when not known (tests, direct calls). */
+    data class RecordSource(val partition: Int, val offset: Long)
+
     /**
-     * Marks a queued run RUNNING. Returns false when the run is already finished or
-     * cancelled, i.e. the Kafka record is a redelivery that must not execute again.
-     * A run left RUNNING by an executor that died is claimed again.
+     * Claims a run for execution, creating its row when the record comes from machine
+     * ingest (those runs are only created here, so ingest does not depend on the database).
+     *
+     * Returns false — the record must be skipped — when the run already finished, was
+     * cancelled, or is RUNNING for a different Kafka record: a second copy of the same run
+     * (client resend with the same idempotency key). A RUNNING run claimed by this very
+     * record is the redelivery after its executor died, so it is claimed again and its
+     * partial node logs are discarded.
      */
     @Transactional(Transactional.TxType.REQUIRES_NEW)
-    fun claimRun(runId: UUID): Boolean {
+    fun claimRun(
+        runId: UUID,
+        pipelineId: UUID? = null,
+        triggerType: TriggerType = TriggerType.DATA,
+        queuedAt: Instant? = null,
+        retryOfRunId: UUID? = null,
+        source: RecordSource? = null,
+    ): Boolean {
+        if (pipelineId != null) {
+            em.createNativeQuery(
+                "INSERT INTO pipeline_runs (id, pipeline_id, status, trigger_type, started_at, queued_at, retry_of_run_id) " +
+                    "VALUES (?1, ?2, 'PENDING', ?3, ?4, ?5, ?6) ON CONFLICT DO NOTHING"
+            ).setParameter(1, runId).setParameter(2, pipelineId).setParameter(3, triggerType.name)
+                .setParameter(4, java.sql.Timestamp.from(Instant.now()))
+                .setParameter(5, queuedAt?.let { java.sql.Timestamp.from(it) })
+                .setParameter(6, retryOfRunId)
+                .executeUpdate()
+        }
         val run = em.find(PipelineRun::class.java, runId, LockModeType.PESSIMISTIC_WRITE) ?: return false
         val reaped = run.status == PipelineRunStatus.FAILED && run.errorMessage == PendingRunReaper.REAPED_MESSAGE
-        if (run.status != PipelineRunStatus.PENDING && run.status != PipelineRunStatus.RUNNING && !reaped) return false
+        when {
+            run.status == PipelineRunStatus.PENDING || reaped -> Unit
+            run.status == PipelineRunStatus.RUNNING -> {
+                val claimedByOther = source != null && run.recordPartition != null &&
+                    (run.recordPartition != source.partition || run.recordOffset != source.offset)
+                if (claimedByOther) return false
+                em.createQuery("DELETE FROM PipelineRunNodeLog l WHERE l.run.id = :id").setParameter("id", runId).executeUpdate()
+            }
+            else -> return false
+        }
         run.errorMessage = null
         run.completedAt = null
         run.status = PipelineRunStatus.RUNNING
         run.startedAt = Instant.now()
+        if (run.queuedAt == null) run.queuedAt = queuedAt
+        source?.let { run.recordPartition = it.partition; run.recordOffset = it.offset }
         return true
     }
 

@@ -118,7 +118,12 @@ class ConnectorRuntimeService {
      * Deliver shaped data via an OUTPUT connector on behalf of the platform.
      * Called after the EXPORT module has run and produced its result.
      */
-    fun deliverViaConnector(connector: Connector, decryptedConfig: Map<String, Any?>, data: Any?) {
+    /**
+     * Delivers [data] through an OUTPUT connector. [deliveryKey] identifies this delivery
+     * (run and node): it is sent as `Idempotency-Key` on REST so that a receiver can drop the
+     * repeat of a delivery that is re-executed after a failover.
+     */
+    fun deliverViaConnector(connector: Connector, decryptedConfig: Map<String, Any?>, data: Any?, deliveryKey: String? = null) {
         val startedAt = System.nanoTime()
         if (connector.direction != Direction.OUTPUT) {
             LOG.warnf("deliverViaConnector called on INPUT connector %s — skipping", connector.id)
@@ -133,7 +138,7 @@ class ConnectorRuntimeService {
         }
         try {
             when (connector.connectorType) {
-                ConnectorType.REST      -> deliverRestOutput(decryptedConfig, data)
+                ConnectorType.REST      -> deliverRestOutput(decryptedConfig, data, deliveryKey)
                 ConnectorType.FILE      -> deliverFileOutput(decryptedConfig, data)
                 ConnectorType.MQTT      -> deliverMqttOutput(decryptedConfig, data, connector)
                 ConnectorType.WEBSOCKET -> deliverWebSocketOutput(decryptedConfig, data, connector)
@@ -234,11 +239,9 @@ class ConnectorRuntimeService {
     /**
      * Implements `deliverRestOutput` for this source unit.
      */
-    private fun deliverRestOutput(config: Map<String, Any?>, data: Any?) {
-        val baseUrl = config["baseUrl"]?.toString()?.trimEnd('/') ?: run {
-            LOG.warn("REST OUTPUT connector missing baseUrl — skipping deliver")
-            return
-        }
+    private fun deliverRestOutput(config: Map<String, Any?>, data: Any?, deliveryKey: String?) {
+        val baseUrl = config["baseUrl"]?.toString()?.trimEnd('/')
+            ?: throw IllegalArgumentException("REST OUTPUT connector has no baseUrl")
         val path = config["path"]?.toString()?.let { if (it.startsWith("/")) it else "/$it" } ?: ""
         val method = config["method"]?.toString()?.uppercase() ?: "POST"
         val url = "$baseUrl$path"
@@ -248,26 +251,34 @@ class ConnectorRuntimeService {
             .uri(URI.create(url))
             .timeout(Duration.ofSeconds(30))
             .header("Content-Type", "application/json")
-
+        deliveryKey?.let { requestBuilder.header("Idempotency-Key", it) }
         applyRestHeaders(requestBuilder, config)
-
         when (method) {
             "PUT"   -> requestBuilder.PUT(HttpRequest.BodyPublishers.ofString(body))
             "PATCH" -> requestBuilder.method("PATCH", HttpRequest.BodyPublishers.ofString(body))
             else    -> requestBuilder.POST(HttpRequest.BodyPublishers.ofString(body))
         }
+        val request = requestBuilder.build()
 
-        LOG.infof("REST OUTPUT deliver: %s %s", method, url)
-        try {
-            val response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString())
-            LOG.infof("REST OUTPUT response: HTTP %d", response.statusCode())
-            if (response.statusCode() >= 400) {
-                LOG.warnf("REST OUTPUT returned error status %d: %s", response.statusCode(), response.body().take(200))
+        // Transient failures (network, 429, 5xx) are retried briefly; anything left fails the
+        // run, which keeps its input for Retry. Other 4xx answers are not retried.
+        var lastError: String? = null
+        for (attempt in 1..REST_ATTEMPTS) {
+            try {
+                val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+                val status = response.statusCode()
+                if (status in 200..299) {
+                    LOG.debugf("REST OUTPUT %s %s -> %d", method, url, status)
+                    return
+                }
+                lastError = "HTTP $status: ${response.body().take(200)}"
+                if (status != 429 && status < 500) break
+            } catch (e: Exception) {
+                lastError = e.message ?: e.javaClass.simpleName
             }
-        } catch (e: Exception) {
-            LOG.errorf("REST OUTPUT deliver failed: %s", e.message)
-            throw RuntimeException("REST connector deliver failed: ${e.message}", e)
+            if (attempt < REST_ATTEMPTS) Thread.sleep(1000L * attempt * attempt)
         }
+        throw RuntimeException("REST connector delivery to $url failed: $lastError")
     }
 
     /**
@@ -383,5 +394,9 @@ class ConnectorRuntimeService {
         } catch (_: Exception) {
             body
         }
+    }
+
+    private companion object {
+        const val REST_ATTEMPTS = 3
     }
 }

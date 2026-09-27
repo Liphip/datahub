@@ -15,6 +15,9 @@ import jakarta.persistence.EntityManager
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -41,6 +44,9 @@ class PipelineRunQueueTest {
 
     @Inject
     lateinit var reaper: PendingRunReaper
+
+    @Inject
+    lateinit var logWriter: PipelineLogWriter
 
     private val mapper = ObjectMapper()
     private lateinit var tenantId: UUID
@@ -71,13 +77,16 @@ class PipelineRunQueueTest {
         }
     }
 
-    private fun run(id: UUID): PipelineRun = QuarkusTransaction.requiringNew().call { em.find(PipelineRun::class.java, id) }
+
+    private fun run(id: UUID): PipelineRun? = QuarkusTransaction.requiringNew().call { em.find(PipelineRun::class.java, id) }
+    private fun records() = messaging.sink<String>("pipeline-commands").received().map { it.payload }
+    private fun source(offset: Long) = PipelineLogWriter.RecordSource(0, offset)
 
     @Test
-    fun enqueueCommitsTheRunAndPublishesKeyedMessage() {
+    fun machineIngestPublishesWithoutTouchingTheDatabase() {
         val runId = queue.enqueue(pipelineId, TriggerType.DATA, mapOf("v" to 1), partitionKey = "sensor-7")
 
-        assertEquals(PipelineRunStatus.PENDING, run(runId).status)   // visible to other nodes before the message
+        assertNull(run(runId))                                   // created by the executor, not by ingest
         val message = messaging.sink<String>("pipeline-commands").received().single()
         val key = message.getMetadata(OutgoingKafkaRecordMetadata::class.java).get().key
         assertEquals("$pipelineId:sensor-7", key)
@@ -85,44 +94,87 @@ class PipelineRunQueueTest {
         assertEquals(runId.toString(), body["runId"].asText())
         assertEquals(1, body["data"]["v"].asInt())
         assertEquals(runId.toString(), body["data"]["_runId"].asText())
+
+        assertTrue(consumer.consume(message.payload, source(1)).success)
+        val created = run(runId)!!
+        assertEquals(PipelineRunStatus.SUCCESS, created.status)
+        assertEquals(TriggerType.DATA, created.triggerType)
+        assertNotNull(created.queuedAt)
+    }
+
+    @Test
+    fun uiRunsAreVisibleBeforeProcessing() {
+        val runId = queue.enqueue(pipelineId, TriggerType.MANUAL, emptyMap(), persistRun = true)
+        assertEquals(PipelineRunStatus.PENDING, run(runId)!!.status)
+    }
+
+    @Test
+    fun resendWithTheSameIdempotencyKeyRunsOnce() {
+        val first = queue.enqueue(pipelineId, TriggerType.DATA, mapOf("v" to 1), idempotencyKey = "dev-1:1700000000")
+        val resend = queue.enqueue(pipelineId, TriggerType.DATA, mapOf("v" to 1), idempotencyKey = "dev-1:1700000000")
+        val other = queue.enqueue(pipelineId, TriggerType.DATA, mapOf("v" to 2), idempotencyKey = "dev-1:1700000060")
+        assertEquals(first, resend)
+        assertNotEquals(first, other)
+
+        val (a, b, c) = records()
+        assertTrue(consumer.consume(a, source(1)).success)
+        assertEquals("skipped", consumer.consume(b, source(2)).stage)    // second copy of the same run
+        assertTrue(consumer.consume(c, source(3)).success)
+        assertEquals(1L, QuarkusTransaction.requiringNew().call {
+            em.createQuery("SELECT COUNT(r) FROM PipelineRun r WHERE r.id = :id", java.lang.Long::class.java).setParameter("id", first).singleResult
+        }.toLong())
+    }
+
+    @Test
+    fun secondCopyIsSkippedWhileTheFirstIsStillRunning() {
+        val runId = queue.enqueue(pipelineId, TriggerType.DATA, mapOf("v" to 1), idempotencyKey = "k")
+        queue.enqueue(pipelineId, TriggerType.DATA, mapOf("v" to 1), idempotencyKey = "k")
+        val (a, b) = records()
+        // Copy a is claimed by an executor that is still working on it.
+        assertTrue(QuarkusTransaction.requiringNew().call { logWriter.claimRun(runId, pipelineId, source = source(10)) })
+        assertEquals("skipped", consumer.consume(b, source(11)).stage)
+        assertEquals(PipelineRunStatus.RUNNING, run(runId)!!.status)
+        // The executor of copy a dies; a is redelivered and runs to completion.
+        assertTrue(consumer.consume(a, source(10)).success)
+        assertEquals(PipelineRunStatus.SUCCESS, run(runId)!!.status)
     }
 
     @Test
     fun redeliveredRecordOfAFinishedRunIsSkipped() {
         val runId = queue.enqueue(pipelineId, TriggerType.DATA, mapOf("v" to 1))
-        val record = messaging.sink<String>("pipeline-commands").received().single().payload
+        val record = records().single()
 
-        assertTrue(consumer.consume(record).success)
-        val finished = run(runId)
+        assertTrue(consumer.consume(record, source(5)).success)
+        val finished = run(runId)!!
         assertEquals(PipelineRunStatus.SUCCESS, finished.status)
 
         // Executor died before committing the offset: the same record arrives again.
-        val again = consumer.consume(record)
+        val again = consumer.consume(record, source(5))
         assertEquals("skipped", again.stage)
-        assertEquals(finished.completedAt, run(runId).completedAt)
+        assertEquals(finished.completedAt, run(runId)!!.completedAt)
     }
 
     @Test
     fun runLeftRunningByADeadExecutorIsExecutedAgain() {
         val runId = queue.enqueue(pipelineId, TriggerType.DATA, mapOf("v" to 1))
-        val record = messaging.sink<String>("pipeline-commands").received().single().payload
-        QuarkusTransaction.requiringNew().run { em.find(PipelineRun::class.java, runId).status = PipelineRunStatus.RUNNING }
+        val record = records().single()
+        assertTrue(QuarkusTransaction.requiringNew().call { logWriter.claimRun(runId, pipelineId, source = source(7)) })
 
-        assertTrue(consumer.consume(record).success)
-        assertEquals(PipelineRunStatus.SUCCESS, run(runId).status)
+        assertTrue(consumer.consume(record, source(7)).success)
+        assertEquals(PipelineRunStatus.SUCCESS, run(runId)!!.status)
     }
 
     @Test
     fun reapedRunIsStillProcessedWhenItsRecordArrivesLate() {
-        val runId = queue.enqueue(pipelineId, TriggerType.DATA, mapOf("v" to 1))
-        val record = messaging.sink<String>("pipeline-commands").received().single().payload
+        val runId = queue.enqueue(pipelineId, TriggerType.MANUAL, mapOf("v" to 1), persistRun = true)
+        val record = records().single()
 
         assertTrue(QuarkusTransaction.requiringNew().call { reaper.reap(java.time.Instant.now().plus(java.time.Duration.ofHours(1))) } >= 1)
-        assertEquals(PipelineRunStatus.FAILED, run(runId).status)
+        assertEquals(PipelineRunStatus.FAILED, run(runId)!!.status)
 
         assertTrue(consumer.consume(record).success)                // backlog drained after the reaper ran
-        assertEquals(PipelineRunStatus.SUCCESS, run(runId).status)
-        assertEquals(null, run(runId).errorMessage)
+        assertEquals(PipelineRunStatus.SUCCESS, run(runId)!!.status)
+        assertEquals(null, run(runId)!!.errorMessage)
     }
 
     @Test
@@ -135,7 +187,7 @@ class PipelineRunQueueTest {
         val record = messaging.sink<String>("pipeline-commands").received().single().payload
 
         assertFalse(consumer.consume(record).success)
-        val failed = run(runId)
+        val failed = run(runId)!!
         assertEquals(PipelineRunStatus.FAILED, failed.status)
         assertEquals(5, mapper.readTree(failed.inputPayload)["v"].asInt())
     }

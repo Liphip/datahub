@@ -30,15 +30,25 @@ CREATE TABLE alert_history (
     channel_id uuid,
     pipeline_id uuid,
     dedup_key varchar(512),
+    delivery_key varchar(600),
     severity varchar(50) NOT NULL,
     title varchar(500) NOT NULL,
     message text,
     payload text,
-    sent_at timestamptz DEFAULT now(),
+    created_at timestamptz DEFAULT now() NOT NULL,
+    sent_at timestamptz,
     status varchar(50) DEFAULT 'PENDING',
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamptz,
+    claimed_at timestamptz,
+    last_error text,
     CONSTRAINT alert_history_severity_check CHECK (severity IN ('INFO', 'WARNING', 'CRITICAL', 'ERROR')),
-    CONSTRAINT alert_history_status_check CHECK (status IN ('PENDING', 'SENT', 'FAILED', 'RETRY'))
+    CONSTRAINT alert_history_status_check CHECK (status IN ('PENDING', 'SENDING', 'SENT', 'SUPPRESSED', 'FAILED'))
 );
+
+-- Outbox identity of an alert: repeating the work that raised it cannot enqueue it twice.
+CREATE UNIQUE INDEX alert_history_delivery_key ON alert_history (delivery_key);
+CREATE INDEX idx_alert_history_due ON alert_history (status, next_attempt_at);
 
 -- api_keys (table)
 
@@ -230,6 +240,9 @@ CREATE TABLE pipeline_runs (
     retry_of_run_id uuid,
     metrics text DEFAULT '{}',
     input_payload text,
+    queued_at timestamptz,
+    record_partition integer,
+    record_offset bigint,
     CONSTRAINT pipeline_runs_status_check CHECK (status IN ('PENDING', 'RUNNING', 'SUCCESS', 'FAILED', 'CANCELLED')),
     CONSTRAINT pipeline_runs_trigger_type_check CHECK (trigger_type IN ('MANUAL', 'SCHEDULED', 'EVENT', 'DATA'))
 );
@@ -462,7 +475,7 @@ CREATE INDEX idx_alert_channels_tenant ON alert_channels USING btree (tenant_id)
 
 -- idx_alert_history_sent (index)
 
-CREATE INDEX idx_alert_history_sent ON alert_history USING btree (sent_at DESC);
+CREATE INDEX idx_alert_history_created ON alert_history USING btree (created_at DESC);
 
 -- idx_alert_history_tenant (index)
 
@@ -625,7 +638,7 @@ ALTER TABLE alert_history
 
 -- alert_history idx_alert_history_dedup (index)
 
-CREATE INDEX idx_alert_history_dedup ON alert_history USING btree (channel_id, dedup_key, sent_at);
+CREATE INDEX idx_alert_history_dedup ON alert_history USING btree (channel_id, dedup_key, created_at);
 
 -- alert_history alert_history_channel_id_fkey (fk constraint)
 
@@ -776,6 +789,7 @@ CREATE TABLE alert_rule_state (
     window_samples text,
     last_seen timestamptz,
     absence_alerted boolean DEFAULT false NOT NULL,
+    last_run_id uuid,
     updated_at timestamptz DEFAULT now() NOT NULL,
     PRIMARY KEY (pipeline_id, node_id, series_key)
 );

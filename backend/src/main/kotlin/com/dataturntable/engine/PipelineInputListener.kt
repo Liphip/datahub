@@ -2,6 +2,7 @@ package com.dataturntable.engine
 
 import com.dataturntable.config.RuntimeRoleConfig
 import io.smallrye.reactive.messaging.annotations.Blocking
+import io.smallrye.reactive.messaging.kafka.api.IncomingKafkaRecordMetadata
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
 import org.eclipse.microprofile.config.inject.ConfigProperty
@@ -52,7 +53,8 @@ class PipelineInputListener {
 
     @Incoming("pipeline-input")
     @Blocking
-    fun onRecord(message: String) {
+    fun onRecord(message: String, metadata: IncomingKafkaRecordMetadata<String, String>) {
+        val source = PipelineLogWriter.RecordSource(metadata.partition, metadata.offset)
         if (!runtimeRoleConfig.ownsPipelineRuntime()) {
             throw IllegalStateException("pipeline-input consumed by role ${runtimeRoleConfig.role}")
         }
@@ -60,7 +62,7 @@ class PipelineInputListener {
         var backoffMs = 500L
         while (true) {
             try {
-                pipelineConsumer.consume(message)
+                pipelineConsumer.consume(message, source)
                 return
             } catch (e: Exception) {
                 if (System.nanoTime() + backoffMs * 1_000_000 > deadline) {

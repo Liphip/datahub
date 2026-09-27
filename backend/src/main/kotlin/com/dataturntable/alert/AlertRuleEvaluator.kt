@@ -3,6 +3,7 @@ package com.dataturntable.alert
 import com.fasterxml.jackson.core.type.TypeReference
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.LockModeType
 import jakarta.persistence.PersistenceContext
@@ -124,13 +125,23 @@ data class RuleAlert(
     val severity: String,
     val seriesKey: String,
     val payload: Map<String, Any?>,
+    /** Outbox entry, when the evaluation enqueued the alert for delivery. */
+    val alertId: UUID? = null,
 )
+
+/** Where the alerts of an evaluation go: enqueued in the same transaction as the rule state. */
+data class AlertTarget(val channelRef: String?, val runId: UUID?)
 
 /**
  * Evaluates built-in alert rules against the records reaching an ALERT node.
  * State (previous values, window samples, last-seen times) lives in [AlertRuleState]
  * and is updated under a row lock in its own transaction, so concurrent executor
  * replicas and failovers see consistent state.
+ *
+ * Exactly once: the alerts are written to the outbox in that same transaction, each state
+ * row remembers the run that last changed it, and outbox entries are keyed by run, node and
+ * record. A run executed again after a failover therefore neither changes the state twice
+ * nor raises its alerts twice.
  */
 @ApplicationScoped
 class AlertRuleEvaluator {
@@ -138,22 +149,49 @@ class AlertRuleEvaluator {
     @PersistenceContext
     lateinit var em: EntityManager
 
+    @Inject
+    lateinit var alertDispatcher: AlertDispatcher
+
     private val objectMapper = ObjectMapper()
 
     /** Upper bound of samples kept per series for time_window rules. */
     private val maxWindowSamples = 10_000
 
+    /**
+     * Evaluates [input] (one record or a micro-batch). With a [target] the alerts are also
+     * enqueued for delivery; with [AlertTarget.runId] set, a repeated evaluation of the same
+     * run changes nothing and returns the alerts it enqueued the first time.
+     */
     @Transactional(Transactional.TxType.REQUIRES_NEW)
-    fun evaluate(pipelineId: UUID, nodeId: String, rule: AlertRuleConfig, input: Any?, now: Instant = Instant.now()): List<RuleAlert> {
+    fun evaluate(
+        pipelineId: UUID, nodeId: String, rule: AlertRuleConfig, input: Any?,
+        now: Instant = Instant.now(), target: AlertTarget? = null,
+    ): List<RuleAlert> {
+        val runId = target?.runId
+        val pipeline = target?.let { em.find(com.dataturntable.pipeline.Pipeline::class.java, pipelineId) }
+        // Per series: null = not touched yet in this evaluation, true = already applied by this run.
+        val replayed = mutableMapOf<String, Boolean>()
+        fun state(seriesKey: String): AlertRuleState? {
+            val row = lockState(pipelineId, nodeId, seriesKey)
+            val isReplay = replayed.getOrPut(seriesKey) { runId != null && row.lastRunId == runId }
+            if (isReplay) return null
+            row.lastRunId = runId
+            return row
+        }
         val alerts = mutableListOf<RuleAlert>()
-        for (record in records(input)) {
+        records(input).forEachIndexed { index, record ->
             val seriesKey = rule.seriesField?.let { resolve(record, it)?.toString() }.orEmpty()
-            when (rule.type) {
-                AlertRuleType.THRESHOLD -> evaluateThreshold(rule, record, seriesKey)?.let(alerts::add)
-                AlertRuleType.RATE_OF_CHANGE -> evaluateRate(pipelineId, nodeId, rule, record, seriesKey, now)?.let(alerts::add)
-                AlertRuleType.TIME_WINDOW -> evaluateWindow(pipelineId, nodeId, rule, record, seriesKey, now)?.let(alerts::add)
-                AlertRuleType.ABSENCE -> markSeen(pipelineId, nodeId, seriesKey, now)
+            val alert = when (rule.type) {
+                AlertRuleType.THRESHOLD -> evaluateThreshold(rule, record, seriesKey)
+                AlertRuleType.RATE_OF_CHANGE -> state(seriesKey)?.let { evaluateRate(it, rule, record, seriesKey, now) }
+                AlertRuleType.TIME_WINDOW -> state(seriesKey)?.let { evaluateWindow(it, rule, record, seriesKey, now) }
+                AlertRuleType.ABSENCE -> { state(seriesKey)?.let { markSeen(it, now) }; null }
+            } ?: return@forEachIndexed
+            val alertId = pipeline?.let {
+                alertDispatcher.enqueueRuleAlert(it, nodeId, target.channelRef, rule, alert,
+                    deliveryKey = runId?.let { r -> "run:$r:$nodeId:$index" })
             }
+            alerts += alert.copy(alertId = alertId)
         }
         return alerts
     }
@@ -164,16 +202,17 @@ class AlertRuleEvaluator {
      * exactly one of them reports each silence.
      */
     @Transactional(Transactional.TxType.REQUIRES_NEW)
-    fun claimAbsences(pipelineId: UUID, nodeId: String, rule: AlertRuleConfig, now: Instant): List<RuleAlert> {
+    fun claimAbsences(pipelineId: UUID, nodeId: String, rule: AlertRuleConfig, now: Instant, channelRef: String? = null, enqueue: Boolean = false): List<RuleAlert> {
         // Start watching streams that never delivered data: the first check opens the grace period.
         val tracked = em.createQuery(
             "SELECT COUNT(s) FROM AlertRuleState s WHERE s.pipelineId = :p AND s.nodeId = :n",
             java.lang.Long::class.java
         ).setParameter("p", pipelineId).setParameter("n", nodeId).singleResult.toLong()
         if (tracked == 0L) {
-            markSeen(pipelineId, nodeId, "", now)
+            markSeen(lockState(pipelineId, nodeId, ""), now)
             return emptyList()
         }
+        val pipeline = if (enqueue) em.find(com.dataturntable.pipeline.Pipeline::class.java, pipelineId) else null
 
         val cutoff = now.minusSeconds(rule.timeoutSeconds)
         val silent = em.createQuery(
@@ -192,13 +231,19 @@ class AlertRuleEvaluator {
             if (claimed != 1) return@mapNotNull null
             val series = state.seriesKey.orEmpty()
             val silenceSeconds = state.lastSeen?.let { now.epochSecond - it.epochSecond } ?: rule.timeoutSeconds
-            RuleAlert(
+            val alert = RuleAlert(
                 title = rule.title ?: "No data" + seriesSuffix(series),
                 message = "No data received for $silenceSeconds s (timeout ${rule.timeoutSeconds} s)" + seriesSuffix(series),
                 severity = rule.severity,
                 seriesKey = series,
                 payload = mapOf("series" to series.ifEmpty { null }, "lastSeen" to state.lastSeen?.toString(), "timeoutSeconds" to rule.timeoutSeconds),
             )
+            // One outbox entry per silence, enqueued with the claim.
+            val alertId = pipeline?.let {
+                alertDispatcher.enqueueRuleAlert(it, nodeId, channelRef, rule, alert,
+                    deliveryKey = "absence:$pipelineId:$nodeId:$series:${state.lastSeen?.toEpochMilli()}")
+            }
+            alert.copy(alertId = alertId)
         }
     }
 
@@ -217,15 +262,14 @@ class AlertRuleEvaluator {
     }
 
     private fun evaluateRate(
-        pipelineId: UUID, nodeId: String, rule: AlertRuleConfig,
+        state: AlertRuleState, rule: AlertRuleConfig,
         record: Map<String, Any?>, seriesKey: String, now: Instant,
     ): RuleAlert? {
         val value = number(resolve(record, rule.field!!)) ?: return null
         val ts = timestamp(record, rule, now)
-        val state = lockState(pipelineId, nodeId, seriesKey)
         val previous = state.lastValue
         val previousTs = state.lastTs
-        // Late or duplicate records (at-least-once redelivery) do not move the state backwards.
+        // Records older than the last one (late or out of order) do not move the state backwards.
         if (previousTs != null && !ts.isAfter(previousTs)) return null
         state.lastValue = value
         state.lastTs = ts
@@ -251,17 +295,16 @@ class AlertRuleEvaluator {
     }
 
     private fun evaluateWindow(
-        pipelineId: UUID, nodeId: String, rule: AlertRuleConfig,
+        state: AlertRuleState, rule: AlertRuleConfig,
         record: Map<String, Any?>, seriesKey: String, now: Instant,
     ): RuleAlert? {
         val value = number(resolve(record, rule.field!!)) ?: return null
         val ts = timestamp(record, rule, now).toEpochMilli()
-        val state = lockState(pipelineId, nodeId, seriesKey)
         val samples = state.windowSamples
             ?.let { objectMapper.readValue(it, object : TypeReference<MutableList<List<Double>>>() {}) }
             ?: mutableListOf()
-        // Ignore exact duplicates (at-least-once redelivery).
-        if (samples.none { it[0].toLong() == ts && it[1] == value }) samples += listOf(ts.toDouble(), value)
+        // Replays are excluded per run (see evaluate); equal samples are real measurements.
+        samples += listOf(ts.toDouble(), value)
         val newest = samples.maxOf { it[0] }
         val kept = samples.filter { it[0] > newest - rule.windowSeconds * 1000 }.sortedBy { it[0] }.takeLast(maxWindowSamples)
         state.windowSamples = objectMapper.writeValueAsString(kept)
@@ -286,8 +329,7 @@ class AlertRuleEvaluator {
         )
     }
 
-    private fun markSeen(pipelineId: UUID, nodeId: String, seriesKey: String, now: Instant) {
-        val state = lockState(pipelineId, nodeId, seriesKey)
+    private fun markSeen(state: AlertRuleState, now: Instant) {
         state.lastSeen = now
         state.absenceAlerted = false
         state.updatedAt = now

@@ -31,15 +31,18 @@ class AlertDispatcherTest {
 
     private lateinit var server: HttpServer
     private val received: MutableList<String> = Collections.synchronizedList(mutableListOf())
+    private val idempotencyKeys: MutableList<String?> = Collections.synchronizedList(mutableListOf())
     private val createdTenants = mutableListOf<UUID>()
 
     @BeforeEach
     fun startWebhookReceiver() {
         received.clear()
+        idempotencyKeys.clear()
         mailbox.clear()
         server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
             createContext("/hook") { exchange ->
                 received += exchange.requestBody.readAllBytes().decodeToString()
+                idempotencyKeys += exchange.requestHeaders.getFirst("Idempotency-Key")
                 exchange.sendResponseHeaders(204, -1)
                 exchange.close()
             }
@@ -76,19 +79,18 @@ class AlertDispatcherTest {
         Fixture(pipeline.id!!, channel.id!!)
     }
 
-    private fun dispatch(f: Fixture, title: String = "Too hot", cooldown: Long? = null, dedupKey: String? = "k") =
-        QuarkusTransaction.requiringNew().run {
-            alertDispatcher.dispatchToChannel(
-                pipeline = em.find(Pipeline::class.java, f.pipelineId),
-                channelRef = f.channelId.toString(),
-                title = title,
-                message = "value 91",
-                severity = "critical",
-                payload = mapOf("value" to 91),
-                dedupKey = dedupKey,
-                cooldownSeconds = cooldown,
-            )
-        }
+    private fun dispatch(f: Fixture, title: String = "Too hot", cooldown: Long? = null, dedupKey: String? = "k", deliveryKey: String? = null) =
+        alertDispatcher.dispatchToChannel(
+            pipeline = QuarkusTransaction.requiringNew().call { em.find(Pipeline::class.java, f.pipelineId) },
+            channelRef = f.channelId.toString(),
+            title = title,
+            message = "value 91",
+            severity = "critical",
+            payload = mapOf("value" to 91),
+            dedupKey = dedupKey,
+            cooldownSeconds = cooldown,
+            deliveryKey = deliveryKey,
+        )
 
     private fun history(f: Fixture): List<AlertHistory> = QuarkusTransaction.requiringNew().call {
         em.createQuery("SELECT a FROM AlertHistory a WHERE a.channel.id = :c", AlertHistory::class.java)
@@ -106,6 +108,8 @@ class AlertDispatcherTest {
         assertTrue(received.single().contains("\"severity\":\"CRITICAL\""), received.single())
         assertTrue(received.single().contains("\"payload\":{\"value\":91}"), received.single())
         assertEquals(AlertStatus.SENT, history(f).single().status)
+        // Receivers can drop a repeated delivery by this key.
+        assertEquals(history(f).single().id.toString(), idempotencyKeys.single())
     }
 
     @Test
@@ -117,7 +121,37 @@ class AlertDispatcherTest {
         dispatch(f, title = "Other alert", cooldown = 300, dedupKey = "other")
 
         assertEquals(2, received.size)
-        assertEquals(2, history(f).size)
+        assertEquals(listOf(AlertStatus.SENT, AlertStatus.SENT, AlertStatus.SUPPRESSED), history(f).map { it.status }.sorted())
+    }
+
+    @Test
+    fun sameDeliveryKeyIsEnqueuedAndSentOnce() {
+        val f = fixture(AlertChannelType.WEBHOOK, """{"url":"http://127.0.0.1:${server.address.port}/hook"}""")
+
+        // The same work repeated after a failover (e.g. a run executed again).
+        dispatch(f, cooldown = 0, deliveryKey = "run:1:n:0")
+        dispatch(f, cooldown = 0, deliveryKey = "run:1:n:0")
+
+        assertEquals(1, received.size)
+        assertEquals(1, history(f).size)
+    }
+
+    @Test
+    fun alertOfADeadDeliveringReplicaIsDeliveredByAnother() {
+        val f = fixture(AlertChannelType.WEBHOOK, """{"url":"http://127.0.0.1:${server.address.port}/hook"}""")
+        val id = QuarkusTransaction.requiringNew().call {
+            alertDispatcher.enqueue(em.find(Pipeline::class.java, f.pipelineId), f.channelId.toString(), "Too hot", "m", cooldownSeconds = 0)!!
+        }
+        // Claimed by a replica that died before it could send.
+        QuarkusTransaction.requiringNew().run {
+            em.find(AlertHistory::class.java, id).apply {
+                status = AlertStatus.SENDING
+                claimedAt = java.time.Instant.now().minusSeconds(600)
+            }
+        }
+        assertEquals(1, alertDispatcher.deliverDue())
+        assertEquals(1, received.size)
+        assertEquals(AlertStatus.SENT, history(f).single().status)
     }
 
     @Test
@@ -143,11 +177,39 @@ class AlertDispatcherTest {
     }
 
     @Test
-    fun failedDeliveryIsRecordedAsFailed() {
+    fun failedDeliveryIsRetriedUntilTheChannelWorks() {
         val f = fixture(AlertChannelType.WEBHOOK, """{"url":"http://127.0.0.1:${server.address.port}/missing"}""")
 
         dispatch(f)
 
+        val failed = history(f).single()
+        assertEquals(AlertStatus.PENDING, failed.status)
+        assertEquals(1, failed.attempts)
+        assertTrue(failed.lastError!!.contains("404"), failed.lastError)
+        assertTrue(failed.nextAttemptAt!!.isAfter(java.time.Instant.now()))
+        assertEquals(0, alertDispatcher.deliverDue())                           // not due yet
+
+        // The receiver is repaired and the retry becomes due.
+        QuarkusTransaction.requiringNew().run {
+            em.find(AlertChannel::class.java, f.channelId).config = """{"url":"http://127.0.0.1:${server.address.port}/hook"}"""
+            em.find(AlertHistory::class.java, failed.id).nextAttemptAt = java.time.Instant.now().minusSeconds(1)
+        }
+        assertEquals(1, alertDispatcher.deliverDue())
+        assertEquals(AlertStatus.SENT, history(f).single().status)
+        assertEquals(1, received.size)
+    }
+
+    @Test
+    fun deliveryGivesUpAfterMaxAttempts() {
+        val f = fixture(AlertChannelType.WEBHOOK, """{"url":"http://127.0.0.1:${server.address.port}/missing"}""")
+        dispatch(f)
+        QuarkusTransaction.requiringNew().run {
+            em.find(AlertHistory::class.java, history(f).single().id).apply {
+                attempts = alertDispatcher.maxAttempts - 1
+                nextAttemptAt = java.time.Instant.now().minusSeconds(1)
+            }
+        }
+        alertDispatcher.deliverDue()
         assertEquals(AlertStatus.FAILED, history(f).single().status)
     }
 }

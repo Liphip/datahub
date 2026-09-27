@@ -14,7 +14,12 @@ import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
-import jakarta.transaction.Transactional
+import io.quarkus.narayana.jta.QuarkusTransaction
+import io.quarkus.scheduler.Scheduled
+import com.dataturntable.config.RuntimeRoleConfig
+import java.time.Duration
+import java.time.Instant
+import java.util.UUID
 import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.jboss.logging.Logger
 import java.net.URI
@@ -30,7 +35,7 @@ class AlertDispatcher {
 
     private val LOG = Logger.getLogger(AlertDispatcher::class.java)
     private val objectMapper = ObjectMapper()
-    private val httpClient = HttpClient.newHttpClient()
+    private val httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
     
     @ConfigProperty(name = "dataturntable.alerts.enabled", defaultValue = "true")
     var alertsEnabled: Boolean = true
@@ -51,6 +56,17 @@ class AlertDispatcher {
     @PersistenceContext
     lateinit var em: EntityManager
 
+    @Inject
+    lateinit var runtimeRoleConfig: RuntimeRoleConfig
+
+    /** Delivery attempts before an alert is marked FAILED (about 13 h with the default backoff). */
+    @ConfigProperty(name = "dataturntable.alerts.max-attempts", defaultValue = "12")
+    var maxAttempts: Int = 12
+
+    /** A claim older than this belongs to a replica that died while delivering. */
+    @ConfigProperty(name = "dataturntable.alerts.claim-timeout", defaultValue = "2m")
+    lateinit var claimTimeout: Duration
+
     /**
      * Delivers or routes the named data to its configured destination.
      */
@@ -58,7 +74,7 @@ class AlertDispatcher {
         val config = parseConfig(channel.config)
         val url = config["url"]?.toString()?.takeIf { it.isNotBlank() }
             ?: throw IllegalArgumentException("Webhook URL not configured")
-        sendJson(url, config["method"]?.toString(), config["authToken"]?.toString(), buildAlertPayload(alert))
+        sendJson(url, config["method"]?.toString(), config["authToken"]?.toString(), buildAlertPayload(alert), alert.id?.toString())
     }
     
     /**
@@ -70,15 +86,17 @@ class AlertDispatcher {
             ?: throw IllegalArgumentException("REST base URL not configured")
         val path = config["path"]?.toString()?.trim().orEmpty()
         val url = if (path.isEmpty()) baseUrl else baseUrl + "/" + path.trimStart('/')
-        sendJson(url, config["method"]?.toString(), config["authToken"]?.toString(), buildAlertPayload(alert))
+        sendJson(url, config["method"]?.toString(), config["authToken"]?.toString(), buildAlertPayload(alert), alert.id?.toString())
     }
 
     /** Sends a JSON body with POST (default), PUT or PATCH; optional Bearer token. Non-2xx fails the delivery. */
-    private fun sendJson(url: String, method: String?, authToken: String?, body: Any) {
+    private fun sendJson(url: String, method: String?, authToken: String?, body: Any, idempotencyKey: String?) {
         val json = HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body))
         val builder = HttpRequest.newBuilder()
             .uri(URI.create(url))
+            .timeout(Duration.ofSeconds(15))
             .header("Content-Type", "application/json")
+        idempotencyKey?.let { builder.header("Idempotency-Key", it) }
         authToken?.takeIf { it.isNotBlank() }?.let { builder.header("Authorization", "Bearer $it") }
         when (val verb = method?.trim()?.uppercase()?.ifEmpty { null } ?: "POST") {
             "POST" -> builder.POST(json)
@@ -161,6 +179,7 @@ class AlertDispatcher {
         
         val request = HttpRequest.newBuilder()
             .uri(URI.create(webhookUrl))
+            .timeout(Duration.ofSeconds(15))
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
             .build()
@@ -210,7 +229,7 @@ class AlertDispatcher {
             "message" to (alert.message ?: ""),
             "severity" to (alert.severity?.name ?: "INFO"),
             "status" to (alert.status?.name ?: "PENDING"),
-            "timestamp" to (alert.sentAt?.toString() ?: java.time.Instant.now().toString()),
+            "timestamp" to alert.createdAt.toString(),
             "payload" to (alert.payload?.let { objectMapper.readValue(it, Any::class.java) } ?: emptyMap<String, Any>())
         )
     }
@@ -235,133 +254,216 @@ class AlertDispatcher {
         }
     }
     
+    // ── Outbox ────────────────────────────────────────────────────────────────
+    //
+    // Alerts are written to alert_history (the outbox) in the same transaction as the work
+    // that raised them — rule state, absence claim, or module result — and delivered
+    // afterwards. The unique delivery key makes enqueueing idempotent: work repeated after a
+    // failover finds its alerts already there. Delivery claims a row atomically, so each
+    // alert is handed to its channel by one replica; if that replica dies mid-delivery the
+    // claim expires and another one retries. Receivers get the alert id as Idempotency-Key
+    // (webhook/REST) to drop the rare repeat of a delivery whose confirmation was lost.
+
     /**
-     * Called when an ALERT module returns `{"__alert__": {...}}` in its output.
-     * Looks up the channel by ID (preferred) or by name within the pipeline's tenant,
-     * creates an AlertHistory entry, and dispatches it.
-     *
-     * @param channelRef  Channel UUID string or channel name.
+     * Adds an alert to the outbox inside the caller's transaction. Returns the alert id, or
+     * null when alerts are disabled. An alert with an existing [deliveryKey] is not added again.
+     * Within the cooldown of the same alert ([dedupKey]) on the same channel it is recorded as
+     * SUPPRESSED instead of being delivered.
      */
-    @Transactional
+    fun enqueue(
+        pipeline: Pipeline,
+        channelRef: String?,
+        title: String,
+        message: String,
+        severity: String = "WARNING",
+        payload: Map<String, Any?>? = null,
+        dedupKey: String? = null,
+        cooldownSeconds: Long? = null,
+        deliveryKey: String? = null,
+    ): UUID? {
+        if (!alertsEnabled) {
+            LOG.debugf("Alerts disabled, not enqueueing '%s'", title)
+            return null
+        }
+        deliveryKey?.let { key ->
+            em.createQuery("SELECT a.id FROM AlertHistory a WHERE a.deliveryKey = :k", UUID::class.java)
+                .setParameter("k", key).resultList.firstOrNull()?.let { return it }
+        }
+        val tenantId = pipeline.tenant?.id ?: throw IllegalStateException("Pipeline ${pipeline.id} has no tenant")
+        val channel = resolveChannel(tenantId, channelRef)
+        val cooldown = cooldownSeconds ?: defaultCooldownSeconds
+        val suppressed = channel != null && dedupKey != null && cooldown > 0 && isInCooldown(channel, dedupKey, cooldown)
+        val alert = AlertHistory().apply {
+            this.tenant = pipeline.tenant
+            this.channel = channel
+            this.pipeline = pipeline
+            this.dedupKey = dedupKey
+            this.deliveryKey = deliveryKey
+            this.severity = parseSeverity(severity)
+            this.title = title
+            this.message = message
+            this.payload = payload?.filterValues { it != null }?.let { objectMapper.writeValueAsString(it) }
+            this.createdAt = Instant.now()
+            when {
+                channel == null -> {
+                    status = AlertStatus.FAILED
+                    lastError = "Alert channel '${channelRef ?: "(default)"}' not found or inactive"
+                    LOG.warnf("Alert '%s': %s", title, lastError)
+                }
+                suppressed -> status = AlertStatus.SUPPRESSED
+                else -> {
+                    status = AlertStatus.PENDING
+                    nextAttemptAt = createdAt
+                }
+            }
+        }
+        em.persist(alert)
+        em.flush()
+        return alert.id
+    }
+
+    /** Enqueues an alert of a built-in rule of an ALERT node (cooldown per node, title and series). */
+    fun enqueueRuleAlert(pipeline: Pipeline, nodeId: String, channelRef: String?, rule: AlertRuleConfig, alert: RuleAlert, deliveryKey: String?): UUID? =
+        enqueue(
+            pipeline = pipeline,
+            channelRef = channelRef?.takeIf { it.isNotBlank() },
+            title = alert.title,
+            message = alert.message,
+            severity = alert.severity,
+            payload = alert.payload,
+            dedupKey = "${pipeline.id}:$nodeId:${alert.title}:${alert.seriesKey}",
+            cooldownSeconds = rule.cooldownSeconds,
+            deliveryKey = deliveryKey,
+        )
+
+    /** Enqueues in its own transaction and delivers right away (alerts raised outside a transaction). */
     fun dispatchToChannel(
         pipeline: Pipeline,
         channelRef: String?,
         title: String,
         message: String,
         severity: String = "WARNING",
-        payload: Map<String, Any>? = null,
+        payload: Map<String, Any?>? = null,
         dedupKey: String? = null,
         cooldownSeconds: Long? = null,
+        deliveryKey: String? = null,
     ) {
-        if (!alertsEnabled) {
-            LOG.infof("Alerts disabled, skipping channel dispatch for '%s'", title)
-            return
-        }
-        val tenantId = pipeline.tenant?.id ?: run {
-            LOG.warn("Cannot dispatch alert: pipeline has no tenant")
-            return
-        }
+        val id = QuarkusTransaction.requiringNew().call {
+            enqueue(em.find(Pipeline::class.java, pipeline.id), channelRef, title, message, severity, payload, dedupKey, cooldownSeconds, deliveryKey)
+        } ?: return
+        deliver(id)
+    }
 
-        val channel: AlertChannel? = if (channelRef != null) {
-            // Try UUID lookup first, then fall back to name search within tenant
-            val byId = try {
-                val uuid = java.util.UUID.fromString(channelRef)
-                em.find(AlertChannel::class.java, uuid)
-                    ?.takeIf { it.tenant?.id == tenantId && it.isActive }
-            } catch (_: Exception) { null }
+    /**
+     * Delivers one outbox entry if it is due and not being delivered by another replica.
+     * Returns true when this call sent it.
+     */
+    fun deliver(alertId: UUID): Boolean {
+        if (!alertsEnabled) return false
+        val now = Instant.now()
+        val claimed = QuarkusTransaction.requiringNew().call {
+            em.createQuery(
+                "UPDATE AlertHistory a SET a.status = :sending, a.claimedAt = :now, a.attempts = a.attempts + 1 " +
+                    "WHERE a.id = :id AND ((a.status = :pending AND (a.nextAttemptAt IS NULL OR a.nextAttemptAt <= :now)) " +
+                    "OR (a.status = :sending AND a.claimedAt < :stale))"
+            ).setParameter("sending", AlertStatus.SENDING).setParameter("pending", AlertStatus.PENDING)
+                .setParameter("now", now).setParameter("stale", now.minus(claimTimeout))
+                .setParameter("id", alertId).executeUpdate() == 1
+        }
+        if (!claimed) return false
+        return try {
+            QuarkusTransaction.requiringNew().run {
+                val alert = em.find(AlertHistory::class.java, alertId)
+                val channel = alert.channel ?: throw IllegalStateException("Alert has no channel")
+                send(channel, alert)
+                alert.status = AlertStatus.SENT
+                alert.sentAt = Instant.now()
+                alert.lastError = null
+            }
+            LOG.infof("Alert %s delivered", alertId)
+            true
+        } catch (e: Exception) {
+            QuarkusTransaction.requiringNew().run {
+                val alert = em.find(AlertHistory::class.java, alertId) ?: return@run
+                alert.lastError = e.message?.take(2000)
+                if (alert.attempts >= maxAttempts) {
+                    alert.status = AlertStatus.FAILED
+                } else {
+                    alert.status = AlertStatus.PENDING
+                    alert.nextAttemptAt = Instant.now().plus(backoff(alert.attempts))
+                }
+            }
+            LOG.warnf("Alert %s delivery failed (%s), will retry unless attempts are exhausted", alertId, e.message)
+            false
+        }
+    }
 
-            byId ?: em.createQuery(
-                "SELECT c FROM AlertChannel c WHERE c.tenant.id = :tid AND c.name = :name AND c.isActive = true",
-                AlertChannel::class.java
-            ).setParameter("tid", tenantId).setParameter("name", channelRef)
-                .resultList.firstOrNull()
+    /** Delivers every due outbox entry, including ones whose delivering replica died. */
+    fun deliverDue(limit: Int = 200): Int {
+        val now = Instant.now()
+        val due = QuarkusTransaction.requiringNew().call {
+            em.createQuery(
+                "SELECT a.id FROM AlertHistory a WHERE (a.status = :pending AND a.nextAttemptAt <= :now) " +
+                    "OR (a.status = :sending AND a.claimedAt < :stale) ORDER BY a.createdAt",
+                UUID::class.java
+            ).setParameter("pending", AlertStatus.PENDING).setParameter("sending", AlertStatus.SENDING)
+                .setParameter("now", now).setParameter("stale", now.minus(claimTimeout))
+                .setMaxResults(limit).resultList
+        }
+        return due.count { deliver(it) }
+    }
+
+    @Scheduled(every = "\${dataturntable.alerts.outbox-interval:5s}", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
+    fun scheduledDelivery() {
+        if (!runtimeRoleConfig.ownsPipelineRuntime()) return
+        try {
+            deliverDue()
+        } catch (e: Exception) {
+            LOG.warnf("Alert outbox delivery failed: %s", e.message)
+        }
+    }
+
+    /** 10 s, 30 s, 1.5 min, … capped at 1 h. */
+    private fun backoff(attempts: Int): Duration =
+        Duration.ofSeconds((10.0 * Math.pow(3.0, (attempts - 1).coerceAtLeast(0).toDouble())).toLong().coerceAtMost(3600))
+
+    private fun resolveChannel(tenantId: UUID, channelRef: String?): AlertChannel? =
+        if (channelRef != null) {
+            runCatching { UUID.fromString(channelRef) }.getOrNull()
+                ?.let { em.find(AlertChannel::class.java, it) }
+                ?.takeIf { it.tenant?.id == tenantId && it.isActive }
+                ?: em.createQuery(
+                    "SELECT c FROM AlertChannel c WHERE c.tenant.id = :tid AND c.name = :name AND c.isActive = true",
+                    AlertChannel::class.java
+                ).setParameter("tid", tenantId).setParameter("name", channelRef).resultList.firstOrNull()
         } else {
-            // No channel specified — try the first active channel for this tenant
+            // No channel specified — the tenant's first active channel.
             em.createQuery(
                 "SELECT c FROM AlertChannel c WHERE c.tenant.id = :tid AND c.isActive = true ORDER BY c.createdAt ASC",
                 AlertChannel::class.java
             ).setParameter("tid", tenantId).setMaxResults(1).resultList.firstOrNull()
         }
 
-        if (channel == null) {
-            LOG.warnf("Alert channel not found for ref '%s' in tenant %s — alert not dispatched", channelRef, tenantId)
-            return
-        }
-
-        val cooldown = cooldownSeconds ?: defaultCooldownSeconds
-        if (dedupKey != null && cooldown > 0 && isInCooldown(channel, dedupKey, cooldown)) {
-            LOG.infof("Alert '%s' suppressed: same alert sent to channel %s within %d s", title, channel.id, cooldown)
-            return
-        }
-
-        val parsedSeverity = parseSeverity(severity)
-        val alert = AlertHistory().apply {
-            this.tenant = pipeline.tenant
-            this.channel = channel
-            this.pipeline = pipeline
-            this.dedupKey = dedupKey
-            this.severity = parsedSeverity
-            this.title = title
-            this.message = message
-            this.status = AlertStatus.PENDING
-            this.payload = payload?.let { objectMapper.writeValueAsString(it) }
-            this.sentAt = java.time.Instant.now()
-        }
-        alert.persist()
-        dispatchAlertToChannel(channel, alert)
-    }
-
-    /** Dispatches an alert produced by a built-in rule of an ALERT node (cooldown per node, title and series). */
-    fun dispatchRuleAlert(pipeline: Pipeline, nodeId: String, channelRef: String?, rule: AlertRuleConfig, alert: RuleAlert) {
-        dispatchToChannel(
-            pipeline = pipeline,
-            channelRef = channelRef?.takeIf { it.isNotBlank() },
-            title = alert.title,
-            message = alert.message,
-            severity = alert.severity,
-            payload = alert.payload.filterValues { it != null }.mapValues { it.value!! },
-            dedupKey = "${pipeline.id}:$nodeId:${alert.title}:${alert.seriesKey}",
-            cooldownSeconds = rule.cooldownSeconds,
-        )
-    }
-
     private fun isInCooldown(channel: AlertChannel, dedupKey: String, cooldownSeconds: Long): Boolean =
         em.createQuery(
             "SELECT COUNT(a) FROM AlertHistory a WHERE a.channel = :channel AND a.dedupKey = :key " +
-                "AND a.status = :sent AND a.sentAt > :since",
+                "AND a.status IN :active AND a.createdAt > :since",
             java.lang.Long::class.java
         )
             .setParameter("channel", channel)
             .setParameter("key", dedupKey)
-            .setParameter("sent", AlertStatus.SENT)
-            .setParameter("since", java.time.Instant.now().minusSeconds(cooldownSeconds))
+            .setParameter("active", listOf(AlertStatus.PENDING, AlertStatus.SENDING, AlertStatus.SENT))
+            .setParameter("since", Instant.now().minusSeconds(cooldownSeconds))
             .singleResult.toLong() > 0
 
-    /** Dispatch an alert directly to a channel. */
-    @Transactional
-    /**
-     * Delivers or routes the named data to its configured destination.
-     */
-    fun dispatchAlertToChannel(channel: AlertChannel, alert: AlertHistory) {
-        if (!alertsEnabled) return
-        try {
-            when (channel.channelType) {
-                null -> throw IllegalArgumentException("Channel type not set")
-                MQTT -> dispatchMqttAlert(channel, alert)
-                WEBHOOK -> dispatchWebhookAlert(channel, alert)
-                REST -> dispatchRestAlert(channel, alert)
-                EMAIL -> dispatchEmailAlert(channel, alert)
-                SLACK -> dispatchSlackAlert(channel, alert)
-            }
-            alert.status = AlertStatus.SENT
-            alert.sentAt = java.time.Instant.now()
-            alert.persist()
-            LOG.infof("Channel alert dispatched: %s -> %s", channel.name, alert.title)
-        } catch (e: Exception) {
-            LOG.errorf("Failed to dispatch channel alert: %s", e.message)
-            alert.status = AlertStatus.FAILED
-            alert.persist()
+    private fun send(channel: AlertChannel, alert: AlertHistory) {
+        when (channel.channelType) {
+            null -> throw IllegalArgumentException("Channel type not set")
+            MQTT -> dispatchMqttAlert(channel, alert)
+            WEBHOOK -> dispatchWebhookAlert(channel, alert)
+            REST -> dispatchRestAlert(channel, alert)
+            EMAIL -> dispatchEmailAlert(channel, alert)
+            SLACK -> dispatchSlackAlert(channel, alert)
         }
     }
-
 }

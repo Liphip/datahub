@@ -62,10 +62,11 @@ class AlertRuleScheduler {
                     log.warnf("Pipeline %s node %s: invalid alert rule: %s", pipelineId, nodeId, e.message)
                     continue
                 }
-                for (alert in evaluator.claimAbsences(pipelineId, nodeId, rule, now)) {
-                    alertDispatcher.dispatchRuleAlert(pipeline, nodeId, node["alertChannel"]?.toString(), rule, alert)
-                    raised++
-                }
+                // The claim and the outbox entry commit together; delivery follows.
+                val alerts = evaluator.claimAbsences(pipelineId, nodeId, rule, now,
+                    channelRef = node["alertChannel"]?.toString()?.takeIf { it.isNotBlank() }, enqueue = true)
+                alerts.mapNotNull { it.alertId }.forEach { alertDispatcher.deliver(it) }
+                raised += alerts.size
             }
         }
         return raised

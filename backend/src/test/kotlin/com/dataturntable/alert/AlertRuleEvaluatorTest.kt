@@ -119,8 +119,61 @@ class AlertRuleEvaluatorTest {
             "operator" to ">=", "value" to 2, "timestampField" to "ts")
         eval(count, mapOf("v" to 1, "ts" to t0.epochSecond), t0, node = "count")
         assertEquals(1, eval(count, mapOf("v" to 1, "ts" to t0.epochSecond + 5), t0, node = "count").size)
-        // The same record redelivered is not counted twice.
+        // Equal measurements are real data and count twice.
         assertEquals(1, eval(count, mapOf("v" to 1, "ts" to t0.epochSecond + 5), t0, node = "count").size)
+        assertEquals(4.0, (eval(count, mapOf("v" to 9), t0, node = "count").single().payload["aggregate"]))
+    }
+
+    @Test
+    fun replayedRunChangesStateAndRaisesAlertsOnlyOnce() {
+        val tenantAndPipeline = QuarkusTransaction.requiringNew().call {
+            val tenant = Tenant().apply { name = "replay-${UUID.randomUUID()}" }.also { it.persist() }
+            createdTenants += tenant.id!!
+            val channel = AlertChannel().apply {
+                this.tenant = tenant; name = "ops"; channelType = AlertChannelType.WEBHOOK; config = """{"url":"http://127.0.0.1:9/none"}"""
+            }.also { it.persist() }
+            val pipeline = Pipeline().apply { this.tenant = tenant; name = "Replay" }.also { it.persist() }
+            pipeline.id!! to channel.id!!.toString()
+        }
+        val (pipelineId, channel) = tenantAndPipeline
+        val window = rule("type" to "time_window", "field" to "v", "aggregation" to "count", "windowSeconds" to 600,
+            "operator" to ">=", "value" to 1, "cooldownSeconds" to 0)
+        val run1 = UUID.randomUUID()
+        val batch = listOf(mapOf("v" to 1), mapOf("v" to 1))
+        fun evalRun(runId: UUID) = evaluator.evaluate(pipelineId, "w", window, batch, t0, AlertTarget(channel, runId))
+
+        val first = evalRun(run1)
+        assertEquals(2, first.size)
+        assertTrue(first.all { it.alertId != null })
+        // The executor died after the evaluation committed; the run is executed again.
+        assertTrue(evalRun(run1).isEmpty())
+        val samples = QuarkusTransaction.requiringNew().call {
+            em.find(AlertRuleState::class.java, AlertRuleStateId(pipelineId, "w", "")).windowSamples
+        }
+        assertEquals(2, samples!!.split("],[").size)                      // not four
+        assertEquals(2L, QuarkusTransaction.requiringNew().call {
+            em.createQuery("SELECT COUNT(a) FROM AlertHistory a WHERE a.pipeline.id = :p", java.lang.Long::class.java)
+                .setParameter("p", pipelineId).singleResult
+        }.toLong())
+        // The next run is applied normally.
+        assertEquals(1, evaluator.evaluate(pipelineId, "w", window, mapOf("v" to 1), t0, AlertTarget(channel, UUID.randomUUID())).size)
+    }
+
+    @Test
+    fun thresholdAlertsOfAReplayedRunAreNotEnqueuedAgain() {
+        val (pipelineId, channel) = QuarkusTransaction.requiringNew().call {
+            val tenant = Tenant().apply { name = "replay-${UUID.randomUUID()}" }.also { it.persist() }
+            createdTenants += tenant.id!!
+            val channel = AlertChannel().apply {
+                this.tenant = tenant; name = "ops"; channelType = AlertChannelType.WEBHOOK; config = """{"url":"http://127.0.0.1:9/none"}"""
+            }.also { it.persist() }
+            Pipeline().apply { this.tenant = tenant; name = "Replay" }.also { it.persist() }.id!! to channel.id!!.toString()
+        }
+        val r = rule("type" to "threshold", "field" to "v", "operator" to ">", "value" to 1, "cooldownSeconds" to 0)
+        val runId = UUID.randomUUID()
+        val first = evaluator.evaluate(pipelineId, "t", r, mapOf("v" to 5), t0, AlertTarget(channel, runId)).single()
+        val replay = evaluator.evaluate(pipelineId, "t", r, mapOf("v" to 5), t0, AlertTarget(channel, runId)).single()
+        assertEquals(first.alertId, replay.alertId)
     }
 
     @Test

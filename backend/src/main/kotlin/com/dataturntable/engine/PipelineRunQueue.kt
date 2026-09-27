@@ -1,6 +1,5 @@
 package com.dataturntable.engine
 
-import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.pipeline.TriggerType
@@ -26,11 +25,15 @@ class PipelineQueueUnavailableException(message: String, cause: Throwable?) : Ru
 /**
  * The only way work reaches the pipeline executors.
  *
- * [enqueue] creates the run in its own committed transaction (so an executor on another
- * node always finds it) and returns only after the Kafka brokers acknowledged the message
- * (`acks=all`, idempotent producer). Callers therefore acknowledge their source — HTTP 202,
- * MQTT PUBACK, a poll cursor — only for data that is durably stored; on failure they get
+ * [enqueue] returns only after the Kafka brokers acknowledged the record (`acks=all`,
+ * idempotent producer, replicated topic). Callers therefore acknowledge their source —
+ * HTTP 202, MQTT PUBACK — only for data that is durably stored; on failure they get
  * [PipelineQueueUnavailableException] and the source keeps or re-sends the data.
+ *
+ * Machine ingest does not touch the database: the run row is created by the executor that
+ * processes the record ([PipelineLogWriter.claimRun]), so a PostgreSQL failover does not
+ * make clients resend. With an idempotency key the run id is derived from it, so a resend
+ * of the same data maps to the same run and is processed once.
  */
 @ApplicationScoped
 class PipelineRunQueue {
@@ -49,9 +52,13 @@ class PipelineRunQueue {
     lateinit var sendTimeout: Duration
 
     /**
-     * Creates a PENDING run for [pipelineId] and publishes it with [data] as the run input.
-     * [partitionKey] (e.g. a device id) spreads one pipeline's load over partitions; records
-     * with the same key keep their order. Returns the run id.
+     * Publishes a run of [pipelineId] with [data] as its input and returns the run id.
+     *
+     * [idempotencyKey]: the same key for the same pipeline always yields the same run id, and
+     * only the first record of a run is executed. [partitionKey] (e.g. a device id) spreads one
+     * pipeline's load over partitions while records with the same key keep their order.
+     * [persistRun] creates the PENDING row right away (runs started from the UI, which show
+     * them immediately); machine ingest leaves that to the executor.
      */
     fun enqueue(
         pipelineId: UUID,
@@ -59,16 +66,26 @@ class PipelineRunQueue {
         data: Map<String, Any?>,
         retryOfRunId: UUID? = null,
         partitionKey: String? = null,
+        idempotencyKey: String? = null,
+        persistRun: Boolean = false,
     ): UUID {
-        val runId = try {
-            createRun(pipelineId, triggerType, retryOfRunId)
-        } catch (e: Exception) {
-            if (!isTransientInfrastructureFailure(e)) throw e
-            throw PipelineQueueUnavailableException("Database unavailable, retry later", e)
+        val runId = idempotencyKey?.takeIf { it.isNotBlank() }?.let { runIdFor(pipelineId, it) } ?: UUID.randomUUID()
+        val queuedAt = Instant.now()
+        if (persistRun) {
+            try {
+                createRun(runId, pipelineId, triggerType, retryOfRunId, queuedAt)
+            } catch (e: Exception) {
+                if (!isTransientInfrastructureFailure(e)) throw e
+                throw PipelineQueueUnavailableException("Database unavailable, retry later", e)
+            }
         }
-        val input = data + mapOf("_pipelineId" to pipelineId.toString(), "_runId" to runId.toString())
+        val input = data + listOfNotNull(
+            "_pipelineId" to pipelineId.toString(),
+            "_runId" to runId.toString(),
+            retryOfRunId?.let { "_retryOfRunId" to it.toString() },
+        )
         val message = objectMapper.writeValueAsString(
-            PipelineTriggerMessage(runId.toString(), pipelineId.toString(), triggerType.name, input)
+            PipelineTriggerMessage(runId.toString(), pipelineId.toString(), triggerType.name, input, queuedAt.toString())
         )
         val key = partitionKey?.takeIf { it.isNotBlank() }?.let { "$pipelineId:$it" } ?: pipelineId.toString()
         try {
@@ -77,15 +94,16 @@ class PipelineRunQueue {
             ).await().atMost(sendTimeout)
         } catch (e: Exception) {
             log.errorf("Pipeline %s: run %s could not be queued: %s", pipelineId, runId, e.message)
-            // Best effort: with the database also down the run stays PENDING, which the
-            // client's resend makes irrelevant.
-            runCatching {
-                QuarkusTransaction.requiringNew().run {
-                    em.find(PipelineRun::class.java, runId)?.apply {
-                        status = PipelineRunStatus.FAILED
-                        completedAt = Instant.now()
-                        errorMessage = "Could not queue run: ${e.message}"
-                        inputPayload = objectMapper.writeValueAsString(input)
+            if (persistRun) {
+                // Best effort: with the database also down the run stays PENDING until the reaper.
+                runCatching {
+                    QuarkusTransaction.requiringNew().run {
+                        em.find(PipelineRun::class.java, runId)?.apply {
+                            status = PipelineRunStatus.FAILED
+                            completedAt = Instant.now()
+                            errorMessage = "Could not queue run: ${e.message}"
+                            inputPayload = objectMapper.writeValueAsString(input)
+                        }
                     }
                 }
             }
@@ -94,15 +112,20 @@ class PipelineRunQueue {
         return runId
     }
 
-    private fun createRun(pipelineId: UUID, triggerType: TriggerType, retryOfRunId: UUID?): UUID =
-        QuarkusTransaction.requiringNew().call {
-            val run = PipelineRun().apply {
-                pipeline = em.getReference(Pipeline::class.java, pipelineId)
-                this.triggerType = triggerType
-                this.retryOfRunId = retryOfRunId
-            }
-            em.persist(run)
-            em.flush()
-            run.id!!
+    private fun createRun(runId: UUID, pipelineId: UUID, triggerType: TriggerType, retryOfRunId: UUID?, queuedAt: Instant) {
+        QuarkusTransaction.requiringNew().run {
+            em.createNativeQuery(
+                "INSERT INTO pipeline_runs (id, pipeline_id, status, trigger_type, started_at, queued_at, retry_of_run_id) " +
+                    "VALUES (?1, ?2, 'PENDING', ?3, ?4, ?4, ?5) ON CONFLICT DO NOTHING"
+            ).setParameter(1, runId).setParameter(2, pipelineId).setParameter(3, triggerType.name)
+                .setParameter(4, java.sql.Timestamp.from(queuedAt)).setParameter(5, retryOfRunId)
+                .executeUpdate()
         }
+    }
+
+    companion object {
+        /** Run id of an idempotency key: stable across resends and ingest replicas. */
+        fun runIdFor(pipelineId: UUID, idempotencyKey: String): UUID =
+            UUID.nameUUIDFromBytes("dataturntable-run|$pipelineId|$idempotencyKey".toByteArray(Charsets.UTF_8))
+    }
 }

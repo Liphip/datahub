@@ -3,6 +3,7 @@ package com.dataturntable.api
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.engine.PipelineQueueUnavailableException
+import com.dataturntable.engine.PipelineDirectory
 import com.dataturntable.engine.PipelineRunQueue
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
@@ -25,8 +26,8 @@ class WebSocketIngestResource {
     @Inject
     lateinit var runQueue: PipelineRunQueue
 
-    @PersistenceContext
-    lateinit var em: EntityManager
+    @Inject
+    lateinit var directory: PipelineDirectory
 
     private val objectMapper = ObjectMapper()
 
@@ -35,12 +36,14 @@ class WebSocketIngestResource {
     /**
      * Queues one message and answers the sender with `{"status":"accepted","runId":...}` or,
      * when the record is not stored, `{"status":"error","retry":true}` so it can resend.
+     * A top-level `_idempotencyKey` (or the pipeline's `deduplicateBy` fields) makes resends
+     * of the same message map to the same run.
      */
     fun handleWebSocketMessage(session: Session, pipelineId: String, message: String) {
         val pipelineUuid = runCatching { UUID.fromString(pipelineId) }.getOrNull()
             ?: return reply(session, mapOf("status" to "error", "retry" to false, "error" to "Invalid pipelineId"))
-        val pipeline = em.find(Pipeline::class.java, pipelineUuid)
-        if (pipeline == null || !pipeline.isActive) {
+        val pipeline = directory.get(pipelineUuid)
+        if (pipeline == null || !pipeline.active) {
             return reply(session, mapOf("status" to "error", "retry" to false, "error" to "Pipeline not found or not active"))
         }
 
@@ -48,11 +51,13 @@ class WebSocketIngestResource {
         val payload = runCatching { objectMapper.readValue(message, Map::class.java) as Map<String, Any?> }
             .getOrElse { mapOf("raw" to message) }
         val data = payload.toMutableMap()
+        val key = data.remove("_idempotencyKey")?.toString()?.takeIf { it.isNotBlank() }
+            ?: PipelineDirectory.recordKey(payload, pipeline.deduplicateBy)
         data["_ingestedAt"] = java.time.Instant.now().toString()
         data["_source"] = "websocket"
 
         try {
-            val runId = runQueue.enqueue(pipelineUuid, TriggerType.DATA, data)
+            val runId = runQueue.enqueue(pipelineUuid, TriggerType.DATA, data, idempotencyKey = key)
             reply(session, mapOf("status" to "accepted", "runId" to runId.toString()))
         } catch (e: PipelineQueueUnavailableException) {
             reply(session, mapOf("status" to "error", "retry" to true, "error" to e.message))

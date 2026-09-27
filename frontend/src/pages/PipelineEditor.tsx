@@ -61,6 +61,8 @@ interface PipelineNodeData extends Record<string, unknown> {
   alertRule?: AlertRuleConfig;
   /** IMPORT nodes: forward records as received instead of running a Python module */
   passThrough?: boolean;
+  /** IMPORT nodes: fields that identify a record, so resent data is processed once */
+  deduplicateBy?: string[];
 }
 
 /** Nodes that run a Python module (as opposed to a built-in rule or pass-through). */
@@ -233,6 +235,7 @@ function graphToFlow(
       alertChannel: raw.alertChannel as string | undefined,
       alertRule: raw.alertRule as AlertRuleConfig | undefined,
       passThrough: raw.type === 'IMPORT' && !raw.moduleVersionId,
+      deduplicateBy: Array.isArray(raw.deduplicateBy) ? (raw.deduplicateBy as string[]) : undefined,
     } satisfies PipelineNodeData,
   }));
 
@@ -267,6 +270,7 @@ function flowToGraph(
         mqttTopic: d.mqttTopic,
         alertChannel: d.alertChannel,
         alertRule: d.alertRule,
+        deduplicateBy: d.nodeType === 'IMPORT' && d.deduplicateBy?.length ? d.deduplicateBy : undefined,
         position: n.position,
       };
     }),
@@ -860,6 +864,23 @@ function NodeConfigPanel({
               or reshape other formats.
             </p>
           )}
+          <label className="block mt-3">
+            <span className="block text-xs font-medium text-gray-600 mb-1">Deduplicate by (optional)</span>
+            <input
+              className="border rounded-sm px-2 py-1 text-sm w-full"
+              placeholder="device, ts"
+              disabled={!canWrite}
+              value={(data.deduplicateBy ?? []).join(', ')}
+              onChange={(e) => {
+                const fields = e.target.value.split(',').map((f) => f.trim()).filter(Boolean);
+                onChange({ deduplicateBy: fields.length ? fields : undefined });
+              }}
+            />
+          </label>
+          <p className="text-[10px] text-gray-400 mt-1">
+            Fields that identify a measurement. A record with the same values is processed only once, so data a
+            device or gateway resends is not counted twice. HTTP clients can send an Idempotency-Key header instead.
+          </p>
         </div>
       )}
 

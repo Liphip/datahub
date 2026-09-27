@@ -788,7 +788,9 @@
     "howTitle": "Wie Alarme diese Kanäle erreichen",
     "howRules": "Eingebaute Regeln: ALERT-Knoten in einer Pipeline anlegen, „Eingebaute Regel“ wählen (Schwellwert, Änderungsrate, Zeitfenster, keine Daten) und einen Kanal auswählen. Kein Code nötig.",
     "howModules": "Python-ALERT-Module rufen für jeden Alarm alert_fn() auf; ohne Angabe gilt der am Knoten gewählte Kanal:",
-    "howChannelHint": "Ein Alarm mit gleichem Titel und gleicher Serie wird erst nach der Abklingzeit der Regel erneut gesendet (Standard 5 Minuten)."
+    "howChannelHint": "Ein Alarm mit gleichem Titel und gleicher Serie wird erst nach der Abklingzeit der Regel erneut gesendet (Standard 5 Minuten).",
+    "suppressedHint": "innerhalb der Abklingzeit nicht erneut gesendet",
+    "retryAt": "Versuch {{attempts}} fehlgeschlagen, nächster Versuch um {{time}}"
   },
   "users": {
     "title": "Benutzer",

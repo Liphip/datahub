@@ -56,6 +56,10 @@ open class AlertRuleState {
     @Column(name = "absence_alerted", nullable = false)
     var absenceAlerted: Boolean = false
 
+    /** Run that last changed this state; a replay of that run must not apply it again. */
+    @Column(name = "last_run_id")
+    var lastRunId: UUID? = null
+
     @Column(name = "updated_at", nullable = false)
     var updatedAt: Instant = Instant.now()
 }

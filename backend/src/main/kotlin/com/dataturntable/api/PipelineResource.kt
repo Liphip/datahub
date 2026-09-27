@@ -157,6 +157,12 @@ class PipelineResource {
                 validateAlertChannel(tenantId, nodeId, nodeMap["alertChannel"]?.toString())?.let { return it }
             }
 
+            (nodeMap["deduplicateBy"])?.let { dedup ->
+                if (nodeType != "IMPORT") return "Node $nodeId: only IMPORT nodes can set deduplicateBy"
+                val fields = dedup as? List<*> ?: return "Node $nodeId: deduplicateBy must be a list of field names"
+                if (fields.any { it !is String || it.isBlank() }) return "Node $nodeId: deduplicateBy must be a list of field names"
+            }
+
             // IMPORT without a module is the built-in pass-through: records flow on as received.
             if (nodeType == "IMPORT" && nodeMap["moduleVersionId"] == null) {
                 val connectorId = nodeMap["connectorId"] as? String ?: continue   // HTTP/WebSocket push by pipeline id
@@ -1072,7 +1078,7 @@ class PipelineResource {
         retryOfRunId: UUID? = null
     ): PipelineRun {
         val runId = try {
-            runQueue.enqueue(pipeline.id!!, triggerType, mapOf("_triggerType" to triggerType.name) + data, retryOfRunId)
+            runQueue.enqueue(pipeline.id!!, triggerType, mapOf("_triggerType" to triggerType.name) + data, retryOfRunId, persistRun = true)
         } catch (e: PipelineQueueUnavailableException) {
             throw WebApplicationException(
                 Response.status(503).header("Retry-After", 5).entity(mapOf("error" to e.message)).build()

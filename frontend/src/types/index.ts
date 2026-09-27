@@ -374,8 +374,12 @@ export interface AlertHistory {
   title: string;
   message?: string;
   payload?: Record<string, unknown>;
-  sentAt: string;
-  status: 'PENDING' | 'SENT' | 'FAILED' | 'RETRY';
+  createdAt: string;
+  sentAt?: string;
+  status: 'PENDING' | 'SENDING' | 'SENT' | 'SUPPRESSED' | 'FAILED';
+  attempts?: number;
+  nextAttemptAt?: string;
+  lastError?: string;
 }
 
 /**

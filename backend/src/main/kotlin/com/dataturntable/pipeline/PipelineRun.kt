@@ -61,6 +61,17 @@ open class PipelineRun : PanacheBase() {
     /** Trigger data of a failed run, kept so that a retry replays the same input. */
     @Column(name = "input_payload", columnDefinition = "text")
     var inputPayload: String? = null
+
+    /** When the record was handed to Kafka (the run row itself is created on first processing). */
+    @Column(name = "queued_at")
+    var queuedAt: Instant? = null
+
+    /** Kafka record that claimed the run; a different copy of the same run is a duplicate. */
+    @Column(name = "record_partition")
+    var recordPartition: Int? = null
+
+    @Column(name = "record_offset")
+    var recordOffset: Long? = null
     
     companion object : PanacheCompanionBase<PipelineRun, UUID> {
         override fun findById(id: UUID): PipelineRun? =

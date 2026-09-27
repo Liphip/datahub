@@ -55,6 +55,8 @@ class PipelineDataService(
         moduleType: ModuleType,
         inputData: Any?,
         tenantId: UUID,
+        /** Identifies this execution (run and node); makes appends idempotent. */
+        recordKeyPrefix: String? = null,
     ): PipelineDataExecutionOutput {
         val startedAt = System.currentTimeMillis()
         val config = parseConfig(moduleVersion.config)
@@ -67,7 +69,7 @@ class PipelineDataService(
 
             val result = when (moduleType) {
                 ModuleType.DB_LOAD -> executeLoad(connection, schema, table, config, inputData)
-                ModuleType.DB_SAVE -> executeSave(connection, schema, table, config, inputData)
+                ModuleType.DB_SAVE -> executeSave(connection, schema, table, config, inputData, recordKeyPrefix)
                 else -> throw IllegalArgumentException("Unsupported pipeline data module type: $moduleType")
             }
             connection.commit()
@@ -156,6 +158,7 @@ class PipelineDataService(
         table: String,
         config: Map<String, Any?>,
         inputData: Any?,
+        recordKeyPrefix: String? = null,
     ): Map<String, Any?> {
         val rows = normalizeRows(inputData)
         if (rows.isEmpty()) {
@@ -165,7 +168,13 @@ class PipelineDataService(
         ensureTableExists(connection, schema, table, rows.first(), config)
 
         val mode = (config["mode"]?.toString()?.lowercase() ?: "append")
-        val columns = rows.flatMap { it.keys }.distinct().map { requireIdentifier(it, "column") }
+        // Append mode: every row carries the key of the run, node and row position, so a run
+        // executed again after a failover does not write its rows twice (upsert mode is
+        // idempotent through its key columns already).
+        val keyed = mode != "upsert" && recordKeyPrefix != null
+        if (keyed) ensureRecordKey(connection, schema, table)
+        val dataColumns = rows.flatMap { it.keys }.distinct().map { requireIdentifier(it, "column") }
+        val columns = if (keyed) dataColumns + RECORD_KEY_COLUMN else dataColumns
         val placeholders = columns.joinToString(", ") { "?" }
         val columnSql = columns.joinToString(", ") { quoteIdentifier(it) }
 
@@ -176,19 +185,30 @@ class PipelineDataService(
             val updateColumns = columns.filterNot { it in keyColumns }
             val updateSql = updateColumns.joinToString(", ") { "${quoteIdentifier(it)} = EXCLUDED.${quoteIdentifier(it)}" }
             "INSERT INTO ${quoteIdentifier(schema)}.${quoteIdentifier(table)} ($columnSql) VALUES ($placeholders) ON CONFLICT (${keyColumns.joinToString(", ") { quoteIdentifier(it) }}) DO UPDATE SET $updateSql"
+        } else if (keyed) {
+            "INSERT INTO ${quoteIdentifier(schema)}.${quoteIdentifier(table)} ($columnSql) VALUES ($placeholders) ON CONFLICT (${quoteIdentifier(RECORD_KEY_COLUMN)}) DO NOTHING"
         } else {
             "INSERT INTO ${quoteIdentifier(schema)}.${quoteIdentifier(table)} ($columnSql) VALUES ($placeholders)"
         }
 
         connection.prepareStatement(sql).use { statement ->
-            rows.forEach { row ->
+            rows.forEachIndexed { rowIndex, row ->
                 columns.forEachIndexed { idx, column ->
-                    bindValue(statement, idx + 1, normalizeValue(row[column]))
+                    val value = if (column == RECORD_KEY_COLUMN && keyed) "$recordKeyPrefix:$rowIndex" else normalizeValue(row[column])
+                    bindValue(statement, idx + 1, value)
                 }
                 statement.addBatch()
             }
             val written = statement.executeBatch().sum()
             return mapOf("written" to written, "schema" to schema, "table" to table, "rows" to rows.size)
+        }
+    }
+
+    private fun ensureRecordKey(connection: Connection, schema: String, table: String) {
+        val qualified = "${quoteIdentifier(schema)}.${quoteIdentifier(table)}"
+        connection.createStatement().use { stmt ->
+            stmt.execute("ALTER TABLE $qualified ADD COLUMN IF NOT EXISTS ${quoteIdentifier(RECORD_KEY_COLUMN)} TEXT")
+            stmt.execute("CREATE UNIQUE INDEX IF NOT EXISTS ${quoteIdentifier("${table}_dt_record_key")} ON $qualified (${quoteIdentifier(RECORD_KEY_COLUMN)})")
         }
     }
 
@@ -363,5 +383,10 @@ class PipelineDataService(
             is Boolean -> statement.setBoolean(index, value)
             else -> statement.setObject(index, value)
         }
+    }
+
+    private companion object {
+        /** Platform column that makes DB_SAVE appends idempotent per run, node and row. */
+        const val RECORD_KEY_COLUMN = "_dt_record_key"
     }
 }

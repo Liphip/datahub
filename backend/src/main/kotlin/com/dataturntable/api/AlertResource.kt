@@ -186,8 +186,12 @@ class AlertResource {
             "title" to history.title,
             "message" to history.message,
             "payload" to parseJsonValue(history.payload),
+            "createdAt" to history.createdAt,
             "sentAt" to history.sentAt,
-            "status" to history.status.name
+            "status" to history.status.name,
+            "attempts" to history.attempts,
+            "nextAttemptAt" to history.nextAttemptAt,
+            "lastError" to history.lastError
         )
     }
     
@@ -316,7 +320,7 @@ class AlertResource {
         val tenantUuid = parseUuid(tenantId, "tenantId")
         requireTenantAccess(currentUser, tenantUuid.toString(), "alert:read")?.let { return it }
         val history = em.createQuery(
-            "SELECT h FROM AlertHistory h WHERE h.tenant.id = :tenantId ORDER BY h.sentAt DESC",
+            "SELECT h FROM AlertHistory h WHERE h.tenant.id = :tenantId ORDER BY h.createdAt DESC",
             AlertHistory::class.java
         )
             .setParameter("tenantId", tenantUuid)

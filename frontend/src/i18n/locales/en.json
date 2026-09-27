@@ -788,7 +788,9 @@
     "howTitle": "How alerts reach these channels",
     "howRules": "Built-in rules: add an ALERT node to a pipeline, choose \"Built-in rule\" (threshold, rate of change, time window, no data) and pick a channel. No code needed.",
     "howModules": "Python ALERT modules call alert_fn() for every alert; the channel defaults to the one selected on the node:",
-    "howChannelHint": "Channels repeat an alert with the same title and series only after the cooldown of the rule (default 5 minutes)."
+    "howChannelHint": "Channels repeat an alert with the same title and series only after the cooldown of the rule (default 5 minutes).",
+    "suppressedHint": "not sent again within the cooldown",
+    "retryAt": "attempt {{attempts}} failed, next try at {{time}}"
   },
   "users": {
     "title": "Users",

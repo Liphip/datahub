@@ -1,13 +1,10 @@
 package com.dataturntable.api
 
-import com.dataturntable.connectors.Connector
 import com.dataturntable.engine.PipelineQueueUnavailableException
+import com.dataturntable.engine.PipelineDirectory
 import com.dataturntable.engine.PipelineRunQueue
-import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.TriggerType
 import jakarta.inject.Inject
-import jakarta.persistence.EntityManager
-import jakarta.persistence.PersistenceContext
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
@@ -16,7 +13,12 @@ import java.util.UUID
 
 /**
  * HTTP push ingestion. A 202 means the record is stored on the Kafka brokers; a 503 means
- * it is not and the client must send it again (delivery is at-least-once).
+ * it is not and the client should send it again. Neither path touches the database, so only
+ * Kafka losing its write quorum makes clients resend.
+ *
+ * Exactly once: send an `Idempotency-Key` header (or configure `deduplicateBy` fields on the
+ * pipeline's IMPORT node). A record resent with the same key gets the same run id and is
+ * processed only once, however often it arrives.
  */
 @Path("/api/ingest/v1")
 @Produces(MediaType.APPLICATION_JSON)
@@ -26,8 +28,8 @@ class IngestResource {
     @Inject
     lateinit var runQueue: PipelineRunQueue
 
-    @PersistenceContext
-    lateinit var em: EntityManager
+    @Inject
+    lateinit var directory: PipelineDirectory
 
     /**
      * Queues [payload] for one pipeline. `X-Partition-Key` (e.g. a device id) lets one
@@ -40,23 +42,26 @@ class IngestResource {
         @HeaderParam("X-API-Key") apiKey: String?,
         @HeaderParam("X-Tenant-Id") tenantId: String?,
         @HeaderParam("X-Partition-Key") partitionKey: String?,
+        @HeaderParam("Idempotency-Key") idempotencyKey: String?,
         payload: Map<String, Any>
     ): Response {
         val pipelineUuid = runCatching { UUID.fromString(pipelineId) }.getOrNull()
             ?: return error(400, "Invalid pipelineId")
-        val pipeline = em.find(Pipeline::class.java, pipelineUuid) ?: return error(404, "Pipeline not found")
-        if (!pipeline.isActive) return error(400, "Pipeline is not active")
+        val pipeline = directory.get(pipelineUuid) ?: return error(404, "Pipeline not found")
+        if (!pipeline.active) return error(400, "Pipeline is not active")
 
         val data = payload.toMutableMap<String, Any?>()
         data["_ingestedAt"] = Instant.now().toString()
         tenantId?.let { data["_tenantId"] = it }
+        val key = idempotencyKey?.trim()?.takeIf { it.isNotEmpty() } ?: PipelineDirectory.recordKey(payload, pipeline.deduplicateBy)
 
         return try {
-            val runId = runQueue.enqueue(pipelineUuid, TriggerType.DATA, data, partitionKey = partitionKey)
+            val runId = runQueue.enqueue(pipelineUuid, TriggerType.DATA, data, partitionKey = partitionKey, idempotencyKey = key)
             Response.accepted(mapOf(
                 "status" to "accepted",
                 "pipelineId" to pipelineId,
                 "runId" to runId,
+                "idempotent" to (key != null),
                 "message" to "Data queued for processing"
             )).build()
         } catch (e: PipelineQueueUnavailableException) {
@@ -68,8 +73,8 @@ class IngestResource {
      * Push-trigger endpoint: an external system or internal ingest service posts data here.
      * The platform finds all active pipelines whose graph contains the given connectorId on an
      * IMPORT node and triggers each one with the incoming payload. If any pipeline could not
-     * be queued the response is 503 and the client resends; pipelines that were queued then
-     * receive the record twice (at-least-once).
+     * be queued the response is 503 and the client resends; with an idempotency key the
+     * pipelines that were already queued do not run twice.
      */
     @POST
     @Path("/ingest/connector/{connectorId}")
@@ -77,27 +82,12 @@ class IngestResource {
         @PathParam("connectorId") connectorId: String,
         @HeaderParam("X-API-Key") apiKey: String?,
         @HeaderParam("X-Partition-Key") partitionKey: String?,
+        @HeaderParam("Idempotency-Key") idempotencyKey: String?,
         payload: Map<String, Any>
     ): Response {
         val connectorUuid = runCatching { UUID.fromString(connectorId) }.getOrNull()
             ?: return error(400, "Invalid connectorId")
-        val connector = em.find(Connector::class.java, connectorUuid) ?: return error(404, "Connector not found")
-        if (connector.direction != Connector.Direction.INPUT) return error(400, "Connector is not an INPUT connector")
-
-        // connector_pipeline_map is populated at pipeline save/activate; the graph scan
-        // catches pipelines whose mapping is not written yet.
-        @Suppress("UNCHECKED_CAST")
-        val mappedPipelineIds = em.createNativeQuery(
-            "SELECT DISTINCT pipeline_id FROM connector_pipeline_map WHERE connector_id = :cid AND node_type = 'IMPORT'"
-        ).setParameter("cid", connectorUuid).resultList as List<UUID>
-        val graphMatchIds = em.createQuery(
-            "SELECT p.id FROM Pipeline p WHERE p.isActive = true AND p.graphDefinition LIKE :pattern",
-            UUID::class.java
-        ).setParameter("pattern", "%\"connectorId\":\"$connectorId\"%").resultList
-
-        val pipelines = (mappedPipelineIds + graphMatchIds).distinct()
-            .mapNotNull { em.find(Pipeline::class.java, it) }
-            .filter { it.isActive }
+        val pipelines = directory.activeForConnector(connectorUuid)
         if (pipelines.isEmpty()) return error(404, "No active pipelines found for connector $connectorId")
 
         val triggeredRuns = mutableListOf<Map<String, Any?>>()
@@ -106,8 +96,9 @@ class IngestResource {
             val data = payload.toMutableMap<String, Any?>()
             data["_connectorId"] = connectorId
             data["_ingestedAt"] = Instant.now().toString()
+            val key = idempotencyKey?.trim()?.takeIf { it.isNotEmpty() } ?: PipelineDirectory.recordKey(payload, pipeline.deduplicateBy)
             try {
-                val runId = runQueue.enqueue(pipeline.id!!, TriggerType.DATA, data, partitionKey = partitionKey)
+                val runId = runQueue.enqueue(pipeline.id, TriggerType.DATA, data, partitionKey = partitionKey, idempotencyKey = key)
                 triggeredRuns.add(mapOf("pipelineId" to pipeline.id, "runId" to runId))
             } catch (e: PipelineQueueUnavailableException) {
                 errors.add("Pipeline ${pipeline.id}: ${e.message}")

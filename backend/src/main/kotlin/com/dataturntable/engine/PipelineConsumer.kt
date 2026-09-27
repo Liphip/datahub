@@ -3,9 +3,12 @@ package com.dataturntable.engine
 import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
 import com.dataturntable.pipeline.Pipeline
+import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.alert.AlertDispatcher
 import com.dataturntable.alert.AlertRuleConfig
 import com.dataturntable.alert.AlertRuleEvaluator
+import com.dataturntable.alert.AlertTarget
+import io.quarkus.narayana.jta.QuarkusTransaction
 import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.ConnectorRuntimeService
 import com.dataturntable.service.PipelineDataService
@@ -27,7 +30,9 @@ data class PipelineTriggerMessage(
     val runId: String,
     val pipelineId: String,
     val triggerType: String,
-    val data: Any? = null
+    val data: Any? = null,
+    /** ISO-8601 time the record was handed to Kafka. */
+    val queuedAt: String? = null,
 )
 
 /**
@@ -201,7 +206,7 @@ class PipelineConsumer {
      * Kafka offset, so the record is not lost.
      */
     @Transactional
-    fun consume(message: String): PipelineEvent {
+    fun consume(message: String, source: PipelineLogWriter.RecordSource? = null): PipelineEvent {
         val trigger = try {
             val tree = objectMapper.readTree(message)
             PipelineTriggerMessage(
@@ -209,6 +214,7 @@ class PipelineConsumer {
                 pipelineId = tree.path("pipelineId").asText(),
                 triggerType = tree.path("triggerType").asText(),
                 data = tree.get("data")?.takeIf { it.isObject }?.let { objectMapper.convertValue(it, Map::class.java) },
+                queuedAt = tree.path("queuedAt").asText(null),
             )
         } catch (e: Exception) {
             LOG.errorf("Discarding unparseable pipeline message: %s", e.message)
@@ -230,11 +236,20 @@ class PipelineConsumer {
             return PipelineEvent(runId, pipelineId, "init", false, error = "Pipeline not found")
         }
 
-        // A record is redelivered when an executor stopped before committing its offset.
-        // Finished runs are skipped; a run that was RUNNING on the lost executor starts again.
-        if (!logWriter.claimRun(runUuid)) {
-            LOG.infof("Run %s is already finished or cancelled, skipping redelivered record", runId)
-            return PipelineEvent(runId, pipelineId, "skipped", false, error = "Run already finished")
+        // Exactly once: the run row is the record of what happened. Finished runs and second
+        // copies of a run (client resend with the same idempotency key) are skipped; the
+        // redelivery of a record whose executor died re-runs it.
+        val claimed = logWriter.claimRun(
+            runId = runUuid,
+            pipelineId = pipelineUuid,
+            triggerType = runCatching { TriggerType.valueOf(trigger.triggerType) }.getOrDefault(TriggerType.DATA),
+            queuedAt = trigger.queuedAt?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() },
+            retryOfRunId = parseUuid(dataPayload?.get("_retryOfRunId")?.toString()),
+            source = source,
+        )
+        if (!claimed) {
+            LOG.infof("Run %s already finished or claimed by another copy, skipping record", runId)
+            return PipelineEvent(runId, pipelineId, "skipped", false, error = "Run already processed")
         }
         LOG.debugf("Executing run %s of pipeline %s", runId, pipelineId)
 
@@ -360,14 +375,11 @@ class PipelineConsumer {
             val label = "rule:${rule.type.key}"
             val startedAt = System.currentTimeMillis()
             executionLog.add("START $stage #$order $label [${node.id}]")
-            val alerts = alertRuleEvaluator.evaluate(pipeline.id!!, node.id, rule, input)
-            alerts.forEach { alert ->
-                try {
-                    alertDispatcher.dispatchRuleAlert(pipeline, node.id, node.alertChannel, rule, alert)
-                } catch (e: Exception) {
-                    LOG.warnf("Alert dispatch failed for node %s: %s", node.id, e.message)
-                }
-            }
+            // State change and outbox entries commit together; delivery failures are retried
+            // by the outbox, so they do not fail the run.
+            val alerts = alertRuleEvaluator.evaluate(pipeline.id!!, node.id, rule, input,
+                target = AlertTarget(node.alertChannel, runUuid))
+            alerts.mapNotNull { it.alertId }.forEach { alertDispatcher.deliver(it) }
             val durationMs = System.currentTimeMillis() - startedAt
             val summary = if (alerts.isEmpty()) "No alert raised by ${rule.type.key} rule"
                 else alerts.joinToString("\n") { "Alert: ${it.title} — ${it.message}" }
@@ -476,7 +488,8 @@ class PipelineConsumer {
                         moduleVersion = version,
                         moduleType = execType,
                         inputData = resolvedInput,
-                        tenantId = tenantId
+                        tenantId = tenantId,
+                        recordKeyPrefix = runUuid?.let { "$it:${node.id}" },
                     )
                     ModuleExecutionOutput(
                         result = dbOutput.result,
@@ -505,7 +518,8 @@ class PipelineConsumer {
                         // A failed delivery fails the run (which keeps its input for Retry)
                         // instead of silently dropping the data.
                         try {
-                            connectorRuntime.deliverViaConnector(conn.connector, conn.config, output.result)
+                            connectorRuntime.deliverViaConnector(conn.connector, conn.config, output.result,
+                                deliveryKey = runUuid?.let { "$it:${node.id}" })
                         } catch (e: Exception) {
                             throw IllegalStateException(
                                 "Delivery via connector '${conn.connector.name}' failed: ${e.message}", e)
@@ -515,25 +529,28 @@ class PipelineConsumer {
 
                 // Dispatch alerts collected by alert_fn() in the ALERT module
                 if (execType == ModuleType.ALERT) {
-                    val alerts = (output.result as? Map<*, *>)?.get("alerts") as? List<*> ?: emptyList<Any>()
-                    alerts.filterIsInstance<Map<*, *>>().forEach { alert ->
-                        try {
+                    val alerts = ((output.result as? Map<*, *>)?.get("alerts") as? List<*>).orEmpty().filterIsInstance<Map<*, *>>()
+                    // Enqueued together and keyed by run, node and position: a run executed again
+                    // after a failover finds its alerts already in the outbox.
+                    val alertIds = QuarkusTransaction.requiringNew().call {
+                        val managed = em.find(Pipeline::class.java, pipeline.id)
+                        alerts.mapIndexedNotNull { index, alert ->
                             @Suppress("UNCHECKED_CAST")
-                            alertDispatcher.dispatchToChannel(
-                                pipeline = pipeline,
+                            alertDispatcher.enqueue(
+                                pipeline = managed,
                                 channelRef = alert["channel"]?.toString()?.takeIf { it.isNotBlank() } ?: node.alertChannel,
                                 title = alert["title"]?.toString()?.takeIf { it.isNotBlank() }
                                     ?: "${pipeline.name ?: "Pipeline"}: ${version.module?.name ?: node.id}",
                                 message = alert["message"]?.toString() ?: "",
                                 severity = alert["severity"]?.toString() ?: "WARNING",
-                                payload = alert["payload"] as? Map<String, Any>,
+                                payload = alert["payload"] as? Map<String, Any?>,
                                 dedupKey = "${pipeline.id}:${node.id}:${alert["title"] ?: ""}",
                                 cooldownSeconds = (alert["cooldownSeconds"] as? Number)?.toLong(),
+                                deliveryKey = runUuid?.let { "run:$it:${node.id}:$index" },
                             )
-                        } catch (ae: Exception) {
-                            LOG.warnf("Alert dispatch failed for node %s: %s", node.id, ae.message)
                         }
                     }
+                    alertIds.forEach { alertDispatcher.deliver(it) }
                 }
 
                 val userStdout = trimLog(userOutput(output.stdout))
