@@ -156,6 +156,10 @@ dataturntable:
       url: ${DATATURNTABLE_PIPELINE_DATA_JDBC_URL:}
       username: ${DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME:}
       password: ${DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD:}
+  ingest:
+    # Durable fallback for records Kafka cannot take (fire-and-forget senders). On Kubernetes
+    # a persistent volume of the ingest pod.
+    spool-dir: ${DATATURNTABLE_INGEST_SPOOL_DIR:${java.io.tmpdir}/dataturntable-spool}
   kafka:
     topics:
       prefix: dataturntable

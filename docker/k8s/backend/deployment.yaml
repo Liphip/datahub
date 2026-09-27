@@ -341,7 +341,7 @@ spec:
           averageUtilization: 80
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: dataturntable-ingest-edge
   labels:
@@ -349,11 +349,12 @@ metadata:
     component: ingest-edge
 spec:
   replicas: 2
-  strategy:
+  # StatefulSet: every ingest pod keeps its spool volume across restarts (fire-and-forget
+  # records Kafka could not take are replayed from it). Pods start and stop in parallel.
+  serviceName: dataturntable-ingest-edge
+  podManagementPolicy: Parallel
+  updateStrategy:
     type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
   selector:
     matchLabels:
       app: dataturntable
@@ -368,7 +369,8 @@ spec:
         prometheus.io/path: "/q/metrics"
         prometheus.io/port: "8080"
     spec:
-      terminationGracePeriodSeconds: 30
+      # Shutdown waits up to 50 s for the spool to drain (DATATURNTABLE_INGEST_SPOOL_DRAIN_TIMEOUT).
+      terminationGracePeriodSeconds: 60
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
@@ -385,6 +387,10 @@ spec:
             - containerPort: 8080
               name: http
           env:
+            - name: DATATURNTABLE_INGEST_SPOOL_DIR
+              value: /var/lib/dataturntable/spool
+            - name: DATATURNTABLE_INGEST_SPOOL_DRAIN_TIMEOUT
+              value: 50s
             - name: QUARKUS_PROFILE
               value: "prod,ingest-edge"
             - name: DATATURNTABLE_RUNTIME_ROLE
@@ -431,6 +437,9 @@ spec:
             preStop:
               sleep:
                 seconds: 5
+          volumeMounts:
+            - name: spool
+              mountPath: /var/lib/dataturntable/spool
           livenessProbe:
             httpGet:
               path: /q/health/live
@@ -447,6 +456,15 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 2
             failureThreshold: 3
+  volumeClaimTemplates:
+    - metadata:
+        name: spool
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+
 ---
 apiVersion: v1
 kind: Service
@@ -476,7 +494,7 @@ metadata:
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
-    kind: Deployment
+    kind: StatefulSet
     name: dataturntable-ingest-edge
   minReplicas: 2
   maxReplicas: 20

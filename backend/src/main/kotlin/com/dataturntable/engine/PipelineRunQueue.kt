@@ -7,6 +7,8 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.narayana.jta.QuarkusTransaction
 import io.smallrye.reactive.messaging.MutinyEmitter
 import io.smallrye.reactive.messaging.kafka.api.OutgoingKafkaRecordMetadata
+import io.quarkus.runtime.Startup
+import jakarta.annotation.PostConstruct
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
@@ -25,16 +27,20 @@ class PipelineQueueUnavailableException(message: String, cause: Throwable?) : Ru
 /**
  * The only way work reaches the pipeline executors.
  *
- * [enqueue] returns only after the Kafka brokers acknowledged the record (`acks=all`,
- * idempotent producer, replicated topic). Callers therefore acknowledge their source —
- * HTTP 202, MQTT PUBACK — only for data that is durably stored; on failure they get
- * [PipelineQueueUnavailableException] and the source keeps or re-sends the data.
+ * [enqueue] returns only when the record is durable: acknowledged by the Kafka brokers
+ * (`acks=all`, idempotent producer, replicated topic) or, when Kafka cannot take it, written
+ * to the local [IngestSpool]. Callers therefore acknowledge their source — HTTP 202, MQTT
+ * PUBACK — only for data that is stored, and fire-and-forget senders lose nothing when
+ * Kafka is briefly unavailable. Only if the spool cannot write either do callers get
+ * [PipelineQueueUnavailableException].
  *
  * Machine ingest does not touch the database: the run row is created by the executor that
  * processes the record ([PipelineLogWriter.claimRun]), so a PostgreSQL failover does not
  * make clients resend. With an idempotency key the run id is derived from it, so a resend
  * of the same data maps to the same run and is processed once.
  */
+// Started eagerly: after a restart the spool must replay before any new record arrives.
+@Startup
 @ApplicationScoped
 class PipelineRunQueue {
 
@@ -50,6 +56,16 @@ class PipelineRunQueue {
 
     @ConfigProperty(name = "dataturntable.kafka.send-timeout", defaultValue = "30s")
     lateinit var sendTimeout: Duration
+
+    @Inject
+    lateinit var spool: IngestSpool
+
+    @ConfigProperty(name = "dataturntable.ingest.spool-enabled", defaultValue = "true")
+    var spoolEnabled: Boolean = true
+
+    /** How long machine ingest waits for Kafka before spooling the record instead. */
+    @ConfigProperty(name = "dataturntable.ingest.spool-after", defaultValue = "5s")
+    lateinit var spoolAfter: Duration
 
     /**
      * Publishes a run of [pipelineId] with [data] as its input and returns the run id.
@@ -88,11 +104,24 @@ class PipelineRunQueue {
             PipelineTriggerMessage(runId.toString(), pipelineId.toString(), triggerType.name, input, queuedAt.toString())
         )
         val key = partitionKey?.takeIf { it.isNotBlank() }?.let { "$pipelineId:$it" } ?: pipelineId.toString()
+        // Machine ingest never refuses because of Kafka: records go to the local spool when
+        // Kafka cannot take them, and through the spool while it drains (keeps their order).
+        val spoolable = !persistRun && spoolEnabled
+        if (spoolable && !spool.isEmpty()) {
+            spoolOrFail(IngestSpool.Entry(key, message), null)
+            return runId
+        }
         try {
-            emitter.sendMessage(
-                Message.of(message).addMetadata(OutgoingKafkaRecordMetadata.builder<String>().withKey(key).build())
-            ).await().atMost(sendTimeout)
+            // Senders are not kept waiting on a Kafka leader election: after spoolAfter the
+            // record goes to the spool. Should the pending Kafka write still succeed, both
+            // copies carry the same run id and the run executes once.
+            send(key, message, if (spoolable) spoolAfter else sendTimeout)
         } catch (e: Exception) {
+            if (spoolable) {
+                log.warnf("Kafka unavailable (%s), spooling run %s of pipeline %s", e.message, runId, pipelineId)
+                spoolOrFail(IngestSpool.Entry(key, message), e)
+                return runId
+            }
             log.errorf("Pipeline %s: run %s could not be queued: %s", pipelineId, runId, e.message)
             if (persistRun) {
                 // Best effort: with the database also down the run stays PENDING until the reaper.
@@ -110,6 +139,26 @@ class PipelineRunQueue {
             throw PipelineQueueUnavailableException("Pipeline queue unavailable, retry later", e)
         }
         return runId
+    }
+
+    private fun send(key: String, message: String, timeout: Duration = sendTimeout) {
+        emitter.sendMessage(
+            Message.of(message).addMetadata(OutgoingKafkaRecordMetadata.builder<String>().withKey(key).build())
+        ).await().atMost(timeout)
+    }
+
+    private fun spoolOrFail(entry: IngestSpool.Entry, cause: Exception?) {
+        try {
+            spool.append(entry)
+        } catch (e: Exception) {
+            log.errorf("Ingest spool unavailable: %s", e.message)
+            throw PipelineQueueUnavailableException("Pipeline queue unavailable, retry later", cause ?: e)
+        }
+    }
+
+    @PostConstruct
+    fun registerReplayer() {
+        spool.replayer = { spool.replay { send(it.key, it.message) } }
     }
 
     private fun createRun(runId: UUID, pipelineId: UUID, triggerType: TriggerType, retryOfRunId: UUID?, queuedAt: Instant) {

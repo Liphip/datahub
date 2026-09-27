@@ -16,3 +16,7 @@ mp:
       publickey:
         location: publicKey.pem
       issuer: https://dataturntable.io
+
+dataturntable:
+  ingest:
+    spool-dir: target/test-spool

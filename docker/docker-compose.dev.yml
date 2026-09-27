@@ -210,6 +210,11 @@ services:
       DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME: pipeline_data
       DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD: pipeline_data
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      DATATURNTABLE_INGEST_SPOOL_DIR: /var/lib/dataturntable/spool
+    # Records Kafka cannot take are spooled here and replayed (fire-and-forget senders).
+    volumes:
+      - ingest_spool:/var/lib/dataturntable/spool
+    stop_grace_period: 60s
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/q/health/ready"]
       interval: 10s
@@ -458,6 +463,7 @@ services:
       - /var/lib/docker/:/var/lib/docker:ro
 
 volumes:
+  ingest_spool:
   pgdata:
   pipeline-pgdata:
   monitoring-pgdata:
