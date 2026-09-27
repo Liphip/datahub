@@ -1,10 +1,12 @@
 # DataTurntable — Software Requirements Specification (SRS)
 
-**Version:** 2.0
-**Date:** 2026-09-25
+**Version:** 2.1
+**Date:** 2026-09-27
 **Status:** Draft
 
 Version 2.0 keeps every requirement of version 1.1 under its original ID. Requirements whose wording changed, and the reason, are listed in [Appendix A](#appendix-a-traceability-to-version-11); the same appendix records the implementation status. New requirement groups: Lakehouse (LAK), Identity & Access (IAM), Audit (AUD), System Administration (OPS), Licensing (NFR-L).
+
+Version 2.1: delivery is exactly once for identified records (PIP-09, PIP-10, PIP-14, DAT-07, NFR-R2); requirements found missing in the review of 2026-09-27 were added (PIP-15, ALT-13, TEN-10, UI-20, UI-21, OPS-07, DAT-09, NFR-P7, NFR-R5, NFR-R6); section 11 orders the MVP into milestones. The review with measurements: [requirements review](../development/requirements-review.md).
 
 ---
 
@@ -146,7 +148,7 @@ Requirements are tagged: `MVP` = required for initial release; `V2` = planned po
 
 | ID | Requirement | Priority |
 | -- | ----------- | -------- |
-| IMP-01 | The system shall expose a REST endpoint (`POST /api/ingest/v1/ingest/{pipelineId}`) that accepts arbitrary JSON payloads from external systems and routes them into the named pipeline. A batch form accepting multiple records per request shall be available. | MVP |
+| IMP-01 | The system shall expose a REST endpoint (`POST /api/ingest/v1/ingest/{pipelineId}`) that accepts arbitrary JSON payloads from external systems and routes them into the named pipeline. A batch form accepting multiple records per request shall be available. Callers may identify a record with an `Idempotency-Key` header (PIP-14). | MVP |
 | IMP-02 | The system shall expose an MQTT subscription interface: the platform subscribes to configurable topics on the bundled or an external MQTT broker; incoming messages are routed into the named pipeline. | MVP |
 | IMP-03 | The system shall expose a WebSocket server endpoint; external clients connect and stream frames into a pipeline. | MVP |
 | IMP-04 | The system shall expose a configurable UDP listener; incoming datagrams are routed into a pipeline. | V2 |
@@ -168,11 +170,13 @@ Requirements are tagged: `MVP` = required for initial release; `V2` = planned po
 | PIP-06 | Pipelines shall support drag-and-drop node graph editing in the UI. | MVP |
 | PIP-07 | Pipelines shall be version-controlled; previous versions shall be stored and restorable. | V2 |
 | PIP-08 | Pipelines shall have draft and published states. | V2 |
-| PIP-09 | The system shall deduplicate system-generated duplicates (from Kafka at-least-once retries) but shall not deduplicate user data unless a deduplication PROCESSING module is explicitly added. | MVP |
-| PIP-10 | Pipelines shall support at-least-once delivery semantics. | MVP |
+| PIP-09 | The system shall suppress system-generated duplicates (redelivery after a failover, client resends of an identified record) but shall not deduplicate user data that carries no identity. | MVP |
+| PIP-10 | Pipelines shall process every acknowledged record: at least once for records without an identity, exactly once for identified records (PIP-14). | MVP |
 | PIP-11 | Pipeline execution metrics (throughput, error rate, latency per node) shall be collected and exposed. | MVP |
 | PIP-12 | Pipeline processing shall scale horizontally: work is partitioned by tenant/pipeline and processed in micro-batches by long-running workers whose number follows the load. | MVP |
 | PIP-13 | Messages that fail processing shall be routed to a dead-letter queue from which operators can inspect and requeue them. | MVP |
+| PIP-14 | A record that carries an identity — `Idempotency-Key` (HTTP), `_idempotencyKey` (WebSocket) or the IMPORT node's `deduplicateBy` fields (any source) — shall be processed, stored and alerted on exactly once, including across broker, executor and database failover and client resends. Side effects leaving the platform shall carry an idempotency key where the protocol allows it (webhook, REST). | MVP |
+| PIP-15 | Execution shall not require metadata database writes per record: records are executed in micro-batches (one run per batch per partition), so that the metadata database load is independent of the record rate (NFR-P7). Run history stays inspectable per record where an identity exists. | MVP |
 
 ### 4.3 Python Module System
 
@@ -207,6 +211,7 @@ Requirements are tagged: `MVP` = required for initial release; `V2` = planned po
 | ALT-09 | Alert escalation chains shall be supported. | V2 |
 | ALT-10 | Each ALERT node shall have a default alert channel; an individual alert may name another channel of the same tenant. | MVP |
 | ALT-11 | Every delivery attempt shall be recorded with its outcome (sent, failed); failed deliveries shall be visible in the UI. | MVP |
+| ALT-13 | The platform shall raise platform alerts on pipeline health — repeated run failures, growing processing lag, dead-letter records, alerts that could not be delivered — to the tenant's default channel and to system administrators. | MVP |
 | ALT-12 | Channel secrets (auth tokens, webhook URLs containing tokens) shall be stored encrypted and never returned in plaintext after creation. MQTT alert channels shall reuse an MQTT connector instead of storing broker credentials. | MVP |
 
 ### 4.5 Outbound Data (Export)
@@ -293,6 +298,8 @@ Connections describe how to reach an external system (endpoint, credentials). Th
 | UI-17 | The configuration page of every component (pipeline, connector, connection, tenant, user, role, dashboard, alert channel, …) shall show an Activity tab with its audit trail and notes (AUD). | MVP |
 | UI-18 | System administrators shall have a system area in the UI for installation operations (OPS) and system monitoring. | MVP |
 | UI-19 | User and administrator documentation shall be available inside the UI. | MVP |
+| UI-20 | The UI shall be available in English and German; every text shall exist in both languages (checked automatically). | MVP |
+| UI-21 | The UI shall meet WCAG 2.1 level AA. | V2 |
 
 ### 4.10 REST API
 
@@ -321,6 +328,7 @@ Connections describe how to reach an external system (endpoint, credentials). Th
 | TEN-07 | Login identity (`users`) shall be **separate** from role assignments. One auth user may hold role assignments in multiple tenants, with a maximum of one membership per (auth user, tenant) pair. | MVP |
 | TEN-08 | System-scope role assignments shall not implicitly grant access to tenant data; access to tenant data requires a data permission assigned at system scope or in the tenant. | MVP |
 | TEN-09 | Protocol connector definitions shall be scoped to a tenant and shall not be visible to other tenants. | MVP |
+| TEN-10 | Ingestion and processing shall be fair between tenants: per-tenant ingest quotas (records/s, payload size) with `429` + `Retry-After` beyond them, so that one tenant cannot delay another's data. | MVP |
 
 ### 4.12 Identity & Access (IAM)
 
@@ -365,6 +373,7 @@ Connections describe how to reach an external system (endpoint, credentials). Th
 | OPS-04 | System monitoring (metrics and logs of all components) shall be available to holders of `system.monitoring:read`, embedded in the UI. It shall contain no tenant payload data. | MVP |
 | OPS-05 | System administrators shall manage tenants and tenant quotas. | MVP |
 | OPS-06 | Module containers, connectors and platform services shall be restarted automatically after failures (see NFR-R4). | MVP |
+| OPS-07 | Operational history (runs, node logs, alert deliveries, DLQ records) shall have configurable retention: details for a limited period (default 14 days), aggregated counts per pipeline and hour beyond it. | MVP |
 
 ---
 
@@ -380,15 +389,18 @@ Connections describe how to reach an external system (endpoint, credentials). Th
 | NFR-P4 | The platform shall support horizontal scaling of the ingestion and processing layers without downtime, driven automatically by load (e.g. consumer lag). |
 | NFR-P5 | Module workers shall be ready within **10 seconds** of being started; processing an individual message shall not start a new container. |
 | NFR-P6 | Interactive SQL queries over recent data and rollups shall return within 5 seconds at the 95th percentile. |
+| NFR-P7 | Metadata database writes shall not grow with the record rate: at NFR-P1 load they stay below 1,000 transactions/s (see PIP-15). |
 
 ### 5.2 Reliability & Availability
 
 | ID | Requirement |
 | -- | ----------- |
 | NFR-R1 | The platform shall target **99.9% uptime** for the core ingestion and processing path (Kubernetes HA deployment). |
-| NFR-R2 | The Kubernetes HA deployment shall recover from a single-node failure without data loss (at-least-once guarantee). |
+| NFR-R2 | The Kubernetes HA deployment shall recover from a single-node failure without losing or duplicating acknowledged records (exactly once for identified records, PIP-14). |
 | NFR-R3 | Hot-plugging a module or connector shall not interrupt processing of unrelated pipelines. |
 | NFR-R4 | Failed module container instances shall be detected and restarted automatically within 30 seconds. |
+| NFR-R5 | Recovery objectives of the Kubernetes HA deployment: RPO 0 for acknowledged records and committed metadata on single-node failure; automatic failover of every stateful component within 2 minutes; restore from backup after total loss with RPO ≤ 24 h. |
+| NFR-R6 | Ingestion shall keep accepting data while the metadata database is unavailable; only the loss of the message bus write quorum may refuse data. |
 
 ### 5.3 Security
 
@@ -490,8 +502,9 @@ Permissions are additive; an auth user may hold role assignments in multiple ten
 | DAT-04 | Recent time-series sensor/IoT data shall be stored in TimescaleDB (hot tier); complete history in lakehouse tables. |
 | DAT-05 | Variable-schema structured data shall be stored in lakehouse tables with schema evolution (see STR-03). |
 | DAT-06 | Batch files shall be stored in the bundled object storage; structured files are imported into tables (LAK-12). Unstructured binary content is not a focus. |
-| DAT-07 | User-imported duplicate data shall be preserved; only system-generated duplicates (from Kafka at-least-once retries) shall be suppressed. |
+| DAT-07 | User-imported duplicate data without an identity shall be preserved; system-generated duplicates and resends of identified records shall be suppressed (PIP-09, PIP-14). |
 | DAT-08 | Data retention and archiving policies shall be configurable at workspace level. |
+| DAT-09 | All data of a tenant (hot tier, lakehouse including old snapshots, run history, audit payloads) shall be deletable on request, e.g. when the tenant leaves or for a GDPR erasure; the deletion is audited and completes within 30 days including backups. |
 
 ---
 
@@ -550,6 +563,18 @@ Permissions are additive; an auth user may hold role assignments in multiple ten
 - Single-node Docker Compose, Kubernetes (single-instance and HA), single Helm chart
 - Reproducible 1B/day benchmark on Kubernetes
 
+### MVP milestones
+
+The MVP list above is the scope of release 1.0; nothing in it is optional. The milestones order it by dependency and risk, so that each one ends in a usable, releasable state. Status per requirement: Appendix A.
+
+| Milestone | Content | Exit criterion |
+| --------- | ------- | -------------- |
+| M0 — Pilot-ready core | Ingest authentication (IMP-09), secrets out of the repository and images (NFR-S7), per-tenant database roles (TEN-03, NFR-S8), CI against PostgreSQL (NFR-M6), platform health alerts (ALT-13), run-history retention (OPS-07) | A department can run its measurements through the platform on a single node without a known security gap. |
+| M1 — Throughput | Micro-batch execution (PIP-15, NFR-P7), long-running module workers on Kubernetes (MOD-03, NFR-P5), lag-driven autoscaling (PIP-12, NFR-P4), tenant quotas (TEN-10), DLQ inspection and requeue (PIP-13), benchmark harness | NFR-P1/P2 demonstrated by the reproducible benchmark on Kubernetes HA. |
+| M2 — Lakehouse | LAK-01 – LAK-12, STR-03/04/05/07, EXP-05/06, INT-01, INT-07, DAT-04 – DAT-06, DAT-08, DAT-09 | Bronze retention, rollups, SQL workspace and catalog in the UI. |
+| M3 — Identity & audit | IAM-01 – IAM-12, AUD-01 – AUD-09, API-03 – API-06, API-08, UI-15 – UI-17, CON-09 – CON-12 | Single login via the auth proxy and OIDC; every impactful action audited. |
+| M4 — Operations | OPS-01 – OPS-06, UI-18, UI-19, DEP-03, DEP-05, NFR-S1, NFR-R5 verified on a cluster | Installation, upgrade, backup and restore run from the UI and the Helm chart. |
+
 ### V2 — Planned
 
 - UDP inbound listener and UDP export modules
@@ -567,7 +592,7 @@ Permissions are additive; an auth user may hold role assignments in multiple ten
 
 ## Appendix A: Traceability to Version 1.1
 
-Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. Status of the implementation on 2026-09-25: **Done**, **Partial**, **Open**.
+Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. Status of the implementation on 2026-09-27: **Done**, **Partial**, **Open**.
 
 | ID | Change | Reason for change | Status |
 | -- | ------ | ----------------- | ------ |
@@ -583,9 +608,12 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | PIP-04 | ~ | Additional node types (DB_LOAD, MERGE, DB_SAVE). | Done |
 | PIP-05, PIP-06 | ~ | The graph editor exists; the linear MVP builder is obsolete. PIP-06 moved to MVP. | Done |
 | PIP-07, PIP-08 | = | | Open |
-| PIP-09, PIP-10 | = | | Partial |
+| PIP-09, PIP-10 | ~ | Exactly once for identified records (decision of 2026-09-27). | Done |
 | PIP-11 | = | | Done |
-| PIP-12, PIP-13 | + | Needed for NFR-P1; DLQ was described in the functional spec only. | Open |
+| PIP-12 | + | Needed for NFR-P1. | Partial (keyed partitions, parallel consumers; no micro-batches, CPU-based autoscaling) |
+| PIP-13 | + | DLQ was described in the functional spec only. | Partial (DLQ topic; no inspection/requeue UI) |
+| PIP-14 | + | Exactly-once delivery. | Done (verified with broker, executor and database failures) |
+| PIP-15 | + | Per-record runs cannot reach NFR-P1 (review 2026-09-27). | Open |
 | MOD-01 | = | | Done |
 | MOD-02 | ~ | Seven module types instead of four. | Done |
 | MOD-03 | ~ | Pods on Kubernetes; long-running workers instead of one container per message (NFR-P5). | Partial (Docker only) |
@@ -601,7 +629,8 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | ALT-05 | ~ | `error` severity exists in the implementation. | Done |
 | ALT-06, ALT-07 | = | | Done |
 | ALT-08, ALT-09 | = | | Open |
-| ALT-10, ALT-11 | + | Alert delivery rework. | Done |
+| ALT-10, ALT-11 | + | Alert delivery rework; ALT-11 via the alert outbox (attempts, retries, errors). | Done |
+| ALT-13 | + | Platform alerts on pipeline health (functional spec §4.6). | Open |
 | ALT-12 | + | Channel secrets are currently stored unencrypted. | Partial (MQTT via connector done) |
 | EXP-01 – EXP-03 | = | | Done |
 | EXP-04 | = | | Partial (UDP output in connector runtime) |
@@ -625,12 +654,14 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | UI-02 | = | | Done |
 | UI-03 | ~ | Graph builder instead of ordered list. | Done |
 | UI-04 – UI-07 | = | | Done |
-| UI-08 | ~ | Alert rules are ALERT nodes. | Partial |
+| UI-08 | ~ | Alert rules are ALERT nodes. | Done |
 | UI-09 | = | | Done |
-| UI-10 | = | | Open |
+| UI-10 | = | | Done (theme switch in the sidebar) |
 | UI-11 | ~ | Moved to MVP (implemented). | Done |
 | UI-12 – UI-14 | = | | Done |
 | UI-15 – UI-19 | + | Single UI, Grafana for users, activity tabs, system area, in-app docs. | Open |
+| UI-20 | + | UI texts exist in English and German. | Done (checked by a test) |
+| UI-21 | + | Accessibility. | Open |
 | API-01, API-02 | ~ | API-02 names the data API path. | Done |
 | API-03 | ~ | Browser session via cookie for reverse-proxy authentication. | Open (JWT in localStorage) |
 | API-04, API-05 | ~ | Expiry added. | Open |
@@ -645,16 +676,23 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | TEN-06, TEN-07 | = | | Done |
 | TEN-08 | ~ | Replaced: system scope grants no implicit data access. | Open |
 | TEN-09 | = | | Done |
-| IAM-01 – IAM-13 | + | Persona and permission model. | Partial (IAM-01: one naming style enforced) |
+| TEN-10 | + | Noisy-neighbour protection for NFR-P1. | Open |
+| IAM-01, IAM-02 | + | Persona and permission model. | Partial (one permission naming style; roles editable per tenant) |
+| IAM-05 | + | Role templates. | Partial (roles seeded; not immutable, no clone/disable) |
+| IAM-03, IAM-04, IAM-06 – IAM-13 | + | Scopes, time-bounded assignments, OIDC, auth proxy, sessions. | Open |
 | AUD-01 – AUD-10 | + | Paper-trail requirement (extends NFR-S5). | Open |
 | OPS-01 – OPS-06 | + | System administrator persona. | Open |
+| OPS-07 | + | Run history grows by one row per record (review 2026-09-27). | Open |
 | NFR-P1 | ~ | Scoped to multi-node autoscaling Kubernetes with a benchmark. | Open |
-| NFR-P2 | ~ | Applies to the hot tier; lakehouse visibility bounded by the commit interval. | Open |
-| NFR-P3 | = | | Open (not measured) |
+| NFR-P2 | ~ | Applies to the hot tier; lakehouse visibility bounded by the commit interval. | Open (measured p99 14.8 s under backlog on one node) |
+| NFR-P3 | = | | Partial (p95 < 10 ms for lists; run summary 215 ms at 10,000 runs) |
 | NFR-P4 | ~ | Automatic, load-driven. | Partial |
 | NFR-P5 | ~ | Resolves the contradiction between per-message containers and NFR-P2. | Open |
 | NFR-P6 | + | SQL workspace. | Open |
-| NFR-R1, NFR-R2 | ~ | Tied to the Kubernetes HA deployment. | Partial (HA overlay exists) |
+| NFR-P7 | + | Metadata load independent of record rate. | Open |
+| NFR-R1, NFR-R2 | ~ | Tied to the Kubernetes HA deployment; R2 exactly once. | Partial (verified with a local 3-broker cluster and two instances; not on Kubernetes) |
+| NFR-R5 | + | Measurable recovery objectives. | Partial (synchronous replication configured; not measured on a cluster) |
+| NFR-R6 | + | Ingest independent of the metadata database. | Done |
 | NFR-R3, NFR-R4 | = | | Partial |
 | NFR-S1 | = | | Open |
 | NFR-S2 | ~ | Client-side SHA-256 pre-hashing dropped: over TLS it adds no protection (the hash becomes the password). BCrypt storage kept; minimum length added. | Done |
@@ -682,8 +720,9 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | DAT-04 | ~ | Hot tier plus lakehouse history. | Partial |
 | DAT-05 | ~ | MongoDB replaced by lakehouse schema evolution. | Open |
 | DAT-06 | ~ | Binary content not a focus; structured file import. | Open |
-| DAT-07 | = | | Partial |
+| DAT-07 | ~ | Follows PIP-14. | Done |
 | DAT-08 | = | | Open |
+| DAT-09 | + | Tenant offboarding and GDPR erasure. | Open |
 | INT-01 | ~ | SimpleJSON endpoint replaced by a permission-checked Grafana data source. | Open |
 | INT-02 | = | | Open |
 | INT-03 | = | | Partial (MQTT v3.1.1 client only) |
