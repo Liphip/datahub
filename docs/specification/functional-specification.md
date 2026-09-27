@@ -272,9 +272,8 @@ The graph is stored in `pipelines.graph_definition`. IMPORT and EXPORT nodes ref
 
 ### 4.7 Deduplication
 
-- **System duplicates** (Kafka at-least-once retries): suppressed using message-ID deduplication within a configurable window (default: 5 minutes).
-  *Implementation note:* every queued record carries its run id, and a redelivered record whose run already finished is skipped. Client resends after a lost response create a new run and are not deduplicated yet.
-- **User data duplicates** (same measurement arriving twice): preserved unless the user explicitly adds a deduplication PROCESSING module to the pipeline.
+- **System duplicates** (redelivery after a failover, a client resending after a lost response): processed once, see §4.9.
+- **User data duplicates** (the same measurement genuinely arriving twice without an identity): preserved. Records are only treated as the same when the sender says so — an `Idempotency-Key` header or the `deduplicateBy` fields of the IMPORT node (e.g. `device`, `ts`).
 
 *Implementation note:* one dead-letter topic for all tenants; requeueing from the UI is not built yet. A module or pipeline error does not use the DLQ: the run is marked failed and keeps its input, and **Retry** in the run view replays that input.
 
@@ -284,22 +283,25 @@ Ingestion pods and pipeline workers are stateless and scale automatically: inges
 
 ### 4.9 Delivery Guarantees and Failover
 
-Delivery is **at-least-once** end to end; no acknowledged record is lost when a pod, a Kafka broker, an MQTT broker node or the PostgreSQL primary fails.
+**Exactly once for identified records.** Strict exactly-once delivery is impossible between independent systems (an acknowledgement can always be lost after the work was done). The platform therefore combines at-least-once transport with idempotent processing: every record that carries an identity is processed, stored and alerted on exactly once, whatever fails and however often it is resent. Records without an identity are processed at least once; they can repeat only when a sender resends after a lost acknowledgement.
+
+**Record identity.** `Idempotency-Key` header (HTTP ingest), `_idempotencyKey` (WebSocket ingest), or the IMPORT node's `deduplicateBy` fields (any source, including MQTT). The run id is derived from pipeline and key, so every copy of a record maps to the same run.
 
 | Stage | Guarantee |
 | ----- | --------- |
-| HTTP / WebSocket ingest | The run is created and the record written to Kafka (`acks=all`, idempotent producer, `min.insync.replicas=2` on Kubernetes HA) before the client gets `202` (WebSocket: `{"status":"accepted"}`). Otherwise the client gets `503` + `Retry-After` (WebSocket: `"retry": true`) and resends. |
-| MQTT connectors | Persistent session (`clean_session=false`, stable client id, QoS 1). The PUBACK is sent only after the record is in Kafka; on failure the connection is dropped and the broker redelivers. On Kubernetes HA the session queues are RabbitMQ quorum queues. When the ingest replica holding the connector lease dies, another replica takes the lease and resumes the session. |
+| HTTP / WebSocket ingest | The record is written to Kafka (`acks=all`, idempotent producer, 3 replicas, `min.insync.replicas=2` on Kubernetes HA) before the client gets `202` (WebSocket: `{"status":"accepted"}`). Ingest does not use PostgreSQL, so a database outage does not refuse data. Only when Kafka has lost its write quorum does the client get `503` + `Retry-After` (WebSocket: `"retry": true`). |
+| MQTT connectors | Persistent session (`clean_session=false`, stable client id, QoS 1). The PUBACK is sent only after the record is in Kafka; on failure the connection is dropped and the broker redelivers. On Kubernetes HA the session queues are RabbitMQ quorum queues. When the ingest replica holding the connector lease dies, another replica takes the lease and resumes the session. A redelivered message is recognised through `deduplicateBy`. |
 | Polling connectors | A poll whose records could not be queued is recorded as failed and fetched again on the next cycle. |
-| Executors | Offsets are committed only after a run finished. A dead executor's partitions move to the others and its uncommitted records are processed again; runs that already finished are skipped, a run that was running is started again. Lost database connections (e.g. a PostgreSQL failover) are retried with backoff for up to 10 minutes (`dataturntable.pipeline.max-infra-retry`) while the partition waits; only then the record goes to the DLQ. |
-| Built-in alert rules | Rule state is stored in PostgreSQL with row locks, so any executor can continue it (§9.2). |
+| Executors | The executor creates the run when it claims the record and records the Kafka partition and offset. Offsets are committed only after the run finished. A redelivered record of a finished run is skipped; a second copy of a run (resend) is skipped; the record of a run whose executor died is run again. Lost database connections (e.g. a PostgreSQL failover) are retried for up to 10 minutes (`dataturntable.pipeline.max-infra-retry`) while the partition waits; only then the record goes to the DLQ. |
+| Built-in alert rules | Rule state lives in PostgreSQL with row locks and remembers the run that last changed it, so a run executed again does not change the state twice (§9.2). |
+| Alerts | Transactional outbox: alerts are stored in the same transaction as the rule state or claim that raised them, keyed by run, node and record, and delivered afterwards. Failed deliveries are retried (10 s … 1 h, 12 attempts); an alert claimed by a replica that died while sending is delivered by another. Webhook and REST channels receive the alert id as `Idempotency-Key`. |
+| DB_SAVE | Appended rows carry `_dt_record_key` (run, node, row) under a unique index; a run executed again does not add rows. Upsert mode is idempotent through its key columns. |
+| REST exports | Sent with `Idempotency-Key` (run and node); transient errors are retried, a final failure fails the run (its input is kept for Retry). |
+| Runs started from the UI | Created as PENDING right away. If the instance dies before Kafka acknowledged the run, it is marked failed as "never queued" after 30 minutes (`dataturntable.pipeline.max-pending-age`); should its record still arrive, it is processed normally. |
 
-| Database unavailable at ingest | `503` + `Retry-After` (never `500`), so clients resend. |
-| Orphaned runs | A run whose instance stopped before Kafka acknowledged it stays PENDING; after 30 minutes (`dataturntable.pipeline.max-pending-age`) it is marked failed as "never queued". If its record still arrives later, it is processed normally. |
+**Where exactly-once ends.** Channels and sinks outside the platform can see a repeat when the platform crashed after they accepted something but before it recorded that: an alert or REST export (they carry an `Idempotency-Key` receivers can use to drop it), e-mail and Slack messages, and MQTT, WebSocket, UDP and file exports (no key possible). The window is the time between the receiver's acknowledgement and the platform's commit — milliseconds.
 
-Verified on a local 3-broker Kafka cluster with two application instances under continuous ingest (16 parallel clients): `kill -9` of a broker and of an application instance — 6,000 of 6,000 acknowledged records processed, none lost; stopping PostgreSQL for 15 s — 4,000 of 4,000 processed, clients received only `503` during the outage.
-
-Consequences: a record can be processed twice (client resend after a lost `202`, executor death mid-run). Exports and alerts of such a run can therefore repeat; alert cooldowns suppress repeated alerts, idempotent sinks (upserts keyed by measurement id and timestamp) avoid duplicate rows.
+**Verified** on a local 3-broker Kafka cluster with two application instances under continuous ingest (16 parallel clients, every record with an `Idempotency-Key`): `kill -9` of a broker and of an application instance — 6,000 records acknowledged, 6,000 runs, no duplicates, none lost; PostgreSQL stopped for 15 s — 16,000 of 16,000 accepted with no client error during the outage, all processed once after the database returned. Built-in rule alerts with the receiver down: retried and delivered once each when it came back.
 
 ---
 
@@ -709,7 +711,7 @@ Roles, their permissions and assignments are defined per installation (IAM-02); 
 | POST | `/api/ingest/v1/ingest/{pipelineId}` | Push data into a pipeline (JSON object or array) |
 | POST | `/api/ingest/v1/ingest/connector/{connectorId}` | Push data into all pipelines using an INPUT connector |
 
-`202` means the record is stored durably; `503` with `Retry-After` means it is not and must be resent (§4.9). The optional header `X-Partition-Key` spreads one pipeline's load over all executors while keeping the order per key.
+`202` means the record is stored durably; `503` with `Retry-After` means it is not and must be resent (§4.9). `Idempotency-Key` makes resends safe: the same key yields the same `runId` and one execution. The optional header `X-Partition-Key` spreads one pipeline's load over all executors while keeping the order per key.
 
 ### 11.4 Standard Response Envelope
 
