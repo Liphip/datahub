@@ -30,6 +30,10 @@ const PERMISSION_GROUPS = [
     abilities: ['data:read', 'data:write', 'data:export'],
   },
   {
+    label: 'Metadata',
+    abilities: ['metadata:read', 'metadata:write'],
+  },
+  {
     label: 'Alerts',
     abilities: ['alert:read', 'alert:configure'],
   },

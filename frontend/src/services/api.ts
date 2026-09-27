@@ -1,5 +1,5 @@
 import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertHistory, DataSummaryResponse, DataBlob, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential } from '../types';
+import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertHistory, DataSummaryResponse, DataBlob, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential, MetadataType, MetadataTemplate, MetadataObjectSummary, MetadataObjectDetail, SaveMetadataMapping } from '../types';
 
 /** Error shape returned by backend endpoints (`{ error, missing }` JSON bodies). */
 export type ApiError = AxiosError<{ error?: string; missing?: string[] }>;
@@ -1042,6 +1042,48 @@ class ApiService {
    */
   async deleteDataBlob(tenantId: string, blobId: string): Promise<void> {
     await this.publicClient.delete(`/data/${tenantId}/blobs/${encodeURIComponent(blobId)}`);
+  }
+
+  // ── Metadata ──────────────────────────────────────────────────────────────
+
+  async getMetadataTypes(tenantId: string): Promise<MetadataType[]> {
+    return (await this.client.get<MetadataType[]>('/metadata/types', { params: { tenantId } })).data;
+  }
+
+  async createMetadataType(tenantId: string, type: Partial<MetadataType>): Promise<MetadataType> {
+    return (await this.client.post<MetadataType>('/metadata/types', type, { params: { tenantId } })).data;
+  }
+
+  async deleteMetadataType(id: string): Promise<void> {
+    await this.client.delete(`/metadata/types/${id}`);
+  }
+
+  async getMetadataTemplates(): Promise<MetadataTemplate[]> {
+    return (await this.client.get<MetadataTemplate[]>('/metadata/templates')).data;
+  }
+
+  async installMetadataTemplate(tenantId: string, key: string): Promise<{ installed: string[]; skipped: number }> {
+    return (await this.client.post(`/metadata/templates/${key}/install`, null, { params: { tenantId } })).data;
+  }
+
+  async getMetadataObjects(tenantId: string, params: { type?: string; q?: string; limit?: number; offset?: number }): Promise<{ total: number; items: MetadataObjectSummary[] }> {
+    return (await this.client.get('/metadata/objects', { params: { tenantId, ...params } })).data;
+  }
+
+  async getMetadataObject(id: string, at?: string): Promise<MetadataObjectDetail> {
+    return (await this.client.get<MetadataObjectDetail>(`/metadata/objects/${id}`, { params: at ? { at } : {} })).data;
+  }
+
+  async upsertMetadataObject(tenantId: string, body: Record<string, unknown>): Promise<{ id: string; created: boolean; changed: boolean }> {
+    return (await this.client.post('/metadata/objects/upsert', body, { params: { tenantId } })).data;
+  }
+
+  async importMetadata(tenantId: string, mapping: SaveMetadataMapping, records: Record<string, unknown>[]): Promise<{ created: number; changed: number; unchanged: number }> {
+    return (await this.client.post('/metadata/objects/import', { mapping, records }, { params: { tenantId }, timeout: 300000 })).data;
+  }
+
+  async deleteMetadataObject(id: string): Promise<void> {
+    await this.client.delete(`/metadata/objects/${id}`);
   }
 }
 

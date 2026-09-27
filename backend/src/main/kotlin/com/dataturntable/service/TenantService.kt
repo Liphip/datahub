@@ -54,7 +54,7 @@ class TenantService {
             this.tenant = tenant
             name = "Viewer"
             description = "Default viewer role"
-            abilities = "[\"module:read\", \"pipeline:read\", \"data:read\", \"alert:read\", \"connector:read\", \"user:read\"]"
+            abilities = "[\"module:read\", \"pipeline:read\", \"data:read\", \"alert:read\", \"connector:read\", \"metadata:read\", \"user:read\"]"
             isDefault = true
         }
         viewerRole.persist()
@@ -63,7 +63,7 @@ class TenantService {
             this.tenant = tenant
             name = "Editor"
             description = "Default editor role"
-            abilities = "[\"module:read\", \"module:write\", \"pipeline:read\", \"pipeline:write\", \"pipeline:execute\", \"data:read\", \"data:write\", \"alert:read\", \"connector:read\", \"connector:write\", \"user:read\"]"
+            abilities = "[\"module:read\", \"module:write\", \"pipeline:read\", \"pipeline:write\", \"pipeline:execute\", \"data:read\", \"data:write\", \"alert:read\", \"connector:read\", \"connector:write\", \"metadata:read\", \"metadata:write\", \"user:read\"]"
         }
         editorRole.persist()
         
@@ -71,7 +71,7 @@ class TenantService {
             this.tenant = tenant
             name = "Tenant Admin"
             description = "Tenant administrator role"
-            abilities = "[\"module:read\", \"module:write\", \"module:delete\", \"pipeline:read\", \"pipeline:write\", \"pipeline:execute\", \"data:read\", \"data:write\", \"data:export\", \"alert:read\", \"alert:configure\", \"tenant:manage\", \"tenant:manage\", \"user:read\", \"user:write\", \"user:delete\", \"connector:read\", \"connector:write\", \"connector:delete\"]"
+            abilities = "[\"module:read\", \"module:write\", \"module:delete\", \"pipeline:read\", \"pipeline:write\", \"pipeline:execute\", \"data:read\", \"data:write\", \"data:export\", \"alert:read\", \"alert:configure\", \"tenant:manage\", \"metadata:read\", \"metadata:write\", \"user:read\", \"user:write\", \"user:delete\", \"connector:read\", \"connector:write\", \"connector:delete\"]"
         }
         adminRole.persist()
     }

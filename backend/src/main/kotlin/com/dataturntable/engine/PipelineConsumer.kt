@@ -8,6 +8,9 @@ import com.dataturntable.alert.AlertDispatcher
 import com.dataturntable.alert.AlertRuleConfig
 import com.dataturntable.alert.AlertRuleEvaluator
 import com.dataturntable.alert.AlertTarget
+import com.dataturntable.metadata.EnrichConfig
+import com.dataturntable.metadata.MetadataNodes
+import com.dataturntable.metadata.SaveMetadataConfig
 import io.quarkus.narayana.jta.QuarkusTransaction
 import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.ConnectorRuntimeService
@@ -101,6 +104,9 @@ class PipelineConsumer {
 
     @Inject
     lateinit var pipelineDataService: PipelineDataService
+
+    @Inject
+    lateinit var metadataNodes: MetadataNodes
 
     @PersistenceContext
     lateinit var em: EntityManager
@@ -367,7 +373,45 @@ class PipelineConsumer {
             val alertChannel: String? = null,
             /** ALERT nodes: built-in rule evaluated by the platform instead of a module. */
             val alertRule: AlertRuleConfig? = null,
+            /** PROCESSING nodes: built-in metadata enrichment instead of a module. */
+            val enrich: EnrichConfig? = null,
+            /** EXPORT nodes: records are saved as metadata objects instead of exported. */
+            val saveMetadata: SaveMetadataConfig? = null,
         )
+
+        /** Log entry of a built-in node (no container). */
+        fun builtinLog(node: GraphNode, label: String, order: Int, startedAt: Long, summary: String) {
+            val durationMs = System.currentTimeMillis() - startedAt
+            if (runUuid != null) {
+                logWriter.persistNodeLog(
+                    runId = runUuid, nodeId = node.id, nodeType = node.type.name, moduleName = label,
+                    success = true, stdout = summary, stderr = "", errorMessage = null, durationMs = durationMs,
+                )
+            }
+            moduleLogs.add(mapOf("stage" to node.type.name, "order" to order, "nodeId" to node.id, "moduleName" to label,
+                "success" to true, "stdout" to summary, "durationMs" to durationMs))
+            executionLog.add("DONE ${node.type.name} #$order $label [${node.id}] (${durationMs}ms)")
+        }
+
+        fun executeEnrich(node: GraphNode, config: EnrichConfig, input: Any?, order: Int): Any? {
+            val startedAt = System.currentTimeMillis()
+            executionLog.add("START PROCESSING #$order enrich [${node.id}]")
+            val tenantId = pipeline.tenant?.id ?: throw IllegalStateException("Pipeline tenant missing")
+            val result = metadataNodes.enrich(tenantId, config, input)
+            builtinLog(node, "enrich:${config.scheme}", order, startedAt,
+                "Enriched ${result.enriched}, no metadata for ${result.missing}" + if (result.dropped > 0) " (dropped ${result.dropped})" else "")
+            return result.output
+        }
+
+        fun executeSaveMetadata(node: GraphNode, config: SaveMetadataConfig, input: Any?, order: Int): Any? {
+            val startedAt = System.currentTimeMillis()
+            executionLog.add("START EXPORT #$order save-metadata [${node.id}]")
+            val tenantId = pipeline.tenant?.id ?: throw IllegalStateException("Pipeline tenant missing")
+            val result = metadataNodes.save(tenantId, config, input, source = "pipeline:${pipeline.id}")
+            builtinLog(node, "save-metadata:${config.typeKey}", order, startedAt,
+                "Created ${result.created}, changed ${result.changed}, unchanged ${result.unchanged}")
+            return mapOf("created" to result.created, "changed" to result.changed, "unchanged" to result.unchanged)
+        }
 
         /** Evaluates a built-in alert rule node and dispatches its alerts. */
         fun executeRuleNode(node: GraphNode, rule: AlertRuleConfig, input: Any?, order: Int): Any? {
@@ -453,6 +497,8 @@ class PipelineConsumer {
         fun executeNode(node: GraphNode, moduleInput: Any?, order: Int): Any? {
             node.alertRule?.let { return executeRuleNode(node, it, moduleInput, order) }
             if (node.type == ModuleType.IMPORT && node.moduleVersionId == null) return executePassThrough(node, moduleInput, order)
+            node.enrich?.let { return executeEnrich(node, it, moduleInput, order) }
+            node.saveMetadata?.let { return executeSaveMetadata(node, it, moduleInput, order) }
             val version = node.moduleVersionId?.let { ModuleVersion.findById(it) }
                 ?: throw IllegalStateException("Missing module version for node ${node.id}")
             // DB_LOAD/DB_SAVE modules sit on IMPORT/EXPORT nodes; execution follows the module's own type.
@@ -674,7 +720,11 @@ class PipelineConsumer {
                 }
             }
             val moduleVersionId = parseUuid(nodeMap["moduleVersionId"]?.toString())
-            if (moduleVersionId == null && alertRule == null && nodeType != ModuleType.IMPORT) return@mapNotNull null
+            val enrich = (nodeMap["enrich"] as? Map<*, *>)?.takeIf { nodeType == ModuleType.PROCESSING && moduleVersionId == null }
+                ?.let { runCatching { EnrichConfig.parse(it) }.getOrElse { e -> throw IllegalStateException("Node $nodeId: ${e.message}") } }
+            val saveMetadata = (nodeMap["saveMetadata"] as? Map<*, *>)?.takeIf { nodeType == ModuleType.EXPORT && moduleVersionId == null }
+                ?.let { runCatching { SaveMetadataConfig.parse(it) }.getOrElse { e -> throw IllegalStateException("Node $nodeId: ${e.message}") } }
+            if (moduleVersionId == null && alertRule == null && enrich == null && saveMetadata == null && nodeType != ModuleType.IMPORT) return@mapNotNull null
             GraphNode(
                 id = nodeId,
                 type = nodeType,
@@ -682,6 +732,8 @@ class PipelineConsumer {
                 connector = connectorsByNodeId[nodeId],
                 alertChannel = nodeMap["alertChannel"]?.toString()?.takeIf { it.isNotBlank() },
                 alertRule = alertRule,
+                enrich = enrich,
+                saveMetadata = saveMetadata,
             )
         }
 

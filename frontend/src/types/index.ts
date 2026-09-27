@@ -592,3 +592,64 @@ export interface TenantRunSummary {
     inFlightRuns: number;
   }[];
 }
+
+/** Metadata: kinds of objects (meter, location, ...) with their schemas. */
+export interface MetadataType {
+  id: string;
+  tenantId: string;
+  typeKey: string;
+  name: string;
+  description?: string;
+  attributeSchema: { name: string; type?: string; description?: string; unit?: string }[];
+  identifierSchemes: { scheme: string; name?: string; pattern?: string }[];
+  relationSchema: { relation: string; targetType?: string; many?: boolean }[];
+  template?: string;
+  objectCount: number;
+}
+
+export interface MetadataTemplate {
+  key: string;
+  name: string;
+  description: string;
+  types: string[];
+}
+
+export interface MetadataObjectSummary {
+  id: string;
+  name: string;
+  typeKey: string;
+  typeName: string;
+  identifiers: Record<string, string>;
+  attributes: Record<string, unknown>;
+  updatedAt: string;
+}
+
+export interface MetadataPeriod {
+  validFrom?: string | null;
+  validTo?: string | null;
+}
+
+export interface MetadataObjectDetail {
+  id: string;
+  name: string;
+  typeKey: string;
+  typeName: string;
+  at: string;
+  identifiers: Record<string, string>;
+  attributes: Record<string, unknown>;
+  identifierHistory: ({ scheme: string; value: string } & MetadataPeriod)[];
+  attributeHistory: ({ attributes: Record<string, unknown>; source?: string; changedAt: string } & MetadataPeriod)[];
+  relations: ({ relation: string; target: { id: string; name: string; typeKey: string } } & MetadataPeriod)[];
+  referencedBy: ({ relation: string; source: { id: string; name: string; typeKey: string } } & MetadataPeriod)[];
+}
+
+/** Mapping of records to metadata objects (the saveMetadata node / import config). */
+export interface SaveMetadataMapping {
+  type: string;
+  match: { scheme: string; field: string };
+  nameField?: string;
+  identifiers?: Record<string, string>;
+  attributes?: Record<string, string> | '*';
+  relations?: { relation: string; type?: string; scheme: string; field: string; create?: boolean }[];
+  validFromField?: string;
+}

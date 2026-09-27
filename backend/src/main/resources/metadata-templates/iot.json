@@ -1,0 +1,19 @@
+{
+  "key": "iot",
+  "name": "Generic IoT: sites, devices, data points",
+  "description": "Sites, the devices installed there and the data points (channels) a device measures.",
+  "types": [
+    {"typeKey": "site", "name": "Site",
+     "identifierSchemes": [{"scheme": "site_id", "name": "Site ID"}],
+     "attributeSchema": [{"name": "address", "type": "string"}, {"name": "lat", "type": "number"}, {"name": "lon", "type": "number"}],
+     "relationSchema": []},
+    {"typeKey": "device", "name": "Device",
+     "identifierSchemes": [{"scheme": "device_id", "name": "Device ID"}, {"scheme": "serial", "name": "Serial number"}],
+     "attributeSchema": [{"name": "manufacturer", "type": "string"}, {"name": "model", "type": "string"}],
+     "relationSchema": [{"relation": "site", "targetType": "site"}]},
+    {"typeKey": "datapoint", "name": "Data point",
+     "identifierSchemes": [{"scheme": "datapoint_id", "name": "Data point ID"}],
+     "attributeSchema": [{"name": "quantity", "type": "string"}, {"name": "unit", "type": "string"}],
+     "relationSchema": [{"relation": "device", "targetType": "device"}]}
+  ]
+}

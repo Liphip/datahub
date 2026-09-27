@@ -23,6 +23,10 @@ enum class Ability(val value: String) {
     ALERT_READ("alert:read"),
     ALERT_CONFIGURE("alert:configure"),
     
+    // Metadata (devices, meters, locations, ... and their relations)
+    METADATA_READ("metadata:read"),
+    METADATA_WRITE("metadata:write"),
+
     // Connectors
     CONNECTOR_READ("connector:read"),
     CONNECTOR_WRITE("connector:write"),

@@ -796,8 +796,87 @@ CREATE TABLE alert_rule_state (
 
 -- Global role templates
 
+-- ── Metadata ──────────────────────────────────────────────────────────────────
+-- Descriptive data about the things measurements come from (devices, meters, metering
+-- and market locations, sites, grid areas, ...). Objects carry the identifiers they have
+-- in the source systems, versioned attributes and relations; everything has a validity
+-- period (NULL = open end) so that a reading is enriched with the metadata valid at its
+-- own timestamp.
+
+CREATE TABLE metadata_types (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    type_key varchar(100) NOT NULL,
+    name varchar(255) NOT NULL,
+    description text,
+    -- [{"name": "lat", "type": "number", "required": false, "unit": "deg"}, ...]
+    attribute_schema text DEFAULT '[]' NOT NULL,
+    -- [{"scheme": "malo", "name": "Market location ID", "pattern": "^[0-9]{11}$"}, ...]
+    identifier_schemes text DEFAULT '[]' NOT NULL,
+    -- [{"relation": "market_location", "targetType": "market_location", "many": false}, ...]
+    relation_schema text DEFAULT '[]' NOT NULL,
+    template varchar(100),
+    created_at timestamptz DEFAULT now() NOT NULL,
+    updated_at timestamptz DEFAULT now() NOT NULL,
+    CONSTRAINT metadata_types_tenant_key UNIQUE (tenant_id, type_key)
+);
+
+CREATE TABLE metadata_objects (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    type_id uuid NOT NULL REFERENCES metadata_types(id) ON DELETE RESTRICT,
+    name varchar(255) NOT NULL,
+    created_at timestamptz DEFAULT now() NOT NULL,
+    updated_at timestamptz DEFAULT now() NOT NULL
+);
+CREATE INDEX idx_metadata_objects_type ON metadata_objects (tenant_id, type_id);
+
+-- An identifier of an object in a source system, valid from/to (e.g. a meter number that
+-- moves to another metering location when the meter is exchanged).
+CREATE TABLE metadata_identifiers (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    object_id uuid NOT NULL REFERENCES metadata_objects(id) ON DELETE CASCADE,
+    scheme varchar(100) NOT NULL,
+    id_value varchar(255) NOT NULL,
+    valid_from timestamptz,
+    valid_to timestamptz,
+    CONSTRAINT metadata_identifiers_period CHECK (valid_from < valid_to),
+    CONSTRAINT metadata_identifiers_unique UNIQUE (tenant_id, scheme, id_value, valid_from)
+);
+CREATE INDEX idx_metadata_identifiers_lookup ON metadata_identifiers (tenant_id, scheme, id_value);
+CREATE INDEX idx_metadata_identifiers_object ON metadata_identifiers (object_id);
+
+-- Attribute versions: exactly one version is valid at any time.
+CREATE TABLE metadata_attributes (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    object_id uuid NOT NULL REFERENCES metadata_objects(id) ON DELETE CASCADE,
+    attributes text DEFAULT '{}' NOT NULL,
+    valid_from timestamptz,
+    valid_to timestamptz,
+    source varchar(255),
+    changed_at timestamptz DEFAULT now() NOT NULL,
+    CONSTRAINT metadata_attributes_period CHECK (valid_from < valid_to),
+    CONSTRAINT metadata_attributes_unique UNIQUE (object_id, valid_from)
+);
+
+CREATE TABLE metadata_relations (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    from_object_id uuid NOT NULL REFERENCES metadata_objects(id) ON DELETE CASCADE,
+    relation varchar(100) NOT NULL,
+    to_object_id uuid NOT NULL REFERENCES metadata_objects(id) ON DELETE CASCADE,
+    valid_from timestamptz,
+    valid_to timestamptz,
+    source varchar(255),
+    CONSTRAINT metadata_relations_period CHECK (valid_from < valid_to),
+    CONSTRAINT metadata_relations_unique UNIQUE (from_object_id, relation, to_object_id, valid_from)
+);
+CREATE INDEX idx_metadata_relations_from ON metadata_relations (from_object_id, relation);
+CREATE INDEX idx_metadata_relations_to ON metadata_relations (to_object_id, relation);
+
 INSERT INTO roles (id, tenant_id, name, description, abilities, is_default, is_system) VALUES
 ('00000000-0000-0000-0000-000000000001', NULL, 'Superadmin', 'Full access to every tenant', '["*"]', FALSE, TRUE),
-('00000000-0000-0000-0000-000000000002', NULL, 'Viewer', 'Read-only access', '["module:read", "pipeline:read", "data:read", "alert:read", "connector:read", "user:read"]', TRUE, TRUE),
-('00000000-0000-0000-0000-000000000003', NULL, 'Editor', 'Build and run pipelines and modules', '["module:read", "module:write", "pipeline:read", "pipeline:write", "pipeline:execute", "data:read", "data:write", "alert:read", "connector:read", "connector:write", "user:read"]', FALSE, TRUE),
-('00000000-0000-0000-0000-000000000004', NULL, 'Tenant Admin', 'Tenant administrator', '["module:read", "module:write", "module:delete", "pipeline:read", "pipeline:write", "pipeline:execute", "data:read", "data:write", "data:export", "alert:read", "alert:configure", "connector:read", "connector:write", "connector:delete", "user:read", "user:write", "user:delete", "tenant:manage"]', FALSE, TRUE);
+('00000000-0000-0000-0000-000000000002', NULL, 'Viewer', 'Read-only access', '["module:read", "pipeline:read", "data:read", "alert:read", "connector:read", "metadata:read", "user:read"]', TRUE, TRUE),
+('00000000-0000-0000-0000-000000000003', NULL, 'Editor', 'Build and run pipelines and modules', '["module:read", "module:write", "pipeline:read", "pipeline:write", "pipeline:execute", "data:read", "data:write", "alert:read", "connector:read", "connector:write", "metadata:read", "metadata:write", "user:read"]', FALSE, TRUE),
+('00000000-0000-0000-0000-000000000004', NULL, 'Tenant Admin', 'Tenant administrator', '["module:read", "module:write", "module:delete", "pipeline:read", "pipeline:write", "pipeline:execute", "data:read", "data:write", "data:export", "alert:read", "alert:configure", "connector:read", "connector:write", "connector:delete", "metadata:read", "metadata:write", "user:read", "user:write", "user:delete", "tenant:manage"]', FALSE, TRUE);

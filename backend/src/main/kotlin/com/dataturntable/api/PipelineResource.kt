@@ -12,6 +12,8 @@ import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.mqtt.MqttConnectionManager
 import com.dataturntable.connectors.websocket.WebSocketConnectionManager
 import com.dataturntable.engine.PipelineQueueUnavailableException
+import com.dataturntable.metadata.EnrichConfig
+import com.dataturntable.metadata.SaveMetadataConfig
 import com.dataturntable.engine.PipelineRunQueue
 import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
@@ -161,6 +163,22 @@ class PipelineResource {
                 if (nodeType != "IMPORT") return "Node $nodeId: only IMPORT nodes can set deduplicateBy"
                 val fields = dedup as? List<*> ?: return "Node $nodeId: deduplicateBy must be a list of field names"
                 if (fields.any { it !is String || it.isBlank() }) return "Node $nodeId: deduplicateBy must be a list of field names"
+            }
+
+            // Built-in metadata nodes: enrichment (PROCESSING) and saving metadata (EXPORT).
+            (nodeMap["enrich"] as? Map<*, *>)?.let { enrich ->
+                if (nodeType != "PROCESSING" || nodeMap["moduleVersionId"] != null) return "Node $nodeId: only PROCESSING nodes without a module can enrich"
+                try { EnrichConfig.parse(enrich) } catch (e: IllegalArgumentException) { return "Node $nodeId: ${e.message}" }
+                continue
+            }
+            (nodeMap["saveMetadata"] as? Map<*, *>)?.let { save ->
+                if (nodeType != "EXPORT" || nodeMap["moduleVersionId"] != null) return "Node $nodeId: only EXPORT nodes without a module can save metadata"
+                val config = try { SaveMetadataConfig.parse(save) } catch (e: IllegalArgumentException) { return "Node $nodeId: ${e.message}" }
+                val types = (listOf(config.typeKey) + config.relations.mapNotNull { it.typeKey }).distinct()
+                val known = em.createQuery("SELECT t.typeKey FROM MetadataType t WHERE t.tenantId = :t", String::class.java)
+                    .setParameter("t", tenantId).resultList.toSet()
+                types.firstOrNull { it !in known }?.let { return "Node $nodeId: unknown metadata type '$it'" }
+                continue
             }
 
             // IMPORT without a module is the built-in pass-through: records flow on as received.
