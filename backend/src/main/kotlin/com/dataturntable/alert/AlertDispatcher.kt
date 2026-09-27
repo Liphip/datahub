@@ -3,6 +3,7 @@ package com.dataturntable.alert
 import com.dataturntable.alert.AlertChannelType.*
 import com.dataturntable.auth.User
 import com.dataturntable.pipeline.Pipeline
+import com.dataturntable.security.SensitiveDataRedactor
 import com.dataturntable.tenant.Tenant
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
@@ -34,7 +35,7 @@ class AlertDispatcher {
     )
     
     private val LOG = Logger.getLogger(AlertDispatcher::class.java)
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
     private val httpClient = HttpClient.newHttpClient()
     
     @ConfigProperty(name = "dataturntable.alerts.enabled", defaultValue = "true")
@@ -42,6 +43,15 @@ class AlertDispatcher {
 
     @PersistenceContext
     lateinit var em: EntityManager
+
+    @Inject
+    lateinit var secretReferenceResolver: AlertChannelSecretReferenceResolver
+
+    @Inject
+    lateinit var cooldowns: AlertCooldownService
+
+    @Inject
+    lateinit var redactor: SensitiveDataRedactor
 
     @Transactional
     /**
@@ -65,18 +75,15 @@ class AlertDispatcher {
         for (rule in rules) {
             if (!matchesCondition(rule.condition, payload)) continue
             matched++
-            if (isInCooldown(rule)) {
+            if (!cooldowns.tryAcquire(rule.id, rule.cooldownSeconds)) {
                 cooldownSkipped++
                 continue
             }
 
-            val condition = parseCondition(rule.condition)
-            val severity = parseSeverity((condition["severity"] ?: "WARNING").toString())
-            val message = (condition["message"] as? String)
+            val message = rule.message?.takeIf { it.isNotBlank() }
                 ?: "Rule '${rule.name ?: rule.id}' matched pipeline data"
 
-            createAlertFromRule(rule, pipeline, severity, message, payload)
-            fired++
+            fired += createAlertsFromRule(rule, pipeline, rule.severity, message, payload).size
         }
 
         return AlertEvaluationReport(
@@ -111,7 +118,7 @@ class AlertDispatcher {
             return
         }
         
-        val channel = rule.channel
+        val channel = alert.channel ?: ruleChannels(rule).firstOrNull()
         if (channel == null) {
             LOG.warnf("Alert rule %s has no associated channel", rule.id)
             return
@@ -133,7 +140,7 @@ class AlertDispatcher {
             
             LOG.infof("Alert dispatched successfully: %s", alert.title)
         } catch (e: Exception) {
-            LOG.errorf("Failed to dispatch alert: %s", e.message)
+            LOG.errorf("Failed to dispatch alert: %s", redactor.text(e.message))
             alert.status = AlertStatus.FAILED
             alert.persist()
         }
@@ -143,7 +150,7 @@ class AlertDispatcher {
      * Delivers or routes the named data to its configured destination.
      */
     private fun dispatchWebhookAlert(channel: AlertChannel, alert: AlertHistory) {
-        val config = parseConfig(channel.config)
+        val config = resolveChannelConfig(channel)
         val url = config["url"]?.toString() 
             ?: throw IllegalArgumentException("Webhook URL not configured")
         
@@ -166,7 +173,7 @@ class AlertDispatcher {
      * Delivers or routes the named data to its configured destination.
      */
     private fun dispatchRestAlert(channel: AlertChannel, alert: AlertHistory) {
-        val config = parseConfig(channel.config)
+        val config = resolveChannelConfig(channel)
         val url = config["url"]?.toString()
             ?: throw IllegalArgumentException("REST endpoint URL not configured")
         
@@ -196,7 +203,7 @@ class AlertDispatcher {
      * Delivers or routes the named data to its configured destination.
      */
     private fun dispatchMqttAlert(channel: AlertChannel, alert: AlertHistory) {
-        val config = parseConfig(channel.config)
+        val config = resolveChannelConfig(channel)
         val topic = config["topic"]?.toString()
             ?: throw IllegalArgumentException("MQTT topic not configured")
         
@@ -207,7 +214,7 @@ class AlertDispatcher {
      * Delivers or routes the named data to its configured destination.
      */
     private fun dispatchEmailAlert(channel: AlertChannel, alert: AlertHistory) {
-        val config = parseConfig(channel.config)
+        val config = resolveChannelConfig(channel)
         val to = config["to"]?.toString()
             ?: throw IllegalArgumentException("Email recipient not configured")
         
@@ -221,7 +228,7 @@ class AlertDispatcher {
      * Delivers or routes the named data to its configured destination.
      */
     private fun dispatchSlackAlert(channel: AlertChannel, alert: AlertHistory) {
-        val config = parseConfig(channel.config)
+        val config = resolveChannelConfig(channel)
         val webhookUrl = config["url"]?.toString()
             ?: throw IllegalArgumentException("Slack webhook URL not configured")
         
@@ -371,25 +378,6 @@ class AlertDispatcher {
     }
 
     /**
-     * Evaluates the named capability or state predicate.
-     */
-    private fun isInCooldown(rule: AlertRule): Boolean {
-        if (rule.cooldownSeconds <= 0) return false
-        val latest = em.createQuery(
-            "SELECT a FROM AlertHistory a WHERE a.rule.id = :ruleId ORDER BY a.sentAt DESC",
-            AlertHistory::class.java
-        )
-            .setParameter("ruleId", rule.id)
-            .setMaxResults(1)
-            .resultList
-            .firstOrNull()
-            ?: return false
-
-        val elapsed = java.time.Duration.between(latest.sentAt, java.time.Instant.now()).seconds
-        return elapsed < rule.cooldownSeconds
-    }
-    
-    /**
      * Implements `buildAlertPayload` for this source unit.
      */
     private fun buildAlertPayload(alert: AlertHistory): Map<String, Any> {
@@ -511,7 +499,7 @@ class AlertDispatcher {
             alert.persist()
             LOG.infof("Channel alert dispatched: %s -> %s", channel.name, alert.title)
         } catch (e: Exception) {
-            LOG.errorf("Failed to dispatch channel alert: %s", e.message)
+            LOG.errorf("Failed to dispatch channel alert: %s", redactor.text(e.message))
             alert.status = AlertStatus.FAILED
             alert.persist()
         }
@@ -520,30 +508,43 @@ class AlertDispatcher {
     /**
      * Creates or persists the requested state.
      */
-    fun createAlertFromRule(
+    fun createAlertsFromRule(
         rule: AlertRule,
         pipeline: Pipeline,
         severity: AlertSeverity,
         message: String,
         payload: Map<String, Any>?
-    ): AlertHistory {
+    ): List<AlertHistory> {
         val tenant = pipeline.tenant
             ?: throw IllegalArgumentException("Pipeline has no tenant")
-        
-        val alert = AlertHistory().apply {
-            this.tenant = tenant
-            this.rule = rule
-            this.severity = severity
-            this.title = rule.name
-            this.message = message
-            this.status = AlertStatus.PENDING
-            this.payload = payload?.let { objectMapper.writeValueAsString(it) }
+
+        return ruleChannels(rule).map { channel ->
+            AlertHistory().apply {
+                this.tenant = tenant
+                this.rule = rule
+                this.channel = channel
+                this.severity = severity
+                this.title = rule.name
+                this.message = message
+                this.status = AlertStatus.PENDING
+                this.payload = payload?.let { objectMapper.writeValueAsString(it) }
+            }.also { alert ->
+                alert.persist()
+                dispatchAlert(alert)
+            }
         }
-        
-        alert.persist()
-        
-        dispatchAlert(alert)
-        
-        return alert
+    }
+
+    private fun resolveChannelConfig(channel: AlertChannel): Map<String, Any> =
+        secretReferenceResolver.resolve(channel, parseConfig(channel.config))
+
+    /** Reads normalized actions, with the legacy single channel as a compatibility fallback. */
+    private fun ruleChannels(rule: AlertRule): List<AlertChannel> {
+        val ruleId = rule.id ?: return listOfNotNull(rule.channel)
+        val channels = em.createQuery(
+            "SELECT a.channel FROM AlertRuleAction a WHERE a.rule.id = :ruleId ORDER BY a.createdAt ASC",
+            AlertChannel::class.java
+        ).setParameter("ruleId", ruleId).resultList
+        return channels.ifEmpty { listOfNotNull(rule.channel) }
     }
 }

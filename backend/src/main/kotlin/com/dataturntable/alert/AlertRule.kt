@@ -40,7 +40,14 @@ open class AlertRule : PanacheBase() {
     
     @Column(columnDefinition = "text", nullable = false)
     var condition: String? = null
-    
+
+    @Column(nullable = false)
+    @Enumerated(EnumType.STRING)
+    var severity: AlertSeverity = AlertSeverity.WARNING
+
+    @Column(columnDefinition = "text")
+    var message: String? = null
+
     @Column
     var enabled: Boolean = true
     

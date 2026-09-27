@@ -11,3 +11,6 @@ scripts/
 scripts/*
 !scripts/add-inline-source-documentation.ps1
 !scripts/generate-source-function-reference.ps1
+!scripts/backup/
+!scripts/backup/backup.sh
+!scripts/backup/restore.sh

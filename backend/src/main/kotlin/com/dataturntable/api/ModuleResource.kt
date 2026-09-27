@@ -51,7 +51,7 @@ class ModuleResource {
             null -> "null"
             is String -> value
             else -> try {
-                com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(value)
+                com.dataturntable.json.JsonObjectMappers.create().writeValueAsString(value)
             } catch (_: Exception) {
                 value.toString()
             }
@@ -77,6 +77,11 @@ class ModuleResource {
         return digest.joinToString("") { "%02x".format(it) }
     }
 
+    private fun digest(value: String): String {
+        val bytes = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(StandardCharsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
     /**
      * Parses external or persisted input into the required representation.
      */
@@ -98,6 +103,9 @@ class ModuleResource {
             "version" to version.version,
             "versionTag" to version.versionTag,
             "contentFingerprint" to version.contentFingerprint,
+            "artifactDigest" to version.artifactDigest,
+            "dependencyDigest" to version.dependencyDigest,
+            "runtimeImageDigest" to version.runtimeImageDigest,
             "code" to version.code,
             "requirements" to version.requirements,
             "config" to version.config,
@@ -401,6 +409,9 @@ class ModuleResource {
             this.version = latestVersionNumber + 1
             this.versionTag = versionTag
             this.contentFingerprint = fingerprint
+            this.artifactDigest = digest(code)
+            this.dependencyDigest = digest(requirements)
+            this.runtimeImageDigest = request["runtimeImageDigest"] as? String
             this.code = code
             this.requirements = requirements
             this.config = canonicalJson(config)

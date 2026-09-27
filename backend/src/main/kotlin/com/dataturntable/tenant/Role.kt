@@ -1,6 +1,8 @@
 package com.dataturntable.tenant
 
 import com.dataturntable.PanacheBase
+import com.dataturntable.authorization.Ability
+import com.dataturntable.security.AbilityEvaluator
 import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanionBase
 import jakarta.persistence.*
 import java.time.Instant
@@ -41,6 +43,14 @@ open class Role : PanacheBase() {
     
     @Column(name = "updated_at")
     var updatedAt: Instant = Instant.now()
+
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+        name = "role_abilities",
+        joinColumns = [JoinColumn(name = "role_id")],
+        inverseJoinColumns = [JoinColumn(name = "ability_value")]
+    )
+    var grantedAbilities: MutableSet<Ability> = mutableSetOf()
     
     companion object : PanacheCompanionBase<Role, UUID> {
         override fun findById(id: UUID): Role? =
@@ -85,31 +95,14 @@ open class Role : PanacheBase() {
      * Evaluates the named capability or state predicate.
      */
     fun hasAbility(ability: String): Boolean {
-        if (abilities?.contains("*") == true) return true
-        // BUG: Role permission checks use substring matching
-        // Details: This has the same false-positive risk as User.hasAbility: an ability token may contain the requested text without being that permission. Reuse one exact-token parser for direct and role permissions.
-        return abilities?.contains(ability) == true
+        return grantedAbilities.any { it.value == "*" || it.value == ability } ||
+            AbilityEvaluator.hasAbility(abilities, ability)
     }
     
     /**
      * Retrieves or enumerates the requested state.
      */
     fun getAbilitiesList(): List<String> {
-        return try {
-            val list = mutableListOf<String>()
-            abilities?.let {
-                val start = it.indexOf('[')
-                val end = it.indexOf(']')
-                if (start >= 0 && end > start) {
-                    val arr = it.substring(start + 1, end)
-                    arr.split(",").forEach { s -> 
-                        list.add(s.trim().removeSurrounding("\"")) 
-                    }
-                }
-            }
-            list
-        } catch (e: Exception) {
-            emptyList()
-        }
+        return (AbilityEvaluator.parse(abilities) + grantedAbilities.map { it.value }).toList()
     }
 }

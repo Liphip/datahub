@@ -1,8 +1,10 @@
 package com.dataturntable.api
 
 import com.dataturntable.tenant.Role
+import com.dataturntable.audit.AuditService
 import com.dataturntable.tenant.Tenant
 import com.dataturntable.auth.User
+import com.dataturntable.authorization.AuthorizationGrantService
 import com.dataturntable.security.SecurityUtils
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.security.Authenticated
@@ -24,13 +26,19 @@ import java.util.UUID
  * Defines the class `RoleResource`, the contract implemented by this source unit.
  */
 class RoleResource {
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
 
     @Inject
     lateinit var jwt: JsonWebToken
 
     @PersistenceContext
     lateinit var em: EntityManager
+
+    @Inject
+    lateinit var authorizationGrantService: AuthorizationGrantService
+
+    @Inject
+    lateinit var audit: AuditService
 
     /**
      * Implements `currentUser` for this source unit.
@@ -84,7 +92,7 @@ class RoleResource {
             "tenantId" to role.tenant?.id,
             "name" to role.name,
             "description" to role.description,
-            "abilities" to parseAbilities(role.abilities),
+            "abilities" to role.getAbilitiesList(),
             "isDefault" to role.isDefault,
             "isSystem" to role.isSystem,
             "createdAt" to role.createdAt?.toString()
@@ -151,17 +159,27 @@ class RoleResource {
             null
         }
         
+        val grantedAbilities = authorizationGrantService.normalize(request["abilities"] as? Collection<*>)
         val role = Role().apply {
             this.name = name
             this.tenant = tenant
             this.description = request["description"] as? String
-            this.abilities = abilitiesJson(request["abilities"])
+            this.abilities = abilitiesJson(grantedAbilities)
             this.isDefault = request["isDefault"] as? Boolean ?: false
             this.isSystem = false
             this.createdAt = java.time.Instant.now()
             this.updatedAt = java.time.Instant.now()
         }
         role.persist()
+        authorizationGrantService.replaceRoleAbilities(role, grantedAbilities)
+        audit.record(
+            actorId = currentUser.id,
+            tenantId = role.tenant?.id,
+            action = "identity.role.created",
+            resourceType = "role",
+            resourceId = role.id.toString(),
+            metadata = mapOf("outcome" to "succeeded", "global" to (role.tenant == null))
+        )
         
         return Response.status(201).entity(roleToMap(role)).build()
     }
@@ -224,10 +242,25 @@ class RoleResource {
             
             request["name"]?.let { role.name = it as String }
             request["description"]?.let { role.description = it as String }
-            request["abilities"]?.let { role.abilities = abilitiesJson(it) }
+            request["abilities"]?.let {
+                val grantedAbilities = authorizationGrantService.normalize(it as? Collection<*>)
+                role.abilities = abilitiesJson(grantedAbilities)
+                authorizationGrantService.replaceRoleAbilities(role, grantedAbilities)
+            }
             request["isDefault"]?.let { role.isDefault = it as Boolean }
             role.updatedAt = java.time.Instant.now()
             role.persist()
+            em.createQuery("UPDATE User u SET u.authorizationVersion = u.authorizationVersion + 1 WHERE EXISTS (SELECT m FROM Membership m WHERE m.authUser = u AND m.role = :role)")
+                .setParameter("role", role)
+                .executeUpdate()
+            audit.record(
+                actorId = currentUser.id,
+                tenantId = role.tenant?.id,
+                action = "identity.role.updated",
+                resourceType = "role",
+                resourceId = role.id.toString(),
+                metadata = mapOf("outcome" to "succeeded")
+            )
             
             Response.ok(roleToMap(role)).build()
         } else {
@@ -260,7 +293,16 @@ class RoleResource {
             if (!SecurityUtils.hasAbility(currentUser, "manage:tenant")) {
                 return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
             }
+            val roleTenantId = role.tenant?.id
             role.delete()
+            audit.record(
+                actorId = currentUser.id,
+                tenantId = roleTenantId,
+                action = "identity.role.deleted",
+                resourceType = "role",
+                resourceId = roleId.toString(),
+                metadata = mapOf("outcome" to "succeeded")
+            )
             Response.noContent().build()
         } else {
             Response.status(404).entity(mapOf("error" to "Role not found")).build()

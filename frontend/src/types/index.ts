@@ -27,6 +27,16 @@ export interface Membership {
   abilities?: string[] | string;
 }
 
+/** Provenance returned by the administrator permission explanation endpoint. */
+export interface AuthorizationExplanation {
+  userId: string;
+  tenantId: string;
+  ability: string;
+  granted: boolean;
+  sources: Record<'platformAdmin' | 'user' | 'membership' | 'role', string[]>;
+  effectiveAbilities: string[];
+}
+
 /**
  * Defines the interface `AuthResponse`, the contract implemented by this source unit.
  */
@@ -374,9 +384,13 @@ export interface AlertRule {
   tenantId?: string;
   pipelineId?: string;
   channelId?: string;
+  channelIds?: string[];
+  actions?: Array<{ id?: string; channelId: string; channelName?: string; channelType?: AlertChannel['channelType'] }>;
   name: string;
   description?: string;
   condition?: Record<string, unknown> | string;
+  severity?: 'INFO' | 'WARNING' | 'CRITICAL' | 'ERROR';
+  message?: string;
   enabled: boolean;
   cooldownSeconds?: number;
   createdAt?: string;

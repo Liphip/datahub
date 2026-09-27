@@ -1,6 +1,8 @@
 package com.dataturntable.api
 
 import com.dataturntable.auth.User
+import com.dataturntable.audit.AuditService
+import com.dataturntable.authorization.AuthorizationGrantService
 import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
@@ -16,6 +18,7 @@ import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
 import java.util.UUID
+import com.fasterxml.jackson.databind.ObjectMapper
 
 @Path("/api/internal/v1/tenants/{tenantId}/memberships")
 @Produces(MediaType.APPLICATION_JSON)
@@ -25,6 +28,7 @@ import java.util.UUID
  * Defines the class `MembershipResource`, the contract implemented by this source unit.
  */
 class MembershipResource {
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
 
     @Inject
     lateinit var jwt: JsonWebToken
@@ -34,6 +38,12 @@ class MembershipResource {
 
     @Inject
     lateinit var grafanaSyncService: GrafanaSyncService
+
+    @Inject
+    lateinit var authorizationGrantService: AuthorizationGrantService
+
+    @Inject
+    lateinit var audit: AuditService
 
     /**
      * Retrieves or enumerates the requested state.
@@ -91,7 +101,8 @@ class MembershipResource {
             "authUserLastName" to membership.authUser?.lastName,
             "roleId" to membership.role?.id,
             "roleName" to membership.role?.name,
-            "abilities" to membership.abilities
+            "abilities" to (authorizationGrantService.legacyTokens(membership.abilities) +
+                membership.grantedAbilities.map { it.value }).distinct()
         )
     }
 
@@ -172,16 +183,26 @@ class MembershipResource {
             return Response.status(409).entity(mapOf("error" to "Root-tenant admins cannot hold sub-tenant memberships")).build()
         }
 
+        val grantedAbilities = authorizationGrantService.normalize(request["abilities"] as? Collection<*>)
         val membership = Membership().apply {
             this.authUser = user
             this.tenant = tenant
             this.role = role
-            this.abilities = request["abilities"]?.toString() ?: "[]"
+            this.abilities = objectMapper.writeValueAsString(grantedAbilities)
             this.createdAt = java.time.Instant.now()
         }
         membership.persist()
+        authorizationGrantService.replaceMembershipAbilities(membership, grantedAbilities)
         grafanaSyncService.queueMembershipSync(membership)
         membership.authUser?.let { grafanaSyncService.queueUserSync(it) }
+        audit.record(
+            actorId = currentUser.id,
+            tenantId = tenantUuid,
+            action = "identity.membership.created",
+            resourceType = "membership",
+            resourceId = membership.id.toString(),
+            metadata = mapOf("outcome" to "succeeded", "userId" to user.id.toString(), "roleId" to role.id.toString())
+        )
 
         return Response.status(201).entity(toMembershipDto(membership)).build()
     }
@@ -204,7 +225,7 @@ class MembershipResource {
         val membership = em.find(Membership::class.java, UUID.fromString(id))
             ?: return Response.status(404).entity(mapOf("error" to "Membership not found")).build()
         if (membership.tenant?.id.toString() != tenantId) {
-            return Response.status(400).entity(mapOf("error" to "Membership does not belong to tenant")).build()
+            return Response.status(404).entity(mapOf("error" to "Membership not found")).build()
         }
         val membershipId = membership.id
         val membershipTenantId = membership.tenant?.id
@@ -212,6 +233,7 @@ class MembershipResource {
         val membershipUserId = membership.authUser?.id
         val membershipUserEmail = membership.authUser?.email
         membership.delete()
+        membership.authUser?.let { it.authorizationVersion++ }
         if (membershipId != null) {
             grafanaSyncService.queueMembershipDeletion(
                 membershipId,
@@ -222,6 +244,14 @@ class MembershipResource {
             )
         }
         membership.authUser?.let { grafanaSyncService.queueUserSync(it) }
+        audit.record(
+            actorId = currentUser.id,
+            tenantId = parseTenantUuid(tenantId),
+            action = "identity.membership.deleted",
+            resourceType = "membership",
+            resourceId = id,
+            metadata = mapOf("outcome" to "succeeded")
+        )
         return Response.noContent().build()
     }
 
@@ -244,9 +274,10 @@ class MembershipResource {
             ?: return Response.status(404).entity(mapOf("error" to "Membership not found")).build()
 
         if (membership.tenant?.id.toString() != tenantId) {
-            return Response.status(400).entity(mapOf("error" to "Membership does not belong to tenant")).build()
+            return Response.status(404).entity(mapOf("error" to "Membership not found")).build()
         }
 
+        var authorizationChanged = false
         request["roleId"]?.let {
             val role = em.find(Role::class.java, UUID.fromString(it as String))
                 ?: return Response.status(404).entity(mapOf("error" to "Role not found")).build()
@@ -254,11 +285,26 @@ class MembershipResource {
                 return Response.status(400).entity(mapOf("error" to "Role does not belong to tenant")).build()
             }
             membership.role = role
+            authorizationChanged = true
         }
-        request["abilities"]?.let { membership.abilities = it.toString() }
+        request["abilities"]?.let {
+            val grantedAbilities = authorizationGrantService.normalize(it as? Collection<*>)
+            membership.abilities = objectMapper.writeValueAsString(grantedAbilities)
+            authorizationGrantService.replaceMembershipAbilities(membership, grantedAbilities)
+            authorizationChanged = true
+        }
+        if (authorizationChanged) membership.authUser?.authorizationVersion = (membership.authUser?.authorizationVersion ?: 0) + 1
         membership.persist()
         grafanaSyncService.queueMembershipSync(membership)
         membership.authUser?.let { grafanaSyncService.queueUserSync(it) }
+        audit.record(
+            actorId = currentUser.id,
+            tenantId = parseTenantUuid(tenantId),
+            action = "identity.membership.updated",
+            resourceType = "membership",
+            resourceId = membership.id.toString(),
+            metadata = mapOf("outcome" to "succeeded", "authorizationChanged" to authorizationChanged)
+        )
 
         return Response.ok(toMembershipDto(membership)).build()
     }

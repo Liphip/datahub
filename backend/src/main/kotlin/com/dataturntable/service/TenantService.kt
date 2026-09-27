@@ -1,6 +1,7 @@
 package com.dataturntable.service
 
 import com.dataturntable.auth.User
+import com.dataturntable.authorization.AuthorizationGrantService
 import com.dataturntable.dto.*
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
@@ -18,8 +19,11 @@ class TenantService {
     
     @Inject
     lateinit var userService: UserService
+
+    @Inject
+    lateinit var authorizationGrantService: AuthorizationGrantService
     
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
     
     @Transactional
     /**
@@ -58,6 +62,7 @@ class TenantService {
             isDefault = true
         }
         viewerRole.persist()
+        authorizationGrantService.replaceRoleAbilities(viewerRole, authorizationGrantService.legacyTokens(viewerRole.abilities))
         
         val editorRole = Role().apply {
             this.tenant = tenant
@@ -66,6 +71,7 @@ class TenantService {
             abilities = "[\"module:read\", \"module:write\", \"pipeline:read\", \"pipeline:write\", \"pipeline:execute\", \"data:read\", \"data:write\", \"alert:read\", \"read:connector\", \"write:connector\", \"read:user\"]"
         }
         editorRole.persist()
+        authorizationGrantService.replaceRoleAbilities(editorRole, authorizationGrantService.legacyTokens(editorRole.abilities))
         
         val adminRole = Role().apply {
             this.tenant = tenant
@@ -74,6 +80,7 @@ class TenantService {
             abilities = "[\"module:read\", \"module:write\", \"module:delete\", \"pipeline:read\", \"pipeline:write\", \"pipeline:execute\", \"data:read\", \"data:write\", \"data:export\", \"alert:read\", \"alert:configure\", \"tenant:users\", \"tenant:manage\", \"manage:tenant\", \"read:user\", \"write:user\", \"delete:user\", \"read:connector\", \"write:connector\", \"delete:connector\"]"
         }
         adminRole.persist()
+        authorizationGrantService.replaceRoleAbilities(adminRole, authorizationGrantService.legacyTokens(adminRole.abilities))
     }
     
     /**

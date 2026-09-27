@@ -86,10 +86,10 @@ Push to WebSocket     ──────────► │   UDP endpoints;    
     - MQTT Broker: localhost:1883
     - Public API metrics: http://localhost/q/metrics
     - Prometheus: http://localhost:9090
-    - Monitoring Grafana (direct): http://localhost:3001 (admin/admin)
+    - Monitoring Grafana (direct): http://localhost:3001 (development credentials are configured by Compose only)
     - Monitoring Grafana (via gateway): http://monitoring.localhost
     - Monitoring fallback route: http://localhost/monitoring
-    - Dashboard Grafana (direct): http://localhost:3003 (admin/admin)
+    - Dashboard Grafana (direct): http://localhost:3003 (development credentials are configured by Compose only)
     - Dashboard Grafana (via gateway): http://dashboard.localhost
     - Dashboard fallback route: http://localhost/dashboard
     - Docs (direct): http://localhost:3002
@@ -230,6 +230,7 @@ Pipelines are directed graphs (DAGs), not just linear chains:
 | POST /grafana/reconcile | Rebuild desired Grafana tenant/user/membership sync state |
 | POST /grafana/apply-pending | Apply pending Grafana sync state to configured dashboard/monitoring Grafana instances |
 | GET /data/{tenantId}/query | Query time-series data |
+| POST /data/{tenantId}/blobs/recover | Retry failed blob cleanup and tombstone stale failed metadata after the configured retention window |
 | GET /alerts/history | Alert history |
 
 Notes:
@@ -238,7 +239,7 @@ Notes:
 - MQTT connector forms include quick-fill for the integrated Mosquitto broker (`mqtt://mosquitto:1883`) and localhost (`mqtt://localhost:1883`), while still allowing custom brokers.
 - Integrated broker credentials are tenant-scoped entities (separate from app auth users) with explicit topic ACL lists; only tenant admins/superadmins can manage them.
 - MQTT connectors can bind a `brokerCredentialId` so topic usage is validated against the credential ACL at create/update time.
-- Frontend auth uses SHA-256 (Base64) client hashing before transmission; server stores BCrypt of that hash.
+- Frontend authentication sends the raw password over TLS; the server stores new credentials with Argon2id and transparently migrates supported legacy BCrypt(SHA-256) credentials at login.
 - Pipelines support a `graphDefinition` payload; IMPORT/EXPORT nodes must reference compatible connectors by `connectorId`.
 - The pipeline editor now captures connector selections for IMPORT/EXPORT nodes and sends a DAG `graphDefinition` with connector-aware validation.
 - Dashboard Grafana tenancy is mirrored through persisted Grafana sync-state records; superadmins are marked as dashboard Grafana admins and as monitoring Grafana users.
@@ -259,19 +260,31 @@ Environment variables for the backend:
 | REDIS_HOSTS | Redis hosts | redis://redis:6379 |
 | DATATURNTABLE_GRAFANA_DASHBOARD_ENABLED | Enable dashboard Grafana reconciliation | false |
 | DATATURNTABLE_GRAFANA_DASHBOARD_BASE_URL | Dashboard Grafana base URL for admin API calls | http://dashboard-grafana:3000 |
-| DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_USER | Dashboard Grafana admin username | admin |
-| DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_PASSWORD | Dashboard Grafana admin password | admin |
+| DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_USER | Dashboard Grafana admin username (required when reconciliation is enabled) | (none) |
+| DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_PASSWORD | Dashboard Grafana admin password (required when reconciliation is enabled) | (none) |
 | DATATURNTABLE_GRAFANA_MONITORING_ENABLED | Enable monitoring Grafana reconciliation | false |
 | DATATURNTABLE_GRAFANA_MONITORING_BASE_URL | Monitoring Grafana base URL for admin API calls | http://grafana:3000 |
-| DATATURNTABLE_GRAFANA_MONITORING_ADMIN_USER | Monitoring Grafana admin username | admin |
-| DATATURNTABLE_GRAFANA_MONITORING_ADMIN_PASSWORD | Monitoring Grafana admin password | admin |
+| DATATURNTABLE_GRAFANA_MONITORING_ADMIN_USER | Monitoring Grafana admin username (required when reconciliation is enabled) | (none) |
+| DATATURNTABLE_GRAFANA_MONITORING_ADMIN_PASSWORD | Monitoring Grafana admin password (required when reconciliation is enabled) | (none) |
 | DATATURNTABLE_PIPELINE_DATA_JDBC_URL | Optional dedicated JDBC URL for pipeline data DB | (falls back to app datasource) |
 | DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME | Optional dedicated JDBC username for pipeline data DB | (falls back to app datasource) |
 | DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD | Optional dedicated JDBC password for pipeline data DB | (falls back to app datasource) |
+| BLOB_FAILED_RETENTION_DAYS | Days to retain `MISSING`/`DELETE_FAILED` blob metadata before the tenant recovery endpoint may tombstone it | 30 |
 | DATATURNTABLE_DOCKER_ALLOW_NETWORK | Whether module containers can access network (true/false) | false |
 | CONNECTOR_CONFIG_KEY | Base64-encoded 32-byte AES key used to encrypt connector configs at rest. Set in production to protect secrets; if unset, configs may be stored unencrypted for local development. | (none) |
 
 ## Deployment
+
+### Support status
+
+| Target | Status | Scope and caveats |
+|---|---|---|
+| Docker Compose | Implemented for development | Single-host contributor workflow; uses development-only credentials and Docker execution. It is not an HA or production reference. |
+| Docker Swarm | Experimental | Deployment assets exist, but production failover, backup/restore, image-digest, and security scanning gates are not yet proven. |
+| Kubernetes | Experimental | Manifests and role split exist; live execution, hostile-workload, HA failover, and restore verification remain required before production use. |
+| Helm HA values | Planned reference infrastructure | Values describe infrastructure topology but are not a complete production installation or verification artifact. |
+
+“Implemented” describes the scoped target above, not every production-readiness requirement. The authoritative completion record is [the production readiness tracker](docs/production-ready-v1-status.md).
 
 ### Docker Compose
 

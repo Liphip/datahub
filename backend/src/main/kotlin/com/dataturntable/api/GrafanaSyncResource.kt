@@ -3,6 +3,7 @@ package com.dataturntable.api
 import com.dataturntable.auth.User
 import com.dataturntable.grafana.GrafanaSyncStatus
 import com.dataturntable.grafana.GrafanaTargetInstance
+import com.dataturntable.security.SensitiveDataRedactor
 import com.dataturntable.service.GrafanaProvisioningService
 import com.dataturntable.service.GrafanaSyncService
 import io.quarkus.security.Authenticated
@@ -33,6 +34,9 @@ class GrafanaSyncResource {
 
     @Inject
     lateinit var grafanaProvisioningService: GrafanaProvisioningService
+
+    @Inject
+    lateinit var redactor: SensitiveDataRedactor
 
     @PersistenceContext
     lateinit var em: EntityManager
@@ -96,7 +100,7 @@ class GrafanaSyncResource {
                     "syncStatus" to state.syncStatus.name,
                     "desiredState" to state.desiredState,
                     "lastSyncedAt" to state.lastSyncedAt,
-                    "lastError" to state.lastError,
+                    "lastError" to redactor.text(state.lastError),
                     "updatedAt" to state.updatedAt
                 )
             }
@@ -176,6 +180,6 @@ class GrafanaSyncResource {
         }
         val state = grafanaSyncService.markFailed(stateId, request?.get("error")?.toString())
             ?: return Response.status(404).entity(mapOf("error" to "Sync state not found")).build()
-        return Response.ok(mapOf("id" to state.id, "syncStatus" to state.syncStatus.name, "lastError" to state.lastError)).build()
+        return Response.ok(mapOf("id" to state.id, "syncStatus" to state.syncStatus.name, "lastError" to redactor.text(state.lastError))).build()
     }
 }

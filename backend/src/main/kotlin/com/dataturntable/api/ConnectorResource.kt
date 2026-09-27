@@ -1,10 +1,14 @@
 package com.dataturntable.api
 
 import com.dataturntable.connectors.Connector
+import com.dataturntable.audit.AuditService
+import com.dataturntable.connectors.ConnectorRevision
 import com.dataturntable.connectors.Connector.Direction
 import com.dataturntable.connectors.Connector.ConnectorType
 import com.dataturntable.connectors.BrokerCredential
 import com.dataturntable.connectors.ConnectorStatusService
+import com.dataturntable.connectors.ConnectorLeaseService
+import com.dataturntable.connectors.ConnectorRuntimeLease
 import com.dataturntable.connectors.mqtt.MqttConnectionManager
 import com.dataturntable.connectors.mqtt.MqttIngestService
 import com.dataturntable.connectors.polling.ConnectorPollingService
@@ -26,6 +30,8 @@ import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
 import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.eclipse.microprofile.jwt.JsonWebToken
+import java.net.InetAddress
+import java.net.URI
 import java.util.UUID
 
 @Path("/api/internal/v1/connectors")
@@ -70,10 +76,16 @@ class ConnectorResource {
     @Inject
     lateinit var connectorStatusService: ConnectorStatusService
 
+    @Inject
+    lateinit var connectorLeaseService: ConnectorLeaseService
+
+    @Inject
+    lateinit var audit: AuditService
+
     /** Connector types that must NOT have pollingEnabled=true (push-based). */
     private val PUSH_ONLY_TYPES = setOf(ConnectorType.MQTT, ConnectorType.WEBSOCKET, ConnectorType.UDP)
 
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
 
     /**
      * Retrieves or enumerates the requested state.
@@ -141,6 +153,30 @@ class ConnectorResource {
             }
         }
         return result
+    }
+
+    /**
+     * Connector credentials must be represented by `secretRefs`, never persisted inline —
+     * matches the AlertResource channel-config convention. Applies to create and update so a
+     * legacy embedded password/apiKey/token cannot be introduced or reintroduced through either
+     * path; existing connectors written before this check remain readable and are only
+     * revalidated if their config is edited again.
+     */
+    private fun validateConnectorConfig(value: Any?): String? {
+        val sensitiveNames = setOf("password", "token", "authtoken", "apikey", "authorization", "secret", "clientsecret")
+        fun validate(node: Any?, insideSecretRefs: Boolean = false): String? = when (node) {
+            is Map<*, *> -> node.entries.firstNotNullOfOrNull { (rawKey, child) ->
+                val key = rawKey?.toString()?.replace(Regex("[^A-Za-z0-9]"), "")?.lowercase().orEmpty()
+                when {
+                    key == "secretrefs" -> validate(child, true)
+                    !insideSecretRefs && key in sensitiveNames -> "Connector credentials must use secretRefs"
+                    else -> validate(child, insideSecretRefs)
+                }
+            }
+            is Collection<*> -> node.firstNotNullOfOrNull { validate(it, insideSecretRefs) }
+            else -> null
+        }
+        return validate(value)
     }
 
     /**
@@ -320,6 +356,34 @@ class ConnectorResource {
             normalized.remove("password")
         }
         return normalized.filterKeys { it.isNotBlank() }
+    }
+
+    /** Reject SSRF destinations before a REST or WebSocket connector is persisted. */
+    private fun validateExternalDestination(type: ConnectorType, config: Any): Response? {
+        if (type !in setOf(ConnectorType.REST, ConnectorType.WEBSOCKET) || config !is Map<*, *>) return null
+        val rawUrl = listOf("url", "endpoint", "baseUrl", "websocketUrl")
+            .firstNotNullOfOrNull { key -> config[key]?.toString()?.trim()?.takeIf { it.isNotBlank() } }
+            ?: return null
+        val uri = try { URI(rawUrl) } catch (_: Exception) {
+            return Response.status(400).entity(mapOf("error" to "Connector destination must be a valid URL")).build()
+        }
+        if (uri.scheme !in setOf("http", "https", "ws", "wss") || uri.host.isNullOrBlank() || uri.userInfo != null) {
+            return Response.status(400).entity(mapOf("error" to "Connector destination must be an absolute HTTP or WebSocket URL without credentials")).build()
+        }
+        val addresses = try { InetAddress.getAllByName(uri.host) } catch (_: Exception) {
+            return Response.status(400).entity(mapOf("error" to "Connector destination host could not be resolved")).build()
+        }
+        if (addresses.any(::isProhibitedDestination)) {
+            return Response.status(400).entity(mapOf("error" to "Connector destination must not target loopback, private, link-local, or metadata networks")).build()
+        }
+        return null
+    }
+
+    private fun isProhibitedDestination(address: InetAddress): Boolean {
+        val host = address.hostAddress.substringBefore('%')
+        return address.isAnyLocalAddress || address.isLoopbackAddress || address.isLinkLocalAddress ||
+            address.isSiteLocalAddress || address.isMulticastAddress || host == "169.254.169.254" ||
+            host.equals("fd00:ec2::254", ignoreCase = true)
     }
 
     /**
@@ -588,6 +652,14 @@ class ConnectorResource {
             this.updatedAt = java.time.Instant.now()
         }
         credential.persist()
+        audit.record(
+            currentUser?.id,
+            tenantUuid,
+            "connector.mqtt_credential.created",
+            "broker_credential",
+            credential.id.toString(),
+            mapOf("outcome" to "succeeded")
+        )
 
         return Response.status(201).entity(
             brokerCredentialToMap(credential) + mapOf("password" to password)
@@ -622,6 +694,14 @@ class ConnectorResource {
         (request["isActive"] as? Boolean)?.let { credential.isActive = it }
         credential.updatedAt = java.time.Instant.now()
         credential.persist()
+        audit.record(
+            currentUser?.id,
+            credential.tenant?.id,
+            "connector.mqtt_credential.updated",
+            "broker_credential",
+            credential.id.toString(),
+            mapOf("outcome" to "succeeded")
+        )
 
         return Response.ok(brokerCredentialToMap(credential)).build()
     }
@@ -650,6 +730,14 @@ class ConnectorResource {
         credential.passwordEncrypted = EncryptionUtils.encrypt(password)
         credential.updatedAt = java.time.Instant.now()
         credential.persist()
+        audit.record(
+            currentUser?.id,
+            credential.tenant?.id,
+            "connector.mqtt_credential.rotated",
+            "broker_credential",
+            credential.id.toString(),
+            mapOf("outcome" to "succeeded")
+        )
 
         return Response.ok(brokerCredentialToMap(credential) + mapOf("password" to password)).build()
     }
@@ -696,6 +784,14 @@ class ConnectorResource {
         }
 
         credential.delete()
+        audit.record(
+            currentUser?.id,
+            tenantUuid,
+            "connector.mqtt_credential.deleted",
+            "broker_credential",
+            credentialId.toString(),
+            mapOf("outcome" to "succeeded")
+        )
         return Response.noContent().build()
     }
 
@@ -811,6 +907,10 @@ class ConnectorResource {
         } else {
             configValue
         }
+        validateConnectorConfig(storedConfigValue)?.let { error ->
+            return Response.status(400).entity(mapOf("error" to error)).build()
+        }
+        validateExternalDestination(parsedConnectorType, storedConfigValue)?.let { return it }
         val configPlainJson = try {
             objectMapper.writeValueAsString(storedConfigValue)
         } catch (_: Exception) {
@@ -848,6 +948,18 @@ class ConnectorResource {
             this.updatedAt = java.time.Instant.now()
         }
         connector.persist()
+        recordRevision(connector, getCurrentUser()?.id)
+        // The response is immediately followed by connector reads/activation in the SPA and
+        // runtime managers; force the insert before publishing the identifier externally.
+        em.flush()
+        audit.record(
+            currentUser.id,
+            tenantUuid,
+            "connector.created",
+            "connector",
+            connector.id.toString(),
+            mapOf("outcome" to "succeeded", "connectorType" to parsedConnectorType.name, "direction" to parsedDirection.name)
+        )
 
         // Refresh connection managers after transaction commits
         val createdId = connector.id
@@ -866,7 +978,7 @@ class ConnectorResource {
             "direction" to connector.direction?.name
         )).build()
     }
-    
+
     @GET
     @Path("/{id}")
     /**
@@ -1329,6 +1441,111 @@ class ConnectorResource {
     }
 
     /**
+     * GET /connectors/{id}/lease
+     *
+     * Exposes persistent-connector HA ownership so operators can answer "which runtime
+     * instance currently owns this connector" during failover diagnosis — the lease/fencing
+     * mechanism in ConnectorLeaseService was previously invisible to any API.
+     */
+    @GET
+    @Path("/{id}/lease")
+    fun getLease(@PathParam("id") id: String): Response {
+        val connectorId = parseUuid(id)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
+        val connector = em.find(Connector::class.java, connectorId)
+            ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
+        val currentUser = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        if (!SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString()) || !SecurityUtils.hasAbility(currentUser, "read:connector")) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        val lease = em.find(ConnectorRuntimeLease::class.java, connectorId)
+        if (lease == null) {
+            return Response.ok(mapOf(
+                "connectorId" to connectorId,
+                "owned" to false,
+                "ownerInstanceId" to null,
+                "runtimeRole" to null,
+                "fencingToken" to null,
+                "leaseUntil" to null
+            )).build()
+        }
+        val leaseActive = lease.leaseUntil.isAfter(java.time.Instant.now())
+        return Response.ok(mapOf(
+            "connectorId" to connectorId,
+            "owned" to leaseActive,
+            "ownerInstanceId" to lease.ownerInstanceId,
+            "runtimeRole" to lease.runtimeRole,
+            "fencingToken" to lease.fencingToken,
+            "leaseUntil" to lease.leaseUntil,
+            "updatedAt" to lease.updatedAt
+        )).build()
+    }
+
+    @GET
+    @Path("/{id}/revisions")
+    fun listRevisions(@PathParam("id") id: String): Response {
+        val connectorId = parseUuid(id)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
+        val connector = em.find(Connector::class.java, connectorId)
+            ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
+        val currentUser = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        if (!SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString()) || !SecurityUtils.hasAbility(currentUser, "read:connector")) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        val revisions = em.createQuery(
+            "SELECT r FROM ConnectorRevision r WHERE r.connectorId = :connectorId ORDER BY r.revision DESC",
+            ConnectorRevision::class.java
+        ).setParameter("connectorId", connectorId).resultList
+        return Response.ok(revisions.map { revision ->
+            mapOf(
+                "id" to revision.id,
+                "revision" to revision.revision,
+                "createdBy" to revision.createdBy,
+                "createdAt" to revision.createdAt
+            )
+        }).build()
+    }
+
+    @POST
+    @Path("/{id}/revisions/{revision}/restore")
+    @Transactional
+    fun restoreRevision(@PathParam("id") id: String, @PathParam("revision") revision: Int): Response {
+        val connectorId = parseUuid(id)
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid connector id")).build()
+        if (revision < 1) return Response.status(400).entity(mapOf("error" to "Invalid revision")).build()
+        val connector = em.find(Connector::class.java, connectorId)
+            ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
+        val currentUser = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        if (!SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString()) || !SecurityUtils.hasAbility(currentUser, "write:connector")) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        val stored = em.createQuery(
+            "SELECT r FROM ConnectorRevision r WHERE r.connectorId = :connectorId AND r.revision = :revision",
+            ConnectorRevision::class.java
+        ).setParameter("connectorId", connectorId).setParameter("revision", revision).resultList.firstOrNull()
+            ?: return Response.status(404).entity(mapOf("error" to "Connector revision not found")).build()
+        @Suppress("UNCHECKED_CAST")
+        val snapshot = objectMapper.readValue(stored.snapshot, Map::class.java) as Map<String, Any?>
+        connector.name = snapshot["name"] as? String ?: connector.name
+        connector.connectorType = (snapshot["connectorType"] as? String)?.let(::parseConnectorType) ?: connector.connectorType
+        connector.direction = (snapshot["direction"] as? String)?.let(::parseDirection) ?: connector.direction
+        connector.config = snapshot["configEncrypted"] as? String ?: connector.config
+        connector.description = snapshot["description"] as? String
+        connector.isActive = snapshot["isActive"] as? Boolean ?: connector.isActive
+        connector.pollingEnabled = snapshot["pollingEnabled"] as? Boolean ?: connector.pollingEnabled
+        connector.pollingIntervalSeconds = (snapshot["pollingIntervalSeconds"] as? Number)?.toInt() ?: connector.pollingIntervalSeconds
+        connector.updatedAt = java.time.Instant.now()
+        recordRevision(connector, currentUser.id)
+        val updatedId = connector.id!!
+        when (connector.connectorType) {
+            ConnectorType.MQTT -> mqttIngestService.refreshConnector(updatedId)
+            ConnectorType.WEBSOCKET -> webSocketConnectionManager.refreshConnector(updatedId)
+            else -> connectorPollingService.onConnectorChanged(updatedId)
+        }
+        return Response.ok(mapOf("id" to connector.id, "restoredFromRevision" to revision)).build()
+    }
+
+    /**
      * GET /connectors/statuses?tenantId=...
      * Returns a map of connectorId → ConnectorStatusDto for all connectors in the tenant.
      * Note: literal path "statuses" takes priority over the {id} path parameter in JAX-RS routing.
@@ -1424,6 +1641,10 @@ class ConnectorResource {
                 } else {
                     it
                 }
+                validateConnectorConfig(effectiveConfigValue)?.let { error ->
+                    return Response.status(400).entity(mapOf("error" to error)).build()
+                }
+                validateExternalDestination(connector.connectorType ?: ConnectorType.CUSTOM, effectiveConfigValue)?.let { response -> return response }
                 val plain = try { objectMapper.writeValueAsString(effectiveConfigValue) } catch (_: Exception) { effectiveConfigValue.toString() }
                 connector.config = EncryptionUtils.encrypt(plain)
             }
@@ -1431,6 +1652,15 @@ class ConnectorResource {
             request["isActive"]?.let { connector.isActive = it as Boolean }
             connector.updatedAt = java.time.Instant.now()
             connector.persist()
+            recordRevision(connector, currentUser.id)
+            audit.record(
+                currentUser.id,
+                connector.tenant?.id,
+                "connector.updated",
+                "connector",
+                connector.id.toString(),
+                mapOf("outcome" to "succeeded")
+            )
 
             // Refresh connection managers
             val updatedId = connector.id
@@ -1452,6 +1682,30 @@ class ConnectorResource {
         } else {
             Response.status(404).entity(mapOf("error" to "Connector not found")).build()
         }
+    }
+
+    private fun recordRevision(connector: Connector, userId: UUID?) {
+        val connectorId = connector.id ?: return
+        val nextRevision = (em.createQuery(
+            "SELECT COALESCE(MAX(r.revision), 0) FROM ConnectorRevision r WHERE r.connectorId = :connectorId",
+            java.lang.Integer::class.java
+        ).setParameter("connectorId", connectorId).singleResult?.toInt() ?: 0) + 1
+        val snapshot = objectMapper.writeValueAsString(mapOf(
+            "name" to connector.name,
+            "connectorType" to connector.connectorType?.name,
+            "direction" to connector.direction?.name,
+            "configEncrypted" to connector.config,
+            "description" to connector.description,
+            "isActive" to connector.isActive,
+            "pollingEnabled" to connector.pollingEnabled,
+            "pollingIntervalSeconds" to connector.pollingIntervalSeconds
+        ))
+        em.persist(ConnectorRevision().apply {
+            this.connectorId = connectorId
+            revision = nextRevision
+            this.snapshot = snapshot
+            createdBy = userId
+        })
     }
 
     @DELETE
@@ -1492,6 +1746,14 @@ class ConnectorResource {
             val deletedType = connector.connectorType
             val deletedDir = connector.direction
             connector.delete()
+            audit.record(
+                currentUser.id,
+                connectorTenantId,
+                "connector.deleted",
+                "connector",
+                connectorId.toString(),
+                mapOf("outcome" to "succeeded")
+            )
 
             // Clean up connection managers
             if (deletedId != null) {

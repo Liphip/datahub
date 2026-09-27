@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dataturntable-execution
+  labels:
+    app: dataturntable
+    component: pipeline-executor
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dataturntable-execution-jobs
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dataturntable-execution-jobs
+subjects:
+  - kind: ServiceAccount
+    name: dataturntable-execution
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dataturntable-execution-jobs

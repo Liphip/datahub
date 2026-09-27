@@ -4,16 +4,34 @@ import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
 import io.quarkus.test.junit.QuarkusTest
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 
 import org.junit.jupiter.api.Assertions.*
 
 @QuarkusTest
-// FIXME: Keep bidirectional test relationships synchronized
-// Details: These tests persist Membership.authUser but never add the membership to User.memberships. User.getAllAbilities reads that initialized collection, so role abilities are absent until the entity is reloaded or both sides are updated.
 class UserTest {
-    
+
+    @PersistenceContext
+    lateinit var em: EntityManager
+
+    @AfterEach
+    @Transactional
+    fun cleanup() {
+        em.createNativeQuery("SET REFERENTIAL_INTEGRITY FALSE").executeUpdate()
+        try {
+            em.createQuery("DELETE FROM Membership").executeUpdate()
+            em.createQuery("DELETE FROM User").executeUpdate()
+            em.createQuery("DELETE FROM Role").executeUpdate()
+            em.createQuery("DELETE FROM Tenant").executeUpdate()
+        } finally {
+            em.createNativeQuery("SET REFERENTIAL_INTEGRITY TRUE").executeUpdate()
+        }
+    }
+
     @Test
     @Transactional
     fun testUserHasAbility() {
@@ -31,7 +49,7 @@ class UserTest {
         role.persist()
         
         val user = User().apply {
-            email = "test@example.com"
+            email = "user-has-ability@example.com"
             passwordHash = "hash"
         }
         user.persist()
@@ -42,6 +60,7 @@ class UserTest {
             this.role = role
         }
         membership.persist()
+        user.memberships.add(membership)
         
         // Then
         // Test that user has abilities from membership
@@ -57,12 +76,12 @@ class UserTest {
     fun testSuperadminHasAllAbilities() {
         // Given
         val user = User().apply {
-            email = "admin@example.com"
+            email = "superadmin-abilities@example.com"
             passwordHash = "hash"
             isSuperadmin = true
         }
         user.persist()
-        
+
         // Then
         assertTrue(user.hasAbility("module:read"))
         assertTrue(user.hasAbility("module:write"))
@@ -87,7 +106,7 @@ class UserTest {
         role.persist()
         
         val user = User().apply {
-            email = "test2@example.com"
+            email = "additional-abilities@example.com"
             passwordHash = "hash"
             abilities = "[\"pipeline:execute\"]"
         }
@@ -99,15 +118,14 @@ class UserTest {
             this.role = role
         }
         membership.persist()
+        user.memberships.add(membership)
         
         // Then
         // Test that user has abilities from role and direct abilities
         val abilities = user.getAllAbilities()
         assertTrue(abilities.contains("module:read"))
         assertTrue(abilities.contains("pipeline:execute"))
-        // BUG: Assertion requires an ability that the fixture never grants
-        // Details: The user has pipeline:execute and the role has module:read; neither grants data:write. Add it to the fixture only if it is part of this test's intended contract.
-        assertTrue(abilities.contains("data:write"))
+        assertFalse(abilities.contains("data:write"))
     }
     
     @Test
@@ -115,7 +133,7 @@ class UserTest {
     fun testCanAccessTenant() {
         // Given - test superadmin access since hierarchy loading is complex in H2
         val user = User().apply {
-            email = "admin@example.com"
+            email = "tenant-access-admin@example.com"
             passwordHash = "hash"
             isSuperadmin = true
         }
@@ -144,7 +162,7 @@ class UserTest {
         role.persist()
         
         val user = User().apply {
-            email = "test@example.com"
+            email = "all-abilities@example.com"
             passwordHash = "hash"
             abilities = "[\"data:write\"]"
         }
@@ -156,6 +174,7 @@ class UserTest {
             this.role = role
         }
         membership.persist()
+        user.memberships.add(membership)
         
         // When
         val abilities = user.getAllAbilities()

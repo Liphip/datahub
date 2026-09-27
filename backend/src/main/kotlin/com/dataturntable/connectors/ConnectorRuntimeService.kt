@@ -5,6 +5,7 @@ import com.dataturntable.connectors.Connector.Direction
 import com.dataturntable.connectors.mqtt.MqttConnectionManager
 import com.dataturntable.connectors.websocket.WebSocketConnectionManager
 import com.dataturntable.security.EncryptionUtils
+import com.dataturntable.security.SensitiveDataRedactor
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
@@ -45,7 +46,7 @@ import java.time.Duration
 class ConnectorRuntimeService {
 
     private val LOG = Logger.getLogger(ConnectorRuntimeService::class.java)
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
     private val httpClient: HttpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(10))
         .build()
@@ -58,6 +59,12 @@ class ConnectorRuntimeService {
 
     @Inject
     lateinit var connectorMetrics: ConnectorMetrics
+
+    @Inject
+    lateinit var secretReferenceResolver: ConnectorSecretReferenceResolver
+
+    @Inject
+    lateinit var redactor: SensitiveDataRedactor
 
     // ── Public API ───────────────────────────────────────────────────────────
 
@@ -164,12 +171,13 @@ class ConnectorRuntimeService {
         } catch (_: Exception) {
             connector.config
         }
-        return try {
+        val config = try {
             @Suppress("UNCHECKED_CAST")
             objectMapper.readValue(raw, Map::class.java) as Map<String, Any?>
         } catch (_: Exception) {
             emptyMap()
         }
+        return secretReferenceResolver.resolve(connector, config)
     }
 
     // ── REST ─────────────────────────────────────────────────────────────────
@@ -192,13 +200,13 @@ class ConnectorRuntimeService {
 
         applyRestHeaders(requestBuilder, config)
 
-        LOG.infof("REST INPUT fetch: GET %s", url)
+        LOG.infof("REST INPUT fetch: GET %s", redactor.text(url))
         return try {
             val response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString())
             LOG.infof("REST INPUT response: HTTP %d, body length %d", response.statusCode(), response.body().length)
             parseResponseBody(response.body())
         } catch (e: Exception) {
-            LOG.errorf("REST INPUT fetch failed: %s", e.message)
+            LOG.errorf("REST INPUT fetch failed: %s", redactor.text(e.message))
             throw RuntimeException("REST connector fetch failed: ${e.message}", e)
         }
     }
@@ -229,15 +237,15 @@ class ConnectorRuntimeService {
             else    -> requestBuilder.POST(HttpRequest.BodyPublishers.ofString(body))
         }
 
-        LOG.infof("REST OUTPUT deliver: %s %s", method, url)
+        LOG.infof("REST OUTPUT deliver: %s %s", method, redactor.text(url))
         try {
             val response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString())
             LOG.infof("REST OUTPUT response: HTTP %d", response.statusCode())
             if (response.statusCode() >= 400) {
-                LOG.warnf("REST OUTPUT returned error status %d: %s", response.statusCode(), response.body().take(200))
+                LOG.warnf("REST OUTPUT returned error status %d: %s", response.statusCode(), redactor.text(response.body().take(200)))
             }
         } catch (e: Exception) {
-            LOG.errorf("REST OUTPUT deliver failed: %s", e.message)
+            LOG.errorf("REST OUTPUT deliver failed: %s", redactor.text(e.message))
             throw RuntimeException("REST connector deliver failed: ${e.message}", e)
         }
     }

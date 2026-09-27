@@ -24,7 +24,7 @@ class GrafanaSyncService {
     @PersistenceContext
     lateinit var em: EntityManager
 
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
 
     /**
      * Retrieves or enumerates the requested state.

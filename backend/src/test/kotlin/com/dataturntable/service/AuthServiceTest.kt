@@ -1,20 +1,24 @@
 package com.dataturntable.service
 
+import com.dataturntable.auth.ApiKey
 import com.dataturntable.auth.User
 import com.dataturntable.dto.LoginRequest
 import com.dataturntable.dto.SetupRequest
 import com.dataturntable.tenant.Tenant
+import com.dataturntable.tenant.Membership
+import com.dataturntable.tenant.Role
 import io.quarkus.test.junit.QuarkusTest
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
+import org.mindrot.jbcrypt.BCrypt
 import java.security.MessageDigest
 import java.util.Base64
-import java.util.UUID
 
 import org.junit.jupiter.api.Assertions.*
 
@@ -30,12 +34,21 @@ class AuthServiceTest {
     @BeforeEach
     @Transactional
     fun cleanup() {
-        // BUG: Cleanup violates membership foreign keys
-        // Details: This bulk delete removes users before their memberships. The suite currently fails with an H2 referential-integrity violation; delete Membership records before users, roles, and tenants.
-        em.createQuery("DELETE FROM User").executeUpdate()
-        em.createQuery("DELETE FROM Role").executeUpdate()
-        em.createQuery("DELETE FROM Tenant").executeUpdate()
+        em.createNativeQuery("SET REFERENTIAL_INTEGRITY FALSE").executeUpdate()
+        try {
+            em.createQuery("DELETE FROM ApiKey").executeUpdate()
+            em.createQuery("DELETE FROM Membership").executeUpdate()
+            em.createQuery("DELETE FROM User").executeUpdate()
+            em.createQuery("DELETE FROM Role").executeUpdate()
+            em.createQuery("DELETE FROM Tenant").executeUpdate()
+        } finally {
+            em.createNativeQuery("SET REFERENTIAL_INTEGRITY TRUE").executeUpdate()
+        }
     }
+
+    @AfterEach
+    @Transactional
+    fun cleanupAfter() = cleanup()
     
     @Test
     @Transactional
@@ -71,13 +84,9 @@ class AuthServiceTest {
         val setupRequest = SetupRequest(email = "admin@example.com")
         val setupResponse = authService.setup(setupRequest)
         
-        // Backend stores BCrypt(SHA-256(password))
-        // Frontend sends SHA-256(password), backend checks BCrypt directly
-        val passwordHash = hashPassword(setupResponse.password)
-        
         val loginRequest = LoginRequest(
             email = "admin@example.com",
-            passwordHash = passwordHash
+            password = setupResponse.password
         )
         
         val response = authService.login(loginRequest)
@@ -90,16 +99,13 @@ class AuthServiceTest {
     
     @Test
     @Transactional
-    fun testLoginWithInvalidPasswordHash() {
+    fun testLoginWithInvalidPassword() {
         val setupRequest = SetupRequest(email = "admin@example.com")
         authService.setup(setupRequest)
         
-        // Backend double-hashes, so wrong hash should fail
-        val wrongHash = hashPassword("wrongpassword")
-        
         val loginRequest = LoginRequest(
             email = "admin@example.com",
-            passwordHash = wrongHash
+            password = "wrongpassword"
         )
         
         assertThrows(SecurityException::class.java) {
@@ -112,7 +118,7 @@ class AuthServiceTest {
     fun testLoginWithNonexistentUser() {
         val loginRequest = LoginRequest(
             email = "nonexistent@example.com",
-            passwordHash = "somehash"
+            password = "some-password"
         )
         
         assertThrows(SecurityException::class.java) {
@@ -126,11 +132,9 @@ class AuthServiceTest {
         val setupRequest = SetupRequest(email = "admin@example.com")
         val setupResponse = authService.setup(setupRequest)
         
-        val passwordHash = hashPassword(setupResponse.password)
-        
         val loginRequest = LoginRequest(
             email = "admin@example.com",
-            passwordHash = passwordHash
+            password = setupResponse.password
         )
         
         val response = authService.login(loginRequest)
@@ -166,6 +170,23 @@ class AuthServiceTest {
         assertTrue(password.any { !it.isLetterOrDigit() })
     }
     
+    @Test
+    @Transactional
+    fun `legacy BCrypt SHA-256 password migrates to Argon2id on login`() {
+        val password = "LegacyPass!123"
+        val user = User().apply {
+            email = "legacy@example.com"
+            passwordHash = BCrypt.hashpw(hashPassword(password), BCrypt.gensalt())
+            isActive = true
+        }
+        em.persist(user)
+        em.flush()
+
+        authService.login(LoginRequest(email = user.email!!, password = password))
+
+        assertTrue(user.passwordHash!!.startsWith("\$argon2id\$"))
+    }
+
     private fun hashPassword(password: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
         val hash = digest.digest(password.toByteArray())

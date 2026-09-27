@@ -67,7 +67,6 @@ Creates the root tenant and the initial superadmin user. Only works once; subseq
 
 ```text
 Authorization: Bearer <jwt-token>
-```
 or
 
 ```text

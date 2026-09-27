@@ -2,8 +2,10 @@ package com.dataturntable.connectors.mqtt
 
 import com.dataturntable.connectors.BrokerCredential
 import com.dataturntable.connectors.Connector
+import com.dataturntable.connectors.ConnectorSecretReferenceResolver
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineRun
+import com.dataturntable.pipeline.PipelineVersionService
 import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.security.EncryptionUtils
@@ -31,10 +33,16 @@ import java.util.UUID
 class MqttMessageRouter {
 
     private val LOG = Logger.getLogger(MqttMessageRouter::class.java)
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
 
     @Inject
     lateinit var kafkaService: KafkaService
+
+    @Inject
+    lateinit var pipelineVersions: PipelineVersionService
+
+    @Inject
+    lateinit var secretReferenceResolver: ConnectorSecretReferenceResolver
 
     @PersistenceContext
     lateinit var em: EntityManager
@@ -71,6 +79,7 @@ class MqttMessageRouter {
 
             val run = PipelineRun().apply {
                 this.pipeline = pipeline
+                this.pipelineVersion = pipelineVersions.latestFor(pipeline.id)
                 this.triggerType = TriggerType.DATA
                 this.status = PipelineRunStatus.PENDING
                 this.startedAt = java.time.Instant.now()
@@ -156,22 +165,23 @@ class MqttMessageRouter {
             emptyMap()
         }.toMutableMap()
 
-        val credentialIdStr = config["brokerCredentialId"]?.toString()
+        val resolvedConfig = secretReferenceResolver.resolve(connector, config).toMutableMap()
+        val credentialIdStr = resolvedConfig["brokerCredentialId"]?.toString()
         if (!credentialIdStr.isNullOrBlank()) {
             val credentialId = try { UUID.fromString(credentialIdStr) } catch (_: Exception) { null }
             if (credentialId != null) {
                 val cred = em.find(BrokerCredential::class.java, credentialId)
                 if (cred != null && cred.isActive) {
-                    config["username"] = cred.username
+                    resolvedConfig["username"] = cred.username
                     val password = cred.passwordEncrypted?.let {
                         try { EncryptionUtils.decrypt(it) } catch (_: Exception) { null }
                     }
-                    if (!password.isNullOrBlank()) config["password"] = password
+                    if (!password.isNullOrBlank()) resolvedConfig["password"] = password
                 }
             }
         }
 
-        return connector to config
+        return connector to resolvedConfig
     }
 
     /**

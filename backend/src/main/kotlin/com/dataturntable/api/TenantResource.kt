@@ -1,6 +1,7 @@
 package com.dataturntable.api
 
 import com.dataturntable.tenant.Tenant
+import com.dataturntable.audit.AuditService
 import com.dataturntable.auth.User
 import com.dataturntable.service.GrafanaSyncService
 import com.dataturntable.service.TenantService
@@ -56,6 +57,9 @@ class TenantResource {
 
     @Inject
     lateinit var jwt: JsonWebToken
+
+    @Inject
+    lateinit var audit: AuditService
 
     @Inject
     lateinit var objectMapper: ObjectMapper
@@ -774,6 +778,14 @@ class TenantResource {
         em.persist(tenant)
         tenantService.createDefaultRoles(tenant)
         grafanaSyncService.queueTenantSync(tenant)
+        audit.record(
+            actorId = user.id,
+            tenantId = tenant.id,
+            action = "identity.tenant.created",
+            resourceType = "tenant",
+            resourceId = tenant.id.toString(),
+            metadata = mapOf("outcome" to "succeeded", "parentTenantId" to parent?.id?.toString())
+        )
         return Response.status(201).entity(mapOf("id" to tenant.id, "name" to tenant.name)).build()
     }
     
@@ -830,6 +842,14 @@ class TenantResource {
             tenant.updatedAt = java.time.Instant.now()
             em.merge(tenant)
             grafanaSyncService.queueTenantSync(tenant)
+            audit.record(
+                actorId = user.id,
+                tenantId = tenantId,
+                action = "identity.tenant.updated",
+                resourceType = "tenant",
+                resourceId = tenant.id.toString(),
+                metadata = mapOf("outcome" to "succeeded")
+            )
             Response.ok(mapOf("id" to tenant.id, "name" to tenant.name)).build()
         } else {
             Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
@@ -868,6 +888,14 @@ class TenantResource {
             }
             tenant.id?.let { grafanaSyncService.queueTenantDeletion(it, tenant.name) }
             em.remove(tenant)
+            audit.record(
+                actorId = user.id,
+                tenantId = tenantId,
+                action = "identity.tenant.deleted",
+                resourceType = "tenant",
+                resourceId = tenantId.toString(),
+                metadata = mapOf("outcome" to "succeeded")
+            )
             Response.noContent().build()
         } else {
             Response.status(404).entity(mapOf("error" to "Tenant not found")).build()

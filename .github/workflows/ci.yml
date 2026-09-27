@@ -1,0 +1,292 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  backend:
+    name: Backend tests and cross-tenant regressions
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Run backend test suite
+        run: mvn --batch-mode test
+
+  frontend:
+    name: Frontend typecheck and production build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck --if-present
+      - name: Production build
+        run: npm run build
+      - name: Assert editor route stays lazy-loaded
+        run: |
+          node --input-type=module -e "import fs from 'node:fs'; const manifest = JSON.parse(fs.readFileSync('dist/.vite/manifest.json', 'utf8')); const entry = Object.values(manifest).find((asset) => asset.isEntry); if (!entry || !(entry.dynamicImports || []).some((item) => item.includes('PipelineEditor'))) { throw new Error('PipelineEditor must remain dynamically imported from the application entry'); }"
+
+  openapi-contract-lint:
+    name: Lint generated OpenAPI contract
+    runs-on: ubuntu-latest
+    # FR-028: "generate/validate versioned OpenAPI contracts... OpenAPI validation runs in CI."
+    # The previous state of this requirement only asserted `/openapi` returns 200 (a liveness
+    # check), never that the generated document is itself structurally valid. This job triggers
+    # Quarkus's build-time OpenAPI generation (quarkus.smallrye-openapi.store-schema-directory,
+    # see backend/src/main/resources/application.yaml) via a single fast test class — any
+    # @QuarkusTest boots the app and produces the same file, so a full test run isn't needed just
+    # to generate it — then lints the real static file with Redocly's `minimal` ruleset
+    # (see .redocly.yaml for why `minimal` and not the stricter `recommended`: several endpoints
+    # here are intentionally unauthenticated by design — health, ingest, auth bootstrap, public
+    # monitoring — which the default `security-defined` rule doesn't understand). `minimal` still
+    # catches real breakage: broken $refs, malformed schemas, duplicate operations.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Generate OpenAPI contract
+        working-directory: backend
+        run: mvn --batch-mode test -Dtest=ApiErrorContractTest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Lint OpenAPI contract
+        run: npx --yes @redocly/cli lint backend/target/generated-openapi/openapi.yaml --config=.redocly.yaml
+
+  kubernetes-manifests:
+    name: Kubernetes overlay rendering
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-kubectl@v4
+      - name: Render base Kubernetes bundle
+        run: kubectl kustomize docker/k8s > /dev/null
+      - name: Render HA Kubernetes overlay
+        run: kubectl kustomize docker/k8s-ha > /dev/null
+
+  container-build-scan-sbom:
+    name: Build container images, scan for vulnerabilities, generate SBOMs
+    runs-on: ubuntu-latest
+    # NFR-018/FR-032: production artifacts need digests/SBOMs and CI must scan
+    # secrets/dependencies/images. This job builds both production images from the same
+    # Dockerfiles used for real deploys and scans each with Trivy and a CycloneDX SBOM per image.
+    # On `push` to `main` only (never on pull_request, so a fork PR never gets a token that can
+    # push packages) it also pushes both images to GitHub Container Registry using the built-in
+    # `GITHUB_TOKEN` — no external registry credential needs to be configured for this — captures
+    # the real pushed digest, and commits nothing, but writes it into a downloadable artifact
+    # (`image-digests-<sha>`) alongside a ready-to-run `kustomize edit set image` command so a
+    # deploy step can consume it. See docker/k8s/kustomization.yaml's own comment for the other
+    # half of this: its `images:` transformer still names the `:latest` placeholder tag until a
+    # real deploy pipeline actually runs that command against a real cluster target.
+    outputs:
+      backend-digest: ${{ steps.push-backend.outputs.digest }}
+      frontend-digest: ${{ steps.push-frontend.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: false
+          load: true
+          tags: dataturntable/backend:ci-${{ github.sha }}
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/frontend.Dockerfile
+          push: false
+          load: true
+          tags: dataturntable/frontend:ci-${{ github.sha }}
+
+      - name: Scan backend image for vulnerabilities
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          image-ref: dataturntable/backend:ci-${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+
+      - name: Scan frontend image for vulnerabilities
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          image-ref: dataturntable/frontend:ci-${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+
+      - name: Generate backend SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: dataturntable/backend:ci-${{ github.sha }}
+          format: cyclonedx-json
+          output-file: sbom-backend.cyclonedx.json
+
+      - name: Generate frontend SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: dataturntable/frontend:ci-${{ github.sha }}
+          format: cyclonedx-json
+          output-file: sbom-frontend.cyclonedx.json
+
+      - name: Upload SBOMs
+        uses: actions/upload-artifact@v4
+        with:
+          name: sboms-${{ github.sha }}
+          path: |
+            sbom-backend.cyclonedx.json
+            sbom-frontend.cyclonedx.json
+          retention-days: 90
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push backend image and capture digest
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: push-backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository }}/backend:${{ github.sha }}
+
+      - name: Push frontend image and capture digest
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: push-frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/frontend.Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository }}/frontend:${{ github.sha }}
+
+      - name: Write image digests and kustomize command
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p image-digests
+          cat > image-digests/README.md <<EOF
+          # Image digests for ${{ github.sha }}
+
+          backend:  ghcr.io/${{ github.repository }}/backend@${{ steps.push-backend.outputs.digest }}
+          frontend: ghcr.io/${{ github.repository }}/frontend@${{ steps.push-frontend.outputs.digest }}
+
+          To apply these to the Kubernetes manifests before a real deploy:
+
+              kustomize edit set image \\
+                dataturntable/backend=ghcr.io/${{ github.repository }}/backend@${{ steps.push-backend.outputs.digest }} \\
+                dataturntable/frontend=ghcr.io/${{ github.repository }}/frontend@${{ steps.push-frontend.outputs.digest }}
+
+          (run from docker/k8s/, or docker/k8s-ha/ for the HA overlay)
+          EOF
+          cat image-digests/README.md
+
+      - name: Upload image digests
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-digests-${{ github.sha }}
+          path: image-digests/README.md
+          retention-days: 90
+
+  dependency-vulnerability-scan:
+    name: Scan Maven and npm dependencies for known vulnerabilities
+    runs-on: ubuntu-latest
+    # NOTE: OWASP Dependency-Check downloads the NVD CVE database on first run and is rate-limited
+    # without an API key. In a real deployment, request a free key at https://nvd.nist.gov/developers
+    # and set it as the DC_NVD_API_KEY repository secret referenced below, and add
+    # actions/cache for ~/.m2/repository/org/owasp/dependency-check-data to avoid re-downloading
+    # the full CVE database on every run. Neither is configured in this repo — this job is not yet
+    # guaranteed to pass in CI, only structurally ready for those two additions.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Scan backend Maven dependencies (OWASP Dependency-Check)
+        working-directory: backend
+        env:
+          NVD_API_KEY: ${{ secrets.DC_NVD_API_KEY }}
+        run: mvn --batch-mode org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=9 -Dformat=SARIF -DnvdApiKey="${NVD_API_KEY}"
+      - name: Scan frontend npm dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=critical
+
+  postgresql-migrations:
+    name: PostgreSQL migration smoke test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: dataturntable
+          POSTGRES_USER: dataturntable
+          POSTGRES_PASSWORD: dataturntable-ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U dataturntable -d dataturntable"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply every Flyway migration in version order
+        env:
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGDATABASE: dataturntable
+          PGUSER: dataturntable
+          PGPASSWORD: dataturntable-ci
+        run: |
+          for migration in $(find backend/src/main/resources/db/migration -name '*.sql' | sort -V); do
+            echo "Applying ${migration}"
+            psql --set ON_ERROR_STOP=1 --file "${migration}"
+          done
+      - name: Verify critical production tables
+        env:
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGDATABASE: dataturntable
+          PGUSER: dataturntable
+          PGPASSWORD: dataturntable-ci
+        run: |
+          psql --set ON_ERROR_STOP=1 --command "SELECT to_regclass('public.event_outbox'), to_regclass('public.secrets'), to_regclass('public.audit_events'), to_regclass('public.data_blobs');"
+          psql --set ON_ERROR_STOP=1 --command "SELECT status, updated_at FROM data_blobs LIMIT 0;"

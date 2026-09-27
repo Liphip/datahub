@@ -1,12 +1,14 @@
 package com.dataturntable.service
 
 import com.dataturntable.grafana.GrafanaInstanceConfig
+import com.dataturntable.security.SensitiveDataRedactor
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpHandler
 import com.sun.net.httpserver.HttpServer
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.OutputStream
@@ -50,7 +52,7 @@ class GrafanaProvisioningServiceTest {
             start()
         }
 
-        val service = GrafanaProvisioningService()
+        val service = GrafanaProvisioningService().apply { redactor = SensitiveDataRedactor() }
         val method = GrafanaProvisioningService::class.java.getDeclaredMethod(
             "ensureGrafanaUser",
             GrafanaInstanceConfig.Target::class.java,
@@ -83,6 +85,53 @@ class GrafanaProvisioningServiceTest {
         assertEquals("new.user@example.com", createdPayloads.first()["login"])
         assertEquals("New User", createdPayloads.first()["name"])
         assertTrue((createdPayloads.first()["password"] as String).startsWith("Dt!"))
+    }
+
+    @Test
+    fun `a failed user-creation response redacts an echoed provisioning password before it reaches the thrown message`() {
+        // Regression test for a real gap found this session: Grafana's error response for a
+        // rejected /api/admin/users POST could echo submitted request fields back (common for
+        // validation 400s), and the submitted payload includes a freshly generated provisioning
+        // password. That message previously flowed unredacted into a log line and the persisted
+        // GrafanaSyncState.lastError column, which GrafanaSyncResource exposes via its JSON API.
+        server = HttpServer.create(InetSocketAddress(0), 0).apply {
+            createContext("/api/users/lookup", JsonHandler { exchange -> respond(exchange, 404, mapOf("message" to "user not found")) })
+            createContext("/api/admin/users", JsonHandler { exchange ->
+                val payload = objectMapper.readValue(exchange.requestBody.readAllBytes(), Map::class.java)
+                // Simulate Grafana echoing the submitted (invalid) password back in a validation error.
+                respond(exchange, 400, mapOf("message" to "invalid payload: password=${payload["password"]}"))
+            })
+            start()
+        }
+
+        val service = GrafanaProvisioningService().apply { redactor = SensitiveDataRedactor() }
+        val method = GrafanaProvisioningService::class.java.getDeclaredMethod(
+            "ensureGrafanaUser",
+            GrafanaInstanceConfig.Target::class.java,
+            com.fasterxml.jackson.databind.JsonNode::class.java
+        )
+        method.isAccessible = true
+
+        val thrown = try {
+            method.invoke(
+                service,
+                GrafanaInstanceConfig.Target(
+                    enabled = true,
+                    baseUrl = "http://localhost:${server!!.address.port}",
+                    adminUser = "admin",
+                    adminPassword = "admin"
+                ),
+                objectMapper.readTree("""{"email":"leak-check@example.com"}""")
+            )
+            null
+        } catch (e: java.lang.reflect.InvocationTargetException) {
+            e.cause
+        }
+
+        assertTrue(thrown is IllegalStateException, "expected the HTTP 400 to surface as an IllegalStateException")
+        val message = thrown!!.message!!
+        assertFalse(message.contains("Dt!"), "the generated provisioning password prefix must not appear in the thrown message: $message")
+        assertTrue(message.contains("[REDACTED]"))
     }
 
     @Test

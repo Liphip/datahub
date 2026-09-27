@@ -1,6 +1,7 @@
 package com.dataturntable.api
 
 import com.dataturntable.auth.User
+import com.dataturntable.audit.AuditService
 import com.dataturntable.security.SecurityUtils
 import com.dataturntable.service.GrafanaSyncService
 import io.quarkus.security.Authenticated
@@ -13,6 +14,7 @@ import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
 import org.eclipse.microprofile.jwt.JsonWebToken
 import org.mindrot.jbcrypt.BCrypt
+import de.mkammerer.argon2.Argon2Factory
 import java.util.UUID
 
 @Path("/api/internal/v1/auth-users")
@@ -31,6 +33,9 @@ class AuthUserResource {
 
     @Inject
     lateinit var grafanaSyncService: GrafanaSyncService
+
+    @Inject
+    lateinit var audit: AuditService
 
     /**
      * Retrieves or enumerates the requested state.
@@ -77,7 +82,8 @@ class AuthUserResource {
      * Evaluates the named capability or state predicate.
      */
     private fun hashForStorage(passwordHash: String): String {
-        return BCrypt.hashpw(passwordHash, BCrypt.gensalt())
+        return Argon2Factory.create(Argon2Factory.Argon2Types.ARGON2id)
+            .hash(3, 65536, 1, passwordHash.toCharArray())
     }
 
     /**
@@ -170,6 +176,14 @@ class AuthUserResource {
         }
         user.persist()
         grafanaSyncService.queueUserSync(user)
+        audit.record(
+            actorId = currentUser.id,
+            tenantId = parseUuid(tenantId, "tenantId"),
+            action = "identity.user.created",
+            resourceType = "auth_user",
+            resourceId = user.id.toString(),
+            metadata = mapOf("outcome" to "succeeded")
+        )
 
         return Response.status(201).entity(mapOf("id" to user.id, "email" to user.email)).build()
     }
@@ -250,14 +264,36 @@ class AuthUserResource {
             return Response.status(404).entity(mapOf("error" to "User not found")).build()
         }
 
+        var authorizationChanged = false
         request["email"]?.let { user.email = it as String }
-        extractPasswordHash(request)?.let { user.passwordHash = hashForStorage(it) }
+        extractPasswordHash(request)?.let {
+            user.passwordHash = hashForStorage(it)
+            authorizationChanged = true
+        }
         request["firstName"]?.let { user.firstName = it as String }
         request["lastName"]?.let { user.lastName = it as String }
-        request["isActive"]?.let { user.isActive = it as Boolean }
+        request["isActive"]?.let {
+            user.isActive = it as Boolean
+            authorizationChanged = true
+        }
+        if (authorizationChanged) user.authorizationVersion++
         user.updatedAt = java.time.Instant.now()
         user.persist()
         grafanaSyncService.queueUserSync(user)
+        val action = when {
+            extractPasswordHash(request) != null -> "identity.user.password.changed"
+            request["isActive"] == false -> "identity.user.deactivated"
+            request["isActive"] == true -> "identity.user.activated"
+            else -> "identity.user.updated"
+        }
+        audit.record(
+            actorId = currentUser.id,
+            tenantId = tenantUuid,
+            action = action,
+            resourceType = "auth_user",
+            resourceId = user.id.toString(),
+            metadata = mapOf("outcome" to "succeeded")
+        )
 
         return Response.ok(mapOf("id" to user.id, "email" to user.email)).build()
     }
@@ -326,6 +362,14 @@ class AuthUserResource {
         } else {
             grafanaSyncService.queueUserSync(user)
         }
+        audit.record(
+            actorId = currentUser.id,
+            tenantId = tenantUuid,
+            action = "identity.user.removed_from_tenant",
+            resourceType = "auth_user",
+            resourceId = userId.toString(),
+            metadata = mapOf("outcome" to "succeeded", "userDeleted" to (remainingMemberships == 0L))
+        )
         return Response.noContent().build()
     }
 }

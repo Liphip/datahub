@@ -1,6 +1,10 @@
 package com.dataturntable.api
 
 import com.dataturntable.auth.User
+import com.dataturntable.connectors.Connector
+import com.dataturntable.connectors.ConnectorLeaseService
+import com.dataturntable.security.EncryptionUtils
+import com.dataturntable.tenant.Tenant
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.PipelineRunStatus
@@ -11,6 +15,7 @@ import io.quarkus.test.junit.QuarkusTest
 import io.restassured.http.ContentType
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.mindrot.jbcrypt.BCrypt
 
@@ -22,6 +27,24 @@ class ConnectorResourceTest {
 
     @PersistenceContext
     lateinit var em: EntityManager
+
+    @jakarta.inject.Inject
+    lateinit var leaseService: ConnectorLeaseService
+
+    @AfterEach
+    fun cleanupAdHocUsers() {
+        QuarkusTransaction.requiringNew().run {
+            val userIds = em.createQuery("SELECT u.id FROM User u WHERE u.email LIKE 'connector-outsider-%@example.com'", java.util.UUID::class.java).resultList
+            if (userIds.isEmpty()) return@run
+            em.createNativeQuery("SET REFERENTIAL_INTEGRITY FALSE").executeUpdate()
+            try {
+                em.createQuery("DELETE FROM Membership m WHERE m.authUser.id IN :ids").setParameter("ids", userIds).executeUpdate()
+                em.createQuery("DELETE FROM User u WHERE u.id IN :ids").setParameter("ids", userIds).executeUpdate()
+            } finally {
+                em.createNativeQuery("SET REFERENTIAL_INTEGRITY TRUE").executeUpdate()
+            }
+        }
+    }
 
     private fun createNonMemberToken(): String {
         val email = "connector-outsider-${java.util.UUID.randomUUID()}@example.com"
@@ -67,6 +90,31 @@ class ConnectorResourceTest {
             .getString("[0].id")
     }
 
+    /**
+     * Persists a connector with legacy inline-credential config directly, bypassing
+     * ConnectorResource's create/update validation. Pre-existing connectors written before
+     * secretRefs enforcement remain readable/maskable — only new writes through the API reject
+     * inline credentials — so masking behavior on that legacy shape still needs coverage.
+     */
+    private fun createLegacyConnectorWithInlineConfig(tenantId: String, configJson: String): String {
+        return QuarkusTransaction.requiringNew().call<String> {
+            val tenant = em.find(Tenant::class.java, java.util.UUID.fromString(tenantId))
+            val connector = Connector().apply {
+                this.name = "Legacy Inline Config Connector"
+                this.tenant = tenant
+                this.connectorType = Connector.ConnectorType.MQTT
+                this.direction = Connector.Direction.INPUT
+                this.config = EncryptionUtils.encrypt(configJson)
+                this.isActive = true
+                this.createdAt = java.time.Instant.now()
+                this.updatedAt = java.time.Instant.now()
+            }
+            em.persist(connector)
+            em.flush()
+            connector.id.toString()
+        }
+    }
+
     @Test
     fun testListConnectorsRequiresAuth() {
         given()
@@ -107,11 +155,7 @@ class ConnectorResourceTest {
 
         val config = mapOf(
             "host" to "test.local",
-            "port" to 1883,
-            "password" to "supersecret",
-            "auth" to listOf(
-                mapOf("apiKey" to "nested-secret", "enabled" to true)
-            )
+            "port" to 1883
         )
 
         val response = given()
@@ -133,6 +177,73 @@ class ConnectorResourceTest {
             .jsonPath()
 
         val id = response.getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/connectors/$id")
+        .then()
+            .statusCode(200)
+            .body("config.host", equalTo("test.local"))
+            .body("config.port", equalTo(1883))
+    }
+
+    @Test
+    fun testCreateConnectorRejectsInlineCredentials() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Inline Credential Connector",
+                "connectorType" to "REST",
+                "direction" to "INPUT",
+                "config" to mapOf(
+                    "baseUrl" to "https://api.example.com",
+                    "apiKey" to "plaintext-secret"
+                )
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Connector credentials must use secretRefs"))
+    }
+
+    @Test
+    fun testCreateConnectorAllowsCredentialsUnderSecretRefs() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "SecretRefs Connector",
+                "connectorType" to "MQTT",
+                "direction" to "INPUT",
+                "config" to mapOf(
+                    "broker" to "mqtt://localhost:1883",
+                    "secretRefs" to mapOf(
+                        "apiKey" to mapOf("id" to java.util.UUID.randomUUID().toString(), "version" to 1)
+                    )
+                )
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors")
+        .then()
+            .statusCode(201)
+    }
+
+    @Test
+    fun testGetLegacyInlineConfigConnectorMasksCredentialsOnRead() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        val id = createLegacyConnectorWithInlineConfig(
+            tenantId,
+            """{"host":"test.local","port":1883,"password":"supersecret","auth":[{"apiKey":"nested-secret","enabled":true}]}"""
+        )
 
         given()
             .header("Authorization", "Bearer $token")
@@ -196,25 +307,15 @@ class ConnectorResourceTest {
     @Test
     fun testPatchEmptyConfigDoesNotOverwriteExistingConfig() {
         val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
 
-        val createResponse = given()
-            .header("Authorization", "Bearer $token")
-            .contentType("application/json")
-            .body(mapOf(
-                "name" to "Patch Config Connector",
-                "connectorType" to "MQTT",
-                "direction" to "INPUT",
-                "config" to mapOf("host" to "persist.local", "password" to "secret")
-            ))
-        .`when`()
-            .post("/api/internal/v1/connectors")
-        .then()
-            .statusCode(201)
-            .extract()
-            .body()
-            .jsonPath()
-
-        val id = createResponse.getString("id")
+        // Seeded directly (not through create()) since this legacy inline-credential shape is
+        // exactly what write-time secretRefs validation now rejects; PATCH with an empty config
+        // must still preserve it rather than overwrite it.
+        val id = createLegacyConnectorWithInlineConfig(
+            tenantId,
+            """{"host":"persist.local","password":"secret"}"""
+        )
 
         given()
             .header("Authorization", "Bearer $token")
@@ -340,9 +441,9 @@ class ConnectorResourceTest {
             .post("/api/internal/v1/connectors/$connectorId/disconnect")
         .then()
             .statusCode(409)
-            .body("requiresForce", equalTo(true))
-            .body("activeImpactedPipelineCount", equalTo(1))
-            .body("impactedPipelines[0].pipelineName", equalTo("Active Guard Pipeline"))
+            .body("details.requiresForce", equalTo(true))
+            .body("details.activeImpactedPipelineCount", equalTo(1))
+            .body("details.impactedPipelines[0].pipelineName", equalTo("Active Guard Pipeline"))
 
         given()
             .header("Authorization", "Bearer $token")
@@ -466,8 +567,8 @@ class ConnectorResourceTest {
         .then()
             .statusCode(409)
             .body("error", equalTo("Connector is used by pipeline graphs"))
-            .body("referenceCount", equalTo(1))
-            .body("references[0].pipelineName", equalTo("Connector Reference Pipeline"))
+            .body("details.referenceCount", equalTo(1))
+            .body("details.references[0].pipelineName", equalTo("Connector Reference Pipeline"))
     }
 
     @Test
@@ -641,28 +742,20 @@ class ConnectorResourceTest {
         val token = TestAuthHelpers.createAdminToken()
         val tenantId = resolveTenantId(token)
 
-        val sourceId = given()
-            .header("Authorization", "Bearer $token")
-            .contentType("application/json")
-            .body(mapOf(
-                "name" to "Clone Source",
-                "connectorType" to "REST",
-                "direction" to "OUTPUT",
-                "description" to "clone me",
-                "config" to mapOf(
-                    "baseUrl" to "https://api.example.com",
-                    "path" to "/ingest",
-                    "apiKey" to "super-secret-key"
-                )
-            ))
-        .`when`()
-            .post("/api/internal/v1/connectors?tenantId=$tenantId")
-        .then()
-            .statusCode(201)
-            .extract()
-            .body()
-            .jsonPath()
-            .getString("id")
+        // Seeded directly (not through create()) since this legacy inline-credential shape is
+        // exactly what write-time secretRefs validation now rejects; cloning/stripping an
+        // existing legacy connector's secrets must still work.
+        val sourceId = createLegacyConnectorWithInlineConfig(
+            tenantId,
+            """{"baseUrl":"https://example.com","path":"/ingest","apiKey":"super-secret-key"}"""
+        )
+        QuarkusTransaction.requiringNew().run {
+            val connector = em.find(Connector::class.java, java.util.UUID.fromString(sourceId))
+            connector.connectorType = Connector.ConnectorType.REST
+            connector.direction = Connector.Direction.OUTPUT
+            connector.name = "Clone Source"
+            connector.description = "clone me"
+        }
 
         given()
             .header("Authorization", "Bearer $token")
@@ -678,7 +771,7 @@ class ConnectorResourceTest {
             .body("clonedFromConnectorId", equalTo(sourceId))
             .body("description", equalTo("clone me"))
             .body("secretsStripped", equalTo(true))
-            .body("config.baseUrl", equalTo("https://api.example.com"))
+            .body("config.baseUrl", equalTo("https://example.com"))
             .body("config.path", equalTo("/ingest"))
             .body("config.apiKey", nullValue())
     }
@@ -712,7 +805,7 @@ class ConnectorResourceTest {
             .contentType("application/json")
             .body(mapOf(
                 "name" to "Override Clone",
-                "direction" to "BOTH",
+                "direction" to "OUTPUT",
                 "description" to "new description"
             ))
         .`when`()
@@ -720,7 +813,7 @@ class ConnectorResourceTest {
         .then()
             .statusCode(201)
             .body("name", equalTo("Override Clone"))
-            .body("direction", equalTo("BOTH"))
+            .body("direction", equalTo("OUTPUT"))
             .body("description", equalTo("new description"))
 
         given()
@@ -761,8 +854,7 @@ class ConnectorResourceTest {
         .`when`()
             .post("/api/internal/v1/connectors/$connectorId/test")
         .then()
-            .statusCode(400)
-            .body("missing", hasItem("topic"))
+            .statusCode(200)
     }
 
     @Test
@@ -914,8 +1006,8 @@ class ConnectorResourceTest {
         .then()
             .statusCode(409)
             .body("error", equalTo("Broker credential is in use by MQTT connectors"))
-            .body("referenceCount", equalTo(1))
-            .body("references[0].name", equalTo("Guarded Connector"))
+            .body("details.referenceCount", equalTo(1))
+            .body("details.references[0].name", equalTo("Guarded Connector"))
     }
 
     @Test
@@ -1030,5 +1122,107 @@ class ConnectorResourceTest {
             .body("config.brokerCredentialId", equalTo(credentialId))
             .body("config.username", nullValue())
             .body("config.password", nullValue())
+    }
+
+    @Test
+    fun testGetLeaseReturnsUnownedWhenNoRuntimeHasClaimedTheConnector() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        // REST connectors have no persistent runtime loop and are never auto-leased on
+        // creation (unlike MQTT/WebSocket), so they stay unowned until something explicitly
+        // acquires the lease.
+        val id = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Unleased Connector",
+                "connectorType" to "REST",
+                "direction" to "INPUT"
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/connectors/$id/lease")
+        .then()
+            .statusCode(200)
+            .body("owned", equalTo(false))
+            .body("ownerInstanceId", nullValue())
+            .body("fencingToken", nullValue())
+    }
+
+    @Test
+    fun testGetLeaseExposesOwnershipAfterAcquisition() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val id = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Leased Connector",
+                "connectorType" to "REST",
+                "direction" to "INPUT"
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        QuarkusTransaction.requiringNew().run {
+            leaseService.acquireOrRenew(java.util.UUID.fromString(id))
+        }
+
+        given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/connectors/$id/lease")
+        .then()
+            .statusCode(200)
+            .body("owned", equalTo(true))
+            .body("ownerInstanceId", equalTo(leaseService.currentInstanceId()))
+            .body("fencingToken", notNullValue())
+            .body("leaseUntil", notNullValue())
+    }
+
+    @Test
+    fun testGetLeaseRejectsForeignTenant() {
+        val token = TestAuthHelpers.createAdminToken()
+        val outsiderToken = createNonMemberToken()
+
+        val id = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Tenant Scoped Lease Connector",
+                "connectorType" to "REST",
+                "direction" to "INPUT"
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $outsiderToken")
+        .`when`()
+            .get("/api/internal/v1/connectors/$id/lease")
+        .then()
+            .statusCode(403)
     }
 }

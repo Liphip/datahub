@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertRule, AlertHistory, DataSummaryResponse, DataBlob, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential } from '../types';
+import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertRule, AlertHistory, DataSummaryResponse, DataBlob, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential, AuthorizationExplanation } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 const PUBLIC_API_BASE_URL = import.meta.env.VITE_PUBLIC_API_URL || '/api/v1';
@@ -20,20 +20,6 @@ type ApiStatusDetail = {
 function emitApiStatus(detail: ApiStatusDetail): void {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new CustomEvent<ApiStatusDetail>(API_STATUS_EVENT, { detail }));
-}
-
-/**
- * Implements `sha256` for this source unit.
- */
-async function sha256(message: string): Promise<string> {
-  const msgBuffer = new TextEncoder().encode(message);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-  const hashArray = new Uint8Array(hashBuffer);
-  let binary = '';
-  for (let i = 0; i < hashArray.length; i++) {
-    binary += String.fromCharCode(hashArray[i]);
-  }
-  return btoa(binary);
 }
 
 /**
@@ -144,8 +130,7 @@ class ApiService {
    * Implements `login` for this source unit.
    */
   async login(email: string, password: string, tenantId?: string): Promise<AuthResponse> {
-    const passwordHash = await sha256(password);
-    const response = await this.client.post<AuthResponse>('/auth/login', { email, passwordHash, tenantId });
+    const response = await this.client.post<AuthResponse>('/auth/login', { email, password, tenantId });
     return response.data;
   }
 
@@ -153,8 +138,7 @@ class ApiService {
    * Creates or persists the requested state.
    */
   async register(email: string, password: string, tenantName?: string, tenantId?: string): Promise<AuthResponse> {
-    const passwordHash = await sha256(password);
-    const response = await this.client.post<AuthResponse>('/auth/register', { email, passwordHash, tenantName, tenantId });
+    const response = await this.client.post<AuthResponse>('/auth/register', { email, password, tenantName, tenantId });
     return response.data;
   }
 
@@ -332,8 +316,7 @@ class ApiService {
    * Creates or persists the requested state.
    */
   async createUser(tenantId: string, email: string, password: string, data?: Partial<User>): Promise<User> {
-    const passwordHash = await sha256(password);
-    const response = await this.client.post<User>(`/auth-users?tenantId=${tenantId}`, { email, passwordHash, ...data });
+    const response = await this.client.post<User>(`/auth-users?tenantId=${tenantId}`, { email, password, ...data });
     return response.data;
   }
 
@@ -388,6 +371,12 @@ class ApiService {
    */
   async deleteTenantMembership(tenantId: string, membershipId: string): Promise<void> {
     await this.client.delete(`/tenants/${tenantId}/memberships/${membershipId}`);
+  }
+
+  /** Explains why a user is or is not granted an ability within one tenant. */
+  async explainAuthorization(userId: string, tenantId: string, ability: string): Promise<AuthorizationExplanation> {
+    const response = await this.client.get<AuthorizationExplanation>('/authorization/explain', { params: { userId, tenantId, ability } });
+    return response.data;
   }
 
   // Modules
@@ -650,8 +639,10 @@ class ApiService {
   /**
    * Retrieves or enumerates the requested state.
    */
-  async getAlertChannels(tenantId: string): Promise<AlertChannel[]> {
-    const response = await this.publicClient.get<AlertChannel[]>(`/alerts/channels?tenantId=${tenantId}`);
+  async getAlertChannels(tenantId: string, page = 0, limit = 50): Promise<{ items: AlertChannel[]; page: number; limit: number; hasMore: boolean }> {
+    const response = await this.publicClient.get<{ items: AlertChannel[]; page: number; limit: number; hasMore: boolean }>(`/alerts/channels`, {
+      params: { tenantId, page, limit },
+    });
     return response.data;
   }
 
@@ -686,8 +677,10 @@ class ApiService {
   /**
    * Retrieves or enumerates the requested state.
    */
-  async getAlertRules(tenantId: string): Promise<AlertRule[]> {
-    const response = await this.publicClient.get<AlertRule[]>(`/alerts/rules?tenantId=${tenantId}`);
+  async getAlertRules(tenantId: string, page = 0, limit = 50): Promise<{ items: AlertRule[]; page: number; limit: number; hasMore: boolean }> {
+    const response = await this.publicClient.get<{ items: AlertRule[]; page: number; limit: number; hasMore: boolean }>(`/alerts/rules`, {
+      params: { tenantId, page, limit },
+    });
     return response.data;
   }
 
@@ -699,7 +692,8 @@ class ApiService {
     name: string,
     condition: Record<string, unknown> | string,
     channelId?: string,
-    pipelineId?: string
+    pipelineId?: string,
+    channelIds?: string[]
   ): Promise<AlertRule> {
     const response = await this.publicClient.post<AlertRule>(`/alerts/rules?tenantId=${tenantId}`, {
       tenantId,
@@ -707,6 +701,7 @@ class ApiService {
       condition,
       channelId,
       pipelineId,
+      channelIds,
     });
     return response.data;
   }
@@ -726,14 +721,26 @@ class ApiService {
     return response.data;
   }
 
+  /** Safely evaluates an alert rule; the backend never dispatches from this endpoint. */
+  async testAlertRule(id: string, payload: Record<string, unknown>): Promise<{
+    ruleId: string;
+    matched: boolean;
+    wouldDispatch: false;
+    actions: Array<{ channelId: string; channelType: string; channelName: string }>;
+  }> {
+    const response = await this.publicClient.post(`/alerts/rules/${id}/test`, { payload });
+    return response.data;
+  }
+
   /**
    * Retrieves or enumerates the requested state.
    */
-  async getAlertHistory(tenantId: string, limit?: number): Promise<AlertHistory[]> {
+  async getAlertHistory(tenantId: string, limit = 20, page = 0): Promise<{ items: AlertHistory[]; page: number; limit: number; hasMore: boolean }> {
     const params = new URLSearchParams({ tenantId });
-    if (limit) params.append('limit', limit.toString());
-    const response = await this.publicClient.get<AlertHistory[]>(`/alerts/history?${params}`);
-    return response.data;
+    params.append('limit', limit.toString());
+    params.append('page', page.toString());
+    const response = await this.publicClient.get<{ items: AlertHistory[] }>(`/alerts/history?${params}`);
+    return response.data as { items: AlertHistory[]; page: number; limit: number; hasMore: boolean };
   }
 
   // Data
@@ -1068,9 +1075,11 @@ class ApiService {
   /**
    * Retrieves or enumerates the requested state.
    */
-  async getDataBlobs(tenantId: string): Promise<DataBlob[]> {
-    const response = await this.publicClient.get<{ blobs: DataBlob[] }>(`/data/${tenantId}/blobs`);
-    return response.data.blobs;
+  async getDataBlobs(tenantId: string, page = 0, limit = 50): Promise<{ blobs: DataBlob[]; page: number; limit: number; hasMore: boolean }> {
+    const response = await this.publicClient.get<{ blobs: DataBlob[]; page: number; limit: number; hasMore: boolean }>(`/data/${tenantId}/blobs`, {
+      params: { page, limit },
+    });
+    return response.data;
   }
 
   /**
@@ -1090,8 +1099,11 @@ class ApiService {
   /**
    * Retrieves or enumerates the requested state.
    */
-  getDataBlobUrl(tenantId: string, blobId: string): string {
-    return `${PUBLIC_API_BASE_URL}/data/${tenantId}/blobs/${encodeURIComponent(blobId)}/download`;
+  async downloadDataBlob(tenantId: string, blobId: string): Promise<Blob> {
+    const response = await this.publicClient.get(`/data/${tenantId}/blobs/${encodeURIComponent(blobId)}/download`, {
+      responseType: 'blob',
+    });
+    return response.data as Blob;
   }
 
   /**

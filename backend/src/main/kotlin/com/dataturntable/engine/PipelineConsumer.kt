@@ -3,12 +3,20 @@ package com.dataturntable.engine
 import com.dataturntable.config.RuntimeRoleConfig
 import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
+import com.dataturntable.execution.ExecutionEnvironment
+import com.dataturntable.execution.ExecutionBackendConfig
+import com.dataturntable.execution.ExecutionLimits
+import com.dataturntable.execution.ExecutionRequest
+import com.dataturntable.execution.ExecutionStatus
+import com.dataturntable.execution.ExecutionService
 import com.dataturntable.pipeline.Pipeline
+import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.alert.AlertDispatcher
 import com.dataturntable.connectors.BrokerCredential
 import com.dataturntable.connectors.Connector
 import com.dataturntable.connectors.ConnectorRuntimeService
 import com.dataturntable.security.EncryptionUtils
+import com.dataturntable.security.SensitiveDataRedactor
 import com.dataturntable.service.PipelineDataService
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.micrometer.core.instrument.MeterRegistry
@@ -45,6 +53,34 @@ data class PipelineEvent(
     val error: String? = null
 )
 
+/**
+ * Validates the wire representation before a pipeline consumer dereferences its
+ * payload. Keeping this map-based avoids accepting a partially deserialized
+ * envelope when a producer sends an unsupported schema version.
+ */
+internal object PipelineEventEnvelopeValidator {
+    data class Validated(val eventId: UUID?, val tenantId: UUID?, val pipelineId: UUID?)
+
+    fun validate(message: Map<String, Any?>): Result<Validated> {
+        if (!message.containsKey("eventId")) return Result.success(Validated(null, null, null))
+        fun uuid(field: String): UUID? = message[field]?.toString()?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        val eventId = uuid("eventId") ?: return Result.failure(IllegalArgumentException("eventId is invalid"))
+        val tenantId = uuid("tenantId") ?: return Result.failure(IllegalArgumentException("tenantId is invalid"))
+        val schemaVersion = message["schemaVersion"]?.toString()?.toIntOrNull()
+            ?: return Result.failure(IllegalArgumentException("schemaVersion is required"))
+        if (schemaVersion != 1) return Result.failure(IllegalArgumentException("schemaVersion is unsupported"))
+        if (message["type"]?.toString()?.isBlank() != false) return Result.failure(IllegalArgumentException("type is required"))
+        if (message["correlationId"]?.toString()?.isBlank() != false) return Result.failure(IllegalArgumentException("correlationId is required"))
+        if (!message.containsKey("payload")) return Result.failure(IllegalArgumentException("payload is required"))
+        val pipelineId = message["pipelineId"]?.toString()?.let {
+            runCatching { UUID.fromString(it) }.getOrElse {
+                return Result.failure(IllegalArgumentException("pipelineId is invalid"))
+            }
+        }
+        return Result.success(Validated(eventId, tenantId, pipelineId))
+    }
+}
+
 @ApplicationScoped
 /**
  * Defines the class `PipelineConsumer`, the contract implemented by this source unit.
@@ -52,7 +88,45 @@ data class PipelineEvent(
 class PipelineConsumer {
 
     private val LOG = Logger.getLogger(PipelineConsumer::class.java)
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
+
+    /** Bounded retry attempts for transient (non-poison) failures before the message is dead-lettered. */
+    private val transientRetryAttempts = 3
+
+    /** Base backoff delay between transient retry attempts; doubles each attempt. */
+    private val transientRetryBaseDelayMs = 200L
+
+    /**
+     * Retries [block] a bounded number of times with exponential backoff when it throws a
+     * transient (non-[PoisonPipelineEvent]) exception — e.g. a momentary DB connectivity blip
+     * while resolving the target pipeline. [PoisonPipelineEvent] is never retried since it
+     * signals unrecoverable message content, not a transient condition; retrying it would only
+     * delay the dead-letter outcome the caller already decided on.
+     */
+    private fun <T> withTransientRetry(block: () -> T): T {
+        var attempt = 0
+        var lastError: Exception
+        while (true) {
+            try {
+                return block()
+            } catch (e: PoisonPipelineEvent) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+                attempt++
+                if (attempt > transientRetryAttempts) throw lastError
+                val delayMs = transientRetryBaseDelayMs * (1L shl (attempt - 1))
+                LOG.warnf("Transient pipeline-input processing failure (attempt %d/%d): %s — retrying in %dms",
+                    attempt, transientRetryAttempts, e.message, delayMs)
+                try {
+                    Thread.sleep(delayMs)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw lastError
+                }
+            }
+        }
+    }
 
     /**
      * Implements `trimLog` for this source unit.
@@ -70,7 +144,10 @@ class PipelineConsumer {
         stdout.lines().filter { !it.trim().startsWith("__RESULT__:") }.joinToString("\n").trim()
 
     @Inject
-    lateinit var dockerService: DockerService
+    lateinit var executionService: ExecutionService
+
+    @Inject
+    lateinit var executionBackendConfig: ExecutionBackendConfig
 
     @Inject
     lateinit var alertDispatcher: AlertDispatcher
@@ -92,6 +169,21 @@ class PipelineConsumer {
 
     @Inject
     lateinit var pipelineDataService: PipelineDataService
+
+    @Inject
+    lateinit var redactor: SensitiveDataRedactor
+
+    @Inject
+    lateinit var runResolver: PipelineRunResolver
+
+    /**
+     * Self-injected client proxy. CDI/ArC interceptors (including `@Transactional`) do not apply
+     * to calls made via `this` within the same bean instance — only calls that go through the
+     * managed proxy are intercepted. [executeResolved] is called through [self] rather than
+     * directly so its transaction boundary is actually honored.
+     */
+    @Inject
+    lateinit var self: PipelineConsumer
 
     @PersistenceContext
     lateinit var em: EntityManager
@@ -133,11 +225,27 @@ class PipelineConsumer {
     }
 
     /**
+     * Resolves the graph JSON a run must actually execute: the immutable snapshot pinned to the
+     * run's `PipelineVersion` when one is linked, falling back to the live, mutable
+     * `Pipeline.graphDefinition` only for legacy runs created before version-pinning existed.
+     * Without this, a pipeline edited after a run is triggered but before its Kafka message is
+     * consumed would silently execute the *new* graph instead of the one the run was pinned to —
+     * defeating the reproducibility guarantee PipelineVersion/PipelineRun.pipelineVersion exist
+     * to provide.
+     */
+    internal fun resolveExecutionGraphJson(pipeline: Pipeline, runUuid: UUID?): String {
+        val pinnedVersion = runUuid
+            ?.let { em.find(PipelineRun::class.java, it) }
+            ?.pipelineVersion
+        return pinnedVersion?.graphDefinition ?: pipeline.graphDefinition ?: "{}"
+    }
+
+    /**
      * Implements `resolveConnectorsByNodeId` for this source unit.
      */
-    private fun resolveConnectorsByNodeId(pipeline: Pipeline): Map<String, ResolvedConnector> {
+    private fun resolveConnectorsByNodeId(pipeline: Pipeline, graphJson: String): Map<String, ResolvedConnector> {
         val tenantId = pipeline.tenant?.id ?: return emptyMap()
-        val graph = parseJsonMap(pipeline.graphDefinition)
+        val graph = parseJsonMap(graphJson)
         val nodes = graph["nodes"] as? List<*> ?: return emptyMap()
         val resolved = mutableMapOf<String, ResolvedConnector>()
 
@@ -201,15 +309,20 @@ class PipelineConsumer {
     // and execute via the normal topological order in executePipeline.
 
     /**
-     * Main Kafka consumer for pipeline execution.
+     * Main Kafka consumer entry point.
      *
-     * The outer @Transactional provides a persistence context for reads (Pipeline, ModuleVersion,
-     * Connector lookups). All writes go through [PipelineLogWriter] in REQUIRES_NEW transactions
-     * so the frontend can poll progressive state while this method is still running.
+     * Resolution of the target pipeline/run (parse, envelope validation, inbox claim, RUNNING
+     * marker) happens in [PipelineRunResolver.resolveAndMarkRunning], a short-lived transaction
+     * retried a bounded number of times on transient failure — a mid-transaction DB hiccup here
+     * must not immediately dead-letter an otherwise-valid event. [PoisonPipelineEvent] is never
+     * retried: it signals the message content itself is unrecoverable. Once resolved, actual
+     * pipeline execution runs exactly once — it is never retried at this layer, since retrying
+     * after a module/connector has already produced side effects (deliveries, alerts) could
+     * duplicate them; that determinism is instead the job of the outbox/inbox and node-attempt
+     * idempotency work described in Phase 3.
      */
     @Incoming("pipeline-input")
     @Blocking
-    @Transactional
     fun consume(message: String): PipelineEvent {
         if (!runtimeRoleConfig.ownsPipelineRuntime()) {
             return PipelineEvent(
@@ -220,119 +333,20 @@ class PipelineConsumer {
                 error = "Pipeline consumer is disabled for role ${runtimeRoleConfig.role.name}"
             )
         }
-        LOG.infof("Received pipeline message: %s", message.take(200))
+        // Event payloads can contain externally supplied fields. Preserve only a
+        // redacted diagnostic prefix in platform logs.
+        LOG.infof("Received pipeline message: %s", redactor.text(message.take(200)))
 
-        val pipelineMsg: PipelineTriggerMessage?
-        var dataPayload: Map<String, Any>? = null
-        var pipelineId: String? = null
+        val resolution = withTransientRetry { runResolver.resolveAndMarkRunning(message) }
+        if (resolution.shortCircuit != null) return resolution.shortCircuit
 
-        try {
-            pipelineMsg = try {
-                objectMapper.readValue(message, PipelineTriggerMessage::class.java)
-            } catch (e: Exception) {
-                null
-            }
+        return self.executeResolved(resolution.pipeline!!, resolution.runUuid, resolution.runId!!, resolution.dataPayload)
+    }
 
-            if (pipelineMsg != null) {
-                pipelineId = pipelineMsg.pipelineId
-                if (pipelineMsg.data is Map<*, *>) {
-                    @Suppress("UNCHECKED_CAST")
-                    dataPayload = pipelineMsg.data as? Map<String, Any>
-                }
-            } else {
-                try {
-                    @Suppress("UNCHECKED_CAST")
-                    dataPayload = objectMapper.readValue(message, Map::class.java) as? Map<String, Any>
-                    pipelineId = (dataPayload?.get("_pipelineId") as? String)
-                        ?: (dataPayload?.get("pipelineId") as? String)
-                } catch (e: Exception) {
-                    LOG.errorf("Failed to parse pipeline message: %s", e.message)
-                    return PipelineEvent(
-                        runId = "unknown",
-                        pipelineId = "unknown",
-                        stage = "parse",
-                        success = false,
-                        error = e.message
-                    )
-                }
-            }
-        } catch (e: Exception) {
-            LOG.errorf("Failed to parse pipeline message: %s", e.message)
-            return PipelineEvent(
-                runId = "unknown",
-                pipelineId = "unknown",
-                stage = "parse",
-                success = false,
-                error = e.message
-            )
-        }
-
-        if (pipelineId == null) {
-            LOG.error("No pipeline ID found in message")
-            return PipelineEvent(
-                runId = "unknown",
-                pipelineId = "unknown",
-                stage = "init",
-                success = false,
-                error = "No pipeline ID in message"
-            )
-        }
-
-        val pipelineUuid = try {
-            UUID.fromString(pipelineId)
-        } catch (_: Exception) {
-            return PipelineEvent(
-                runId = "unknown",
-                pipelineId = pipelineId,
-                stage = "init",
-                success = false,
-                error = "Invalid pipeline ID"
-            )
-        }
-
-        val pipeline = Pipeline.findById(pipelineUuid)
-        if (pipeline == null) {
-            LOG.errorf("Pipeline not found: %s", pipelineId)
-            return PipelineEvent(
-                runId = pipelineMsg?.runId ?: "unknown",
-                pipelineId = pipelineId,
-                stage = "init",
-                success = false,
-                error = "Pipeline not found"
-            )
-        }
-
-        val runId = pipelineMsg?.runId
-            ?: (dataPayload?.get("_runId") as? String)
-            ?: (dataPayload?.get("runId") as? String)
-            ?: UUID.randomUUID().toString()
-
-        val runUuid = parseUuid(runId)
-
-        // Set retry-of link if applicable
-        if (runUuid != null) {
-            val retryOfRunId = parseUuid(dataPayload?.get("_retryOfRunId")?.toString())
-            if (retryOfRunId != null) {
-                logWriter.setRetryOfRunId(runUuid, retryOfRunId)
-            }
-        }
-
-        // Check for cancellation before starting
-        if (runUuid != null && logWriter.isCancelled(runUuid)) {
-            return PipelineEvent(
-                runId = runId,
-                pipelineId = pipelineId,
-                stage = "cancelled",
-                success = false,
-                error = "Run cancelled"
-            )
-        }
-
-        // Mark RUNNING — committed immediately so frontend sees it
-        if (runUuid != null) {
-            logWriter.markRunning(runUuid)
-        }
-
+    /** Executes an already-resolved run exactly once; never retried at this layer (see [consume]). */
+    @Transactional
+    fun executeResolved(pipeline: Pipeline, runUuid: UUID?, runId: String, dataPayload: Map<String, Any>?): PipelineEvent {
+        val pipelineId = pipeline.id.toString()
         val executionStartedAt = System.currentTimeMillis()
 
         try {
@@ -431,7 +445,8 @@ class PipelineConsumer {
         val results = mutableMapOf<String, Any?>()
         val moduleLogs = mutableListOf<Map<String, Any?>>()
         val executionLog = mutableListOf<String>()
-        val connectorsByNodeId = resolveConnectorsByNodeId(pipeline)
+        val graphJson = resolveExecutionGraphJson(pipeline, runUuid)
+        val connectorsByNodeId = resolveConnectorsByNodeId(pipeline, graphJson)
         val pipelineId = pipeline.id.toString()
 
         /**
@@ -496,14 +511,20 @@ class PipelineConsumer {
                         durationMs = dbOutput.durationMs
                     )
                 } else {
-                    dockerService.executeModule(
-                        version,
-                        resolvedInput,
-                        pipelineId,
-                        runId,
-                        node.type,
-                        node.connector?.meta
-                    )
+                    val execution = executionService.execute(ExecutionRequest(
+                        executionId = UUID.randomUUID(),
+                        tenantId = pipeline.tenant?.id ?: throw IllegalStateException("Pipeline tenant missing"),
+                        moduleVersionId = version.id ?: throw IllegalStateException("Module version missing id"),
+                        input = resolvedInput,
+                        moduleType = node.type,
+                        connectorMetadata = node.connector?.meta,
+                        environment = ExecutionEnvironment("python:3.11-slim", backend = executionBackendConfig.backend),
+                        limits = ExecutionLimits()
+                    ))
+                    if (execution.status != ExecutionStatus.SUCCESS) {
+                        throw ModuleExecutionException(execution.errorMessage ?: "Execution failed", execution.stdout, execution.stderr, execution.exitCode)
+                    }
+                    ModuleExecutionOutput(execution.output, execution.stdout, execution.stderr, execution.exitCode ?: 0, System.currentTimeMillis() - nodeStartedAt)
                 }
 
                 // For EXPORT: platform delivers shaped result via connector after module runs.
@@ -618,11 +639,11 @@ class PipelineConsumer {
                     nodeDurationMs, e.exitCode, e.message?.take(200))
                 if (userStdout.isNotBlank()) {
                     LOG.infof("MODULE_STDOUT pipeline=%s run=%s node=%s stdout=%s",
-                        pipelineId, runId, node.id, userStdout.take(2000))
+                        pipelineId, runId, node.id, redactor.text(userStdout.take(2000)))
                 }
                 if (trimmedStderr.isNotBlank()) {
                     LOG.warnf("MODULE_STDERR pipeline=%s run=%s node=%s stderr=%s",
-                        pipelineId, runId, node.id, trimmedStderr.take(2000))
+                        pipelineId, runId, node.id, redactor.text(trimmedStderr.take(2000)))
                 }
 
                 moduleLogs.add(mapOf(
@@ -645,7 +666,7 @@ class PipelineConsumer {
         }
 
         // ── Parse graph ──────────────────────────────────────────────────────
-        val graph = parseJsonMap(pipeline.graphDefinition)
+        val graph = parseJsonMap(graphJson)
         val graphNodesRaw = graph["nodes"] as? List<*> ?: emptyList<Any>()
         val graphEdgesRaw = graph["edges"] as? List<*> ?: emptyList<Any>()
 

@@ -1,5 +1,6 @@
 package com.dataturntable.api
 
+import com.dataturntable.audit.AuditService
 import com.dataturntable.dto.*
 import com.dataturntable.service.AuthService
 import io.quarkus.security.Authenticated
@@ -24,6 +25,9 @@ class AuthResource {
     
     @Inject
     lateinit var jwt: JsonWebToken
+
+    @Inject
+    lateinit var audit: AuditService
     
     @POST
     @Path("/login")
@@ -32,9 +36,25 @@ class AuthResource {
      */
     fun login(@Valid request: LoginRequest): Response {
         return try {
-            val response = authService.login(request)
+            val response = authService.login(request) ?: throw SecurityException("Invalid credentials")
+            audit.record(
+                actorId = java.util.UUID.fromString(response.user.id),
+                tenantId = response.user.tenantId?.let(::uuidOrNull),
+                action = "auth.login.succeeded",
+                resourceType = "auth_user",
+                resourceId = response.user.id,
+                metadata = mapOf("outcome" to "succeeded")
+            )
             Response.ok(response).build()
         } catch (e: SecurityException) {
+            audit.record(
+                actorId = null,
+                tenantId = null,
+                action = "auth.login.failed",
+                resourceType = "auth_user",
+                resourceId = null,
+                metadata = mapOf("outcome" to "failed")
+            )
             Response.status(401).entity(mapOf("error" to "Invalid credentials")).build()
         }
     }
@@ -47,19 +67,18 @@ class AuthResource {
     fun register(@Valid request: SetupRequest): Response {
         return try {
             val setupResponse = authService.setup(request)
-            val loginHash = request.passwordHash
-                ?: request.password?.let { plain ->
-                    val digest = java.security.MessageDigest.getInstance("SHA-256")
-                    java.util.Base64.getEncoder().encodeToString(digest.digest(plain.toByteArray()))
-                }
-                ?: run {
-                    val digest = java.security.MessageDigest.getInstance("SHA-256")
-                    java.util.Base64.getEncoder().encodeToString(digest.digest(setupResponse.password.toByteArray()))
-                }
-
-            val auth = authService.login(LoginRequest(request.email, loginHash, setupResponse.user.tenantId))
+            val loginCredential = request.password ?: request.passwordHash ?: setupResponse.password
+            val auth = authService.login(LoginRequest(request.email, password = loginCredential, tenantId = setupResponse.user.tenantId))
                 ?: return Response.status(401).entity(mapOf("error" to "Unable to authenticate registered user")).build()
 
+            audit.record(
+                actorId = java.util.UUID.fromString(auth.user.id),
+                tenantId = auth.user.tenantId?.let(::uuidOrNull),
+                action = "auth.registration.completed",
+                resourceType = "auth_user",
+                resourceId = auth.user.id,
+                metadata = mapOf("outcome" to "succeeded")
+            )
             Response.status(201).entity(auth).build()
         } catch (e: IllegalStateException) {
             Response.status(409).entity(mapOf("error" to (e.message ?: "Setup already completed"))).build()
@@ -78,6 +97,14 @@ class AuthResource {
     fun setup(@Valid request: SetupRequest): Response {
         return try {
             val response = authService.setup(request)
+            audit.record(
+                actorId = java.util.UUID.fromString(response.user.id),
+                tenantId = response.user.tenantId?.let(::uuidOrNull),
+                action = "auth.setup.completed",
+                resourceType = "auth_user",
+                resourceId = response.user.id,
+                metadata = mapOf("outcome" to "succeeded")
+            )
             Response.status(201).entity(response).build()
         } catch (e: IllegalStateException) {
             Response.status(409).entity(mapOf("error" to (e.message ?: "Setup already completed"))).build()
@@ -137,6 +164,14 @@ class AuthResource {
 
         return try {
             val response = authService.switchTenant(userId, tenantId)
+            audit.record(
+                actorId = userId,
+                tenantId = response.user.tenantId?.let(::uuidOrNull),
+                action = "auth.tenant.switched",
+                resourceType = "tenant",
+                resourceId = response.user.tenantId,
+                metadata = mapOf("outcome" to "succeeded")
+            )
             Response.ok(response).build()
         } catch (e: IllegalArgumentException) {
             Response.status(400).entity(mapOf("error" to (e.message ?: "Bad request"))).build()
@@ -145,5 +180,11 @@ class AuthResource {
         } catch (e: SecurityException) {
             Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
+    }
+
+    private fun uuidOrNull(value: String): java.util.UUID? = try {
+        java.util.UUID.fromString(value)
+    } catch (_: IllegalArgumentException) {
+        null
     }
 }

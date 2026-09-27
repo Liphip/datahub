@@ -23,10 +23,11 @@ spec:
     spec:
       containers:
         - name: control-api
-          # TODO: Pin deployable images to immutable versions or digests
-          # Details: `latest` plus `imagePullPolicy: Always` makes rollbacks and incident reproduction non-deterministic. Apply the release version/digest consistently to every backend deployment.
+          # The literal tag here is a placeholder identity for kustomization.yaml's `images:`
+          # transformer (see its comment) — CI must override it with an immutable digest before a
+          # real deploy; this file is never applied with `:latest` still in force in production.
           image: dataturntable/backend:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
               name: http
@@ -68,9 +69,17 @@ spec:
             - name: DATATURNTABLE_GRAFANA_DASHBOARD_BASE_URL
               value: "http://dashboard-grafana:3000"
             - name: DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_USER
-              value: "admin"
+              valueFrom:
+                secretKeyRef:
+                  name: dataturntable-secrets
+                  key: grafana-dashboard-admin-user
+                  optional: true # blank/missing safely disables Grafana provisioning rather than crash-looping the pod
             - name: DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_PASSWORD
-              value: "admin"
+              valueFrom:
+                secretKeyRef:
+                  name: dataturntable-secrets
+                  key: grafana-dashboard-admin-password
+                  optional: true
             - name: DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_HOST
               value: pipeline-postgresql
             - name: DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_PORT
@@ -92,9 +101,17 @@ spec:
             - name: DATATURNTABLE_GRAFANA_MONITORING_BASE_URL
               value: "http://grafana:3000"
             - name: DATATURNTABLE_GRAFANA_MONITORING_ADMIN_USER
-              value: "admin"
+              valueFrom:
+                secretKeyRef:
+                  name: dataturntable-secrets
+                  key: grafana-monitoring-admin-user
+                  optional: true # blank/missing safely disables Grafana provisioning rather than crash-looping the pod
             - name: DATATURNTABLE_GRAFANA_MONITORING_ADMIN_PASSWORD
-              value: "admin"
+              valueFrom:
+                secretKeyRef:
+                  name: dataturntable-secrets
+                  key: grafana-monitoring-admin-password
+                  optional: true
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka:9092"
             - name: REDIS_HOSTS
@@ -195,7 +212,7 @@ spec:
       containers:
         - name: public-api
           image: dataturntable/backend:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
               name: http
@@ -332,7 +349,7 @@ spec:
       containers:
         - name: ingest-edge
           image: dataturntable/backend:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
               name: http
@@ -466,12 +483,11 @@ spec:
         prometheus.io/path: "/q/metrics"
         prometheus.io/port: "8080"
     spec:
+      serviceAccountName: dataturntable-execution
       containers:
         - name: pipeline-executor
-          # BUG: Pipeline modules cannot start Docker containers in this pod
-          # Details: DockerService invokes the Docker CLI, but this deployment has no Docker socket/daemon or Kubernetes-native runner. Module execution will fail in Kubernetes; replace the Docker dependency with Jobs/Pods or provide a deliberately secured remote runner.
           image: dataturntable/backend:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
               name: http
@@ -480,6 +496,8 @@ spec:
               value: "prod,pipeline-executor"
             - name: DATATURNTABLE_RUNTIME_ROLE
               value: "pipeline-executor"
+            - name: DATATURNTABLE_EXECUTION_BACKEND
+              value: "kubernetes"
             - name: DB_HOST
               value: "postgresql"
             - name: DB_PORT

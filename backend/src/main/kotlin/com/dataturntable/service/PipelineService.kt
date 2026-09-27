@@ -5,6 +5,7 @@ import com.dataturntable.dto.*
 import com.dataturntable.module.ModuleVersion
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineRun
+import com.dataturntable.pipeline.PipelineVersionService
 import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.tenant.Tenant
@@ -19,11 +20,13 @@ import java.util.*
  * Defines the class `PipelineService`, the contract implemented by this source unit.
  */
 class PipelineService {
+    @Inject
+    lateinit var pipelineVersions: PipelineVersionService
     
     @Inject
     lateinit var kafkaService: KafkaService
     
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
     
     /**
      * Retrieves or enumerates the requested state.
@@ -128,6 +131,7 @@ class PipelineService {
         
         val run = PipelineRun().apply {
             this.pipeline = pipeline
+            this.pipelineVersion = pipelineVersions.latestFor(pipeline.id)
             this.triggerType = triggerType
             this.status = PipelineRunStatus.PENDING
         }

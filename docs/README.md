@@ -24,6 +24,11 @@ This directory contains product, API, operations, and user documentation.
 - [Configuration reference](development/configuration-reference.md)
 - [Documentation gaps and FIXMEs](development/documentation-gaps.md)
 
+## Operations Documentation
+
+- [Backup and restore procedure](operations/backup-restore.md)
+- [Feature and deployment support matrix](operations/support-matrix.md)
+
 The source-code reference maps every production backend and frontend file to its
 implemented responsibility. Public REST contracts remain in `api/README.md` so
 they are documented once, next to request/response examples.

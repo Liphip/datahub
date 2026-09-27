@@ -1,44 +1,29 @@
 quarkus:
   application:
     name: dataturntable
+  smallrye-openapi:
+    path: /openapi
+    # FR-028: write the generated OpenAPI contract to a static file at build time so CI can lint
+    # it (see .github/workflows/ci.yml's openapi-contract-lint job) without booting the app.
+    store-schema-directory: target/generated-openapi
   http:
     port: 8080
     host: 0.0.0.0
+    limits:
+      max-body-size: 1M
   
   datasource:
     db-kind: postgresql
-    jdbc:
-      url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dataturntable}
-    username: ${DB_USER:dataturntable}
-    password: ${DB_PASSWORD:dataturntable}
   
   hibernate-orm:
     database:
       generation: none
     log:
       sql: false
-    persistence-units:
-      default:
-        packages:
-          - com.dataturntable.tenant
-          - com.dataturntable.auth
-          - com.dataturntable.pipeline
-          - com.dataturntable.module
-          - com.dataturntable.alert
   
   flyway:
     migrate-at-start: true
     baseline-on-migrate: true
-  
-  # FIXME: Unsupported Quarkus Kafka namespace
-  # Details: `mvn test` reports quarkus.kafka.bootstrap.servers as unrecognized, so this value is ignored. Use the Kafka client configuration namespace supported by the pinned Quarkus version.
-  kafka:
-    bootstrap:
-      servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-  
-  redis:
-    hosts: ${REDIS_HOSTS:redis://localhost:6379}
-
   micrometer:
     export:
       prometheus:
@@ -46,19 +31,22 @@ quarkus:
     binder:
       http-server:
         enabled: true
-    # WARNING: Unrecognized Micrometer distribution settings
-    # Details: `mvn test` reports every key below as unrecognized. Confirm the Micrometer property names for Quarkus 3.32.2; ignored settings do not publish the intended histogram buckets or bounds.
-    # Publish histogram buckets so Grafana can compute histogram_quantile()
-    distribution:
-      percentiles-histogram:
-        "dt_pipeline_duration_seconds": true
-        "dt_module_duration_seconds": true
-      minimum-expected-value:
-        "dt_pipeline_duration_seconds": "100ms"
-        "dt_module_duration_seconds": "10ms"
-      maximum-expected-value:
-        "dt_pipeline_duration_seconds": "300000ms"
-        "dt_module_duration_seconds": "120000ms"
+
+  # NFR-020: distributed tracing. Disabled (quarkus.otel.sdk.disabled=true) unless a deployment
+  # sets DATATURNTABLE_OTEL_ENABLED=false and points DATATURNTABLE_OTEL_ENDPOINT at a real OTLP
+  # collector — otherwise this is present-but-inert infrastructure with zero runtime behavior
+  # change, since there is no collector to export to in most environments (including this repo's
+  # own test/dev stacks).
+  otel:
+    sdk:
+      disabled: ${DATATURNTABLE_OTEL_DISABLED:true}
+    exporter:
+      otlp:
+        endpoint: ${DATATURNTABLE_OTEL_ENDPOINT:http://localhost:4317}
+
+kafka:
+  bootstrap:
+    servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
 
 mp:
   messaging:
@@ -85,36 +73,67 @@ mp:
           servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
         value:
           deserializer: org.apache.kafka.common.serialization.StringDeserializer
+        # Malformed envelopes and target-mismatch events are raised by the
+        # consumer, so the connector acknowledges them only after publishing a
+        # broker-inspectable copy to this dedicated poison-event topic.
+        failure-strategy: dead-letter-queue
+        dead-letter-queue:
+          topic: dataturntable.pipelines.dead-letter
+          key:
+            serializer: org.apache.kafka.common.serialization.StringSerializer
+          value:
+            serializer: org.apache.kafka.common.serialization.StringSerializer
         auto:
           offset:
             reset: earliest
   jwt:
     verify:
       publickey:
-        location: publicKey.pem
+        location: ${DATATURNTABLE_JWT_PUBLIC_KEY_LOCATION}
       issuer: https://dataturntable.io
     token:
       header: Authorization
       verification:
         key:
-          location: publicKey.pem
+          location: ${DATATURNTABLE_JWT_PUBLIC_KEY_LOCATION}
       generation:
-        # WARNING: JWT signing key is bundled with the application resources
-        # Details: privateKey.pem is tracked under src/main/resources and copied into the runtime artifact/image, so every deployment shares the same signing material. Load an environment-specific key from a secret mount or managed key service and keep only non-sensitive public test material in the repository.
         key:
-          location: privateKey.pem
+          location: ${DATATURNTABLE_JWT_SIGNING_KEY_LOCATION}
 
 smallrye:
   jwt:
     sign:
       key:
-        location: privateKey.pem
+        location: ${DATATURNTABLE_JWT_SIGNING_KEY_LOCATION}
 
 jwt:
   issuer: https://dataturntable.io
   duration: 3600
 
 dataturntable:
+  outbox:
+    enabled: ${DATATURNTABLE_OUTBOX_ENABLED:true}
+  data:
+    blob:
+      max-upload-bytes: ${BLOB_MAX_UPLOAD_BYTES:1048576}
+      max-tenant-bytes: ${BLOB_MAX_TENANT_BYTES:1073741824}
+      failed-retention-days: ${BLOB_FAILED_RETENTION_DAYS:30}
+  redis:
+    hosts: ${REDIS_HOSTS:redis://localhost:6379}
+  ingest:
+    websocket:
+      idle-timeout-ms: ${DATATURNTABLE_INGEST_WEBSOCKET_IDLE_TIMEOUT_MS:300000}
+      # How often the idle-session reaper scans for idle connections (see
+      # WebSocketIngestResource.reapIdleSessions) — enforcement granularity is roughly this
+      # interval, so keep it well under idle-timeout-ms.
+      idle-reap-interval: ${DATATURNTABLE_INGEST_WEBSOCKET_IDLE_REAP_INTERVAL:10s}
+  retention:
+    # -1 (default) means indefinite retention — nothing is deleted until a deployment opts in.
+    check-interval: ${DATATURNTABLE_RETENTION_CHECK_INTERVAL:24h}
+    pipeline-runs-days: ${DATATURNTABLE_RETENTION_PIPELINE_RUNS_DAYS:-1}
+    alert-history-days: ${DATATURNTABLE_RETENTION_ALERT_HISTORY_DAYS:-1}
+    audit-events-days: ${DATATURNTABLE_RETENTION_AUDIT_EVENTS_DAYS:-1}
+    readings-days: ${DATATURNTABLE_RETENTION_READINGS_DAYS:-1}
   runtime:
     role: ${DATATURNTABLE_RUNTIME_ROLE:all}
     instance-id: ${DATATURNTABLE_RUNTIME_INSTANCE_ID:}
@@ -126,10 +145,10 @@ dataturntable:
     dashboard:
       enabled: ${DATATURNTABLE_GRAFANA_DASHBOARD_ENABLED:false}
       base-url: ${DATATURNTABLE_GRAFANA_DASHBOARD_BASE_URL:http://dashboard-grafana:3000}
-      # WARNING: Production-capable defaults include Grafana admin credentials
-      # Details: When dashboard provisioning is enabled without environment variables, it authenticates as admin/admin. Require these values from the deployment secret or fail startup to prevent accidental insecure deployments.
-      admin-user: ${DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_USER:admin}
-      admin-password: ${DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_PASSWORD:admin}
+      # Enabling provisioning requires deployment-provided credentials; blanks
+      # leave the target unconfigured.
+      admin-user: ${DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_USER:}
+      admin-password: ${DATATURNTABLE_GRAFANA_DASHBOARD_ADMIN_PASSWORD:}
       datasource:
         host: ${DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_HOST:}
         port: ${DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_PORT:5432}
@@ -140,8 +159,8 @@ dataturntable:
     monitoring:
       enabled: ${DATATURNTABLE_GRAFANA_MONITORING_ENABLED:false}
       base-url: ${DATATURNTABLE_GRAFANA_MONITORING_BASE_URL:http://grafana:3000}
-      admin-user: ${DATATURNTABLE_GRAFANA_MONITORING_ADMIN_USER:admin}
-      admin-password: ${DATATURNTABLE_GRAFANA_MONITORING_ADMIN_PASSWORD:admin}
+      admin-user: ${DATATURNTABLE_GRAFANA_MONITORING_ADMIN_USER:}
+      admin-password: ${DATATURNTABLE_GRAFANA_MONITORING_ADMIN_PASSWORD:}
   pipeline-data:
     jdbc:
       url: ${DATATURNTABLE_PIPELINE_DATA_JDBC_URL:}
@@ -179,9 +198,6 @@ dataturntable:
         url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dataturntable}
       username: ${DB_USER:dataturntable}
       password: ${DB_PASSWORD:dataturntable}
-    kafka:
-      bootstrap:
-        servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     redis:
       hosts: ${REDIS_HOSTS:redis://localhost:6379}
     flyway:
@@ -246,8 +262,8 @@ dataturntable:
         url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dataturntable}
         max-size: 20
         min-size: 5
-    kafka:
-      bootstrap:
-        servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+      # Production credentials are mandatory and must come from the deployment secret store.
+      username: ${DB_USER}
+      password: ${DB_PASSWORD}
     redis:
       hosts: ${REDIS_HOSTS:redis://localhost:6379}

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { Membership, Role, User } from '../types';
+import type { AuthorizationExplanation, Membership, Role, User } from '../types';
 
 /**
  * Defines the interface `EditState`, the contract implemented by this source unit.
@@ -42,7 +42,7 @@ const PERMISSION_GROUPS = [
 export default function Users() {
   const { t } = useTranslation();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
-  const [activeTab, setActiveTab] = useState<'members' | 'roles'>('members');
+  const [activeTab, setActiveTab] = useState<'members' | 'roles' | 'debug'>('members');
   const [users, setUsers] = useState<User[]>([]);
   const [memberships, setMemberships] = useState<Membership[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
@@ -75,6 +75,10 @@ export default function Users() {
   const [savingRole, setSavingRole] = useState(false);
   const [confirmDeleteRoleId, setConfirmDeleteRoleId] = useState<string | null>(null);
   const [deletingRoleId, setDeletingRoleId] = useState<string | null>(null);
+  const [debugUserId, setDebugUserId] = useState('');
+  const [debugAbility, setDebugAbility] = useState('pipeline:execute');
+  const [debugResult, setDebugResult] = useState<AuthorizationExplanation | null>(null);
+  const [debugging, setDebugging] = useState(false);
 
   const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
   const abilities = user?.abilities || [];
@@ -163,6 +167,21 @@ export default function Users() {
     if (!memberAbilities) return [];
     if (Array.isArray(memberAbilities)) return memberAbilities as string[];
     try { const p = JSON.parse(memberAbilities as string); return Array.isArray(p) ? p : []; } catch { return []; }
+  };
+
+  const explainPermission = async () => {
+    if (!tenantId || !debugUserId || !debugAbility.trim() || !canManageTenant) return;
+    setDebugging(true);
+    try {
+      setDebugResult(await api.explainAuthorization(debugUserId, tenantId, debugAbility.trim()));
+      setError('');
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Unable to explain this permission.';
+      setDebugResult(null);
+      setError(message);
+    } finally {
+      setDebugging(false);
+    }
   };
 
   /**
@@ -431,6 +450,16 @@ export default function Users() {
         >
           Roles
         </button>
+        {canManageTenant && (
+          <button
+            onClick={() => setActiveTab('debug')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium ${
+              activeTab === 'debug' ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            Permission debug
+          </button>
+        )}
       </div>
 
       {!canReadUsers && !canManageTenant && (
@@ -728,6 +757,53 @@ export default function Users() {
             </div>
           )}
         </>
+      )}
+
+      {activeTab === 'debug' && canManageTenant && (
+        <section className="grid gap-5 lg:grid-cols-[minmax(16rem,0.75fr)_minmax(0,1.5fr)]">
+          <div className="card h-fit space-y-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-primary-700">Authorization trace</p>
+              <h2 className="text-xl font-bold text-gray-900">Why is this allowed?</h2>
+              <p className="mt-1 text-sm text-gray-600">Inspect one member’s effective permission and its grants in the selected tenant.</p>
+            </div>
+            <label className="block text-sm font-medium text-gray-700">Member
+              <select className="input mt-1 w-full" value={debugUserId} onChange={(event) => { setDebugUserId(event.target.value); setDebugResult(null); }}>
+                <option value="">Select a member</option>
+                {tableUsers.map((member) => <option key={member.id} value={member.id}>{member.email}</option>)}
+              </select>
+            </label>
+            <label className="block text-sm font-medium text-gray-700">Ability
+              <input className="input mt-1 w-full font-mono" value={debugAbility} onChange={(event) => { setDebugAbility(event.target.value); setDebugResult(null); }} placeholder="pipeline:execute" />
+            </label>
+            <button className="btn-primary w-full" disabled={!debugUserId || !debugAbility.trim() || debugging} onClick={explainPermission}>{debugging ? 'Tracing…' : 'Explain permission'}</button>
+          </div>
+          <div className="card min-h-72">
+            {!debugResult ? (
+              <div className="flex min-h-64 items-center justify-center text-center text-sm text-gray-500">Choose a member and ability to inspect the platform, user, membership, and role grants.</div>
+            ) : (
+              <div className="space-y-5">
+                <div className={`rounded-xl border p-4 ${debugResult.granted ? 'border-emerald-200 bg-emerald-50' : 'border-rose-200 bg-rose-50'}`}>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-gray-600">Decision</p>
+                  <p className={`mt-1 text-2xl font-bold ${debugResult.granted ? 'text-emerald-800' : 'text-rose-800'}`}>{debugResult.granted ? 'Granted' : 'Denied'}</p>
+                  <p className="mt-1 font-mono text-sm text-gray-700">{debugResult.ability}</p>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-gray-900">Grant provenance</h3>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    {Object.entries(debugResult.sources).map(([source, grants]) => (
+                      <div key={source} className="rounded-lg border border-gray-200 p-3">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">{source}</p>
+                        {grants.length ? <div className="mt-2 flex flex-wrap gap-1">{grants.map((grant) => <span key={grant} className="rounded bg-indigo-50 px-2 py-0.5 font-mono text-xs text-indigo-700">{grant}</span>)}</div> : <p className="mt-2 text-sm text-gray-400">No grants</p>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div><h3 className="font-semibold text-gray-900">Effective abilities</h3><div className="mt-2 flex flex-wrap gap-1">{debugResult.effectiveAbilities.map((grant) => <span key={grant} className="rounded bg-gray-100 px-2 py-1 font-mono text-xs text-gray-700">{grant}</span>)}</div></div>
+              </div>
+            )}
+          </div>
+        </section>
       )}
 
       {/* Invite user modal */}

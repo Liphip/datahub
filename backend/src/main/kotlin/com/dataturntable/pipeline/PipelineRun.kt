@@ -10,7 +10,18 @@ import java.util.UUID
  * Defines the enum class `PipelineRunStatus`, the contract implemented by this source unit.
  */
 enum class PipelineRunStatus {
-    PENDING, RUNNING, SUCCESS, FAILED, CANCELLED
+    PENDING, QUEUED, RUNNING, CANCELLING, CANCELLED, SUCCESS, FAILED, TIMED_OUT
+}
+
+object PipelineRunStateMachine {
+    private val transitions = mapOf(
+        PipelineRunStatus.PENDING to setOf(PipelineRunStatus.QUEUED, PipelineRunStatus.CANCELLED),
+        PipelineRunStatus.QUEUED to setOf(PipelineRunStatus.RUNNING, PipelineRunStatus.CANCELLING, PipelineRunStatus.CANCELLED, PipelineRunStatus.FAILED),
+        PipelineRunStatus.RUNNING to setOf(PipelineRunStatus.SUCCESS, PipelineRunStatus.FAILED, PipelineRunStatus.TIMED_OUT, PipelineRunStatus.CANCELLING),
+        PipelineRunStatus.CANCELLING to setOf(PipelineRunStatus.CANCELLED, PipelineRunStatus.FAILED, PipelineRunStatus.TIMED_OUT)
+    )
+    fun canTransition(from: PipelineRunStatus, to: PipelineRunStatus) = to in (transitions[from] ?: emptySet())
+    fun terminal(status: PipelineRunStatus) = status in setOf(PipelineRunStatus.CANCELLED, PipelineRunStatus.SUCCESS, PipelineRunStatus.FAILED, PipelineRunStatus.TIMED_OUT)
 }
 
 /**
@@ -34,6 +45,10 @@ open class PipelineRun : PanacheBase() {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "pipeline_id")
     var pipeline: Pipeline? = null
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "pipeline_version_id")
+    var pipelineVersion: PipelineVersion? = null
     
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -79,6 +94,8 @@ open class PipelineRun : PanacheBase() {
      * Implements `markRunning` for this source unit.
      */
     fun markRunning() {
+        if (status == PipelineRunStatus.PENDING) status = PipelineRunStatus.QUEUED
+        require(PipelineRunStateMachine.canTransition(status, PipelineRunStatus.RUNNING)) { "Illegal run transition $status -> RUNNING" }
         status = PipelineRunStatus.RUNNING
         startedAt = Instant.now()
     }
@@ -87,6 +104,7 @@ open class PipelineRun : PanacheBase() {
      * Implements `markSuccess` for this source unit.
      */
     fun markSuccess() {
+        require(PipelineRunStateMachine.canTransition(status, PipelineRunStatus.SUCCESS)) { "Illegal run transition $status -> SUCCESS" }
         status = PipelineRunStatus.SUCCESS
         completedAt = Instant.now()
     }
@@ -95,6 +113,10 @@ open class PipelineRun : PanacheBase() {
      * Implements `markFailed` for this source unit.
      */
     fun markFailed(error: String?) {
+        // Submission can fail before a consumer claims the run; model that as
+        // PENDING -> QUEUED -> FAILED rather than permitting a shortcut.
+        if (status == PipelineRunStatus.PENDING) status = PipelineRunStatus.QUEUED
+        require(PipelineRunStateMachine.canTransition(status, PipelineRunStatus.FAILED)) { "Illegal run transition $status -> FAILED" }
         status = PipelineRunStatus.FAILED
         completedAt = Instant.now()
         errorMessage = error
@@ -104,6 +126,8 @@ open class PipelineRun : PanacheBase() {
      * Implements `markCancelled` for this source unit.
      */
     fun markCancelled() {
+        if (status == PipelineRunStatus.RUNNING) status = PipelineRunStatus.CANCELLING
+        require(PipelineRunStateMachine.canTransition(status, PipelineRunStatus.CANCELLED)) { "Illegal run transition $status -> CANCELLED" }
         status = PipelineRunStatus.CANCELLED
         completedAt = Instant.now()
     }

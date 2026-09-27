@@ -16,6 +16,7 @@ import jakarta.ws.rs.core.Response
 import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.eclipse.microprofile.jwt.JsonWebToken
 import java.io.File
+import java.nio.ByteBuffer
 import java.sql.Clob
 import java.sql.Connection
 import java.sql.DriverManager
@@ -47,6 +48,15 @@ class DataResource {
     @ConfigProperty(name = "dataturntable.data.blob-dir", defaultValue = "/data/blobs")
     lateinit var blobDir: String
 
+    @ConfigProperty(name = "dataturntable.data.blob.max-upload-bytes", defaultValue = "1048576")
+    var maxBlobUploadBytes: Long = 1_048_576
+
+    @ConfigProperty(name = "dataturntable.data.blob.max-tenant-bytes", defaultValue = "1073741824")
+    var maxTenantBlobBytes: Long = 1_073_741_824
+
+    @ConfigProperty(name = "dataturntable.data.blob.failed-retention-days", defaultValue = "30")
+    var failedBlobRetentionDays: Int = 30
+
     @ConfigProperty(name = "dataturntable.pipeline-data.jdbc.url", defaultValue = "")
     lateinit var configuredJdbcUrl: Optional<String>
 
@@ -65,7 +75,10 @@ class DataResource {
     @ConfigProperty(name = "quarkus.datasource.password", defaultValue = "")
     lateinit var defaultJdbcPassword: String
 
-    private val objectMapper = ObjectMapper()
+    @ConfigProperty(name = "quarkus.datasource.db-kind", defaultValue = "postgresql")
+    lateinit var dbKind: String
+
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
     private val tableNameRegex = Regex("^[A-Za-z0-9_]+$")
     private val columnNameRegex = Regex("^[A-Za-z_][A-Za-z0-9_]*$")
     private val tagFieldRegex = Regex("^[A-Za-z0-9_.-]+$")
@@ -484,9 +497,7 @@ class DataResource {
             }
             Response.ok(mapOf("tables" to tables)).build()
         } catch (e: Exception) {
-            // BUG: Table-list failures are reported as an empty successful result
-            // Details: Connection, schema, and registry-query failures become HTTP 200 with no tables, causing clients to treat an outage or misconfiguration as an empty tenant. Return a meaningful error status and log the cause instead.
-            Response.ok(mapOf("tables" to emptyList<Map<*, *>>())).build()
+            Response.status(500).entity(mapOf("error" to "Failed to list tables")).build()
         }
     }
     
@@ -719,22 +730,33 @@ class DataResource {
     /**
      * Retrieves or enumerates the requested state.
      */
-    fun listBlobs(@PathParam("tenantId") tenantId: String): Response {
+    fun listBlobs(
+        @PathParam("tenantId") tenantId: String,
+        @QueryParam("limit") limit: Int?,
+        @QueryParam("page") page: Int?
+    ): Response {
         val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
         val tenantUuid = parseTenantUuid(tenantId)
         requireTenantAccess(currentUser, tenantUuid.toString(), "data:read")?.let { return it }
+        val effectiveLimit = limit ?: 50
+        val effectivePage = page ?: 0
+        if (effectiveLimit !in 1..200 || effectivePage < 0) {
+            return Response.status(400).entity(mapOf("error" to "limit must be between 1 and 200 and page must be non-negative")).build()
+        }
 
         return try {
             val rows = em.createNativeQuery(
-                // TODO: Paginate tenant blob listings
-                // Details: This query returns every blob metadata row for a tenant. As uploads accumulate it increases response size and query latency; add validated limit/cursor parameters and return pagination metadata.
-                "SELECT id, name, content_type, size_bytes, created_at FROM data_blobs WHERE tenant_id = :tid ORDER BY created_at DESC"
-            ).setParameter("tid", tenantUuid).resultList
-            val blobs = rows.map { row ->
+                "SELECT id, name, content_type, size_bytes, status, created_at FROM data_blobs WHERE tenant_id = :tid ORDER BY created_at DESC, id DESC"
+            ).setParameter("tid", tenantUuid)
+                .setFirstResult(effectivePage * effectiveLimit)
+                .setMaxResults(effectiveLimit + 1)
+                .resultList
+            val hasMore = rows.size > effectiveLimit
+            val blobs = rows.take(effectiveLimit).map { row ->
                 val r = row as Array<*>
-                mapOf("id" to r[0]?.toString(), "name" to r[1], "contentType" to r[2], "sizeBytes" to r[3], "createdAt" to r[4]?.toString())
+                mapOf("id" to r[0]?.toString(), "name" to r[1], "contentType" to r[2], "sizeBytes" to r[3], "status" to r[4], "createdAt" to r[5]?.toString())
             }
-            Response.ok(mapOf("blobs" to blobs)).build()
+            Response.ok(mapOf("blobs" to blobs, "page" to effectivePage, "limit" to effectiveLimit, "hasMore" to hasMore)).build()
         } catch (e: Exception) {
             Response.status(500).entity(mapOf("error" to "Failed to list blobs: ${e.message}")).build()
         }
@@ -760,19 +782,29 @@ class DataResource {
         requireTenantAccess(currentUser, tenantUuid.toString(), "data:write")?.let { return it }
         if (fileBytes == null || fileBytes.isEmpty())
             return Response.status(400).entity(mapOf("error" to "No file provided")).build()
+        if (fileBytes.size.toLong() > maxBlobUploadBytes) {
+            return Response.status(413).entity(mapOf("error" to "Blob exceeds maximum upload size")).build()
+        }
+        val currentTenantBytes = (em.createNativeQuery(
+            "SELECT COALESCE(SUM(size_bytes), 0) FROM data_blobs WHERE tenant_id = :tenantId"
+        ).setParameter("tenantId", tenantUuid).singleResult as Number).toLong()
+        if (currentTenantBytes + fileBytes.size > maxTenantBlobBytes) {
+            return Response.status(413).entity(mapOf("error" to "Tenant blob storage quota exceeded")).build()
+        }
         val fileName = (name ?: "upload-${UUID.randomUUID()}").replace(Regex("[^a-zA-Z0-9._\\-]"), "_")
+        var writtenFile: File? = null
 
         return try {
             val dir = File("$blobDir/$tenantId").also { it.mkdirs() }
             val blobId = UUID.randomUUID()
             val storagePath = "${dir.absolutePath}/$blobId-$fileName"
-            // BUG: Upload can orphan a file when metadata persistence fails
-            // Details: The filesystem write precedes the database insert, but the catch block does not delete the new file if the insert or transaction fails. Use a temporary object plus compensation/cleanup, or persist an upload state that a reconciler can recover.
-            File(storagePath).writeBytes(fileBytes)
+            val targetFile = File(storagePath)
+            writtenFile = targetFile
+            targetFile.writeBytes(fileBytes)
             val resolvedContentType = contentType?.takeIf { it.isNotBlank() } ?: "application/octet-stream"
 
             em.createNativeQuery(
-                "INSERT INTO data_blobs (id, tenant_id, name, content_type, size_bytes, storage_path, uploaded_by) VALUES (:id, :tid, :name, :ctype, :size, :path, :uid)"
+                "INSERT INTO data_blobs (id, tenant_id, name, content_type, size_bytes, storage_path, uploaded_by, status, updated_at) VALUES (:id, :tid, :name, :ctype, :size, :path, :uid, 'AVAILABLE', CURRENT_TIMESTAMP)"
             ).setParameter("id", blobId)
              .setParameter("tid", tenantUuid)
              .setParameter("name", fileName)
@@ -784,12 +816,14 @@ class DataResource {
 
             Response.status(201).entity(mapOf("id" to blobId, "name" to fileName, "sizeBytes" to fileBytes.size)).build()
         } catch (e: Exception) {
+            writtenFile?.takeIf { it.exists() }?.delete()
             Response.status(500).entity(mapOf("error" to "Upload failed: ${e.message}")).build()
         }
     }
 
     @GET
     @Path("/{tenantId}/blobs/{blobId}/download")
+    @Transactional
     /**
      * Implements `downloadBlob` for this source unit.
      */
@@ -804,14 +838,19 @@ class DataResource {
         return try {
             val blobUuid = UUID.fromString(blobId)
             val rows = em.createNativeQuery(
-                "SELECT name, content_type, storage_path FROM data_blobs WHERE id = :id AND tenant_id = :tid"
+                "SELECT name, content_type, storage_path, status FROM data_blobs WHERE id = :id AND tenant_id = :tid"
             ).setParameter("id", blobUuid).setParameter("tid", tenantUuid).resultList
 
             if (rows.isEmpty()) return Response.status(404).entity(mapOf("error" to "Blob not found")).build()
             val r = rows[0] as Array<*>
             val storagePath = r[2]?.toString() ?: return Response.status(404).entity(mapOf("error" to "No storage path")).build()
             val file = File(storagePath)
-            if (!file.exists()) return Response.status(404).entity(mapOf("error" to "File not found on disk")).build()
+            if (!file.exists()) {
+                em.createNativeQuery("UPDATE data_blobs SET status = 'MISSING', last_error = 'Blob object was not found', updated_at = CURRENT_TIMESTAMP WHERE id = :id")
+                    .setParameter("id", blobUuid).executeUpdate()
+                em.flush()
+                return Response.status(409).entity(mapOf("error" to "Blob object is unavailable", "status" to "MISSING")).build()
+            }
 
             Response.ok(file.readBytes())
                 .header("Content-Disposition", "attachment; filename=\"${r[0]}\"")
@@ -843,14 +882,66 @@ class DataResource {
             ).setParameter("id", blobUuid).setParameter("tid", tenantUuid).resultList
             if (rows.isEmpty()) return Response.status(404).entity(mapOf("error" to "Blob not found")).build()
             val path = rows[0]?.toString()
-            // BUG: Blob metadata is removed even if file deletion fails
-            // Details: File.delete() returns false on I/O failure, but the database row is deleted regardless, orphaning storage and losing retry information. Check the result and keep or mark the record for retry when deletion fails.
-            if (!path.isNullOrBlank()) File(path).delete()
+            if (!path.isNullOrBlank()) {
+                val file = File(path)
+                if (file.exists() && !file.delete()) {
+                    em.createNativeQuery("UPDATE data_blobs SET status = 'DELETE_FAILED', last_error = 'Blob storage deletion failed', updated_at = CURRENT_TIMESTAMP WHERE id = :id")
+                        .setParameter("id", blobUuid).executeUpdate()
+                    return Response.status(500).entity(mapOf("error" to "Blob storage deletion failed; metadata retained for retry", "status" to "DELETE_FAILED")).build()
+                }
+            }
             em.createNativeQuery("DELETE FROM data_blobs WHERE id = :id").setParameter("id", blobUuid).executeUpdate()
             Response.noContent().build()
         } catch (e: Exception) {
             Response.status(500).entity(mapOf("error" to "Delete failed: ${e.message}")).build()
         }
+    }
+
+    /**
+     * Retries deletion of failed blob objects and tombstones stale metadata once
+     * the configured retention window has elapsed. This gives operators a safe,
+     * tenant-scoped recovery path without silently orphaning storage objects.
+     */
+    @POST
+    @Path("/{tenantId}/blobs/recover")
+    @Transactional
+    fun recoverFailedBlobs(@PathParam("tenantId") tenantId: String): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val tenantUuid = parseTenantUuid(tenantId)
+        requireTenantAccess(currentUser, tenantUuid.toString(), "data:write")?.let { return it }
+        if (failedBlobRetentionDays < 0) return Response.status(500).entity(mapOf("error" to "Invalid blob retention configuration")).build()
+        val cutoff = Instant.now().minusSeconds(failedBlobRetentionDays.toLong() * 86_400)
+        val rows = em.createNativeQuery(
+            "SELECT id, storage_path FROM data_blobs WHERE tenant_id = :tid AND status IN ('MISSING', 'DELETE_FAILED') AND updated_at <= :cutoff"
+        )
+            .setParameter("tid", tenantUuid)
+            .setParameter("cutoff", cutoff)
+            .resultList
+        var purged = 0
+        var retained = 0
+        rows.forEach { row ->
+            val values = row as Array<*>
+            val id = nativeUuid(values[0]) ?: return@forEach
+            val path = values[1]?.toString()
+            val deleted = path.isNullOrBlank() || File(path).let { !it.exists() || it.delete() }
+            if (deleted) {
+                em.createNativeQuery("DELETE FROM data_blobs WHERE id = :id AND tenant_id = :tid")
+                    .setParameter("id", id).setParameter("tid", tenantUuid).executeUpdate()
+                purged++
+            } else {
+                retained++
+            }
+        }
+        return Response.ok(mapOf("eligible" to rows.size, "purged" to purged, "retained" to retained, "retentionDays" to failedBlobRetentionDays)).build()
+    }
+
+    /** Hibernate/H2 returns native UUID columns as bytes while PostgreSQL returns UUID. */
+    private fun nativeUuid(value: Any?): UUID? = when (value) {
+        is UUID -> value
+        is ByteArray -> value.takeIf { it.size == 16 }?.let { bytes ->
+            ByteBuffer.wrap(bytes).let { UUID(it.long, it.long) }
+        }
+        else -> value?.toString()?.let { runCatching { UUID.fromString(it) }.getOrNull() }
     }
 
     // ── Table registry ────────────────────────────────────────────────────────
@@ -893,15 +984,7 @@ class DataResource {
                 connection.commit()
             }
 
-            em.createNativeQuery(
-                """INSERT INTO data_table_registry (tenant_id, table_name, table_type, schema_def)
-                   VALUES (:tid, :name, :type, CAST(:schema AS jsonb))
-                   ON CONFLICT (tenant_id, table_name) DO UPDATE SET table_type = EXCLUDED.table_type, schema_def = EXCLUDED.schema_def"""
-            ).setParameter("tid", tenantUuid)
-             .setParameter("name", tableName)
-             .setParameter("type", tableType)
-             .setParameter("schema", schemaJson)
-             .executeUpdate()
+            upsertTableRegistryEntry(tenantUuid, tableName, tableType, schemaJson)
 
             Response.status(201).entity(mapOf("tableName" to tableName, "tableType" to tableType)).build()
         } catch (e: WebApplicationException) {
@@ -912,16 +995,57 @@ class DataResource {
     }
 
     /**
+     * Upserts a `data_table_registry` row. PostgreSQL's `ON CONFLICT` cannot be attempted against
+     * H2 (test profile): a caught `SQLGrammarException` inside this method's surrounding
+     * `@Transactional` JTA transaction would still leave it marked rollback-only even though the
+     * exception looks handled here — see ConnectorLeaseService/EventInboxService for the same
+     * trap. The dialect is checked upfront instead of relying on catch. H2 also has no `jsonb`
+     * type, so the fallback stores schema_def as plain text rather than casting it.
+     */
+    private fun upsertTableRegistryEntry(tenantId: UUID, tableName: String, tableType: String, schemaJson: String?) {
+        if (dbKind == "h2") {
+            val existing = em.createNativeQuery(
+                "SELECT id FROM data_table_registry WHERE tenant_id = :tid AND table_name = :name"
+            ).setParameter("tid", tenantId).setParameter("name", tableName).resultList.firstOrNull()
+            if (existing != null) {
+                em.createNativeQuery(
+                    "UPDATE data_table_registry SET table_type = :type, schema_def = :schema WHERE tenant_id = :tid AND table_name = :name"
+                ).setParameter("type", tableType).setParameter("schema", schemaJson)
+                 .setParameter("tid", tenantId).setParameter("name", tableName)
+                 .executeUpdate()
+            } else {
+                em.createNativeQuery(
+                    "INSERT INTO data_table_registry (id, tenant_id, table_name, table_type, schema_def) VALUES (random_uuid(), :tid, :name, :type, :schema)"
+                ).setParameter("tid", tenantId).setParameter("name", tableName)
+                 .setParameter("type", tableType).setParameter("schema", schemaJson)
+                 .executeUpdate()
+            }
+            return
+        }
+        em.createNativeQuery(
+            """INSERT INTO data_table_registry (tenant_id, table_name, table_type, schema_def)
+               VALUES (:tid, :name, :type, CAST(:schema AS jsonb))
+               ON CONFLICT (tenant_id, table_name) DO UPDATE SET table_type = EXCLUDED.table_type, schema_def = EXCLUDED.schema_def"""
+        ).setParameter("tid", tenantId)
+         .setParameter("name", tableName)
+         .setParameter("type", tableType)
+         .setParameter("schema", schemaJson)
+         .executeUpdate()
+    }
+
+    /**
      * Implements `ensureRelationalTableExists` for this source unit.
      */
     private fun ensureRelationalTableExists(connection: Connection, tenantId: String, tableName: String, columns: List<Map<String, String>>) {
         ensureTenantSchemaExists(connection, tenantId)
         val safeTable = qualifiedTableName(tenantId, tableName)
         val timestampType = if (isH2(connection)) "TIMESTAMP WITH TIME ZONE" else "TIMESTAMPTZ"
+        val seenColumns = mutableSetOf<String>()
         val colDefs = columns.joinToString(", ") { col ->
-            // BUG: Relational column names are silently rewritten
-            // Details: A requested name such as `device-id` becomes `deviceid` in the physical table while the registry stores the original schema. Reject invalid or duplicate names with 400 instead, using the existing column-name validation helper.
-            val colName = col["name"]?.replace(Regex("[^a-zA-Z0-9_]"), "") ?: return@joinToString ""
+            val colName = requireValidColumnName(col["name"], "column name", "")
+            if (!seenColumns.add(colName.lowercase())) {
+                throw WebApplicationException(Response.status(400).entity(mapOf("error" to "Duplicate column name: $colName")).build())
+            }
             val colType = when (col["type"]?.uppercase()) {
                 "INTEGER" -> "INTEGER"
                 "FLOAT" -> "DOUBLE PRECISION"

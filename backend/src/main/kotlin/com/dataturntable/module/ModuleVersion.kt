@@ -31,6 +31,15 @@ open class ModuleVersion : PanacheBase() {
 
     @Column(name = "content_fingerprint", nullable = false)
     var contentFingerprint: String = ""
+
+    @Column(name = "artifact_digest")
+    var artifactDigest: String? = null
+
+    @Column(name = "dependency_digest")
+    var dependencyDigest: String? = null
+
+    @Column(name = "runtime_image_digest")
+    var runtimeImageDigest: String? = null
     
     @Column(columnDefinition = "text", nullable = false)
     var code: String? = null

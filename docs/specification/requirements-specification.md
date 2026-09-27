@@ -90,6 +90,7 @@ The platform occupies two positions relative to external systems:
 8. Expose a full management and data REST API (`/api/internal/v1/`)
 9. Provide a lightweight admin UI for configuration, monitoring, and code editing
 10. Enforce multi-tenant isolation and fine-grained permissions
+12. Store and verify authentication credentials using a modern, memory-hard algorithm (Argon2id). Legacy BCrypt(SHA-256) credentials shall be migrated to Argon2id on successful login.
 11. Allow all modules and connectors to be installed, updated, and toggled at runtime
 
 ### 2.3 Assumptions and Dependencies

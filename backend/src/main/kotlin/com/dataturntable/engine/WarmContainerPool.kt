@@ -229,7 +229,7 @@ class WarmContainerPool {
             "-e", "__DT_RUNNER__=$runnerB64",
         )
         if (needsNetwork) {
-            args.addAll(listOf("-e", "MODULE_REQUIREMENTS=$requirements"))
+            args.addAll(listOf("-e", envArg("MODULE_REQUIREMENTS", requirements)))
         }
         args.addAll(listOf(
             baseImage,

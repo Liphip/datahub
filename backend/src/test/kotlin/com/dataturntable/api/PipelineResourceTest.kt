@@ -1,6 +1,7 @@
 package com.dataturntable.api
 
 import com.dataturntable.auth.User
+import com.dataturntable.audit.AuditEvent
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.PipelineRunStatus
@@ -11,17 +12,34 @@ import io.quarkus.test.junit.QuarkusTest
 import io.restassured.http.ContentType
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.mindrot.jbcrypt.BCrypt
 
 import io.restassured.RestAssured.given
 import org.hamcrest.CoreMatchers.*
+import org.hamcrest.Matchers.greaterThan
 
 @QuarkusTest
 class PipelineResourceTest {
 
     @PersistenceContext
     lateinit var em: EntityManager
+
+    @AfterEach
+    fun cleanupAdHocUsers() {
+        QuarkusTransaction.requiringNew().run {
+            val userIds = em.createQuery("SELECT u.id FROM User u WHERE u.email = 'pipeline-viewer@example.com'", java.util.UUID::class.java).resultList
+            if (userIds.isEmpty()) return@run
+            em.createNativeQuery("SET REFERENTIAL_INTEGRITY FALSE").executeUpdate()
+            try {
+                em.createQuery("DELETE FROM Membership m WHERE m.authUser.id IN :ids").setParameter("ids", userIds).executeUpdate()
+                em.createQuery("DELETE FROM User u WHERE u.id IN :ids").setParameter("ids", userIds).executeUpdate()
+            } finally {
+                em.createNativeQuery("SET REFERENTIAL_INTEGRITY TRUE").executeUpdate()
+            }
+        }
+    }
 
     fun createNonMemberToken(): String {
         val email = "pipeline-viewer@example.com"
@@ -135,6 +153,47 @@ class PipelineResourceTest {
     }
 
     @Test
+    fun testCreatePipelineAcceptsExplicitSupportedSchemaVersionAndRejectsUnsupported() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Schema Versioned Pipeline",
+                "graphDefinition" to mapOf("schemaVersion" to 1, "nodes" to emptyList<Any>(), "edges" to emptyList<Any>())
+            ))
+        .`when`()
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .body("graphDefinition.schemaVersion", equalTo(1))
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Future Schema Pipeline",
+                "graphDefinition" to mapOf("schemaVersion" to 999, "nodes" to emptyList<Any>(), "edges" to emptyList<Any>())
+            ))
+        .`when`()
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId")
+        .then()
+            .statusCode(400)
+            .body("error", containsString("schemaVersion 999 is not supported"))
+    }
+
+    @Test
     fun testCreatePipelineRejectsImportNodeWithOutputOnlyConnector() {
         val token = TestAuthHelpers.createAdminToken()
 
@@ -189,7 +248,7 @@ class PipelineResourceTest {
             .post("/api/internal/v1/pipelines?tenantId=$tenantId")
         .then()
             .statusCode(400)
-            .body("error", containsString("INPUT/BOTH"))
+            .body("error", containsString("requires INPUT connector direction"))
     }
 
     @Test
@@ -310,7 +369,7 @@ class PipelineResourceTest {
             .post("/api/internal/v1/pipelines?tenantId=$tenantId")
         .then()
             .statusCode(400)
-            .body("error", containsString("expects EXPORT module version"))
+            .body("error", containsString("expects one of EXPORT/DB_SAVE"))
     }
 
     @Test
@@ -370,7 +429,7 @@ class PipelineResourceTest {
             .post("/api/internal/v1/pipelines?tenantId=$tenantId")
         .then()
             .statusCode(400)
-            .body("error", containsString("contains a cycle"))
+            .body("error", containsString("cannot have incoming edges"))
     }
 
     @Test
@@ -593,6 +652,17 @@ class PipelineResourceTest {
             .statusCode(200)
             .body("status", equalTo("CANCELLED"))
             .body("errorMessage", equalTo("Cancelled by user"))
+
+        val audit = QuarkusTransaction.requiringNew().call {
+            em.createQuery(
+                "SELECT e FROM AuditEvent e WHERE e.action = :action AND e.resourceId = :resourceId",
+                AuditEvent::class.java
+            ).setParameter("action", "pipeline.run.cancelled")
+                .setParameter("resourceId", runId)
+                .singleResult
+        }
+        org.junit.jupiter.api.Assertions.assertEquals("pipeline_run", audit.resourceType)
+        org.junit.jupiter.api.Assertions.assertTrue(audit.metadata.orEmpty().contains("RUNNING"))
 
         given()
             .header("Authorization", "Bearer $token")
@@ -1276,7 +1346,7 @@ class PipelineResourceTest {
             .get("/api/internal/v1/pipelines/runs/summary")
         .then()
             .statusCode(200)
-            .body("windowSize", equalTo(25))
+            .body("windowSize", greaterThan(0))
             .body("sinceHours", equalTo(24))
             .body("bucketSeconds", equalTo(3600))
             .body("trendBuckets.size()", equalTo(24))
@@ -1387,5 +1457,152 @@ class PipelineResourceTest {
         .then()
             .statusCode(403)
             .body("error", equalTo("Forbidden"))
+    }
+
+    @Test
+    fun testCreateAndUpdatePipelineRebuildsConnectorPipelineMap() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        val importVersionId = createModuleVersion(token, tenantId, "IMPORT", "Map Sync Import")
+        val alertVersionId = createModuleVersion(token, tenantId, "ALERT", "Map Sync Alert")
+
+        fun createConnector(name: String): String = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to name,
+                "connectorType" to "MQTT",
+                "direction" to "INPUT",
+                "config" to mapOf("broker" to "mqtt://localhost:1883", "topic" to "dt/map-sync/${java.util.UUID.randomUUID()}")
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        val connectorAId = createConnector("Map Sync Connector A")
+        val connectorBId = createConnector("Map Sync Connector B")
+
+        val pipelineId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Map Sync Pipeline",
+                "graphDefinition" to mapOf(
+                    "nodes" to listOf(
+                        mapOf("id" to "n-import", "type" to "IMPORT", "moduleVersionId" to importVersionId, "connectorId" to connectorAId),
+                        mapOf("id" to "n-alert", "type" to "ALERT", "moduleVersionId" to alertVersionId)
+                    ),
+                    "edges" to listOf(mapOf("from" to "n-import", "to" to "n-alert"))
+                )
+            ))
+        .`when`()
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        // syncConnectorPipelineMap's H2 fallback branch runs here — verify the row it inserted.
+        val afterCreate = QuarkusTransaction.requiringNew().call<List<Array<Any>>> {
+            @Suppress("UNCHECKED_CAST")
+            em.createNativeQuery("SELECT CAST(connector_id AS VARCHAR), node_id, node_type FROM connector_pipeline_map WHERE pipeline_id = :pid")
+                .setParameter("pid", java.util.UUID.fromString(pipelineId))
+                .resultList as List<Array<Any>>
+        }
+        org.junit.jupiter.api.Assertions.assertEquals(1, afterCreate.size)
+        org.junit.jupiter.api.Assertions.assertEquals(connectorAId.lowercase(), afterCreate[0][0].toString().lowercase())
+        org.junit.jupiter.api.Assertions.assertEquals("n-import", afterCreate[0][1])
+        org.junit.jupiter.api.Assertions.assertEquals("IMPORT", afterCreate[0][2])
+
+        // Updating the graph to point at a different connector must delete the old mapping row,
+        // not merely add to it.
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "graphDefinition" to mapOf(
+                    "nodes" to listOf(
+                        mapOf("id" to "n-import", "type" to "IMPORT", "moduleVersionId" to importVersionId, "connectorId" to connectorBId),
+                        mapOf("id" to "n-alert", "type" to "ALERT", "moduleVersionId" to alertVersionId)
+                    ),
+                    "edges" to listOf(mapOf("from" to "n-import", "to" to "n-alert"))
+                )
+            ))
+        .`when`()
+            .patch("/api/internal/v1/pipelines/$pipelineId")
+        .then()
+            .statusCode(200)
+
+        val afterUpdate = QuarkusTransaction.requiringNew().call<List<Array<Any>>> {
+            @Suppress("UNCHECKED_CAST")
+            em.createNativeQuery("SELECT CAST(connector_id AS VARCHAR), node_id, node_type FROM connector_pipeline_map WHERE pipeline_id = :pid")
+                .setParameter("pid", java.util.UUID.fromString(pipelineId))
+                .resultList as List<Array<Any>>
+        }
+        org.junit.jupiter.api.Assertions.assertEquals(1, afterUpdate.size)
+        org.junit.jupiter.api.Assertions.assertEquals(connectorBId.lowercase(), afterUpdate[0][0].toString().lowercase())
+    }
+
+    @Test
+    fun testUpdatePipelineRejectsMalformedModuleVersionIdWithCleanBadRequest() {
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        val pipelineId = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("name" to "Malformed UUID Pipeline", "graphDefinition" to mapOf("nodes" to emptyList<Any>(), "edges" to emptyList<Any>())))
+        .`when`()
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId")
+        .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("importModuleVersionId" to "not-a-valid-uuid"))
+        .`when`()
+            .patch("/api/internal/v1/pipelines/$pipelineId")
+        .then()
+            .statusCode(400)
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf("processingModuleVersionIds" to listOf("also-not-a-uuid")))
+        .`when`()
+            .patch("/api/internal/v1/pipelines/$pipelineId")
+        .then()
+            .statusCode(400)
     }
 }

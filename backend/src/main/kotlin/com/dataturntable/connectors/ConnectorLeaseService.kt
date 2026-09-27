@@ -17,6 +17,8 @@ import java.util.UUID
  */
 class ConnectorLeaseService {
 
+    data class LeaseClaim(val connectorId: UUID, val ownerInstanceId: String, val fencingToken: Long)
+
     private val log = Logger.getLogger(ConnectorLeaseService::class.java)
 
     @PersistenceContext
@@ -30,6 +32,9 @@ class ConnectorLeaseService {
 
     @ConfigProperty(name = "dataturntable.connectors.lease.ttl-seconds", defaultValue = "45")
     var leaseTtlSeconds: Long = 45
+
+    @ConfigProperty(name = "quarkus.datasource.db-kind", defaultValue = "postgresql")
+    lateinit var dbKind: String
 
     private val instanceId: String by lazy {
         configuredInstanceId.orElseGet { "ingest-${UUID.randomUUID()}" }
@@ -45,29 +50,77 @@ class ConnectorLeaseService {
      * Implements `tryAcquireOrRenew` for this source unit.
      */
     fun tryAcquireOrRenew(connectorId: UUID): Boolean {
+        return acquireOrRenew(connectorId) != null
+    }
+
+    /** Returns the current fencing generation only when this runtime owns the lease. */
+    @Transactional
+    fun acquireOrRenew(connectorId: UUID): LeaseClaim? {
         val now = Instant.now()
         val leaseUntil = now.plusSeconds(leaseTtlSeconds.coerceAtLeast(10))
+        if (dbKind == "h2") {
+            // H2 test schema lacks PostgreSQL's ON CONFLICT ... DO UPDATE ... WHERE upsert form;
+            // production always uses the atomic path below.
+            return tryAcquireOrRenewH2Fallback(connectorId, now, leaseUntil)
+        }
         val updated = em.createNativeQuery(
             """
-            INSERT INTO connector_runtime_leases (connector_id, runtime_role, owner_instance_id, lease_until, updated_at)
-            VALUES (:connectorId, :runtimeRole, :ownerInstanceId, :leaseUntil, :updatedAt)
+            INSERT INTO connector_runtime_leases (connector_id, runtime_role, owner_instance_id, lease_until, fencing_token, updated_at)
+            VALUES (:connectorId, :runtimeRole, :ownerInstanceId,
+                    CURRENT_TIMESTAMP + (:leaseSeconds * INTERVAL '1 second'), 1, CURRENT_TIMESTAMP)
             ON CONFLICT (connector_id) DO UPDATE
             SET runtime_role = EXCLUDED.runtime_role,
                 owner_instance_id = EXCLUDED.owner_instance_id,
-                lease_until = EXCLUDED.lease_until,
-                updated_at = EXCLUDED.updated_at
+                lease_until = CURRENT_TIMESTAMP + (:leaseSeconds * INTERVAL '1 second'),
+                fencing_token = CASE
+                    WHEN connector_runtime_leases.owner_instance_id = EXCLUDED.owner_instance_id
+                    THEN connector_runtime_leases.fencing_token
+                    ELSE connector_runtime_leases.fencing_token + 1
+                END,
+                updated_at = CURRENT_TIMESTAMP
             WHERE connector_runtime_leases.owner_instance_id = :ownerInstanceId
-               OR connector_runtime_leases.lease_until <= :now
+               OR connector_runtime_leases.lease_until <= CURRENT_TIMESTAMP
             """.trimIndent()
         )
             .setParameter("connectorId", connectorId)
             .setParameter("runtimeRole", runtimeRole.uppercase())
             .setParameter("ownerInstanceId", instanceId)
-            .setParameter("leaseUntil", Timestamp.from(leaseUntil))
-            .setParameter("updatedAt", Timestamp.from(now))
-            .setParameter("now", Timestamp.from(now))
+            .setParameter("leaseSeconds", leaseTtlSeconds.coerceAtLeast(10))
             .executeUpdate()
-        return updated > 0
+        if (updated == 0) return null
+        val lease = em.find(ConnectorRuntimeLease::class.java, connectorId) ?: return null
+        return LeaseClaim(connectorId, instanceId, lease.fencingToken)
+    }
+
+    private fun tryAcquireOrRenewH2Fallback(connectorId: UUID, now: Instant, leaseUntil: Instant): LeaseClaim? {
+        val existing = em.find(ConnectorRuntimeLease::class.java, connectorId)
+        if (existing != null && existing.ownerInstanceId != instanceId && existing.leaseUntil.isAfter(now)) {
+            return null
+        }
+        if (existing != null) {
+            if (existing.ownerInstanceId != instanceId) existing.fencingToken += 1
+            existing.runtimeRole = runtimeRole.uppercase()
+            existing.ownerInstanceId = instanceId
+            existing.leaseUntil = leaseUntil
+            existing.updatedAt = now
+        } else {
+            em.persist(ConnectorRuntimeLease().apply {
+                this.connectorId = connectorId
+                this.runtimeRole = runtimeRole.uppercase()
+                this.ownerInstanceId = instanceId
+                this.leaseUntil = leaseUntil
+                this.fencingToken = 1
+                this.updatedAt = now
+            })
+        }
+        return LeaseClaim(connectorId, instanceId, existing?.fencingToken ?: 1)
+    }
+
+    /** A stale runtime must not write authoritative connector state after failover. */
+    @Transactional
+    fun owns(connectorId: UUID, fencingToken: Long): Boolean {
+        val lease = em.find(ConnectorRuntimeLease::class.java, connectorId) ?: return false
+        return lease.ownerInstanceId == instanceId && lease.fencingToken == fencingToken && lease.leaseUntil.isAfter(Instant.now())
     }
 
     @Transactional

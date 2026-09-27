@@ -13,7 +13,8 @@
     <description>High-performance data hub for IoT/sensor data processing</description>
     
     <properties>
-        <compiler-plugin.version>3.13.0</compiler-plugin.version>
+    <testcontainers.version>1.18.3</testcontainers.version>
+    <compiler-plugin.version>3.13.0</compiler-plugin.version>
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <quarkus.platform.version>3.32.2</quarkus.platform.version>
@@ -46,6 +47,10 @@
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-rest-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-openapi</artifactId>
         </dependency>
         
         <!-- Database -->
@@ -113,10 +118,24 @@
             <artifactId>quarkus-smallrye-health</artifactId>
         </dependency>
 
+        <!-- Scheduled jobs (retention cleanup) -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-scheduler</artifactId>
+        </dependency>
+
         <!-- Metrics / Prometheus -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-micrometer-registry-prometheus</artifactId>
+        </dependency>
+
+        <!-- Distributed tracing (NFR-020). Disabled by default (see application.yaml,
+             quarkus.otel.sdk.disabled) so its presence is zero-behavior-change until a
+             deployment configures a real OTLP endpoint and opts in. -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-opentelemetry</artifactId>
         </dependency>
         
         <!-- Validation -->
@@ -130,6 +149,11 @@
             <groupId>org.mindrot</groupId>
             <artifactId>jbcrypt</artifactId>
             <version>0.4</version>
+        </dependency>
+        <dependency>
+            <groupId>de.mkammerer</groupId>
+            <artifactId>argon2-jvm</artifactId>
+            <version>2.12</version>
         </dependency>
         
         <!-- Docker Java API -->
@@ -177,16 +201,17 @@
             <artifactId>quarkus-test-h2</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- FIXME: Duplicate H2 test dependencies
-             Details: quarkus-jdbc-h2 and quarkus-test-h2 are each declared twice. Keep one declaration of each so dependency updates and effective-POM inspection remain unambiguous. -->
+        <!-- Testcontainers Kafka for broker-backed integration tests -->
         <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-jdbc-h2</artifactId>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>kafka</artifactId>
+            <version>${testcontainers.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-test-h2</artifactId>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <version>${testcontainers.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

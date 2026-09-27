@@ -1,14 +1,17 @@
 package com.dataturntable.service
 
 import com.dataturntable.auth.User
+import com.dataturntable.authorization.AuthorizationGrantService
 import com.dataturntable.dto.UserDto
 import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.inject.Inject
 import jakarta.transaction.Transactional
 import org.mindrot.jbcrypt.BCrypt
+import de.mkammerer.argon2.Argon2Factory
 import java.util.UUID
 
 @ApplicationScoped
@@ -16,8 +19,10 @@ import java.util.UUID
  * Defines the class `UserService`, the contract implemented by this source unit.
  */
 class UserService {
+    @Inject
+    lateinit var authorizationGrantService: AuthorizationGrantService
     
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
     
     /**
      * Retrieves or enumerates the requested state.
@@ -60,7 +65,7 @@ class UserService {
         
         val user = User().apply {
             this.email = email
-            this.passwordHash = BCrypt.hashpw(password, BCrypt.gensalt())
+            this.passwordHash = hashArgon2(password)
             this.firstName = firstName
             this.lastName = lastName
             this.isSuperadmin = isSuperadmin
@@ -76,6 +81,7 @@ class UserService {
         }
         membership.persist()
         user.memberships.add(membership)
+        authorizationGrantService.replaceMembershipAbilities(membership, abilities ?: emptyList())
         
         return toDto(user)
     }
@@ -114,6 +120,7 @@ class UserService {
                 val membership = user.getMembershipForTenant(primaryTenantId)
                 if (membership != null) {
                     membership.abilities = objectMapper.writeValueAsString(it)
+                    authorizationGrantService.replaceMembershipAbilities(membership, it)
                     membership.persist()
                 }
             }
@@ -144,11 +151,24 @@ class UserService {
     fun changePassword(id: UUID, oldPassword: String, newPassword: String): Boolean {
         val user = User.findById(id) ?: return false
         
-        if (!BCrypt.checkpw(oldPassword, user.passwordHash)) {
+        val valid = if (user.passwordHash?.startsWith("\$argon2id\$") == true) {
+            try {
+                Argon2Factory.create(Argon2Factory.Argon2Types.ARGON2id).verify(user.passwordHash, oldPassword.toCharArray())
+            } catch (e: Exception) {
+                false
+            }
+        } else {
+            try {
+                user.passwordHash != null && BCrypt.checkpw(oldPassword, user.passwordHash)
+            } catch (e: IllegalArgumentException) {
+                false
+            }
+        }
+        if (!valid) {
             throw SecurityException("Invalid old password")
         }
         
-        user.passwordHash = BCrypt.hashpw(newPassword, BCrypt.gensalt())
+        user.passwordHash = hashArgon2(newPassword)
         user.updatedAt = java.time.Instant.now()
         user.persist()
         
@@ -170,4 +190,7 @@ class UserService {
              superadmin = user.isSuperadmin
          )
     }
+
+    private fun hashArgon2(password: String): String =
+        Argon2Factory.create(Argon2Factory.Argon2Types.ARGON2id).hash(3, 65536, 1, password.toCharArray())
 }

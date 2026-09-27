@@ -1,30 +1,21 @@
+"%test":
+  quarkus:
+    datasource:
+      db-kind: h2
+      username: sa
+      password: test
+      jdbc:
+        url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;USER=sa;PASSWORD=test
+    hibernate-orm:
+      database:
+        generation: drop-and-create
+      log:
+        sql: false
+
 quarkus:
-  datasource:
-    db-kind: h2
-    jdbc:
-      url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE
-  hibernate-orm:
-    database:
-      generation: drop-and-create
-    log:
-      sql: false
-  # WARNING: Ineffective H2 Dev Services switch
-  # Details: Quarkus reports quarkus.h2.devservices.enabled as unrecognized during tests, so it does not control test infrastructure.
-  h2:
-    devservices:
-      enabled: false
   redis:
     devservices:
       enabled: false
-  # WARNING: Ineffective MQTT Dev Services switch
-  # Details: Quarkus reports quarkus.mqtt.devservices.enabled as unrecognized during tests; this project uses Eclipse Paho rather than a Quarkus MQTT Dev Service.
-  mqtt:
-    devservices:
-      enabled: false
-  # WARNING: Ineffective reactive-messaging switch
-  # Details: Quarkus reports this key as unrecognized. Disable individual channels with mp.messaging.*.enabled so tests do not attempt Kafka connections.
-  smallrye-reactive-messaging:
-    enabled: false
 
 mp:
   jwt:
@@ -32,3 +23,20 @@ mp:
       publickey:
         location: publicKey.pem
       issuer: https://dataturntable.io
+    token:
+      verification:
+        key:
+          location: publicKey.pem
+      generation:
+        key:
+          location: privateKey.pem
+
+smallrye:
+  jwt:
+    sign:
+      key:
+        location: privateKey.pem
+
+dataturntable:
+  outbox:
+    enabled: false

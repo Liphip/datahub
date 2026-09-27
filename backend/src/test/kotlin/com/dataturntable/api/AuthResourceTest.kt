@@ -32,13 +32,19 @@ class AuthResourceTest {
     @BeforeEach
     @Transactional
     fun cleanup() {
-        em.createQuery("DELETE FROM AlertHistory").executeUpdate()
-        em.createQuery("DELETE FROM AlertRule").executeUpdate()
-        em.createQuery("DELETE FROM AlertChannel").executeUpdate()
-        em.createQuery("DELETE FROM Membership").executeUpdate()
-        em.createQuery("DELETE FROM User").executeUpdate()
-        em.createQuery("DELETE FROM Role").executeUpdate()
-        em.createQuery("DELETE FROM Tenant").executeUpdate()
+        em.createNativeQuery("SET REFERENTIAL_INTEGRITY FALSE").executeUpdate()
+        try {
+            em.createQuery("DELETE FROM AlertHistory").executeUpdate()
+            em.createQuery("DELETE FROM AlertRule").executeUpdate()
+            em.createQuery("DELETE FROM AlertChannel").executeUpdate()
+            em.createQuery("DELETE FROM ApiKey").executeUpdate()
+            em.createQuery("DELETE FROM Membership").executeUpdate()
+            em.createQuery("DELETE FROM User").executeUpdate()
+            em.createQuery("DELETE FROM Role").executeUpdate()
+            em.createQuery("DELETE FROM Tenant").executeUpdate()
+        } finally {
+            em.createNativeQuery("SET REFERENTIAL_INTEGRITY TRUE").executeUpdate()
+        }
     }
 
     @AfterEach
@@ -143,11 +149,10 @@ class AuthResourceTest {
             .jsonPath()
 
         val password = setupResponse.getString("password")
-        val passwordHash = hashPasswordHex(password)
 
         given()
             .contentType(ContentType.JSON)
-            .body(mapOf("email" to "adminhex@example.com", "passwordHash" to passwordHash))
+            .body(mapOf("email" to "adminhex@example.com", "password" to password))
         .`when`()
             .post("/api/internal/v1/auth/login")
         .then()
@@ -175,16 +180,14 @@ class AuthResourceTest {
             .jsonPath()
         
         val password = setupResponse.getString("password")
-        // Backend stores BCrypt(SHA-256(password))
-        val passwordHash = hashPassword(password)
-        
+
         val loginBody = """
             {
                 "email": "admin2@example.com",
-                "passwordHash": "$passwordHash"
+                "password": "$password"
             }
         """.trimIndent()
-        
+
         given()
             .contentType(ContentType.JSON)
             .body(loginBody)
@@ -215,14 +218,14 @@ class AuthResourceTest {
 
         given()
             .contentType(ContentType.JSON)
-            .body(mapOf("email" to "custompass@example.com", "passwordHash" to hashPassword(customPassword)))
+            .body(mapOf("email" to "custompass@example.com", "password" to customPassword))
         .`when`()
             .post("/api/internal/v1/auth/login")
         .then()
             .statusCode(200)
             .body("token", notNullValue())
     }
-    
+
     @Test
     fun testLoginWithInvalidCredentials() {
         val loginBody = """
@@ -262,13 +265,11 @@ class AuthResourceTest {
             .jsonPath()
         
         val password = setupResponse.getString("password")
-        // Backend stores BCrypt(SHA-256(password))
-        val passwordHash = hashPassword(password)
-        
+
         val loginBody = """
             {
                 "email": "admin3@example.com",
-                "passwordHash": "$passwordHash"
+                "password": "$password"
             }
         """.trimIndent()
         
@@ -319,7 +320,7 @@ class AuthResourceTest {
         val rootTenantId = setupResponse.getString("user.tenantId")
         val token = given()
             .contentType(ContentType.JSON)
-            .body(mapOf("email" to "switch@example.com", "passwordHash" to hashPassword(password)))
+            .body(mapOf("email" to "switch@example.com", "password" to password))
         .`when`()
             .post("/api/internal/v1/auth/login")
         .then()
@@ -378,11 +379,5 @@ class AuthResourceTest {
         val digest = MessageDigest.getInstance("SHA-256")
         val hash = digest.digest(password.toByteArray())
         return Base64.getEncoder().encodeToString(hash)
-    }
-
-    private fun hashPasswordHex(password: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val hash = digest.digest(password.toByteArray())
-        return hash.joinToString("") { "%02x".format(it) }
     }
 }

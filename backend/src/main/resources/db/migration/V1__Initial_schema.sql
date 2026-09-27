@@ -1,6 +1,8 @@
 -- V1__Initial_schema.sql
 -- DataTurntable Initial Database Schema
 
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- Tenants (Recursive Hierarchy)
 CREATE TABLE tenants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -1,6 +1,8 @@
 package com.dataturntable.api
 
 import com.dataturntable.pipeline.Pipeline
+import com.dataturntable.pipeline.PipelineVersion
+import com.dataturntable.pipeline.PipelineVersionService
 import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.PipelineRunNodeLog
 import com.dataturntable.pipeline.PipelineRunStatus
@@ -12,6 +14,7 @@ import com.dataturntable.engine.PipelineConsumer
 import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
 import com.dataturntable.auth.User
+import com.dataturntable.audit.AuditService
 import com.dataturntable.security.SecurityUtils
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.quarkus.security.Authenticated
@@ -22,8 +25,11 @@ import jakarta.transaction.Transactional
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
+import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.eclipse.microprofile.jwt.JsonWebToken
 import java.util.UUID
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 
 @Path("/api/internal/v1/pipelines")
 @Produces(MediaType.APPLICATION_JSON)
@@ -33,7 +39,33 @@ import java.util.UUID
  * Defines the class `PipelineResource`, the contract implemented by this source unit.
  */
 class PipelineResource {
-    private val objectMapper = ObjectMapper()
+    private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
+
+    companion object {
+        /** FR-010: the graph schema versions this backend can currently validate/execute. */
+        val SUPPORTED_GRAPH_SCHEMA_VERSIONS = setOf(1)
+    }
+
+    @Inject
+    lateinit var pipelineVersions: PipelineVersionService
+
+    @Inject
+    lateinit var audit: AuditService
+
+    private fun appendPipelineVersion(pipeline: Pipeline, graph: Any?) {
+        val graphJson = objectMapper.writeValueAsString(graph ?: emptyMap<String, Any>())
+        val latest = em.createQuery("SELECT COALESCE(MAX(v.version), 0) FROM PipelineVersion v WHERE v.pipeline.id = :pipelineId", java.lang.Integer::class.java)
+            .setParameter("pipelineId", pipeline.id)
+            .singleResult.toInt()
+        PipelineVersion().apply {
+            this.pipeline = pipeline
+            version = latest + 1
+            graphDefinition = graphJson
+            schemaVersion = ((graph as? Map<*, *>)?.get("schemaVersion") as? Number)?.toInt() ?: 1
+            contentFingerprint = MessageDigest.getInstance("SHA-256").digest(graphJson.toByteArray(StandardCharsets.UTF_8)).joinToString("") { "%02x".format(it) }
+            persist()
+        }
+    }
 
     /**
      * Implements `allowedModuleTypesForNode` for this source unit.
@@ -61,6 +93,9 @@ class PipelineResource {
 
     @PersistenceContext
     lateinit var em: EntityManager
+
+    @ConfigProperty(name = "quarkus.datasource.db-kind", defaultValue = "postgresql")
+    lateinit var dbKind: String
 
     /**
      * Implements `currentUser` for this source unit.
@@ -110,6 +145,18 @@ class PipelineResource {
      */
     private fun validateGraphDefinition(tenantId: UUID, graphDefinition: Any?): String? {
         if (graphDefinition !is Map<*, *>) return null
+
+        // FR-010: every graph must carry a schemaVersion so a future breaking graph-schema change
+        // has a place to branch on and migrate old fixtures. A missing schemaVersion is treated as
+        // implicit legacy version 1 (matching appendPipelineVersion's existing fallback) rather
+        // than rejected outright — this project has no live production data yet, but existing
+        // callers/tests that predate this field still shouldn't break. An explicitly wrong/
+        // unsupported version IS rejected, since that's a real signal of an incompatible graph.
+        val schemaVersion = (graphDefinition["schemaVersion"] as? Number)?.toInt() ?: 1
+        if (schemaVersion !in SUPPORTED_GRAPH_SCHEMA_VERSIONS) {
+            return "Graph schemaVersion $schemaVersion is not supported (supported: $SUPPORTED_GRAPH_SCHEMA_VERSIONS)"
+        }
+
         val nodes = graphDefinition["nodes"] as? List<*> ?: return null
 
         val nodeIds = mutableSetOf<String>()
@@ -875,9 +922,18 @@ class PipelineResource {
         }
         pipeline.persist()
         em.flush()
+        appendPipelineVersion(pipeline, graphDefinition)
         if (graphDefinition != null) {
             syncConnectorPipelineMap(pipeline.id!!, graphDefinition)
         }
+        audit.record(
+            currentUser.id,
+            tenantUuid,
+            "pipeline.created",
+            "pipeline",
+            pipeline.id.toString(),
+            mapOf("outcome" to "succeeded")
+        )
 
         // Refresh routing tables so MQTT/WS subscriptions stay in sync if pipeline is active
         mqttIngestService.refreshAll()
@@ -928,6 +984,14 @@ class PipelineResource {
                 ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
             requireTenantAccess(currentUser, tenantId, "pipeline:write")?.let { return it }
             pipeline.delete()
+            audit.record(
+                currentUser.id,
+                pipeline.tenant?.id,
+                "pipeline.deleted",
+                "pipeline",
+                pipelineId.toString(),
+                mapOf("outcome" to "succeeded")
+            )
             // Rebuild routing tables to remove this pipeline's subscriptions
             mqttIngestService.refreshAll()
             webSocketConnectionManager.refreshAll()
@@ -958,16 +1022,22 @@ class PipelineResource {
             request["name"]?.let { pipeline.name = it as String }
             request["description"]?.let { pipeline.description = it as String }
             request["isActive"]?.let { pipeline.isActive = it as Boolean }
-            request["importModuleVersionId"]?.let { pipeline.importModuleVersionId = UUID.fromString(it as String) }
-            request["processingModuleVersionIds"]?.let { 
-                (it as List<*>).let { ids -> 
-                    pipeline.processingModuleVersionIds = ids.map { id -> UUID.fromString(id as String) }.toTypedArray()
+            try {
+                request["importModuleVersionId"]?.let { pipeline.importModuleVersionId = parseUuid(it as String, "importModuleVersionId") }
+                request["processingModuleVersionIds"]?.let {
+                    (it as List<*>).let { ids ->
+                        pipeline.processingModuleVersionIds = ids.map { id -> parseUuid(id as String, "processingModuleVersionIds") }.toTypedArray()
+                    }
                 }
-            }
-            request["exportModuleVersionIds"]?.let { 
-                (it as List<*>).let { ids -> 
-                    pipeline.exportModuleVersionIds = ids.map { id -> UUID.fromString(id as String) }.toTypedArray()
+                request["exportModuleVersionIds"]?.let {
+                    (it as List<*>).let { ids ->
+                        pipeline.exportModuleVersionIds = ids.map { id -> parseUuid(id as String, "exportModuleVersionIds") }.toTypedArray()
+                    }
                 }
+            } catch (e: WebApplicationException) {
+                return e.response
+            } catch (e: ClassCastException) {
+                return Response.status(400).entity(mapOf("error" to "Invalid module version id field type")).build()
             }
 
             request["graphDefinition"]?.let {
@@ -978,10 +1048,19 @@ class PipelineResource {
                     return Response.status(400).entity(mapOf("error" to graphValidationError)).build()
                 }
                 pipeline.graphDefinition = objectMapper.writeValueAsString(it)
+                appendPipelineVersion(pipeline, it)
                 syncConnectorPipelineMap(pipeline.id!!, it)
             }
             pipeline.updatedAt = java.time.Instant.now()
             pipeline.persist()
+            audit.record(
+                currentUser.id,
+                pipeline.tenant?.id,
+                "pipeline.updated",
+                "pipeline",
+                pipeline.id.toString(),
+                mapOf("outcome" to "succeeded", "createdVersion" to request.containsKey("graphDefinition"))
+            )
 
             // Refresh connection managers so topic subscriptions stay in sync with graph changes
             mqttIngestService.refreshAll()
@@ -1012,16 +1091,32 @@ class PipelineResource {
             val nodeId   = node["id"]?.toString() ?: continue
             val nodeType = node["type"]?.toString() ?: continue
             val connectorUuid = try { UUID.fromString(connectorId) } catch (_: Exception) { continue }
-            em.createNativeQuery(
-                """INSERT INTO connector_pipeline_map (id, connector_id, pipeline_id, node_id, node_type)
-                   VALUES (gen_random_uuid(), :cid, :pid, :nid, :ntype)
-                   ON CONFLICT (connector_id, pipeline_id, node_id) DO NOTHING"""
-            )
-                .setParameter("cid", connectorUuid)
-                .setParameter("pid", pipelineId)
-                .setParameter("nid", nodeId)
-                .setParameter("ntype", nodeType)
-                .executeUpdate()
+            if (dbKind == "h2") {
+                // H2 test schema lacks PostgreSQL's gen_random_uuid()/ON CONFLICT; production
+                // always uses the atomic path below. The map was just cleared for this pipeline,
+                // so a plain insert is equivalent.
+                em.createNativeQuery(
+                    "INSERT INTO connector_pipeline_map (id, connector_id, pipeline_id, node_id, node_type, created_at) VALUES (:id, :cid, :pid, :nid, :ntype, :createdAt)"
+                )
+                    .setParameter("id", UUID.randomUUID())
+                    .setParameter("cid", connectorUuid)
+                    .setParameter("pid", pipelineId)
+                    .setParameter("nid", nodeId)
+                    .setParameter("ntype", nodeType)
+                    .setParameter("createdAt", java.time.Instant.now())
+                    .executeUpdate()
+            } else {
+                em.createNativeQuery(
+                    """INSERT INTO connector_pipeline_map (id, connector_id, pipeline_id, node_id, node_type)
+                       VALUES (gen_random_uuid(), :cid, :pid, :nid, :ntype)
+                       ON CONFLICT (connector_id, pipeline_id, node_id) DO NOTHING"""
+                )
+                    .setParameter("cid", connectorUuid)
+                    .setParameter("pid", pipelineId)
+                    .setParameter("nid", nodeId)
+                    .setParameter("ntype", nodeType)
+                    .executeUpdate()
+            }
         }
     }
 
@@ -1036,6 +1131,7 @@ class PipelineResource {
     ): PipelineRun {
         val run = PipelineRun().apply {
             this.pipeline = pipeline
+            this.pipelineVersion = pipelineVersions.latestFor(pipeline.id)
             this.triggerType = triggerType
             this.retryOfRunId = retryOfRunId
         }
@@ -1057,9 +1153,7 @@ class PipelineResource {
         try {
             pipelineConsumer.consume(objectMapper.writeValueAsString(triggerMessage))
         } catch (e: Exception) {
-            run.status = PipelineRunStatus.FAILED
-            run.completedAt = java.time.Instant.now()
-            run.errorMessage = e.message ?: "Failed to execute pipeline trigger"
+            run.markFailed(e.message ?: "Failed to execute pipeline trigger")
             run.persist()
         }
 
@@ -1090,6 +1184,14 @@ class PipelineResource {
                 return Response.status(400).entity(mapOf("error" to "Invalid triggerType")).build()
             }
             val run = enqueuePipelineRun(pipeline, parsedTriggerType)
+            audit.record(
+                currentUser.id,
+                pipeline.tenant?.id,
+                "pipeline.run.triggered",
+                "pipeline_run",
+                run.id.toString(),
+                mapOf("outcome" to "accepted", "pipelineId" to pipeline.id.toString(), "triggerType" to parsedTriggerType.name)
+            )
 
             Response.status(201).entity(
                 mapOf(
@@ -1145,6 +1247,14 @@ class PipelineResource {
             mapOf("_retryOfRunId" to sourceRun.id.toString()),
             sourceRun.id
         )
+        audit.record(
+            currentUser.id,
+            pipeline.tenant?.id,
+            "pipeline.run.retried",
+            "pipeline_run",
+            retriedRun.id.toString(),
+            mapOf("outcome" to "accepted", "pipelineId" to pipeline.id.toString(), "retryOfRunId" to sourceRun.id.toString())
+        )
 
         return Response.status(201).entity(
             mapOf(
@@ -1188,14 +1298,22 @@ class PipelineResource {
             return Response.status(404).entity(mapOf("error" to "Run not found for this pipeline")).build()
         }
 
-        if (run.status == PipelineRunStatus.SUCCESS || run.status == PipelineRunStatus.FAILED || run.status == PipelineRunStatus.CANCELLED) {
+        if (com.dataturntable.pipeline.PipelineRunStateMachine.terminal(run.status)) {
             return Response.status(409).entity(mapOf("error" to "Run is already completed")).build()
         }
 
-        run.status = PipelineRunStatus.CANCELLED
-        run.completedAt = java.time.Instant.now()
+        val previousStatus = run.status
+        run.markCancelled()
         run.errorMessage = "Cancelled by user"
         run.persist()
+        audit.record(
+            currentUser.id,
+            pipeline.tenant?.id,
+            "pipeline.run.cancelled",
+            "pipeline_run",
+            run.id.toString(),
+            mapOf("pipelineId" to pipeline.id, "previousStatus" to previousStatus.name)
+        )
 
         return Response.ok(
             mapOf(

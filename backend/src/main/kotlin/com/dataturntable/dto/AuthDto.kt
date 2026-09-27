@@ -10,7 +10,8 @@ import jakarta.validation.constraints.NotBlank
  */
 class LoginRequest @JsonCreator constructor(
     @JsonProperty("email") @Email @NotBlank val email: String,
-    @JsonProperty("passwordHash") @NotBlank val passwordHash: String,
+    @JsonProperty("password") val password: String? = null,
+    @JsonProperty("passwordHash") val passwordHash: String? = null,
     @JsonProperty("tenantId") val tenantId: String? = null
 )
 

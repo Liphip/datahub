@@ -38,9 +38,8 @@ class PipelineLogWriter {
      */
     fun markRunning(runId: UUID) {
         val run = em.find(PipelineRun::class.java, runId) ?: return
-        if (run.status == PipelineRunStatus.CANCELLED) return
-        run.status = PipelineRunStatus.RUNNING
-        run.startedAt = Instant.now()
+        if (PipelineRunStatus.entries.any { it == run.status && com.dataturntable.pipeline.PipelineRunStateMachine.terminal(it) }) return
+        run.markRunning()
         em.merge(run)
     }
 
@@ -50,8 +49,8 @@ class PipelineLogWriter {
      */
     fun markSuccess(runId: UUID, metrics: String?) {
         val run = em.find(PipelineRun::class.java, runId) ?: return
-        run.status = PipelineRunStatus.SUCCESS
-        run.completedAt = Instant.now()
+        if (com.dataturntable.pipeline.PipelineRunStateMachine.terminal(run.status)) return
+        run.markSuccess()
         run.metrics = metrics
         em.merge(run)
     }
@@ -62,8 +61,8 @@ class PipelineLogWriter {
      */
     fun markFailed(runId: UUID, errorMessage: String?, metrics: String?) {
         val run = em.find(PipelineRun::class.java, runId) ?: return
-        run.status = PipelineRunStatus.FAILED
-        run.completedAt = Instant.now()
+        if (com.dataturntable.pipeline.PipelineRunStateMachine.terminal(run.status)) return
+        run.markFailed(errorMessage)
         run.errorMessage = errorMessage
         run.metrics = metrics
         em.merge(run)
