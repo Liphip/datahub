@@ -13,7 +13,10 @@ This document lets another assistant or developer continue the work without the 
 > (or already fixed / reclassified), all pushed, and all 17 review threads marked resolved on
 > GitHub.** The `libexpat` CVE fix initially only patched `backend/Dockerfile`; the container-scan
 > job still failed afterward because `docker/frontend.Dockerfile` (nginx-based, also Alpine 3.24)
-> carries the same gap — see the newest session entry below for the second fix. The full backend
+> carried the same gap — fixed and **confirmed green on CI** (commit `60899b8`, run `36448680758`):
+> every job now passes except the still-open, still-not-code-fixable `DC_NVD_API_KEY` job. **PR #2
+> is effectively done from this session's side** — the only red check is the pre-existing missing-secret
+> one, which needs the owner to add a repo secret, not a code change. The full backend
 > suite on H2 is green:
 > **378 tests, 0 failures, 0 errors, 22 skipped** (all skips are legitimately Postgres/Docker/
 > Python-gated — the previous 9 "unexplained" H2 skips are gone, see the relevant session entry
@@ -1437,6 +1440,20 @@ Two follow-ups after the previous entry:
    `resolveReviewThread` mutation — each already had a reply from this session citing its fixing
    commit, so this was pure bookkeeping (marking threads that were already substantively closed),
    not new analysis.
+
+## Session 2026-09-28 (continued): PR #2 — the frontend libexpat fix confirmed green, CI is effectively done
+
+Pushed commit `60899b8` (the `docker/frontend.Dockerfile` fix from the previous entry) and watched
+the resulting run (`36448680758`) to completion via the PR subscription. Result: **"Build container
+images, scan for vulnerabilities, generate SBOMs" now passes** — both images (backend and frontend)
+are clean of the `libexpat` finding. Every other job passes too (backend tests, Postgres migration
+smoke test, frontend typecheck/build, OpenAPI lint, Kubernetes overlay rendering), except the one
+job that was never fixable from this branch: "Scan Maven and npm dependencies for known
+vulnerabilities" still fails on the missing `DC_NVD_API_KEY` repository secret — already reported
+on the PR in an earlier session entry, reproduced identically on a docs-only commit, and confirmed
+to affect `dev` itself the same way. **No further CI work is pending from this session unless a new
+failure appears or reviewers leave new comments** — the PR is watched and will keep receiving pushes
+for anything new, but as of this write-up there is nothing actionable left.
 
 ## Sources used
 
