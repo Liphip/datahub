@@ -4,7 +4,7 @@ This document lets another assistant or developer continue the work without the 
 
 > **Read this first.** Everything is committed and pushed to `claude/datahub-lakehouse-review-6tiaf5`
 > and the working tree is clean. **The only thing left before landing is asking the owner to open the
-> PR into `dev`** — nothing technical is blocked. The full backend suite on H2 is green: **349 tests,
+> PR into `dev`** — nothing technical is blocked. The full backend suite on H2 is green: **352 tests,
 > 0 failures, 0 errors, 20 skipped** (all 20 are legitimately Postgres/Docker/Python-gated — the
 > previous 9 "unexplained" H2 skips are gone, see the newest session entry). To reproduce the
 > Docker/Python-gated portion on a host you need a Windows JDK 25 **and** a real `python3` on `PATH`
@@ -12,9 +12,11 @@ This document lets another assistant or developer continue the work without the 
 > are in chronological order; the newest is **"the 9 unexplained skips were dead code, not a test
 > bug"**: `ModuleService`/`UserService` and most of `TenantService` had zero live callers and were
 > removed along with the DTOs only they used, rather than re-enabling tests for code nothing calls —
-> that investigation also found and fixed a systemic bug where 13 entities had a `UNIQUE` constraint
+> that investigation also found and fixed a systemic bug where 15 entities had a `UNIQUE` constraint
 > in the Flyway migration that their JPA `@Table` never mirrored, so H2's schema-from-entities test
-> database silently never enforced it.
+> database silently never enforced it (two of the 15, `alert_history.delivery_key` and
+> `module_versions`' content-fingerprint dedup, were found in a follow-up sweep after the first one
+> missed a second SQL syntax the migration uses for unique constraints).
 > Before that, **"TEN-03/NFR-S8: per-tenant PostgreSQL database roles"** closed the last open M0
 > item, verified against a real PostgreSQL 16 instance (cross-tenant access denied at the database
 > layer, not just in application code), and corrected **MOD-15 to Partial** (artifacts are
@@ -959,13 +961,47 @@ Hibernate `validate` mode still accepts every entity's schema as matching the mi
 confirming none of the 13 additions over- or under-declares what's actually in `V1__baseline.sql`.
 Database dropped after the run.
 
-**Not yet done, flagged for whoever picks this up next:** none of these 13 fixes has a dedicated
-regression test the way `CodeModule` now does — that one test exists because writing it was what
-surfaced the bug, not because every entity needed one. Whether it's worth adding a duplicate-insert
-test per entity (or a single parameterized test asserting all 24 migration constraints round-trip
-through Hibernate metadata) is a judgment call for the next session/owner; the `PostgresMigrationBehaviorTest`
-validate-mode pass gives some confidence but, per the finding above, provably doesn't catch this
-exact class of bug on its own.
+**Follow-up: the sweep itself had a gap, and two more real bugs were behind it.** The 13-entity
+sweep above only searched for `ALTER TABLE ... ADD CONSTRAINT ... UNIQUE`, because that's how every
+table-level constraint in the migration is written — except two, which use
+`CREATE UNIQUE INDEX ... ON <table> (...)` instead (same effect, different SQL). Both were missed
+the first time and were the identical bug:
+- `alert_history_delivery_key` (`alert_history.delivery_key`) — the outbox identity that keeps a
+  repeated delivery attempt after a failover from enqueueing the same alert twice
+  (`AlertDispatcher.enqueueInternal`'s own comment says as much). `AlertDispatcher` already does an
+  application-level `SELECT ... WHERE deliveryKey = :k` before inserting, but that's a check-then-act
+  race — the DB constraint is what actually closes it under concurrent replicas, and it wasn't there.
+- `idx_module_versions_fingerprint` (`module_versions(module_id, content_fingerprint)`) — a second,
+  independent uniqueness rule on top of the `(module_id, version)` one already fixed.
+
+Fixed both (`alert/AlertHistory.kt`, `module/ModuleVersion.kt` now declares two `UniqueConstraint`s).
+This time, rather than leave the other 13 untested per the note above, wrote direct-persistence
+regression tests for all of them at once: `alert/EntityUniqueConstraintTest.kt`, three tests —
+duplicate `delivery_key` rejected, `NULL delivery_key` allowed to repeat (standard SQL: `NULL` is
+never equal to `NULL`, so the migration's nullable unique index permits any number of them — a
+duplicate-insert test that didn't also check this would be a false negative waiting to happen), and
+duplicate `content_fingerprint` rejected. These persist through `EntityManager` directly rather than
+through `AlertDispatcher`/`ModuleResource`, so they prove the database constraint itself, independent
+of whatever application-level check does or doesn't exist above it.
+
+**Verified after this follow-up:** compiles clean; full H2 suite **352 tests, 0 failures, 0 errors,
+20 skipped** (349 + 3 new `EntityUniqueConstraintTest` tests, all passing — confirmed in the run log
+that both SQLState `23505` violations actually fire, not just that the test framework didn't
+complain). Re-ran `PostgresMigrationBehaviorTest` against a third fresh PostgreSQL 16 database:
+**1 test, 0 failures, 0 errors** — Hibernate `validate` mode still matches the migration exactly
+with both new constraints declared. Grepped the full migration one more time for every `UNIQUE (`
+occurrence (25 table-level `CONSTRAINT ... UNIQUE` + 2 `CREATE UNIQUE INDEX`, no other syntax used)
+and cross-checked each against its entity — nothing else is missing now.
+
+**Remaining judgment call for whoever picks this up next:** the other 11 of the original 13 fixes
+(all but `CodeModule`, which already has `ModuleResourceTest.testCreateModuleRejectsDuplicateNameAndType`,
+and `AlertHistory`/`ModuleVersion`, now covered by `EntityUniqueConstraintTest`) still have no
+dedicated regression test — only `PostgresMigrationBehaviorTest`'s validate-mode pass, which this
+whole investigation proved doesn't actually catch a missing `@Table` declaration. Whether that's
+worth closing entity-by-entity or with one parameterized test is left open; nothing found in this
+pass suggests it's hiding another live bug the way `AlertHistory`/`ModuleVersion` were, but the
+sweep's own history (missed once, missed a second syntax the first time) argues for not assuming
+that without checking.
 
 ## Sources used
 

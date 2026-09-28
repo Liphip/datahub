@@ -30,7 +30,7 @@ enum class AlertStatus {
 }
 
 @Entity
-@Table(name = "alert_history")
+@Table(name = "alert_history", uniqueConstraints = [UniqueConstraint(columnNames = ["delivery_key"])])
 /**
  * Defines the class `AlertHistory`, the contract implemented by this source unit.
  */
