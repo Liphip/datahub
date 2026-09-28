@@ -1145,6 +1145,61 @@ class DbSaveModule:
 
 Module name, type, description, requirements and config are stored with the module and its versions in the UI; code does not need to declare them.
 
+### 15.9 Worked Examples
+
+The contracts above are minimal signatures. These are complete, realistic modules for common
+tasks, in addition to the full worked example in §13.6 and `docs/examples/energy-14a/`.
+
+**PROCESSING — parse a semicolon-separated CSV line into a typed record** (a common shape for
+German exports; feeds a "Save to metadata" or DB_SAVE node downstream):
+
+```python
+class ProcessingModule:
+    def process(self, data: dict, query_fn=None) -> dict | None:
+        line = data.get("line", "")
+        if not line or line.startswith("#"):
+            return None                       # header or blank line: drop, do not fail the run
+        cols = line.split(";")
+        return {
+            "meter_number": cols[0].strip(),
+            "reading_kwh": float(cols[1].replace(",", ".")),
+            "read_at": cols[2].strip(),
+        }
+```
+
+**ALERT — absence of data, with a per-series cooldown** (custom logic beyond the built-in
+absence rule type, e.g. when the "missing" window depends on the record itself):
+
+```python
+class AlertModule:
+    def evaluate(self, data: dict, alert_fn=None, query_fn=None) -> bool:
+        expected_interval_s = data.get("reportingIntervalSeconds", 900)
+        age_s = data.get("secondsSinceLastReading", 0)
+        if age_s > expected_interval_s * 3:
+            alert_fn(
+                severity="warning",
+                message=f"No reading from {data.get('deviceId')} for {age_s}s "
+                         f"(expected every {expected_interval_s}s)",
+                payload=data,
+                cooldown_seconds=expected_interval_s,
+            )
+            return True
+        return False
+```
+
+**EXPORT — shape a record for a legacy system expecting a fixed field order**:
+
+```python
+class ExportModule:
+    def shape(self, data: dict, connector_meta: dict = None) -> dict:
+        return {
+            "DEVICE": data["deviceId"],
+            "VALUE": round(data["value"], 2),
+            "UNIT": data.get("unit", "kWh"),
+            "TS": data["time"],
+        }
+```
+
 ---
 
 ## 16. Security Model
