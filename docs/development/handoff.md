@@ -2,22 +2,16 @@
 
 This document lets another assistant or developer continue the work without the chat history.
 
-> **Read this first.** Everything is committed and pushed to `claude/datahub-lakehouse-review-6tiaf5`
-> and the working tree is clean. **The PR into `dev` is open: https://github.com/Liphip/datahub/pull/2**
-> (the owner explicitly asked for it to be opened once the branch made sense to move over — see the
-> session entry below). This session is subscribed to its activity and will keep pushing fixes for CI
-> failures and review feedback; check the PR itself for current status rather than assuming this
-> document's snapshot is still current — as of this write-up, CI had one known red job (missing
-> `DC_NVD_API_KEY` secret, not code-fixable, see below), a Codex bot review with six findings, and
-> a Copilot bot review with eleven more, **seventeen bot findings total, all triaged, all real
-> (or already fixed / reclassified), all pushed, and all 17 review threads marked resolved on
-> GitHub.** The `libexpat` CVE fix initially only patched `backend/Dockerfile`; the container-scan
-> job still failed afterward because `docker/frontend.Dockerfile` (nginx-based, also Alpine 3.24)
-> carried the same gap — fixed and **confirmed green on CI** (commit `60899b8`, run `36448680758`):
-> every job now passes except the still-open, still-not-code-fixable `DC_NVD_API_KEY` job. **PR #2
-> is effectively done from this session's side** — the only red check is the pre-existing missing-secret
-> one, which needs the owner to add a repo secret, not a code change. The full backend
-> suite on H2 is green:
+> **Read this first.** **PR #2 has been merged into `dev`: https://github.com/Liphip/datahub/pull/2**
+> — the entire branch's work (this whole document's history) has landed. This session was
+> auto-unsubscribed from the PR on merge; there is nothing further to push to it, and it should not
+> be reopened. If you are picking up follow-on work, start a **fresh** branch from `dev` rather than
+> continuing on `claude/datahub-lakehouse-review-6tiaf5` — that branch's job is done. The one loose
+> end noted before the merge: CI's "Scan Maven and npm dependencies for known vulnerabilities" job
+> was red the whole time on a missing `DC_NVD_API_KEY` repository secret — not code-fixable from any
+> branch; the repo owner needs to add that secret. All other CI was green at merge time, and all 17
+> bot review findings (6 Codex, 11 Copilot) were fixed and their threads resolved. The full backend
+> suite on H2 was green:
 > **378 tests, 0 failures, 0 errors, 22 skipped** (all skips are legitimately Postgres/Docker/
 > Python-gated — the previous 9 "unexplained" H2 skips are gone, see the relevant session entry
 > below). To reproduce the Docker/Python-gated portion on a host you need a Windows JDK 25 **and**
@@ -1454,6 +1448,16 @@ on the PR in an earlier session entry, reproduced identically on a docs-only com
 to affect `dev` itself the same way. **No further CI work is pending from this session unless a new
 failure appears or reviewers leave new comments** — the PR is watched and will keep receiving pushes
 for anything new, but as of this write-up there is nothing actionable left.
+
+## Session 2026-09-28 (continued): PR #2 merged into `dev`
+
+GitHub confirmed the merge (`pull_request.closed`, outcome `merged`) shortly after the previous
+entry — commit `6e61cb7` was the last one on the branch at merge time. This session was
+auto-unsubscribed from the PR's activity. **This closes out the entire review/hardening/merge
+effort this document has tracked.** `claude/datahub-lakehouse-review-6tiaf5` should not receive
+further commits for this work; any follow-on task starts a new branch from `dev`. The only
+outstanding item is not code: the repo owner needs to add a `DC_NVD_API_KEY` secret so the OWASP
+dependency-check job can pass on `dev` and future PRs.
 
 ## Sources used
 
