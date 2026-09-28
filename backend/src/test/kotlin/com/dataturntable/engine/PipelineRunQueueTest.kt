@@ -223,6 +223,14 @@ class PipelineRunQueueTest {
             queue.enqueue(pipelineId, TriggerType.DATA, mapOf("_connectorId" to "c", "payload" to mapOf("device" to "b2", "temp" to 99)))
             sink.received().forEach { assertTrue(consumer.consume(it.payload).success) }
 
+            // Alert delivery goes through the transactional outbox and a scheduled dispatcher, so
+            // the webhooks can land shortly after consume() returns. Wait for them instead of
+            // asserting immediately: under full-suite load the dispatcher had not run yet and this
+            // test failed intermittently with an empty `received` (it passes in isolation, so it
+            // only ever reddened CI). Same bounded-poll idiom as the WebSocket E2E tests.
+            val deadline = System.currentTimeMillis() + 15_000
+            while (received.size < 2 && System.currentTimeMillis() < deadline) Thread.sleep(50)
+
             assertEquals(2, received.size)
             assertTrue(received.any { "\"b1\"" in it } && received.any { "\"b2\"" in it }, received.toString())
         } finally {
