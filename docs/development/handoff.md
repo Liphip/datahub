@@ -8,17 +8,24 @@ This document lets another assistant or developer continue the work without the 
 > session entry below). This session is subscribed to its activity and will keep pushing fixes for CI
 > failures and review feedback; check the PR itself for current status rather than assuming this
 > document's snapshot is still current — as of this write-up, CI had one known red job (missing
-> `DC_NVD_API_KEY` secret, not code-fixable, see below) and a Codex bot review with six findings, all
-> six verified real and fixed, all pushed. The full backend suite on H2 is green: **374 tests,
-> 0 failures, 0 errors, 22 skipped** (all skips are legitimately Postgres/Docker/Python-gated — the
-> previous 9 "unexplained" H2 skips are gone, see the relevant session entry below). To reproduce
-> the Docker/Python-gated portion on a host you need a Windows JDK 25 **and** a real `python3` on
-> `PATH` — the "Tests" section at the top has admin-free download recipes for both. Session entries
-> below are in chronological order; the newest is **"PR #2 — CI red fixed and a bot's six review
-> findings triaged"** (a stray `PostgresTestProfile` bug plus six real, verified Codex findings —
-> two P1s that could break every DB_LOAD/DB_SAVE operation without CREATEROLE, a P1 pipeline-version
-> regression on machine-ingest records, a P1 that could silently drop spooled fire-and-forget records
-> forever, and two P2 permission gaps). Before that, **"OPS-07 — hourly run-history aggregates"**:
+> `DC_NVD_API_KEY` secret, not code-fixable, see below), a Codex bot review with six findings, and
+> a Copilot bot review with eleven more, **seventeen bot findings total, all triaged, all real
+> (or already fixed / reclassified), all pushed.** The full backend suite on H2 is green:
+> **378 tests, 0 failures, 0 errors, 22 skipped** (all skips are legitimately Postgres/Docker/
+> Python-gated — the previous 9 "unexplained" H2 skips are gone, see the relevant session entry
+> below). To reproduce the Docker/Python-gated portion on a host you need a Windows JDK 25 **and**
+> a real `python3` on `PATH` — the "Tests" section at the top has admin-free download recipes for
+> both. Session entries below are in chronological order; the newest two are **"PR #2 — a Copilot
+> review, eleven findings, all verified"** (plaintext secrets in audit metadata, an MQTT lease
+> released by a replica that never owned it, a stale H2 test-schema load script that's been
+> generating spurious "already exists" warnings all session, an unauthenticated dev broker exposed
+> to the whole host network, a dropped image digest pin restored via two independently-verified
+> lookups, and a documented-not-yet-fixed MQTT backup gap) and, before that, **"PR #2 — CI red
+> fixed and a bot's six review findings triaged"** (a stray `PostgresTestProfile` bug plus six
+> real, verified Codex findings — two P1s that could break every DB_LOAD/DB_SAVE operation without
+> CREATEROLE, a P1 pipeline-version regression on machine-ingest records, a P1 that could silently
+> drop spooled fire-and-forget records forever, and two P2 permission gaps). Before that,
+> **"OPS-07 — hourly run-history aggregates"**:
 > `RetentionCleanupService` now folds `pipeline_runs` rows into `pipeline_run_hourly_stats` before
 > deleting them past the retention window, closing OPS-07 from Partial to Done (backend/API only —
 > no UI page for it yet, flagged there). Before that, **"the 9 unexplained skips were dead code, not
@@ -1287,6 +1294,115 @@ beyond the 3 Codex actually flagged in `TenantService.kt`'s diff against `dev` �
 fixing those 3 came back empty, so there's reasonable confidence none remain, but this wasn't an
 exhaustive audit of every ability check in the codebase, only of the specific strings this
 finding named.
+
+## Session 2026-09-28 (continued): PR #2 — a Copilot review, eleven findings, all verified
+
+The six Codex fixes above were pushed (`0c324c5`). Before that push's CI even finished, a
+second bot — GitHub Copilot's own PR review — posted 11 open findings on the same PR (5 High, 5
+Medium, 1 Low, per its own severity badges). None were labeled nit/suggestion/style/minor/low/
+trivial/info by the bot itself, so all 11 were investigated the same way as Codex's: verified
+against the actual code, `git diff origin/dev..HEAD` to confirm each file was actually touched by
+this branch (all 11 were), then fixed or explained. All 11 turned out to need action — nine real
+bugs/gaps to fix, one already fixed by this session's own earlier PostgresTestProfile change, one
+now understood as a documentation gap rather than a code bug.
+
+1. **High — plaintext secret values in audit metadata.** `SecretResource.create`/`rotate` passed
+   `"value" to value` straight into `audit.record`'s metadata map, storing the plaintext secret in
+   `audit_events` — directly contradicting the class's own doc comment ("plaintext is write-only").
+   Removed `value` from both metadata maps; `name`/`version` still recorded.
+2. **High — an MQTT connector lease could be released by a replica that never owned it.**
+   `disconnectConnector`'s `releaseLease` default released the shared DB lease unconditionally, but
+   `ConnectorResource`'s delete/deactivate callbacks call it directly (a fast path, bypassing
+   `refreshConnector`'s `ownsIngestRuntime()` guard) from whatever replica the HTTP request landed
+   on. In an HA deployment with control-api and ingest roles split across replica pools, a
+   control-api-only replica releasing a lease it never held would let another ingest replica
+   acquire a fresh fencing token while the true owner's client is still live and unaware its own
+   token is stale — two replicas consuming the same connector concurrently. Traced `refreshAll`'s
+   own reconcile loop (which already only runs `if (runtimeRoleConfig.ownsIngestRuntime())`) to
+   confirm the owning replica's periodic reconciliation already disconnects+releases correctly on
+   its own within `leaseReconcileIntervalSeconds` — so gating the release the same way loses
+   nothing, it just stops a non-owning replica from interfering. New test file
+   (`MqttConnectionManagerDisconnectTest`, plain instantiation + a Mockito mock of
+   `ConnectorLeaseService`, no `@QuarkusTest`/broker needed) confirmed failing without the fix and
+   passing with it.
+3. **High — H2 test schema tried to re-create two Hibernate-managed tables.** `native-tables.sql`
+   (loaded via `sql-load-script`) `CREATE TABLE`'d `connector_pipeline_map` and
+   `connector_runtime_leases` "raw," on top of Hibernate's own `drop-and-create` schema generation
+   — but both are `@Entity`-mapped now (confirmed by grep), so Hibernate already creates them; the
+   load script's own header comment ("tables Hibernate's generated schema does not contain") is
+   simply stale. This is the source of the `Table "connector_pipeline_map" already exists` /
+   `Table "connector_runtime_leases" already exists` warnings that have appeared in **every single
+   test run this entire session** — dismissed earlier as harmless log noise since they're caught
+   and logged as warnings, not fatal exceptions (so Copilot's specific claim that this "prevents
+   the H2 test application from starting" doesn't match what was actually observed all session —
+   but the underlying redundant, obsolete configuration is real). Removed the `sql-load-script`
+   line and deleted the now-pointless file. Verified: those two warning lines are gone from a full
+   test run's output (`grep -c "already exists"` → 0, was previously dozens per run), and the
+   suite is otherwise unaffected (374/0/0/22 before this batch's other additions).
+4. **High (duplicate of Codex #6) — `AuthorizationResource.explain` still checked the dropped
+   `manage:tenant` string.** Already fixed by the Codex-findings commit just before this one;
+   nothing further to do — noted as resolved rather than silently skipped.
+5. **Medium — machine-ingest can't validate `rate_of_change` alert rules the backend will reject.**
+   `AlertRuleEvaluator` requires `delta >= 0` and a positive `intervalSeconds`
+   (`positiveSeconds("intervalSeconds", 60)`); `alertRules.ts`'s `validateAlertRule` only checked
+   that `delta` was present, so the editor could submit an invalid rule and surface a raw server
+   error instead of the same local validation message every other rule type gets. Added both
+   checks, matching the backend exactly (interval optional — it has a default — but must be
+   positive if given).
+6. **Medium — `PostgresTestProfile.available()`'s Docker check didn't verify reachability, just a
+   socket path/env var's existence.** Already fixed by this session's own earlier change (the
+   `available()` rewrite replaced the raw Docker-socket check with the actual opt-in signal
+   entirely) — confirmed the current file no longer has the flagged code at all; nothing further
+   to do.
+7. **Low — a generated `tsc` build-info file was committed.** `frontend/tsconfig.tsbuildinfo` is
+   `tsc -b`'s own incremental-build cache, not source. Removed it from the repo and added it to
+   `.gitignore` alongside the other frontend build artifacts already ignored there.
+8. **High — the dev Mosquitto broker's unauthenticated ports were published to every host
+   interface, not just the host machine.** `mosquitto.conf`'s own TODO already documents that
+   broker credentials aren't yet pushed to the broker and says to "keep the broker ports inside
+   the host/cluster network" — but `docker-compose.dev.yml` published `1883`/`9001` as bare
+   `"1883:1883"`/`"9001:9001"`, which Docker binds to `0.0.0.0` (every interface), not just
+   localhost. Confirmed the backend reaches the broker over the compose network
+   (`mqtt://mosquitto:1883`, not the published port) and the documented "external" URL is also
+   `localhost:1883`, so binding the published ports to `127.0.0.1` only enforces what the TODO
+   already claims, without breaking anything that actually depends on the wider publish.
+9. **High — an immutable digest pin was replaced by a bare mutable tag.** `git diff origin/dev`
+   showed `grafana/alloy` went from `v1.5.1@sha256:...` to a bare `v1.19.2` somewhere in this
+   branch's earlier history (an image-version-bump commit that dropped the digest in the
+   process) — the one monitoring-stack image in `docker/k8s/monitoring/` that had been digest-pinned,
+   now the one that wasn't. Looked up the real digest for `v1.19.2` two independent ways (Docker
+   Hub's public API, and the registry v2 manifest endpoint's `Docker-Content-Digest` response
+   header with a fresh anonymous pull token) — both agreed
+   (`sha256:b8ec653c44235fbe910879145dac3597d66b0aaecf60bcbbe82580767771a839`) — and pinned it,
+   unlike the trivy-action tag earlier this session where no reliable verification path existed
+   from this session's scoped access; here direct registry API access was available and used.
+10. **High → reclassified as a documentation gap — MQTT broker's durable queue isn't backed up.**
+    `backup.sh` only dumps the two PostgreSQL databases; the bundled broker's `persistence true`/
+    `queue_qos0_messages true` config (`mosquitto-data` volume) can hold messages already
+    acknowledged to a sender for a disconnected platform connector, and a total-loss restore from
+    the dumps alone would lose those. `backup-restore.md` already documented the equivalent gap
+    for Kafka and the ingest spool ("drain ingestion first") but never mentioned the broker's own
+    queue. Rather than attempt an unverified volume-backup implementation (this session has no way
+    to test a real disaster-recovery restore of a Mosquitto persistence store), documented the gap
+    explicitly in both `backup-restore.md` (the existing paragraph, plus a new "Known gaps" entry)
+    and as a runtime note `backup.sh` itself prints after every run — an honest limitation beats a
+    backup script whose completeness is silently overstated.
+11. **Medium — a call site validated `delta` sign for `threshold`/`time_window` but not
+    `rate_of_change`.** Covered by finding 5 above; listed here only because Copilot's summary
+    counted it as a separate item from a second angle on the same diff hunk — no separate action.
+
+**Verified as a whole:** full H2 suite **378 tests, 0 failures, 0 errors, 22 skipped** (374 + 4 new
+`MqttConnectionManagerDisconnectTest` tests). Frontend `tsc --noEmit` clean. Both changed YAML
+files (`alloy.yaml`, `docker-compose.dev.yml`) parse cleanly with `yaml.safe_load`(`_all`) —
+`kubectl`/`kustomize` aren't available in this sandbox to render the full overlay, so that's left
+for CI's own "Kubernetes overlay rendering" job to confirm.
+
+**Not done:** did not attempt to independently re-verify every OTHER third-party image pin in
+`docker/k8s/monitoring/` for the same tag-vs-digest drift — only the one Copilot actually flagged.
+Whether any of `grafana/grafana`, `prom/prometheus`, `grafana/loki`, the exporters, etc. have
+similar unpinned-by-tag-bump history is unchecked; none of them appear to have ever been
+digest-pinned in this branch's history (unlike Alloy), so there may be nothing to find, but this
+wasn't confirmed either way.
 
 ## Sources used
 

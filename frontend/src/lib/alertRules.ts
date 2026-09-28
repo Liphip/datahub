@@ -41,7 +41,13 @@ export function validateAlertRule(rule: AlertRuleConfig): string | null {
   if ((rule.type === 'threshold' || rule.type === 'time_window') && (rule.value === undefined || rule.value === '')) {
     return 'Value is required';
   }
-  if (rule.type === 'rate_of_change' && (rule.delta === undefined || Number.isNaN(rule.delta))) return 'Max change is required';
+  if (rule.type === 'rate_of_change') {
+    if (rule.delta === undefined || Number.isNaN(rule.delta)) return 'Max change is required';
+    if (rule.delta < 0) return 'Max change must not be negative';
+    if (rule.intervalSeconds !== undefined && !(Number(rule.intervalSeconds) > 0)) {
+      return 'Interval must be greater than 0';
+    }
+  }
   if (rule.type === 'time_window' && !(Number(rule.windowSeconds) > 0)) return 'Window must be greater than 0';
   if (rule.type === 'absence' && !(Number(rule.timeoutSeconds) > 0)) return 'Timeout must be greater than 0';
   return null;

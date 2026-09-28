@@ -28,8 +28,11 @@ item stays where the remote system put it.
 
 The monitoring/dashboard Postgres instances (Grafana's own state) and Kafka are not covered —
 they hold operational state that can be rebuilt, not durable tenant-owned state. Records that are
-still in Kafka or in an ingest spool when a backup is taken are not in the dumps; drain ingestion
-first if a backup must contain everything acknowledged so far.
+still in Kafka, in an ingest spool, or **queued in the bundled MQTT broker's own persistent store**
+(`mosquitto-data`, the Docker volume behind `docker/mosquitto/mosquitto.conf`'s
+`persistence true`/`queue_qos0_messages true` — messages the broker has acknowledged for a
+platform connector that is currently disconnected) when a backup is taken are not in the dumps;
+drain ingestion first if a backup must contain everything acknowledged so far.
 
 ## Procedure
 
@@ -129,3 +132,11 @@ run and compared against pre-backup values — not merely once the scripts compl
 - **Point-in-time recovery is out of scope.** This procedure produces periodic full logical dumps,
   not continuous WAL archiving — recovery granularity is "as of the last backup run," not to an
   arbitrary point in time.
+- **The MQTT broker's own durable queue is not backed up.** `mosquitto-data` (the volume behind
+  `persistence true`/`queue_qos0_messages true` in `docker/mosquitto/mosquitto.conf`) can hold
+  messages the broker already acknowledged to a sender for a platform connector that is currently
+  disconnected. `backup.sh` only dumps the two PostgreSQL databases, so a restore from those dumps
+  alone can lose messages that were durably queued at the broker but never reached Kafka. A
+  total-loss restore should either also restore that Docker volume, or the operator should accept
+  that acknowledged-but-undelivered MQTT messages are not covered — this procedure does not yet
+  do either automatically.

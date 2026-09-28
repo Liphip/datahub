@@ -16,6 +16,7 @@ docs-site/site/
 frontend/*.config.js
 !frontend/eslint.config.js
 frontend/*.config.d.ts
+frontend/tsconfig.tsbuildinfo
 !scripts/backup/
 !scripts/backup/backup.sh
 !scripts/backup/restore.sh

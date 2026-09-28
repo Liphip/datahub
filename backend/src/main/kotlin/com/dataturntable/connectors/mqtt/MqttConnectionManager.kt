@@ -210,6 +210,18 @@ class MqttConnectionManager {
 
     /**
      * Disconnect and remove a connector's MQTT client.
+     *
+     * [ConnectorResource]'s create/update/delete callbacks call this directly (a fast path, so a
+     * connector stops the moment it's deleted/deactivated rather than waiting for the next
+     * [refreshAll] reconcile tick) from wherever the HTTP request happened to land — which, in an
+     * HA deployment with API and ingest roles split across replica pools, need not be the replica
+     * actually holding this connector's client or lease. Only release the lease when this replica
+     * owns ingest runtime: a control-api-only replica releasing a lease it never held would let
+     * another ingest replica acquire it (with a fresh fencing token) while the true owner's client
+     * is still live and unaware its token is now stale — two replicas consuming the same connector
+     * concurrently. The owning replica's own [refreshAll] already disconnects and releases
+     * correctly once it next reconciles (within `leaseReconcileIntervalSeconds`), so nothing here
+     * is lost by not doing it from a replica that was never the owner.
      */
     fun disconnectConnector(connectorId: UUID, releaseLease: Boolean = true) {
         clients.remove(connectorId)?.let { client ->
@@ -219,7 +231,7 @@ class MqttConnectionManager {
         }
         subscribedTopicsMap.remove(connectorId)
         leaseTokens.remove(connectorId)
-        if (releaseLease) {
+        if (releaseLease && runtimeRoleConfig.ownsIngestRuntime()) {
             connectorLeaseService.release(connectorId)
         }
     }

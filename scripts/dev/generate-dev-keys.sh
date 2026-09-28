@@ -18,7 +18,7 @@ set -euo pipefail
 KEY_DIR="${KEY_DIR:-./secrets/dev-keys}"
 KEY_BITS="${KEY_BITS:-2048}"
 
-if [ -f "${KEY_DIR}/signing.pem" ] && [ "${FORCE:-0}" != "1" ]; then
+if [ -f "${KEY_DIR}/signing.pem" ] && [ -f "${KEY_DIR}/public.pem" ] && [ "${FORCE:-0}" != "1" ]; then
   echo "==> Keys already present in ${KEY_DIR}; nothing to do."
   echo "    Set FORCE=1 to regenerate (this invalidates all issued tokens)."
   exit 0

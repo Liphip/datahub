@@ -65,7 +65,7 @@ class SecretResource {
         val value = request["value"]?.toString() ?: return Response.status(400).entity(mapOf("error" to "value is required")).build()
         return try {
             val reference = secrets.create(id, name, value)
-            audit.record(currentUser()?.id, id, "secret.created", "secret", reference.id.toString(), mapOf("name" to name, "value" to value))
+            audit.record(currentUser()?.id, id, "secret.created", "secret", reference.id.toString(), mapOf("name" to name))
             Response.status(201).entity(mapOf("id" to reference.id, "name" to reference.name, "version" to reference.version)).build()
         } catch (e: IllegalArgumentException) {
             Response.status(400).entity(mapOf("error" to e.message)).build()
@@ -84,7 +84,7 @@ class SecretResource {
         val value = request["value"]?.toString() ?: return Response.status(400).entity(mapOf("error" to "value is required")).build()
         return try {
             val reference = secrets.rotate(tenant, secret, value)
-            audit.record(currentUser()?.id, tenant, "secret.rotated", "secret", reference.id.toString(), mapOf("name" to reference.name, "version" to reference.version, "value" to value))
+            audit.record(currentUser()?.id, tenant, "secret.rotated", "secret", reference.id.toString(), mapOf("name" to reference.name, "version" to reference.version))
             Response.ok(mapOf("id" to reference.id, "name" to reference.name, "version" to reference.version)).build()
         } catch (e: IllegalArgumentException) {
             Response.status(400).entity(mapOf("error" to e.message)).build()

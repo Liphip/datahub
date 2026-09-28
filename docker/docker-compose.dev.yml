@@ -49,8 +49,12 @@ services:
     image: eclipse-mosquitto:2.0.22
     container_name: dataturntable-mosquitto
     ports:
-      - "1883:1883"
-      - "9001:9001"
+      # Bound to localhost only: the broker accepts unauthenticated clients (see
+      # mosquitto.conf's own TODO), so publishing to every host interface would let anything on
+      # the host's network in, not just the host machine itself. Other containers reach it via
+      # the compose network (mqtt://mosquitto:1883), not this published port.
+      - "127.0.0.1:1883:1883"
+      - "127.0.0.1:9001:9001"
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto-data:/mosquitto/data

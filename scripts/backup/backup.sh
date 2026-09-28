@@ -33,6 +33,8 @@ docker exec "${PIPELINE_CONTAINER}" pg_dump -U "${PIPELINE_USER}" -d "${PIPELINE
   > "${DEST}/pipeline-${PIPELINE_DB}.dump"
 
 echo "==> Both databases dumped; no file storage to archive (records only)."
+echo "    NOTE: this does not back up the MQTT broker's own durable queue (mosquitto-data);"
+echo "    see docs/operations/backup-restore.md's Known gaps."
 
 (cd "${DEST}" && sha256sum -- * > CHECKSUMS.sha256)
 
