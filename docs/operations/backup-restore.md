@@ -1,12 +1,13 @@
-# Backup and restore (NFR-017)
+# Backup and restore (NFR-R11, OPS-03)
 
 > **Status: Implemented for the single-node Docker Compose reference topology
 > (`docker/docker-compose.dev.yml`) and verified by an actual restore drill during this session.
 > NOT implemented, tested, or scheduled for the Kubernetes HA topology
 > (`docker/k8s`, `docker/k8s-ha`)** — see
-> [Known gaps](#known-gaps) below. Per the support-matrix classification in
-> [support-matrix.md](support-matrix.md), treat the Kubernetes backup path as **Planned**, not
-> Implemented, until a real restore drill runs against a live cluster.
+> [Known gaps](#known-gaps) below. The status is kept in the
+> [requirements specification, Appendix A](../specification/requirements-specification.md#appendix-a-traceability-and-implementation-status)
+> (NFR-R11: Partial); treat the Kubernetes backup path as planned until a real restore drill runs
+> against a live cluster.
 
 ## What gets backed up
 
@@ -14,8 +15,8 @@ DataTurntable's durable state lives in two places:
 
 1. **Primary database** (`dataturntable`, container `dataturntable-postgres` in dev) — identity,
    tenants, memberships, roles, pipelines, pipeline versions, runs, run node logs, connectors,
-   connector runtime leases, alert rules/history/channels, module versions, API keys, secrets
-   metadata, data table registry, Flyway history.
+   connector runtime leases, alert history/channels, module versions, API keys, secrets,
+   metadata objects, audit events, data table registry, Flyway history.
 2. **Pipeline data database** (`pipeline_data`, container `dataturntable-pipeline-postgres` in
    dev) — ingested time-series `readings` and any pipeline-created relational tables (Data
    Service).
@@ -25,10 +26,10 @@ payloads are not stored anywhere in the platform (STR-08), so a pulled file, a m
 attachments or an exported binary is reduced to records before it is persisted, and the source
 item stays where the remote system put it.
 
-The monitoring/dashboard Postgres instances (Grafana's own state) and Kafka/Redis are not covered
-— they hold operational/cache state that is reasonable to lose and rebuild, not durable
-tenant-owned state, and are out of scope for this procedure per the spec's own framing of NFR-017
-("representative identity, pipeline/version/run, and data state").
+The monitoring/dashboard Postgres instances (Grafana's own state) and Kafka are not covered —
+they hold operational state that can be rebuilt, not durable tenant-owned state. Records that are
+still in Kafka or in an ingest spool when a backup is taken are not in the dumps; drain ingestion
+first if a backup must contain everything acknowledged so far.
 
 ## Procedure
 

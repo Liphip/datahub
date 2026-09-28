@@ -716,7 +716,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | IMP-05 | ~ | The platform fetches via connectors and the module parses (security: no credentials in containers, CON-05). | Done |
 | IMP-06 – IMP-08 | = | | Done |
 | IMP-09 | + | Ingestion was unauthenticated (security review). | Done (API keys per pipeline/connector, SHA-256 stored, shown once, expiry, revocation, UI page `/api-keys`) |
-| IMP-14 | + | Ingest protections (former FR-007). | Done (payload size, per-key rate `429`, WebSocket connection limit and idle reaper) |
+| IMP-14 | + | Ingest protections (former FR-007). | Partial (1 MB body limit `413`, per-key rate limit `429` — off by default, WebSocket idle reaper; no connection-count limit) |
 | IMP-10 – IMP-13 | + | Fire-and-forget for every input, platform-owned pull inputs, per-connector item ledger, and no unstructured storage (decision of 2026-09-27). | Partial (FILE/FTP/SFTP/EMAIL poller, ledger and retry API done; UI forms done; EMail/FTP/SFTP sources usable) |
 | PIP-01, PIP-02 | = | | Done |
 | PIP-03 | ~ | Fan-in is implemented by the dedicated MERGE node type. | Done |

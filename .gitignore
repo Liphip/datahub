@@ -27,3 +27,6 @@ frontend/*.config.d.ts
 # defect, not a convenience. Anchored to the repository root so it does not also swallow any
 # nested `secrets/` directory (e.g. docker/secrets/).
 /secrets/
+
+# Copied from docs/ at image build time (docker/docs.Dockerfile); never commit a copy
+/docs-site/docs/reference/

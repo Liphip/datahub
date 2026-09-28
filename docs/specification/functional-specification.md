@@ -1,10 +1,10 @@
 # DataTurntable — Functional Specification
 
-**Version:** 2.0
-**Date:** 2026-09-25
+**Version:** 2.2
+**Date:** 2026-09-28
 **Status:** Draft
 
-This version describes the target behaviour agreed in [target-architecture.md](../development/target-architecture.md) and specified in the [requirements specification](requirements-specification.md) v2.0 (requirement IDs in brackets). Where the current implementation differs substantially, an *Implementation note* says so; the per-requirement status is in the requirements specification, Appendix A.
+This document describes how DataTurntable works: the target behaviour specified in the [requirements specification](requirements-specification.md) v2.2 (requirement IDs in brackets). The requirements specification is the authoritative document: it holds the goals, the requirements, the decisions against alternatives, and — in its Appendix A — the only implementation status. Where the current implementation differs substantially from the behaviour described here, a short *Implementation note* says so; it never replaces Appendix A.
 
 ---
 
@@ -118,7 +118,7 @@ UDP datagram                     ────────►                    
 | Access | Reverse proxy | nginx `auth_request` | One login for every component (IAM-09) |
 | Management API | Backend (`control-api`, `public-api`) | Quarkus 3.x (Kotlin / Java 25) | REST APIs, auth, tenants, roles, config, audit |
 | Ingestion | Backend (`ingest-edge`) | Quarkus (REST + MQTT + WS + UDP) | Protocol endpoints; route incoming data into Kafka |
-| Messaging | Internal bus | Apache Kafka (KRaft) | Decouple ingestion and processing; at-least-once delivery; replay |
+| Messaging | Internal bus | Apache Kafka (KRaft) | Decouple ingestion and processing; exactly once for identified records (§4.9); replay |
 | Execution | Backend (`pipeline-executor`) + module workers | Quarkus; Python 3.14 containers/pods | Run pipeline graphs; run user Python code in isolation |
 | Query | Backend (`query`) | Embedded DuckDB, Iceberg | SQL over hot tier and lakehouse; Iceberg REST catalog |
 | Storage | Databases, object storage | PostgreSQL, TimescaleDB, S3-compatible store | Metadata, hot tier, lakehouse |
@@ -179,7 +179,7 @@ The import layer sits at the boundary between the outside world and the pipeline
 
 All passive endpoints authenticate the caller with an API key scoped to the pipeline or connector (IMP-09). Unauthenticated requests are rejected.
 
-*Implementation note:* the ingestion endpoints read but do not yet validate the API key.
+Ingest API keys are created on the API keys page (`/api-keys`, permission `secret:manage`): each key is granted exact pipelines and INPUT connectors, is shown once, stored as a SHA-256 digest, can expire and can be revoked. Keys are cached by digest so ingestion keeps working while the metadata database is unavailable (NFR-R6); a revocation takes effect at once on the instance that handled it and within 30 s on the others.
 
 ### 3.3 Active Pull (IMPORT Module)
 
@@ -703,7 +703,7 @@ Roles, their permissions and assignments are defined per installation (IAM-02); 
 - At most one membership per (user, tenant).
 - No `is_superadmin` column; installation administration comes from system-scope assignments (TEN-05). System scope grants no implicit tenant-data access (TEN-08).
 
-*Implementation note:* today a Tenant Admin membership in the root tenant acts as superadmin with access to all tenants; system-scope assignments replace this.
+*Implementation note:* installation administration is an explicit `is_platform_admin` flag on the user, separate from root-tenant administration; system-scope role assignments that replace it are not built yet.
 
 ### 10.4 Authentication
 
@@ -1094,7 +1094,7 @@ Module name, type, description, requirements and config are stored with the modu
 - Failed login attempts are rate-limited (5 attempts per 15 minutes per IP) and audited.
 - Signing keys and all credentials come from the installation's secrets, never from the image or repository (NFR-S7).
 
-*Implementation note:* a JWT signing key is currently committed to the repository; ingestion API keys are not validated.
+Signing keys are supplied per installation (`DATATURNTABLE_JWT_SIGNING_KEY_LOCATION`, `DATATURNTABLE_JWT_PUBLIC_KEY_LOCATION`); none is part of the repository or the images (NFR-S7). For development, `scripts/dev/generate-dev-keys.sh` creates a throwaway pair in the git-ignored `secrets/dev-keys/`.
 
 ### 16.3 Module Sandboxing
 
@@ -1216,7 +1216,7 @@ Users with `audit.note:write` attach notes to events or add standalone notes to 
 - **Activity tab** on every component's configuration page, filtered to the component and its children (a pipeline includes its versions and runs) (UI-17).
 - **Audit page**: filters for time range, actor, action, target type/id, tenant, outcome, source, full text; saved filters; CSV/JSON export (audited) (AUD-07). Visibility follows `audit:read` scope (AUD-08).
 
-*Implementation note:* no audit trail exists yet; the `AuditLogger` class writes to the console only and is not called.
+*Implementation note:* `AuditService` writes `audit_events` rows for configuration changes (pipelines, connectors, tenants, users, memberships, roles, secrets, API keys, alert channels), run control and logins. There is no read API, UI, hash chain or notes yet.
 
 ---
 

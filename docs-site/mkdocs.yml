@@ -29,11 +29,16 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Developers:
-      - Architecture and Runtime: developer/architecture.md
-      - Source-code Reference: developer/source-reference.md
-      - Source Function Reference: developer/source-function-reference.md
-      - Configuration Reference: developer/configuration-reference.md
-      - Documentation Gaps: developer/documentation-gaps.md
+      - Requirements Specification: reference/specification/requirements-specification.md
+      - Functional Specification: reference/specification/functional-specification.md
+      - Development Setup: reference/development/setup.md
+      - Configuration Reference: reference/development/configuration-reference.md
+      - API Reference: reference/api/README.md
+      - Source-code Reference: reference/development/source-reference.md
+      - Source Function Reference: reference/development/source-function-reference.md
+      - Licences: reference/development/licenses.md
+      - Backup and Restore: reference/operations/backup-restore.md
+      - "Example: §14a EnWG": reference/examples/energy-14a/README.md
   - English:
       - Getting Started: en/getting-started.md
       - Beginner Guide: en/beginner-guide.md

@@ -1,86 +1,71 @@
-# Docker Setup
+# Containers and Deployment
 
-This document describes the Docker infrastructure for DataTurntable.
+Supported targets: a single node with Docker Compose, and Kubernetes (single-instance
+infrastructure or the high-availability overlay). Docker Swarm is not supported (DEP-08). Status
+per target: requirements specification, Appendix A (DEP-01, DEP-02, NFR-R1 – NFR-R11).
 
-## Services
+| Target | What it is | Redundancy |
+|---|---|---|
+| Docker Compose (`docker/docker-compose.dev.yml`) | Development, evaluation and small single-node installations. Same service split as Kubernetes. | None: one broker, one database. Ingest survives a Kafka outage through the local spool, but not the loss of the node (NFR-R8). |
+| Kubernetes (`docker/k8s`) | Runtime roles as Deployments/StatefulSet with autoscaling; PostgreSQL, Kafka and Mosquitto as single instances. | Stateless roles scale and restart; infrastructure is single-instance. |
+| Kubernetes HA (`docker/k8s-ha`) | Overlay replacing the infrastructure with CloudNativePG, Strimzi Kafka (RF 3, min ISR 2) and a RabbitMQ MQTT cluster. See [its README](../../docker/k8s-ha/README.md). | Designed for no loss on single-node failure (NFR-R2, NFR-R7). Render-validated in CI; never run on a real cluster. |
 
-The development environment consists of the following services:
+## Images
 
-| Service | Image | Port | Description |
-|---------|-------|------|-------------|
-| postgresql | timescale/timescaledb:latest-pg16 | 5432 | TimescaleDB for time-series data |
-| kafka | confluentinc/cp-kafka:7.5.0 | 9092 | Message broker for data streaming |
-| mosquitto | eclipse-mosquitto:2 | 1883 | MQTT broker for IoT data |
-| backend | custom (Quarkus) | 8080 | REST API server |
-| frontend | custom (React + Nginx) | 3000 | Web UI |
-| nginx | nginx:alpine | 80 | Reverse proxy |
+| Image | Built from | Content |
+|---|---|---|
+| `dataturntable/backend` | `backend/Dockerfile` | Quarkus application; the role is chosen with `DATATURNTABLE_RUNTIME_ROLE` |
+| `dataturntable/frontend` | `docker/frontend.Dockerfile` | React build served by nginx |
+| `dataturntable/docs` | `docker/docs.Dockerfile` (context: repository root) | Documentation site: `docs-site/` plus the `docs/` tree copied in at build time |
+| Third-party | pinned tags in the Compose file and manifests | `timescale/timescaledb:2.30.1-pg18`, `apache/kafka:4.3.1`, `eclipse-mosquitto:2.0.22`, `nginx`, Prometheus, Loki, Alloy, Grafana, exporters |
 
-## Quick Start
+Licences of every bundled image: [licenses.md](../development/licenses.md).
 
-```bash
-cd docker
-docker-compose -f docker-compose.dev.yml up -d
-```
-
-Wait for all services to become healthy:
-
-```bash
-docker-compose -f docker-compose.dev.yml ps
-```
-
-## Accessing Services
-
-| Service | URL |
-|---------|-----|
-| Frontend (direct) | http://localhost:3000 |
-| Frontend (via nginx) | http://localhost |
-| Backend API | http://localhost:8080 |
-| API (via nginx) | http://localhost/api |
-
-## Health Checks
-
-All services have health checks configured:
-
-- **PostgreSQL**: `pg_isready -U dataturntable`
-- **Kafka**: `kafka-broker-api-versions --bootstrap-server localhost:9092`
-- **Mosquitto**: `mosquitto_sub -t $$SYS/#`
-- **Backend**: `http://localhost:8080/q/health/ready`
-- **Frontend**: `http://localhost/health`
-
-## Environment Variables
-
-### Backend
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| DB_HOST | postgresql | Database host |
-| DB_PORT | 5432 | Database port |
-| DB_NAME | dataturntable | Database name |
-| DB_USER | dataturntable | Database user |
-| DB_PASSWORD | dataturntable | Database password |
-| KAFKA_BOOTSTRAP_SERVERS | kafka:9092 | Kafka servers |
-
-## Troubleshooting
-
-### View logs
+## Docker Compose
 
 ```bash
-# All services
-docker-compose -f docker-compose.dev.yml logs
-
-# Specific service
-docker-compose -f docker-compose.dev.yml logs backend
-docker-compose -f docker-compose.dev.yml logs -f backend
+./scripts/dev/generate-dev-keys.sh
+docker compose -f docker/docker-compose.dev.yml up -d
+docker compose -f docker/docker-compose.dev.yml ps          # wait for healthy
 ```
 
-### Reset volumes
+Services: `postgresql` (metadata), `pipeline-postgresql` (tenant data), `monitoring-postgresql`,
+`dashboard-postgresql`, `kafka`, `mosquitto`, the four backend roles (`control-api`,
+`public-api`, `ingest-edge`, `pipeline-executor`), `frontend`, `nginx` (gateway on port 80),
+`docs`, and the monitoring stack (`prometheus`, `loki`, `alloy`, `grafana`, `dashboard-grafana`,
+exporters, `cadvisor`). URLs and ports: [setup guide](../development/setup.md#full-stack-with-docker-compose).
+
+The backend roles mount `../secrets/dev-keys` at `/keys`. Compose resolves relative bind paths
+against the project directory (`docker/`), hence the `../`.
+
+Troubleshooting:
 
 ```bash
-docker-compose -f docker-compose.dev.yml down -v
+docker compose -f docker/docker-compose.dev.yml logs -f control-api   # one service
+docker compose -f docker/docker-compose.dev.yml up -d --build         # rebuild
+docker compose -f docker/docker-compose.dev.yml down -v               # reset all data
 ```
 
-### Rebuild services
+## Kubernetes
 
 ```bash
-docker-compose -f docker-compose.dev.yml up -d --build
+kubectl apply -k docker/k8s        # single-instance infrastructure
+kubectl apply -k docker/k8s-ha     # HA overlay (install the operators first, see its README)
 ```
+
+Before applying:
+- Populate `docker/k8s/storage/secrets.yaml` (database credentials) and the
+  `dataturntable-jwt-keys` Secret (keys `signing.pem`, `public.pem`); both ship empty. Every
+  backend workload mounts the JWT keys read-only at `/keys`.
+- Set `CONNECTOR_CONFIG_KEY` and, if connectors must reach internal systems,
+  `DATATURNTABLE_CONNECTORS_ALLOWED_NETWORKS` ([configuration reference](../development/configuration-reference.md)).
+- Replace the image placeholders with digests. CI publishes them with a ready
+  `kustomize edit set image` command (NFR-M8).
+
+Layout: `backend/` (four role workloads with autoscalers, PodDisruptionBudgets, execution RBAC
+and network policy; `ingest-edge` is a StatefulSet with a persistent volume for the spool),
+`frontend/`, `docs/`, `infra/messaging.yaml` (Kafka, Mosquitto), `storage/` (PostgreSQL,
+Secrets), `monitoring/`, `ingress/` (hosts `monitoring.`, `dashboard.`, `docs.dataturntable.example.com`).
+
+Modules on Kubernetes run as pods through the Kubernetes execution backend, never through a Docker
+socket (NFR-S3); that backend has not been run against a real cluster yet.

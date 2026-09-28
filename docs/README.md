@@ -1,45 +1,24 @@
 # DataTurntable Documentation
 
-This directory contains product, API, operations, and user documentation.
+Each fact is kept in one place. Start with the document that matches your question.
 
-## Sections
+| Question | Document |
+|---|---|
+| What must the product do, why, and what is built already? | [Requirements specification](specification/requirements-specification.md) — goals, requirements, decisions, **implementation status (Appendix A)** |
+| How does it work? | [Functional specification](specification/functional-specification.md) |
+| What is being worked on, what is open, what did we learn? | [Handoff / work log](development/handoff.md) |
+| How do I run, build and test it? | [Development setup](development/setup.md) |
+| Which settings exist? | [Configuration reference](development/configuration-reference.md) |
+| How do I call the API? | [API guide](api/README.md) (complete contract: generated OpenAPI) |
+| Where is a class and what does it do? | [Source reference](development/source-reference.md), [source function reference](development/source-function-reference.md) (generated) |
+| Which licences are bundled? | [Licences](development/licenses.md) |
+| How do I back up and restore? | [Backup and restore](operations/backup-restore.md) |
+| How are the containers built and deployed? | [Docker and Kubernetes](docker/README.md) |
+| A complete worked example | [§14a EnWG example](examples/energy-14a/README.md) |
+| How do I use the UI? (end users, administrators) | The documentation site: `docs-site/docs/en`, `docs-site/docs/de`, served at `/docs` |
+| How do I contribute, and which document do I update? | [CONTRIBUTING.md](../CONTRIBUTING.md) |
 
-- `api/` - internal API notes and examples
-- `development/` - development plan and setup guides
-- `docker/` - container, deployment, and runtime notes
-- `specification/` - functional and requirements specs
-- `user/` - end-user documentation (i18n)
-
-## User Documentation (i18n)
-
-- English: `docs/user/en/user-guide.md`
-- German: `docs/user/de/benutzerhandbuch.md`
-- User docs index: `docs/user/README.md`
-
-## Developer Documentation
-
-- [Architecture and runtime guide](development/architecture.md)
-- [Source-code reference](development/source-reference.md)
-- [Source function reference](development/source-function-reference.md)
-- [Configuration reference](development/configuration-reference.md)
-- [Documentation gaps and FIXMEs](development/documentation-gaps.md)
-
-## Operations Documentation
-
-- [Backup and restore procedure](operations/backup-restore.md)
-- [Feature and deployment support matrix](operations/support-matrix.md)
-
-The source-code reference maps every production backend and frontend file to its
-implemented responsibility. Public REST contracts remain in `api/README.md` so
-they are documented once, next to request/response examples.
-
-## Web Docs (`/docs`)
-
-A standalone MkDocs Material documentation service is provided at:
-
-- Source: `docs-site/`
-- Runtime URL (subdomain): `docs.localhost`
-- Runtime URL (fallback): `/docs`
-- Framework: MkDocs Material
-
-The docs site is intentionally separate from the React application pages and runs as its own container/service.
+The documentation site (`docs-site/`, served by the `docs` container at `/docs` and
+`docs.localhost`) contains the end-user and administrator guides in English and German. Its
+developer section is copied from this directory when the image is built, so there is no second copy
+to maintain.

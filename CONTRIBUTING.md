@@ -1,169 +1,55 @@
 # Contributing to DataTurntable
 
-Thank you for your interest in contributing to DataTurntable!
+Set up the environment and run the tests as described in
+[docs/development/setup.md](docs/development/setup.md).
 
-## Table of Contents
+## Workflow
 
-- [Code of Conduct](#code-of-conduct)
-- [Getting Started](#getting-started)
-- [Development Environment](#development-environment)
-- [Making Changes](#making-changes)
-- [Testing](#testing)
-- [Commit Guidelines](#commit-guidelines)
-- [Pull Request Process](#pull-request-process)
+1. Create a feature branch from `dev`.
+2. Make the change with its tests and documentation (see below).
+3. Run the checks from the setup guide: backend suite, PostgreSQL migration test when the schema
+   changed, frontend type check, lint, tests and build.
+4. Open a pull request into `dev`. CI (`.github/workflows/ci.yml`) must pass.
 
-## Code of Conduct
+The project has no production installation yet: do not add backward-compatibility code, legacy
+fallbacks or data migrations, and keep dependencies current. Before the first production
+installation, schema changes edit `V1__baseline.sql` directly.
 
-This project and everyone participating in it is governed by our [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.
+## Code
 
-## Getting Started
+- **Backend (Kotlin/Quarkus):** Kotlin conventions; KDoc on public classes and non-obvious
+  functions. Packages are by domain (`api`, `engine`, `connectors`, `metadata`, `security`, …; see
+  the [source reference](docs/development/source-reference.md)). Every REST behaviour change gets a
+  test.
+- **Frontend (React/TypeScript):** functional components with hooks, ESLint clean, every UI text in
+  English and German (`src/i18n/locales`, checked by a test), component tests for new pages.
+- **Security:** never commit secrets. `secrets/` is git-ignored because
+  `scripts/dev/generate-dev-keys.sh` writes a private key there; stage files by path, not with
+  `git add -A`.
+- **Unknowns:** when behaviour depends on a decision nobody has made, add a precise
+  `FIXME` next to the code (what is undecided and what evidence would close it) and an entry under
+  "Open work" in `docs/development/handoff.md`. Do not leave vague TODOs.
 
-1. Fork the repository
-2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/dataturntable.git`
-3. Create a feature branch: `git checkout -b feature/your-feature-name`
+## Documentation
 
-## Development Environment
+Each fact lives in one place; link to it instead of repeating it.
 
-### Prerequisites
+| Change | Update |
+|---|---|
+| A requirement is implemented or its status changes | `docs/specification/requirements-specification.md`, Appendix A, in the same change |
+| New or changed requirement, or a decision against an alternative | The SRS (requirements; section 12 for decisions) |
+| Behaviour or design changes | `docs/specification/functional-specification.md` |
+| REST request, response, status or permission changes | `docs/api/README.md` |
+| New or changed environment variable or config key | `docs/development/configuration-reference.md` |
+| A class gains or changes a responsibility | `docs/development/source-reference.md`; regenerate `source-function-reference.md` with `scripts/generate-source-function-reference.ps1` |
+| User or operator workflow changes | The user guides (`docs-site/docs/en`, `docs-site/docs/de`) and `docs/operations/` |
+| New dependency or image | `docs/development/licenses.md` |
+| Work in progress, findings, next steps | `docs/development/handoff.md` (kept current so anyone can take over) |
 
-- Docker & Docker Compose
-- Java 21+
-- Maven 3.9+
-- Node.js 18+
-- npm 9+
+Never present planned or untested behaviour as implemented (NFR-M9).
 
-### Local Development
+## Commits and pull requests
 
-1. Start infrastructure:
-```bash
-cd docker
-docker-compose -f docker-compose.dev.yml up -d
-```
-
-2. Run backend:
-```bash
-cd backend
-mvn quarkus:dev
-```
-
-3. Run frontend:
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-## Making Changes
-
-### Backend (Quarkus/Kotlin)
-
-- Follow Kotlin coding conventions
-- Use meaningful variable names
-- Add KDoc comments for public APIs
-- Write unit tests for new features
-
-### Frontend (React/TypeScript)
-
-- Follow ESLint configuration
-- Use TypeScript for all new code
-- Write component tests
-- Use functional components with hooks
-
-### File Organization
-
-```
-backend/
-├── src/main/kotlin/com/dataturntable/
-│   ├── api/          # REST endpoints
-│   ├── service/      # Business logic
-│   ├── entity/       # Database entities
-│   └── dto/         # Data transfer objects
-
-frontend/
-├── src/
-│   ├── components/   # Reusable UI components
-│   ├── pages/       # Page components
-│   ├── services/    # API services
-│   ├── stores/      # State management
-│   └── __tests__/   # Test files
-```
-
-## Testing
-
-<!-- TODO: Add a CI workflow for the documented checks
-     Details: The repository contains no GitHub Actions workflow, so Maven compilation/tests, frontend type-check/build/tests, and manifest rendering are not automatically enforced for pull requests. Add a reproducible CI matrix and make its required checks visible here. -->
-### Backend Tests
-
-Run unit tests:
-```bash
-cd backend
-mvn test
-```
-
-Run integration tests:
-```bash
-cd backend
-mvn verify
-```
-
-### Frontend Tests
-
-Run tests:
-```bash
-cd frontend
-npm test
-```
-
-Run with coverage:
-```bash
-cd frontend
-npm run test:coverage
-```
-
-## Commit Guidelines
-
-We follow [Conventional Commits](https://conventionalcommits.org/) for commit messages:
-
-```
-<type>(<scope>): <description>
-
-[optional body]
-
-[optional footer]
-```
-
-Types:
-- `feat`: A new feature
-- `fix`: A bug fix
-- `docs`: Documentation only changes
-- `style`: Changes that don't affect code meaning (formatting)
-- `refactor`: Code change that neither fixes a bug nor adds a feature
-- `test`: Adding or updating tests
-- `chore`: Changes to build process or auxiliary tools
-
-Examples:
-```
-feat(auth): add JWT token refresh
-fix(module): handle null version tag
-docs(api): update endpoint documentation
-test(pipeline): add integration tests for pipeline execution
-```
-
-## Pull Request Process
-
-1. Ensure all tests pass locally
-2. Update documentation for any changes
-3. Add a clear description of the changes
-4. Link any related issues
-5. Request review from maintainers
-
-### PR Title Format
-
-Use the same format as commit messages:
-```
-feat(auth): add user registration endpoint
-```
-
-## Questions?
-
-Feel free to open an issue for questions about contributing.
+[Conventional Commits](https://conventionalcommits.org/): `<type>(<scope>): <description>`, with
+types `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`. Pull request titles use the same
+format. Describe what changed and why, link related issues, and list what was verified.

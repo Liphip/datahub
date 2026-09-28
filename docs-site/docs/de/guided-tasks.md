@@ -59,6 +59,21 @@
 4. Name/Defaults setzen.
 5. Speichern und Baumstruktur pruefen.
 
+## Aufgabe 8: Performance-Regression untersuchen
+
+1. Startzeitpunkt der Regression in den Dashboard-Trends bestimmen.
+2. In Grafana die p95-Latenz vorher und nachher vergleichen.
+3. In Loki nach Fehler- oder Retry-Spitzen suchen.
+4. Letzte Modul- und Pipeline-Versionen pruefen.
+5. Bei hohem Risiko auf die vorherige Version zurueckrollen.
+
+## Aufgabe 9: Mandantenzugriff validieren (Admin)
+
+1. Read-only-Testbenutzer anlegen.
+2. Rolle Viewer in einem Nicht-Produktions-Mandanten zuweisen.
+3. Pruefen: lesen erlaubt, aendern verboten.
+4. Nachweis dokumentieren (Screenshots und Audit-Notiz).
+
 ## Praktische Tipps
 
 - Immer zuerst den aktiven Mandanten pruefen.

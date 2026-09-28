@@ -1,70 +1,119 @@
 # Configuration Reference
 
-This reference is derived from `backend/src/main/resources/application.yaml` and
-the development compose stack. Environment variables override the defaults shown
-below. Development defaults are deliberately convenient; they are not production
-secrets.
+Every environment variable the backend reads, taken from `backend/src/main/resources/application.yaml`
+and the code (`CONNECTOR_CONFIG_KEY`). Environment variables override the defaults. Development
+defaults are convenient, not production secrets. Update this page in the same change as
+`application.yaml`.
 
-## Core services
+## Databases and messaging
 
-| Variable | Default | Used by | Meaning |
+| Variable | Default | Key | Meaning |
 |---|---|---|---|
-| `DB_HOST`, `DB_PORT`, `DB_NAME` | `localhost`, `5432`, `dataturntable` | Quarkus datasource | Application metadata database location |
-| `DB_USER`, `DB_PASSWORD` | `dataturntable` | Quarkus datasource | Application metadata database credentials |
-| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | reactive messaging | Kafka bootstrap address for pipeline topics |
-| `REDIS_HOSTS` | `redis://localhost:6379` | connector/runtime coordination | Redis client address |
-| `DATATURNTABLE_PIPELINE_DATA_JDBC_URL` | empty | pipeline data service | Separate JDBC URL for tenant pipeline data |
-| `DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME`, `DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD` | empty | pipeline data service | Credentials for the pipeline-data database |
+| `DB_HOST`, `DB_PORT`, `DB_NAME` | `localhost`, `5432`, `dataturntable` | `quarkus.datasource.jdbc.url` | Application (metadata) database |
+| `DB_USER`, `DB_PASSWORD` | `dataturntable` (none in `%prod`) | `quarkus.datasource.*` | Metadata database credentials; required in production |
+| `DATATURNTABLE_PIPELINE_DATA_JDBC_URL`, `..._USERNAME`, `..._PASSWORD` | empty | `dataturntable.pipeline-data.jdbc.*` | Separate database for tenant pipeline data (DB_LOAD/DB_SAVE); falls back to the metadata datasource |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | `kafka.bootstrap.servers`, messaging channels | Kafka bootstrap address |
+| `PIPELINE_CONSUMER_CONCURRENCY` | `4` | `mp.messaging.incoming.pipeline-input.concurrency` | Parallel consumers per executor instance |
 
-## Runtime roles and connector leases
+## Security
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DATATURNTABLE_RUNTIME_ROLE` | `all` | Selects `all`, `control-api`, `public-api`, `ingest-edge`, or `pipeline-executor` responsibilities |
-| `DATATURNTABLE_RUNTIME_INSTANCE_ID` | empty | Stable identity used by the runtime where configured |
-| `DATATURNTABLE_CONNECTOR_LEASE_TTL_SECONDS` | `45` | Redis connector-lease lifetime |
-| `DATATURNTABLE_CONNECTOR_LEASE_RECONCILE_INTERVAL_SECONDS` | `20` | Frequency of connector ownership reconciliation |
+| `DATATURNTABLE_JWT_SIGNING_KEY_LOCATION` | none | PKCS#8 private key for issuing tokens. Required; the backend does not start without it (NFR-S7, NFR-S11). Development: `scripts/dev/generate-dev-keys.sh` |
+| `DATATURNTABLE_JWT_PUBLIC_KEY_LOCATION` | none | Matching SPKI public key for verifying tokens. Required |
+| `CONNECTOR_CONFIG_KEY` | none | Base64 of exactly 32 bytes; AES key for connector configurations and secrets at rest. Required with the `prod` profile (startup fails without it); without it outside `prod`, values are stored unencrypted |
+| `DATATURNTABLE_CONNECTORS_ALLOWED_NETWORKS` | empty | Comma-separated CIDR list of internal networks connectors may reach, e.g. `10.20.0.0/16,192.168.5.0/24`. Empty: loopback, private, link-local and multicast destinations are refused; cloud metadata endpoints are refused always (NFR-S9) |
+
+## Runtime roles and connectors
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DATATURNTABLE_RUNTIME_ROLE` | `all` | `all`, `control-api`, `public-api`, `ingest-edge` or `pipeline-executor` (functional specification §2.2) |
+| `DATATURNTABLE_RUNTIME_INSTANCE_ID` | empty | Stable instance identity for connector leases |
+| `DATATURNTABLE_CONNECTOR_LEASE_TTL_SECONDS` | `30` | Lifetime of a connector ownership lease in PostgreSQL (NFR-R10) |
+| `DATATURNTABLE_CONNECTOR_LEASE_RECONCILE_INTERVAL_SECONDS` | `10` | How often ownership is reconciled |
+| `DATATURNTABLE_FILE_BASE_DIR` | `/data/files` | Root directory that FILE (directory inbox) connectors may read |
+
+## Ingestion
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DATATURNTABLE_INGEST_SPOOL_DIR` | `${java.io.tmpdir}/…` | Local fsync'd spool for records Kafka refused (NFR-R7). Use a persistent volume in production (the Kubernetes ingest edge is a StatefulSet with a PVC) |
+| `quarkus.http.limits.max-body-size` | `1M` | Largest accepted request body; larger ingest requests get `413` (IMP-14) |
+| `dataturntable.ingest.spool-enabled` | `true` | Use the spool when Kafka refuses a record |
+| `dataturntable.ingest.spool-after` | `5s` | How long a Kafka write may take before the record goes to the spool |
+| `dataturntable.ingest.spool-segment-bytes`, `spool-max-bytes` | 16 MiB, 10 GiB | Spool segment size and total cap; beyond the cap ingest answers `503` |
+| `dataturntable.ingest.spool-drain-timeout` | `25s` | Time budget per drain attempt |
+| `dataturntable.ingest.rate-limit-per-minute` | `0` (off) | Per-key ingest limit (`429` beyond it). Off by default: fire-and-forget senders do not retry, so a limit trades their data for overload protection |
+| `DATATURNTABLE_INGEST_WEBSOCKET_IDLE_TIMEOUT_MS` | `300000` | Idle WebSocket ingest sessions are closed after this time (IMP-14) |
+| `DATATURNTABLE_INGEST_WEBSOCKET_IDLE_REAP_INTERVAL` | `10s` | How often idle sessions are checked |
+
+## Alerts and mail
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DATATURNTABLE_ALERT_COOLDOWN_SECONDS` | `300` | Default alert cooldown (ALT-07) |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, `SMTP_START_TLS` | `localhost`, `25`, `dataturntable@localhost`, `OPTIONAL` | Mail server for e-mail alert channels |
+
+## Retention
+
+All categories default to `-1` (keep indefinitely) until an installation opts in (STR-07, OPS-07).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DATATURNTABLE_RETENTION_CHECK_INTERVAL` | `24h` | How often the cleanup runs (on `control-api` only) |
+| `DATATURNTABLE_RETENTION_PIPELINE_RUNS_DAYS` | `-1` | Runs and node logs |
+| `DATATURNTABLE_RETENTION_ALERT_HISTORY_DAYS` | `-1` | Alert history and deliveries |
+| `DATATURNTABLE_RETENTION_AUDIT_EVENTS_DAYS` | `-1` | Audit events |
+| `DATATURNTABLE_RETENTION_READINGS_DAYS` | `-1` | Pipeline data readings |
+
+## Observability
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DATATURNTABLE_OTEL_DISABLED` | `true` | Set to `false` to enable OpenTelemetry tracing (NFR-M7) |
+| `DATATURNTABLE_OTEL_ENDPOINT` | `http://localhost:4317` | OTLP endpoint |
 
 ## Grafana integration
 
-`DATATURNTABLE_GRAFANA_DASHBOARD_*` configures the dashboard Grafana target and
-`DATATURNTABLE_GRAFANA_MONITORING_*` configures the monitoring Grafana target.
-Both targets have an `ENABLED`, `BASE_URL`, `ADMIN_USER`, and `ADMIN_PASSWORD`
-setting. Dashboard provisioning also uses `DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_`
-variables for host, port, database, user, password, and SSL mode.
+`DATATURNTABLE_GRAFANA_DASHBOARD_*` configures the dashboard Grafana (tenant dashboards) and
+`DATATURNTABLE_GRAFANA_MONITORING_*` the monitoring Grafana (system monitoring).
 
-The checked-in `admin/admin` defaults are only suitable for the local compose
-environment. Set explicit secret values in each deployment and do not expose a
-Grafana admin account through general application configuration.
+| Variable | Default | Meaning |
+|---|---|---|
+| `DATATURNTABLE_GRAFANA_{DASHBOARD,MONITORING}_ENABLED` | `false` | Enable reconciliation of users, organisations and data sources |
+| `DATATURNTABLE_GRAFANA_DASHBOARD_BASE_URL` | `http://dashboard-grafana:3000` | Admin API base URL |
+| `DATATURNTABLE_GRAFANA_MONITORING_BASE_URL` | `http://grafana:3000` | Admin API base URL |
+| `DATATURNTABLE_GRAFANA_{DASHBOARD,MONITORING}_ADMIN_USER`, `..._ADMIN_PASSWORD` | none | Required when enabled; no default credentials |
+| `DATATURNTABLE_GRAFANA_DASHBOARD_DATASOURCE_{HOST,PORT,DATABASE,USER,PASSWORD,SSL_MODE}` | port `5432`, SSL `disable` | Pipeline-data database provisioned as tenant data sources |
+
+The Compose stack starts both Grafana instances with `admin/admin`. That is for local
+development only; set explicit credentials in every other deployment.
 
 ## Module execution and MQTT defaults
 
-| Variable/key | Default | Meaning |
+| Key / variable | Default | Meaning |
 |---|---|---|
-| `dataturntable.docker.module.base-image` | `python:3.14.7-slim-trixie` | Base image used for user module containers |
-| `dataturntable.docker.module.network` | `dataturntable` | Docker network connected to module containers |
-| `dataturntable.docker.resources.cpu-limit` | `1.0` | CPU limit passed to module containers |
-| `dataturntable.docker.resources.memory-limit` | `512m` | Memory limit passed to module containers |
-| `MQTT_INTEGRATED_INTERNAL_BROKER_URL` | `mqtt://mosquitto:1883` | UI default reachable from the stack |
-| `MQTT_INTEGRATED_EXTERNAL_BROKER_URL` | `mqtt://localhost:1883` | UI default reachable from a developer machine |
-| `MQTT_INTEGRATED_WEBSOCKET_URL` | `ws://localhost:9001` | UI MQTT-over-WebSocket default |
-| `MQTT_INTEGRATED_DEFAULT_TOPIC` | `dataturntable/events` | Initial topic suggested in the UI |
+| `dataturntable.docker.module.base-image` | `python:3.14.7-slim-trixie` | Base image for module containers |
+| `dataturntable.docker.module.network` | `dataturntable` | Docker network for modules that are granted network access |
+| `dataturntable.docker.resources.cpu-limit`, `.memory-limit` | `1.0`, `512m` | Container limits (MOD-04) |
+| `MQTT_INTEGRATED_INTERNAL_BROKER_URL` | `mqtt://mosquitto:1883` | Bundled broker as seen from the stack (UI default) |
+| `MQTT_INTEGRATED_EXTERNAL_BROKER_URL` | `mqtt://localhost:1883` | Bundled broker as seen from a developer machine (UI default) |
+| `MQTT_INTEGRATED_WEBSOCKET_URL` | `ws://localhost:9001` | MQTT over WebSocket (UI default) |
+| `MQTT_INTEGRATED_DEFAULT_TOPIC` | `dataturntable/events` | Topic suggested in the UI |
 
-## Profiles and operational rules
+## Profiles
 
-- `%test` uses an in-memory H2 database, disables Flyway migration and inbound
-  pipeline consumption, and disables background runtime work.
-- `%dev` and `%prod` override datasource/Kafka/Redis connection values; `%prod`
-  also establishes datasource pool bounds.
-- The role profiles turn off inbound pipeline consumption everywhere except the
-  executor profile.
-- Flyway runs on normal application startup. Treat migrations as a deployment
-  concern and back up the application database before release.
+- `%test`: H2 in memory, Flyway off (schema from the entities), inbound pipeline consumption and
+  background jobs off, `allowed-networks: 127.0.0.0/8` for local test receivers.
+- `%dev` and `%prod` override datasource and Kafka values; `%prod` sets pool bounds and requires
+  credentials.
+- Role profiles disable inbound pipeline consumption everywhere except `pipeline-executor`.
+- Flyway runs at startup. Back up the metadata database before an upgrade.
 
 ## Secrets
 
-Never commit production values for database passwords, Grafana credentials, JWT
-private keys, connector credentials, or external alert tokens. Inject them using
-the deployment platform's secret mechanism. The current JWT key and insecure
-Grafana defaults are called out in [documentation gaps](documentation-gaps.md)
-because the repository cannot safely invent a production key-management policy.
+Never commit production values for database passwords, Grafana credentials, JWT keys, the
+connector encryption key, connector credentials or alert tokens. Inject them with the deployment's
+secret mechanism (Compose `env_file`/secrets, Kubernetes Secrets). Connector and alert-channel
+credentials are stored as platform secrets and referenced with `secretRefs` (CON-18).

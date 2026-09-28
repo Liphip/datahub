@@ -34,12 +34,22 @@ often-stale comments while keeping every callable contract discoverable.
 | `pipeline/PipelineRun.kt` | Persisted pipeline execution state and result metadata. |
 | `pipeline/PipelineRunNodeLog.kt` | Per-node execution log entity. |
 | `alert/AlertChannel.kt` | Alert delivery-channel entity and channel type enum. |
-| `alert/AlertRule.kt` | Alert rule entity and tenant lookup. |
 | `alert/AlertHistory.kt` | Alert attempt/history entity, severity/status enums, and recent-history lookup. |
 | `connectors/Connector.kt` | Connector configuration entity and connector type/direction/status enums. |
 | `connectors/BrokerCredential.kt` | Broker credential entity and credential lifecycle metadata. |
 | `grafana/GrafanaSyncState.kt` | Persisted Grafana synchronization cursor/state. |
 | `grafana/GrafanaInstanceConfig.kt` | Resolves target-specific Grafana configuration and validates whether it is usable. |
+| `alert/AlertRuleState.kt` | Per rule node and series state of built-in alert rules (last value, window, cooldown). |
+| `audit/AuditEvent.kt` | Append-only audit event entity; metadata is redacted before persistence. |
+| `auth/ApiKey.kt` | Ingest API key entity: SHA-256 digest, tenant, granted `ingest:*` abilities, expiry, last use. |
+| `authorization/Ability.kt` | Normalised permission token entity (`abilities` table). |
+| `connectors/ConnectorPipelineMap.kt`, `connectors/ConnectorRuntimeLease.kt`, `data/DataTableRegistryRecord.kt` | Tables accessed with native SQL, mapped so the H2 test schema contains them. |
+| `connectors/ConnectorRevision.kt` | Immutable encrypted configuration snapshot per connector change (CON-17). |
+| `events/ConsumerDeadLetter.kt` | Record of a pipeline message the executor could not use. |
+| `execution/Execution.kt`, `execution/ExecutionQuotaLock.kt` | Durable execution record and the lock row used while reserving execution capacity. |
+| `metadata/MetadataEntities.kt` | Metadata types, objects, identifiers, attribute versions and relations with validity periods. |
+| `pipeline/PipelineVersion.kt` | Immutable pipeline graph version referenced by runs (PIP-16). |
+| `secrets/Secret.kt`, `secrets/SecretVersion.kt` | Secret and its encrypted, versioned values. |
 
 ## Management and ingestion API
 
@@ -64,6 +74,14 @@ reference; add a new route there in the same change as its handler.
 | `api/AlertResource.kt` | Alert-channel/rule CRUD and bounded delivery-history retrieval. |
 | `api/MonitoringResource.kt` | Monitoring snapshot and status endpoints. |
 | `api/GrafanaSyncResource.kt` | Explicit Grafana synchronization operations and state visibility. |
+| `api/ApiErrorContract.kt` | Uniform error envelope (`code`, `message`, `details`), request ids and security response headers (API-10, NFR-S12). |
+| `api/TransientFailureMapper.kt` | Maps lost database connections to `503` + `Retry-After` and constraint violations (SQLState 23xxx) to `409`/`400`. |
+| `api/ApiKeyResource.kt` | Creates (shown once), lists and revokes ingest API keys (`secret:manage`). |
+| `api/AuthorizationResource.kt` | `GET /authorization/explain`: why a user has or lacks a permission (IAM-15). |
+| `api/EventDlqResource.kt` | Lists and retries dead-lettered pipeline messages (PIP-13). |
+| `api/ExecutionResource.kt` | Submits, reads and cancels module executions through the execution service. |
+| `api/MetadataResource.kt` | Metadata types, objects, upsert, CSV import, resolve and template installation (`metadata:read`/`metadata:write`). |
+| `api/SecretResource.kt` | Creates and rotates secrets; exposes references only, values are write-only. |
 
 ## Services and application policy
 
@@ -73,13 +91,21 @@ reference; add a new route there in the same change as its handler.
 | `service/UserService.kt` | User CRUD/business rules independent of HTTP transport. |
 | `service/TenantService.kt` | Tenant creation, hierarchy traversal, inherited/default configuration, and tenant validation. |
 | `service/ModuleService.kt` | Module/version creation, lookup, and version lifecycle policy. |
-| `service/PipelineService.kt` | Pipeline creation/update, graph validation, trigger preparation, and run state transitions. |
 | `service/PipelineDataService.kt` | Tenant schema/table creation and parameterized pipeline-data access. |
-| `service/KafkaService.kt` | Topic naming/creation and pipeline message publication. |
 | `service/GrafanaSyncService.kt` | Builds and synchronizes Grafana resources for supported scopes. |
 | `service/GrafanaProvisioningService.kt` | Provisions datasources/dashboards against a configured Grafana instance. |
 | `alert/AlertDispatcher.kt` | Evaluates condition trees, observes cooldowns, records alert history, and dispatches per channel. |
 | `logging/AuditLogger.kt` | Emits structured audit records for security-relevant changes. |
+| `alert/AlertRuleEvaluator.kt` | Evaluates built-in ALERT node rules (threshold, rate of change, time window, absence) with cooldown. |
+| `alert/AlertRuleScheduler.kt` | Periodically evaluates absence rules on every executor; each silence is reported once. |
+| `alert/AlertChannelSecretReferenceResolver.kt` | Resolves channel secret references in memory only, for delivery. |
+| `audit/AuditService.kt` | Writes audit events in the caller's transaction. |
+| `authorization/AuthorizationGrantService.kt` | Replaces and normalises the permission tokens of roles, memberships and users. |
+| `events/ConsumerDeadLetterService.kt` | Records and lists dead-lettered messages (redacted). |
+| `metadata/MetadataService.kt` | Metadata upsert with as-of versioning, identifier resolution (including merge by another identifier), relations and enrichment lookups. |
+| `pipeline/PipelineVersionService.kt` | Finds the version a run executes. |
+| `secrets/SecretService.kt` | Encrypts, versions, rotates and resolves secrets. |
+| `service/RetentionCleanupService.kt` | Deletes runs, alert history, audit events and readings past their configured age (control API only). |
 
 ## Connector runtime
 
@@ -88,17 +114,23 @@ reference; add a new route there in the same change as its handler.
 | `connectors/ConnectorInterfaces.kt` | Common connection, reader, and writer contracts implemented by connector types. |
 | `connectors/ConnectorManager.kt` | Starts/stops registered connector implementations and coordinates lifecycle. |
 | `connectors/ConnectorRuntimeService.kt` | Binds persisted connectors to the active runtime role and reconciles their runtime state. |
-| `connectors/ConnectorLeaseService.kt` | Uses Redis leases to ensure one eligible instance owns a connector runtime. |
+| `connectors/ConnectorLeaseService.kt` | Uses PostgreSQL leases (heartbeat, expiry, fencing token) so one instance owns a connector runtime (NFR-R10). |
 | `connectors/ConnectorStatusService.kt` | Records and exposes connection health/status changes. |
 | `connectors/ConnectorMetrics.kt` | Creates and updates connector observability metrics. |
 | `connectors/polling/ConnectorPollingService.kt` | Schedules polling connector reads and submits resulting records. |
 | `connectors/http/HttpConnector.kt` | HTTP connector connection/read/write implementation. |
 | `connectors/mqtt/MqttConnector.kt` | MQTT connector implementation and subscription/publication configuration. |
 | `connectors/mqtt/MqttConnectionManager.kt` | Owns MQTT client connections and reconnection lifecycle. |
-| `connectors/mqtt/MqttIngestService.kt` | Converts MQTT messages to ingestion work. |
 | `connectors/mqtt/MqttMessageRouter.kt` | Routes MQTT payloads to matching connector/pipeline targets. |
 | `connectors/websocket/WebSocketConnector.kt` | WebSocket connector implementation. |
 | `connectors/websocket/WebSocketConnectionManager.kt` | Owns outbound WebSocket sessions, reconnects, and message delivery. |
+| `connectors/AfterCommit.kt` | Runs connection-manager updates after the transaction commits. |
+| `connectors/ConnectorSecretReferenceResolver.kt` | Resolves connector secret references in runtime memory only. |
+| `connectors/DestinationPolicy.kt` | Refuses loopback, private, link-local, multicast and metadata destinations unless allowed (NFR-S9). |
+| `connectors/inbox/InboxPoller.kt` | Polls FILE/FTP/SFTP/EMAIL connectors, keeps the item ledger (`ConnectorInboxItem`), applies `minAge` and the post-read action. |
+| `connectors/inbox/InboxSource.kt` | Source abstraction: list, read and finish items. |
+| `connectors/inbox/DirectorySource.kt`, `FtpSource.kt`, `SftpSource.kt`, `ImapSource.kt` | Directory (sandboxed to the base dir), FTP/FTPS, SFTP (pinned host key) and IMAP sources. |
+| `connectors/inbox/InboxParser.kt` | Turns files and attachments into records (CSV, JSON, JSON lines) or text/Base64 payloads. |
 
 ## Pipeline engine and observability
 
@@ -112,9 +144,18 @@ reference; add a new route there in the same change as its handler.
 | `monitoring/MonitoringSnapshotService.kt` | Assembles current operational state for management monitoring. |
 | `monitoring/MonitoringMetricsUpdater.kt` | Refreshes application monitoring metrics on its scheduled/lifecycle path. |
 | `health/HealthChecks.kt` | Supplies liveness/readiness checks for dependencies and runtime roles. |
-| `health/HelloResource.kt` | Minimal diagnostic endpoint. |
 | `grafana/GrafanaInstanceConfig.kt` | Central target selection for dashboard versus monitoring Grafana. |
 | `grafana/GrafanaSyncState.kt` | Prevents duplicate/incorrect Grafana sync work by recording scope state. |
+| `engine/IngestSpool.kt` | Local fsync'd spool for records Kafka refused; drains when Kafka is back (NFR-R7). |
+| `engine/PipelineRunQueue.kt` | Hands a record to Kafka (or the spool) with a deterministic run id; the caller acknowledges only after that. |
+| `engine/PipelineDirectory.kt` | In-memory view of active pipelines, connector bindings and deduplication rules for DB-free ingest (NFR-R6). |
+| `engine/PipelineInputListener.kt` | Kafka listener of the executor; distinguishes infrastructure failures (retry) from pipeline failures. |
+| `engine/PendingRunReaper.kt` | Marks runs that never reached Kafka as failed. |
+| `metadata/MetadataNodes.kt` | Executes the "Enrich with metadata" and "Save to metadata" nodes. |
+| `execution/ExecutionService.kt`, `ExecutionContracts.kt`, `ExecutionStateMachine.kt` | Execution requests, limits and results, the state machine (PIP-18), and dispatch to the selected backend. |
+| `execution/ExecutionBackendConfig.kt`, `ExecutionCapacityService.kt` | Backend selection per deployment and capacity reservation across replicas. |
+| `execution/DockerExecutionBackend.kt` | Docker backend (single node). |
+| `execution/KubernetesJobExecutionBackend.kt`, `KubernetesExecutionReconciler.kt` | Kubernetes Job backend (no Docker socket) and reconciliation after submitter loss. |
 
 ## Security and configuration
 
@@ -126,6 +167,12 @@ reference; add a new route there in the same change as its handler.
 | `config/RuntimeRoleConfig.kt` | Answers role-capability questions used to gate runtime components. |
 | `config/RuntimeRoleFilter.kt` | Applies role restrictions to resources/components at runtime. |
 | `config/DataSeeder.kt` | Creates initial development/bootstrap data on the relevant lifecycle path. |
+| `security/AbilityEvaluator.kt` | Exact-token permission evaluation (IAM-01). |
+| `security/AuthorizationVersionFilter.kt` | Rejects tokens issued before the user's last authorization change (IAM-14). |
+| `security/IngestAuthorizationService.kt` | Cached ingest API key checks by SHA-256 digest; works while the database is down. |
+| `security/IngestRateLimiter.kt` | Optional per-key ingest rate limit (off by default). |
+| `security/SensitiveDataRedactor.kt`, `security/GlobalLogRedactionFilter.kt` | Call-site and global log redaction of credentials (NFR-S10). |
+| `json/JsonObjectMappers.kt` | Jackson mapper with Java time support for application-owned JSON. |
 
 ## DTOs
 
@@ -135,7 +182,6 @@ reference; add a new route there in the same change as its handler.
 | `dto/TenantDto.kt` | Tenant, hierarchy, defaults, and diagnostics shapes. |
 | `dto/PermissionDto.kt` | Role permission request/response shapes. |
 | `dto/ModuleDto.kt` | Module/version request and response shapes. |
-| `dto/PipelineDto.kt` | Pipeline graph, run, and lineage request/response shapes. |
 
 ## Frontend application
 
@@ -162,11 +208,18 @@ reference; add a new route there in the same change as its handler.
 | `pages/Users.tsx` | Tenant user administration and membership UI. |
 | `pages/Tenants.tsx` | Tenant hierarchy, tenant settings, roles, and governance UI. |
 | `vite-env.d.ts` | Vite environment type declarations. |
+| `pages/ApiKeys.tsx` | Ingest API keys: create (key shown once), grants, last use, revoke. |
+| `pages/Metadata.tsx` | Metadata types, objects, as-of view, CSV import, templates. |
+| `components/AlertRuleForm.tsx`, `lib/alertRules.ts` | Built-in alert rule configuration of ALERT nodes. |
+| `components/MetadataNodeForms.tsx`, `lib/metadataNodes.ts` | Enrich / Save-to-metadata node forms and their validation. |
+| `lib/secrets.ts` | Stores credential form fields as secrets and replaces them by `secretRefs`. |
+| `lib/csv.ts` | RFC 4180 CSV parser for metadata imports. |
+| `hooks/useNow.ts` | Current time for relative-time rendering. |
 
 ## Tests and non-production files
 
 Test sources under `backend/src/test` and `frontend/src/__tests__` document
 expected behavior rather than runtime functionality. Keep a test name aligned with
-the corresponding endpoint/service contract. Compose, Swarm, Kubernetes, Helm,
-and monitoring manifests are deployment configuration; see the Docker and
+the corresponding endpoint/service contract. Compose, Kubernetes and monitoring
+manifests are deployment configuration; see `docs/docker/README.md` and the
 operations documents for their runtime purpose.

@@ -17,7 +17,7 @@ This document lets another assistant or developer continue the work without the 
   ignored, but stage by path and re-check `git status` before committing.
 - Stack:
   - Backend: Quarkus 3.39 with Kotlin 2.4 on Java 25; SmallRye Reactive Messaging with Kafka.
-  - Databases: PostgreSQL 16 (Flyway, one baseline `V1__baseline.sql`); tests use H2.
+  - Databases: PostgreSQL 18 with the TimescaleDB image (Flyway, one baseline `V1__baseline.sql`); tests use H2.
   - Frontend: React, Vite, Tailwind, i18n (en/de); tests with vitest.
 - Tests:
   - Backend: `cd backend && mvn test -Dquarkus.http.test-port=0`. Docker-only tests are skipped without a Docker daemon.
@@ -278,46 +278,58 @@ Vite and Playwright.
 - `RetentionCleanupService` runs only on the control API with background jobs enabled. It had raced
   tests in the full suite.
 
-## In progress: documentation consolidation (owner request 2026-09-28)
+## Documentation map (consolidated 2026-09-28)
 
-Goal: every document tells the same story, with fewer files. Owner decisions:
-- **The SRS (`docs/specification/requirements-specification.md`) is the main document and wins every
-  conflict.** Requirements from `production-ready-spec.json` that still make sense move into it,
-  expanding it.
-- **FR-029 (split into domain microservices behind a gateway) is dropped.** The runtime roles
-  (control-api, public-api, ingest-edge, pipeline-executor) are enough; record it as a rejected
-  alternative.
+The owner asked for one consistent story in fewer files. **The SRS is the main document and wins
+every conflict**; FR-029 (microservices) was dropped. Where each fact lives:
 
-Target structure:
-
-| Kept file | Absorbs |
+| File | Holds |
 |---|---|
-| `README.md` | Overview and quick start only; links to the rest |
-| `docs/specification/requirements-specification.md` | Goals from `target-architecture.md` §1; still-valid FR/NFR items and rejected alternatives from `production-ready-spec.json`; the status column of `docs/operations/support-matrix.md`; findings and measurements of `docs/development/requirements-review.md` |
-| `docs/specification/functional-specification.md` | Runtime topology and ownership from `docs/development/architecture.md`; design detail from `target-architecture.md` §2–6 |
-| `docs/development/handoff.md` | The only progress log and next-steps list: `.agent-status/progress.md`, the still-relevant parts of `docs/production-ready-v1-status.md` (project policy, pitfalls), `docs/development/documentation-gaps.md` (open items), `docs/development/plan.md` (nothing current; obsolete) |
-| Reference docs, unchanged in role | `setup.md`, `configuration-reference.md`, `source-reference.md`, `source-function-reference.md` (generated), `licenses.md`, `docs/api/README.md`, `docs/operations/backup-restore.md`, the user guides |
+| `README.md` | What the product is, quick start, pointers |
+| `docs/specification/requirements-specification.md` (SRS v2.2) | Goals (1.5), all requirements, decisions against alternatives (§12), **the only implementation status** (Appendix A), measurements (Appendix B), old FR/NFR-ID mapping (Appendix C) |
+| `docs/specification/functional-specification.md` | How the system works (architecture, runtime roles, data flow, design) |
+| `docs/development/handoff.md` (this file) | Work log, decisions in flight, open work, pitfalls |
+| `docs/development/setup.md` | Run, build, test; service URLs |
+| `docs/development/configuration-reference.md` | Every environment variable (regenerated from `application.yaml`) |
+| `CONTRIBUTING.md` | Workflow, code rules, which document to update for which change |
+| Reference | `docs/api/README.md`, `source-reference.md`, `source-function-reference.md` (generated), `licenses.md`, `docs/operations/backup-restore.md`, `docs/docker/README.md`, `docs/examples/energy-14a/` |
+| User guides | `docs-site/docs/{en,de}` (served at `/docs`); the developer section of the site is copied from `docs/` at image build time |
 
-Conflicts found (fixed as the files are merged):
-- Password hashing: the README, the support matrix, FR-003 and the v1 tracker say Argon2id; the code
-  (`AuthService`, `BcryptUtil`) and the SRS (NFR-S2) say BCrypt.
-- Swarm is still "optional" in FR-030 and "Experimental" in the support matrix, but was removed
-  (SRS DEP-08).
-- MinIO (spec JSON tech stack) is excluded by licence; Redis appears in `architecture.md`, the
-  configuration reference, backup-restore and the user guides, but the code has no Redis (leases
-  are in PostgreSQL).
-- "Unauthenticated ingest" / "no API keys" / "no audit trail" / "committed `privateKey.pem`"
-  (requirements review, documentation gaps, SRS Appendix A IMP-09): ingest API keys, `AuditService`
-  and externalised JWT keys exist.
-- At-least-once (plan, support matrix NFR-007) against exactly-once (SRS PIP-14).
-- `plan.md` still describes client-side SHA-256 hashing, a Kafka topic per edge, Redis, Helm and
-  Promtail/ELK.
-- README: "1B+ readings/day" is stated as a fact, while the review measured roughly 300 runs/s per
-  node and the target applies to multi-node Kubernetes only. "TimescaleDB-optimised" is also
-  stated, but the baseline creates no hypertables.
-- `docs-site/docs/developer/*.md` are older copies of `docs/development/*` that diverged (all five
-  differ).
-- `production-ready-spec.json` tech stack is stale (React 18, Kotlin 2.3, Quarkus 3.32, Python 3.11).
+Retired (content merged into the files above; history in git): `docs/development/plan.md`
+(obsolete), `target-architecture.md` (→ SRS 1.5, functional spec), `requirements-review.md`
+(→ SRS Appendix B), `architecture.md` (→ functional spec §2, CONTRIBUTING), `documentation-gaps.md`
+(→ open work below), `docs/production-ready-spec.json` (→ SRS, Appendix C),
+`docs/production-ready-v1-status.md` and `.agent-status/progress.md` (→ this file),
+`docs/operations/support-matrix.md` (→ SRS Appendix A), `docs/user/` (→ `docs-site/docs`),
+`docs-site/docs/developer/` (diverged copies; now built from `docs/`).
+
+Verified: the documentation site builds with Zensical (`docs/` copied to `docs-site/docs/reference`)
+with 8 warnings. Five are table-of-contents anchors that GitHub slugs differently (`&` → `--`), and
+three are links from `docs/` to files outside it (`CONTRIBUTING.md`, `docker/k8s-ha/README.md`),
+which work on GitHub but not in the site. `source-function-reference.md` is generated by a
+PowerShell script and was **not** regenerated (no `pwsh` here); `source-reference.md` was updated
+by hand and now covers every production source file.
+
+Conflicts that were resolved in the process (the code was checked each time):
+- **Password hashing:** Argon2id in README, FR-003, support matrix, v1 tracker; **BCrypt** in the code
+  and SRS NFR-S2. BCrypt stays; Argon2id is recorded as "not adopted for now" (SRS §12).
+- **Swarm** still listed as optional/experimental; removed (DEP-08).
+- **Redis** in `architecture.md`, configuration reference, backup-restore, user guides: the code has
+  none; leases and cooldowns are in PostgreSQL.
+- **At-least-once** in plan, support matrix, functional spec layer table; exactly once for identified
+  records (PIP-14).
+- **Stale "open" statuses:** ingest API keys, audit trail, signing key in the repository, CI. Now
+  Done/Partial per the code; the audit trail is **Partial** (writes, but no read API, UI, hash chain
+  or notes), not "Implemented" as the v1 tracker claimed.
+- **TimescaleDB:** the image is shipped but no hypertables are created → STR-01 Partial; the
+  README no longer calls the storage "TimescaleDB-optimised".
+- **Throughput:** README claimed "1B+ readings/day" as a fact; measured ~300 runs/s on one machine
+  (SRS Appendix B). The target stays for multi-node Kubernetes only.
+- **PostgreSQL version:** 18 (image `timescale/timescaledb:2.30.1-pg18`), not 16.
+- **Service URLs:** `setup.md`, README and CONTRIBUTING disagreed (frontend on :80, :3000 or
+  :8080; `/api/v1` "placeholder returning 501"). Checked against Compose and nginx.
+- **Setup instructions:** CONTRIBUTING said Java 21 and Node 18 and linked a missing
+  `CODE_OF_CONDUCT.md`.
 
 ## Open work (in priority order)
 
@@ -431,6 +443,33 @@ Conflicts found (fixed as the files are merged):
    - FTPS needs certificates the JVM truststore accepts.
    - Retention of run rows limits how long idempotency lasts.
    - Measured throughput on one machine was ~306 runs/s. Micro-batching (PIP-15) is needed for the 1B/day target.
+
+
+### Carried over from the retired trackers (2026-09-28)
+
+- **Dependabot:** GitHub reports 6 vulnerabilities on the default branch (2 critical, 1 high,
+  3 moderate). Check which apply to this branch after the merge into `dev`.
+- **Kubernetes-only verification is still missing:** hostile-module tests for the Kubernetes
+  execution backend (NFR-S3), the backup/restore drill on `docker/k8s`/`k8s-ha` (NFR-R11), and the
+  exactly-once failover test on a cluster (NFR-R2).
+- **DLQ:** there is a retry API but no inspection UI (PIP-13). `.agent-status` planned an end-to-end
+  replay test through the broker (`/api/internal/v1/events/dlq/{id}/retry`), and a Kafka-backed IT
+  workflow exists (`.github/workflows/integration-tests-kafka.yml`) that has never run on GitHub.
+- **OpenTelemetry:** spans do not carry the platform's correlation/run ids yet, and there is no
+  collector to verify against (NFR-M7).
+- **Graph schema migrations** (PIP-17): only version 1 exists; write the migration framework when a
+  version 2 appears, not before.
+- **`ON CONFLICT` under JTA:** a caught SQL exception inside a JTA transaction still marks it
+  rollback-only. `ConnectorLeaseService`, `EventInboxService`, `PipelineResource` and
+  `PipelineDataService` branch on the dialect first; audit `DataResource.kt` (readings upsert,
+  `data_table_registry` upsert) the same way.
+- **Documentation gaps:** per-connector and per-alert-channel configuration examples with retry
+  semantics are missing. `scripts/generate-source-function-reference.ps1` only recognises one-line
+  Kotlin/TypeScript declarations; extend it before introducing multi-line declaration styles.
+- **Grafana `admin/admin`** exists only in the Compose dev stack. The backend itself has no default
+  Grafana credentials (NFR-S11).
+- Pitfall (fixed, keep in mind): on this Quarkus version `Session.setMaxIdleTimeout` is a no-op
+  for WebSockets, so idle sessions are closed by a scheduled reaper instead.
 
 ## Sources used
 
