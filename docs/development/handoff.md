@@ -539,7 +539,7 @@ every conflict**; FR-029 (microservices) was dropped. Where each fact lives:
 | `docs/development/setup.md` | Run, build, test; service URLs |
 | `docs/development/configuration-reference.md` | Every environment variable (regenerated from `application.yaml`) |
 | `CONTRIBUTING.md` | Workflow, code rules, which document to update for which change |
-| Reference | `docs/api/README.md`, `source-reference.md`, `source-function-reference.md` (generated), `licenses.md`, `docs/operations/backup-restore.md`, `docs/docker/README.md`, `docs/examples/energy-14a/` |
+| Reference | `docs/api/README.md`, `source-reference.md`, `source-function-reference.md` (generated), `licenses.md`, `docs/operations/backup-restore.md`, `docs/docker/README.md`, `docs/examples/energy-14a/`, `docs/examples/model-forecast/` |
 | User guides | `docs-site/docs/{en,de}` (served at `/docs`); the developer section of the site is copied from `docs/` at image build time |
 
 Retired (content merged into the files above; history in git): `docs/development/plan.md`
