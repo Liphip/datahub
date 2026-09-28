@@ -1404,6 +1404,21 @@ similar unpinned-by-tag-bump history is unchecked; none of them appear to have e
 digest-pinned in this branch's history (unlike Alloy), so there may be nothing to find, but this
 wasn't confirmed either way.
 
+## Session 2026-09-28 (continued): PR #2 — trivy fix confirmed working, catches a real CVE
+
+After the trivy-action fix landed, its scan step actually ran for the first time (previously it
+failed to even resolve the action) — and found a genuine `HIGH` finding: `libexpat 2.8.4-r0` in
+the backend image (`eclipse-temurin:...-alpine-3.24` + `apk add docker-cli`'s own dependency
+chain), with a fix already published (`2.8.5-r0`). Confirmed directly against Alpine's own v3.24
+package index (`dl-cdn.alpinelinux.org`) that `expat 2.8.5-r0` is live in the stable repo — so an
+`apk upgrade` at build time gets it. Fixed `backend/Dockerfile`: `apk upgrade --no-cache` before
+`apk add --no-cache docker-cli`, so every already-installed package (not just what `docker-cli`
+itself needs) gets the patched version available at build time, not just this one CVE. Could not
+build+scan the image locally to verify end to end (no Docker daemon in this sandbox); verification
+here is the package-index lookup plus the standard, well-understood `apk upgrade` idiom for this
+exact class of problem — CI's own image-scan job is the actual confirmation, watch it on the next
+push.
+
 ## Sources used
 
 - BK6-22-300 Anlage 1: https://www.bundesnetzagentur.de/DE/Beschlusskammern/1_GZ/BK6-GZ/2022/BK6-22-300/Beschluss/BK6-22-300_Beschluss_Anlage1.pdf?__blob=publicationFile&v=1

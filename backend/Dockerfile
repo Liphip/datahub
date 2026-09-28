@@ -9,7 +9,10 @@ RUN --mount=type=cache,target=/root/.m2 mvn -B package -DskipTests
 
 FROM eclipse-temurin:25.0.4_7-jre-alpine-3.24
 
-RUN apk add --no-cache docker-cli
+# apk upgrade first: docker-cli's own dependency chain can pull an Alpine package (e.g. libexpat)
+# older than the version already patched in the 3.24 stable repo, which Trivy then flags even
+# though a fix is available — upgrading everything already-installed closes exactly that gap.
+RUN apk upgrade --no-cache && apk add --no-cache docker-cli
 
 WORKDIR /app
 
