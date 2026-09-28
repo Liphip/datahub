@@ -800,8 +800,17 @@ Conflicts that were resolved in the process (the code was checked each time):
 - **Kubernetes-only verification is still missing:** hostile-module tests for the Kubernetes
   execution backend (NFR-S3), the backup/restore drill on `docker/k8s`/`k8s-ha` (NFR-R11), and the
   exactly-once failover test on a cluster (NFR-R2).
-- **DLQ:** there is a retry API but no inspection UI (PIP-13). `.agent-status` planned an end-to-end
-  replay test through the broker (`/api/internal/v1/events/dlq/{id}/retry`), and a Kafka-backed IT
+- **DLQ:** **corrected — there is no retry API, only a read-only one.** `EventDlqResource` (platform-
+  admin-only) has `GET /api/internal/v1/events/dlq` and `GET .../consumer` to list dead-lettered
+  messages; there is no `POST .../retry` anywhere in the codebase (confirmed:
+  `grep -rn "dlq.*retry" backend/src/main/kotlin` finds nothing) and no frontend page at all
+  (confirmed: `grep -ri "dlq" frontend/src` finds nothing). The functional spec is accurate here
+  (§4.9's implementation note: "requeueing from the UI is not built yet") — this bullet was the
+  stale one, previously implying a retry endpoint existed. Building retry (backend) + inspection UI
+  (frontend) for the DLQ is real, open PIP-13 work — sizable enough (new endpoint + new page) that
+  it wasn't started speculatively this session; a future session should scope it as its own task.
+  `.agent-status` planned an end-to-end replay test through the broker once that retry endpoint
+  exists, and a Kafka-backed IT
   workflow exists (`.github/workflows/integration-tests-kafka.yml`) that **had two bugs (wrong JDK,
   nonexistent default test class) that would have failed its first-ever trigger — fixed, but still
   not actually run; see the newest session entry.**
