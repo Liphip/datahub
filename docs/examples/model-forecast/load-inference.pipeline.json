@@ -1,0 +1,15 @@
+{
+  "name": "Load forecast - continuous inference",
+  "description": "Passes every incoming hourly reading through the saved model to forecast the next hour. Uses the same module version as the training pipeline, because a model artifact is module-scoped.",
+  "graphDefinition": {
+    "nodes": [
+      { "id": "in", "type": "IMPORT", "label": "Hourly reading" },
+      { "id": "predict", "type": "PROCESSING", "label": "Apply the saved model", "moduleVersionId": "${forecastModuleVersionId}" },
+      { "id": "out", "type": "EXPORT", "label": "Forecast sink", "connectorId": "${forecastConnectorId}" }
+    ],
+    "edges": [
+      { "source": "in", "target": "predict" },
+      { "source": "predict", "target": "out" }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "Load forecast - nightly training",
+  "description": "Fits a straight line through a day's hourly readings and saves it as the 'load-forecast' model artifact. Re-running creates a new version, which the inference pipeline picks up on its next execution.",
+  "graphDefinition": {
+    "nodes": [
+      { "id": "in", "type": "IMPORT", "label": "Daily load summary", "deduplicateBy": ["station", "date"] },
+      { "id": "fit", "type": "PROCESSING", "label": "Fit and save the model", "moduleVersionId": "${forecastModuleVersionId}" },
+      { "id": "report", "type": "EXPORT", "label": "Training report", "connectorId": "${trainingConnectorId}" }
+    ],
+    "edges": [
+      { "source": "in", "target": "fit" },
+      { "source": "fit", "target": "report" }
+    ]
+  }
+}
