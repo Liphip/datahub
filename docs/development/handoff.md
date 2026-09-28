@@ -809,10 +809,13 @@ Conflicts that were resolved in the process (the code was checked each time):
   collector to verify against (NFR-M7).
 - **Graph schema migrations** (PIP-17): only version 1 exists; write the migration framework when a
   version 2 appears, not before.
-- **`ON CONFLICT` under JTA:** a caught SQL exception inside a JTA transaction still marks it
-  rollback-only. `ConnectorLeaseService`, `EventInboxService`, `PipelineResource` and
-  `PipelineDataService` branch on the dialect first; audit `DataResource.kt` (readings upsert,
-  `data_table_registry` upsert) the same way.
+- ~~**`ON CONFLICT` under JTA.**~~ **Verified done, nothing to do.** Audited `DataResource.kt`'s
+  two upserts (readings, `data_table_registry`) against the pattern used in
+  `ConnectorLeaseService`/`EventInboxService`/`PipelineDataService`: both already check the dialect
+  upfront (`isH2(connection)` / `dbKind == "h2"`) before choosing `MERGE INTO`/manual
+  select-then-update vs. `ON CONFLICT`, with a doc comment at `upsertTableRegistryEntry` explicitly
+  citing the rollback-only trap this avoids. No caught-`SQLException`-inside-JTA pattern remains
+  anywhere in this list.
 - **Documentation gaps:** per-connector and per-alert-channel configuration examples with retry
   semantics are missing. `scripts/generate-source-function-reference.ps1` only recognises one-line
   Kotlin/TypeScript declarations; extend it before introducing multi-line declaration styles.
