@@ -762,7 +762,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | ALT-06, ALT-07 | = | | Done |
 | ALT-08, ALT-09 | = | | Open |
 | ALT-10, ALT-11 | + | Alert delivery rework; ALT-11 via the alert outbox (attempts, retries, errors). | Done |
-| ALT-13 | + | Platform alerts on pipeline health (functional spec §4.6). | Open |
+| ALT-13 | + | Platform alerts on pipeline health (functional spec §9.6). | Done (`PlatformHealthMonitor`: repeated run failures, processing lag, dead-letter records and undelivered alerts, raised through the existing alert outbox to the tenant's default channel and to the configured administrators; runs on the control API; 12 tests. Administrators are notified by email via the installation's SMTP settings — there is no separate admin channel or UI yet) |
 | ALT-12 | + | Channel secrets were stored unencrypted. | Done (secret references, resolved in memory only; MQTT via connector) |
 | EXP-01 – EXP-03 | = | | Done |
 | EXP-04 | = | | Partial (UDP output in connector runtime) |

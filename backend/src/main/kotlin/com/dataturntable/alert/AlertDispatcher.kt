@@ -288,6 +288,59 @@ class AlertDispatcher {
         cooldownSeconds: Long? = null,
         deliveryKey: String? = null,
     ): UUID? {
+        val tenant = pipeline.tenant ?: throw IllegalStateException("Pipeline ${pipeline.id} has no tenant")
+        val tenantId = tenant.id ?: throw IllegalStateException("Tenant of pipeline ${pipeline.id} has no id")
+        return enqueueInternal(
+            tenant = tenant,
+            pipeline = pipeline,
+            channel = resolveChannel(tenantId, channelRef),
+            channelLabel = channelRef ?: "(default)",
+            title = title, message = message, severity = severity, payload = payload,
+            dedupKey = dedupKey, cooldownSeconds = cooldownSeconds, deliveryKey = deliveryKey,
+        )
+    }
+
+    /**
+     * Enqueues a platform alert that belongs to a tenant but to no pipeline and no node.
+     *
+     * It goes through the same outbox as every other alert, so cooldown suppression, retry with
+     * backoff, and the FAILED state that [PlatformHealthMonitor] reports as "could not be
+     * delivered" all work unchanged. `channel` is passed in because there is no ALERT node to
+     * reference a channel by.
+     */
+    fun enqueuePlatformAlert(
+        tenant: Tenant,
+        channel: AlertChannel?,
+        title: String,
+        message: String,
+        severity: String = "WARNING",
+        payload: Map<String, Any?>? = null,
+        dedupKey: String? = null,
+        cooldownSeconds: Long? = null,
+        deliveryKey: String? = null,
+    ): UUID? =
+        enqueueInternal(
+            tenant = tenant,
+            pipeline = null,
+            channel = channel,
+            channelLabel = channel?.name ?: "(no channel)",
+            title = title, message = message, severity = severity, payload = payload,
+            dedupKey = dedupKey, cooldownSeconds = cooldownSeconds, deliveryKey = deliveryKey,
+        )
+
+    private fun enqueueInternal(
+        tenant: Tenant,
+        pipeline: Pipeline?,
+        channel: AlertChannel?,
+        channelLabel: String,
+        title: String,
+        message: String,
+        severity: String,
+        payload: Map<String, Any?>?,
+        dedupKey: String?,
+        cooldownSeconds: Long?,
+        deliveryKey: String?,
+    ): UUID? {
         if (!alertsEnabled) {
             LOG.debugf("Alerts disabled, not enqueueing '%s'", title)
             return null
@@ -296,12 +349,10 @@ class AlertDispatcher {
             em.createQuery("SELECT a.id FROM AlertHistory a WHERE a.deliveryKey = :k", UUID::class.java)
                 .setParameter("k", key).resultList.firstOrNull()?.let { return it }
         }
-        val tenantId = pipeline.tenant?.id ?: throw IllegalStateException("Pipeline ${pipeline.id} has no tenant")
-        val channel = resolveChannel(tenantId, channelRef)
         val cooldown = cooldownSeconds ?: defaultCooldownSeconds
         val suppressed = channel != null && dedupKey != null && cooldown > 0 && isInCooldown(channel, dedupKey, cooldown)
         val alert = AlertHistory().apply {
-            this.tenant = pipeline.tenant
+            this.tenant = tenant
             this.channel = channel
             this.pipeline = pipeline
             this.dedupKey = dedupKey
@@ -314,7 +365,7 @@ class AlertDispatcher {
             when {
                 channel == null -> {
                     status = AlertStatus.FAILED
-                    lastError = "Alert channel '${channelRef ?: "(default)"}' not found or inactive"
+                    lastError = "Alert channel '$channelLabel' not found or inactive"
                     LOG.warnf("Alert '%s': %s", title, lastError)
                 }
                 suppressed -> status = AlertStatus.SUPPRESSED
@@ -433,6 +484,10 @@ class AlertDispatcher {
     /** 10 s, 30 s, 1.5 min, … capped at 1 h. */
     private fun backoff(attempts: Int): Duration =
         Duration.ofSeconds((10.0 * Math.pow(3.0, (attempts - 1).coerceAtLeast(0).toDouble())).toLong().coerceAtMost(3600))
+
+    /** The tenant's default channel: its first active one, as an ALERT node without a reference gets. */
+    fun defaultChannel(tenant: Tenant): AlertChannel? =
+        resolveChannel(tenant.id ?: return null, null)
 
     private fun resolveChannel(tenantId: UUID, channelRef: String?): AlertChannel? =
         if (channelRef != null) {

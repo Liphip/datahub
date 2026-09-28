@@ -407,11 +407,14 @@ half-done or uncommitted. Remaining before landing:
 2. **Ask the owner before opening the PR into `dev`** — everything else in "Open work" below still
    applies; nothing new blocks it.
 3. If continuing documentation-vs-implementation triage: the SRS Appendix A is current as of this
-   commit; the next reasonable target is an M0 item (TEN-03/NFR-S8 per-tenant database roles, or
-   ALT-13 platform health alerts) per the milestone table in the SRS, §11.
+   commit; the next reasonable target is the remaining M0 item, **TEN-03/NFR-S8 per-tenant database
+   roles**, per the milestone table in the SRS, §11. ALT-13 is now Done (see the last session
+   section); it is the tractable half of the M0 pair, and TEN-03 is the larger one.
 
 **Honestly scoped, not overclaimed (Appendix A updated accordingly):**
-- MOD-15, MOD-17, MOD-19, DAT-10: Done.
+- MOD-15, MOD-17, MOD-19, DAT-10: Done. (MOD-15 was later corrected to **Partial** once the
+  model-forecast example showed the module-scoping gap against the requirement's wording — see the
+  last session section. The entry below reflects the state at the time of that commit.)
 - MOD-16: Partial — a save records its own version; a run does **not** log which version it
   *read*, only which it created. Would need a `_loadedModels`-style marker (same trick as
   `_savedModels`) surfaced into the run's node log.
@@ -493,9 +496,12 @@ of those skips were the Docker-gated tests and 4 more were a class that had *nev
 `passThroughImportFeedsBuiltInRuleWithoutAnyModule` asserted the webhook deliveries immediately,
 but alerts go out through the transactional outbox on a *scheduled* dispatcher, so the requests can
 land after `consume()` returns. It failed once in the full suite with an empty `received` list while
-passing in isolation (verified twice). It now waits with a bounded 15 s poll, the same idiom
-`WebSocketIdleTimeoutE2ETest`/`WebSocketIngestE2ETest` already use. Not caused by change 1 — the
-class shares no state with it; the timing simply shifted.
+passing in isolation (verified twice). A 15 s bounded poll was not enough and it failed again on
+2026-09-28 with 1 of 2 webhooks, still passing 3/3 in isolation. Root cause of the second failure:
+the outbox's first retry is backed off **10 s** (`AlertDispatcher.backoff`), so a run that has to be
+retried can never fit inside a poll that only sleeps. The poll now calls `alertDispatcher.deliverDue()`
+each iteration instead of sleeping on the 5 s scheduler, so delivery no longer depends on the
+scheduler ticking. Not caused by change 1 — the class shares no state with it.
 
 **3. PostgreSQL 18.6 is now verified for real, not just configured.**
 Started a throwaway `postgres:18.6-alpine3.24` (the exact CI tag) and ran the exact CI command from
@@ -523,6 +529,45 @@ Started a throwaway `postgres:18.6-alpine3.24` (the exact CI tag) and ran the ex
 blocked. The only genuinely unverifiable items left need a Kubernetes cluster (k8s render-only
 wiring, hostile-module tests for the Kubernetes execution backend, the backup/restore drill, the
 exactly-once failover test).
+
+## Session 2026-09-28 (continued): model-forecast example, ALT-13 platform health alerts
+
+**Full suite on the host: 351 tests, 0 failures, 0 errors, 10 skipped** (was 335: +12 health
+monitor, +3 model example, +1 API mapping).
+
+**A second documentation example** (`docs/examples/model-forecast/`, executed end to end by
+`ModelForecastExampleTest` against a real Docker daemon): a nightly pipeline fits a line to a day's
+hourly readings and `save_model`s it, an inference pipeline `load_model`s it and forecasts the next
+hour, and a retrain is picked up with no restart. Plain-Python OLS keeps the arithmetic checkable,
+so the test asserts exact coefficients (slope 10, intercept 100 → 160 for hour 6) rather than a fuzzy
+model output. The README documents the limits honestly instead of only the happy path.
+
+**MOD-15 corrected to Partial in Appendix A.** The example exposed a real gap between SRS and code:
+MOD-15 says a model can be loaded "of the same module or a different one", but artifacts are keyed
+by module id, so a *different* module cannot load them. Both roles therefore run from **one** module
+version. Closing it means scoping lookups by tenant and name while keeping the producing module for
+provenance — an isolation decision, not a bug fix.
+
+**ALT-13 implemented** (`PlatformHealthMonitor`, 12 tests): the four conditions no ALERT node can
+see — repeated run failures, processing lag, dead-letter records, undelivered alerts — raised to the
+affected tenant's default channel and to `dataturntable.health.admin-emails`. It reuses the existing
+`alert_history` outbox (`AlertDispatcher.enqueuePlatformAlert` / `defaultChannel`), so retry with
+backoff and the FAILED state that the undelivered-alert check then reports all work unchanged. Runs
+on the control API only, like retention cleanup, and `delivery_key` is problem + time bucket, so a
+condition that persists is reported once per `dedupe-window-seconds` rather than on every scan.
+Two design points worth keeping: an administrator email is recorded as a `platform-admin:`-prefixed
+audit row with no channel, so a broken mail server is not itself reported as an undelivered alert
+(which would keep generating mail for as long as it stayed broken); and a platform-wide finding goes
+to administrators only, because telling a tenant that its alerts are not arriving, through the
+channel that is failing to deliver them, would not help. Documented in functional spec §9.6.
+Administrators are notified by email over the installation's SMTP settings — there is no separate
+admin channel or UI yet.
+
+**One API defect found by building the example:** a description longer than its 255-character column
+came back as **500**, so a client input error looked like an outage worth retrying. SQLState `22001`
+now maps to 400 in `TransientFailureMapper`. `PipelineResourceTest` asserts the message, using an
+empty graph so the length is the only thing that can be wrong — otherwise the test would also pass
+for the wrong reason.
 
 ## Documentation map (consolidated 2026-09-28)
 

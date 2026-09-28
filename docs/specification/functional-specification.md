@@ -706,6 +706,40 @@ class AlertModule:
         return False
 ```
 
+### 9.6 Platform Health Alerts (ALT-13)
+
+An ALERT node only reports on the data that reaches it. Four conditions are about the platform
+itself, are not caused by any pipeline's data, and cannot be configured away by a tenant, so the
+platform raises them on its own initiative:
+
+| Condition | Threshold (`dataturntable.health.*`) |
+|---|---|
+| **Repeated run failures** — one active pipeline failing run after run | ≥ `failure-threshold` (3) FAILED runs within `failure-window-seconds` (900) |
+| **Growing processing lag** — triggers queueing up instead of being processed | oldest unfinished run older than `lag-threshold-seconds` (300) |
+| **Dead-letter records** — records no consumer could handle | any within `failure-window-seconds`, grouped by channel |
+| **Undelivered alerts** — an alert that exhausted its delivery attempts | any within `failure-window-seconds` |
+
+Recipients differ by condition, because the tenant's own channel is sometimes the thing that is
+broken:
+
+- Findings about a tenant's pipelines go to that tenant's **default channel** (its first active
+  channel, as in §9.4) **and** to the system administrators in `admin-emails`.
+- Findings with no tenant — dead letters, and undelivered alerts — go to the **administrators
+  only**. Telling a tenant that its alerts are not arriving, through the channel that is failing to
+  deliver them, would not help.
+
+A platform alert has no pipeline and no node, so it goes through the same `alert_history` outbox as
+every other alert: the same retry with backoff, and the same FAILED state that the undelivered-alert
+check then reports. The `delivery_key` is the problem plus a time bucket, so a condition that
+persists is reported once per `dedupe-window-seconds` (3600) rather than on every
+`check-interval` (60 s) scan. The scan runs on the control API only, like retention cleanup, so a
+multi-replica deployment reports each problem once.
+
+With no `admin-emails` configured, tenants are still notified and platform-wide findings are only
+written to `alert_history` and the log. The recorded attempt carries a `platform-admin:` dedup key
+so that a broken mail server is not itself reported as an undelivered alert, which would otherwise
+keep generating mail for as long as it stayed broken.
+
 ---
 
 ## 10. Multi-Tenancy, Identity & Access

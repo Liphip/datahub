@@ -48,6 +48,9 @@ class PipelineRunQueueTest {
     @Inject
     lateinit var logWriter: PipelineLogWriter
 
+    @Inject
+    lateinit var alertDispatcher: com.dataturntable.alert.AlertDispatcher
+
     private val mapper = ObjectMapper()
     private lateinit var tenantId: UUID
     private lateinit var pipelineId: UUID
@@ -223,13 +226,16 @@ class PipelineRunQueueTest {
             queue.enqueue(pipelineId, TriggerType.DATA, mapOf("_connectorId" to "c", "payload" to mapOf("device" to "b2", "temp" to 99)))
             sink.received().forEach { assertTrue(consumer.consume(it.payload).success) }
 
-            // Alert delivery goes through the transactional outbox and a scheduled dispatcher, so
-            // the webhooks can land shortly after consume() returns. Wait for them instead of
-            // asserting immediately: under full-suite load the dispatcher had not run yet and this
-            // test failed intermittently with an empty `received` (it passes in isolation, so it
-            // only ever reddened CI). Same bounded-poll idiom as the WebSocket E2E tests.
+            // Alert delivery goes through the transactional outbox, so the webhooks land after
+            // consume() returns. Pump the outbox directly instead of waiting for the 5 s scheduler:
+            // under full-suite load the scheduler does not reliably tick within the deadline, and
+            // a failed first attempt is backed off by 10 s, so sleeping reddened CI intermittently
+            // with an empty `received` even though the test passes in isolation.
             val deadline = System.currentTimeMillis() + 15_000
-            while (received.size < 2 && System.currentTimeMillis() < deadline) Thread.sleep(50)
+            while (received.size < 2 && System.currentTimeMillis() < deadline) {
+                alertDispatcher.deliverDue()
+                Thread.sleep(50)
+            }
 
             assertEquals(2, received.size)
             assertTrue(received.any { "\"b1\"" in it } && received.any { "\"b2\"" in it }, received.toString())

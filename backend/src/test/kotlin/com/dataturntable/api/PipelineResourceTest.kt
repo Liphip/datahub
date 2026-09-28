@@ -159,6 +159,39 @@ class PipelineResourceTest {
     }
 
     @Test
+    fun testCreatePipelineRejectsATooLongDescriptionAsBadRequest() {
+        val token = TestAuthHelpers.createAdminToken()
+
+        val tenantId = given()
+            .header("Authorization", "Bearer $token")
+        .`when`()
+            .get("/api/internal/v1/tenants")
+        .then()
+            .statusCode(200)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("[0].id")
+
+        // `description` is a 255-character column. The graph is empty, which the API accepts, so
+        // the length is the only thing that can be wrong: this asserts the client error is reported
+        // as a client error, not as an outage the caller should retry.
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Overlong Description",
+                "description" to "x".repeat(300),
+                "graphDefinition" to mapOf("nodes" to emptyList<Any>(), "edges" to emptyList<Any>()),
+            ))
+        .`when`()
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("The request violates a data constraint"))
+    }
+
+    @Test
     fun testCreatePipelineAcceptsExplicitSupportedSchemaVersionAndRejectsUnsupported() {
         val token = TestAuthHelpers.createAdminToken()
         val tenantId = given()

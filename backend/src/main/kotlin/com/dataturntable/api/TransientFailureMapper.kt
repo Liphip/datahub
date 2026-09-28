@@ -32,7 +32,7 @@ class TransientFailureMapper {
         when (sqlState) {
             "23505" -> return Response.status(409).entity(mapOf("error" to "An entry with this name or key already exists")).build()
             "23503" -> return Response.status(409).entity(mapOf("error" to "The entry is referenced by, or refers to, another entry")).build()
-            "23502", "23514" -> return Response.status(400).entity(mapOf("error" to "The request violates a data constraint")).build()
+            "23502", "23514", "22001" -> return Response.status(400).entity(mapOf("error" to "The request violates a data constraint")).build()
         }
         // A rolled-back transaction left nothing behind, so the client can safely resend.
         val rolledBack = generateSequence<Throwable>(e) { it.cause }.take(20).any { it is RollbackException }

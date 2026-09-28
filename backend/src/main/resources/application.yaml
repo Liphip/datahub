@@ -150,6 +150,18 @@ dataturntable:
   alerts:
     enabled: true
     default-cooldown-seconds: ${DATATURNTABLE_ALERT_COOLDOWN_SECONDS:300}
+  # Platform health (ALT-13): alerts about the platform's own condition, for conditions no
+  # ALERT node can see — repeated run failures, processing lag, dead-letter records, and alerts
+  # that could not be delivered. Runs on the control API. Recipients are the affected tenant's
+  # default channel and the administrators below; leave admin-emails empty to notify tenants only.
+  health:
+    enabled: ${DATATURNTABLE_HEALTH_ALERTS_ENABLED:true}
+    check-interval: ${DATATURNTABLE_HEALTH_CHECK_INTERVAL:60s}
+    failure-threshold: ${DATATURNTABLE_HEALTH_FAILURE_THRESHOLD:3}
+    failure-window-seconds: ${DATATURNTABLE_HEALTH_FAILURE_WINDOW_SECONDS:900}
+    lag-threshold-seconds: ${DATATURNTABLE_HEALTH_LAG_THRESHOLD_SECONDS:300}
+    dedupe-window-seconds: ${DATATURNTABLE_HEALTH_DEDUPE_WINDOW_SECONDS:3600}
+    admin-emails: ${DATATURNTABLE_HEALTH_ADMIN_EMAILS:}
   # There is no `data` section: unstructured payloads are not stored. Readings, metadata
   # and locations only — a file, mail or FTP item is parsed into records and then lives in a
   # table, so there is no blob directory to configure, cap or clean up.
