@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       tests:
-        description: 'Groovy-style test pattern to run (Maven -Dtest). Default: EventOutboxReplayIT'
+        description: 'Groovy-style test pattern to run (Maven -Dtest). Default: PipelineConsumerDlqIT'
         required: false
-        default: 'EventOutboxReplayIT'
+        default: 'PipelineConsumerDlqIT'
 
 jobs:
   integration:
@@ -15,11 +15,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 25
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '25'
 
       - name: Cache Maven local repository
         uses: actions/cache@v4
