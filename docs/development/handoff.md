@@ -806,11 +806,16 @@ Conflicts that were resolved in the process (the code was checked each time):
   `grep -rn "dlq.*retry" backend/src/main/kotlin` finds nothing) and no frontend page at all
   (confirmed: `grep -ri "dlq" frontend/src` finds nothing). The functional spec is accurate here
   (§4.9's implementation note: "requeueing from the UI is not built yet") — this bullet was the
-  stale one, previously implying a retry endpoint existed. Building retry (backend) + inspection UI
-  (frontend) for the DLQ is real, open PIP-13 work — sizable enough (new endpoint + new page) that
-  it wasn't started speculatively this session; a future session should scope it as its own task.
-  `.agent-status` planned an end-to-end replay test through the broker once that retry endpoint
-  exists, and a Kafka-backed IT
+  stale one, previously implying a retry endpoint existed. **A naive "retry" is actively unsafe,
+  not just unbuilt:** `ConsumerDeadLetterService.record()` stores `payload` through
+  `SensitiveDataRedactor` before persisting it — the stored copy has sensitive fields masked, so
+  republishing it verbatim would resubmit masked/corrupted data as if it were real, and these
+  entries are specifically messages that were unparseable or addressed a since-deleted pipeline, so
+  replaying the same bytes mostly just fails the same way again. A correct retry design needs either
+  the raw pre-redaction payload kept somewhere access-controlled, or to be scoped only to the
+  "pipeline was deleted then recreated with the same id" case — real design work, not a quick
+  endpoint; deliberately not started blind this session. `.agent-status` planned an end-to-end
+  replay test through the broker once a real retry endpoint exists, and a Kafka-backed IT
   workflow exists (`.github/workflows/integration-tests-kafka.yml`) that **had two bugs (wrong JDK,
   nonexistent default test class) that would have failed its first-ever trigger — fixed, but still
   not actually run; see the newest session entry.**
@@ -1553,6 +1558,51 @@ local `mvn test` will not work in this exact sandbox.
    no CI status is harmless. If `dev` ever gets a required "CI" status check, revisit this —
    `paths-ignore` means a doc-only PR would never satisfy it and could get stuck pending forever
    (a well-known GitHub Actions gotcha).
+
+## Session 2026-09-28 (continued): CI/CD work paused; implemented AUD-01's missing retention-cleanup audit event
+
+Owner explicitly asked to pause further CI/CD tinkering and prioritize implementation and tests
+instead, and to keep GitHub Actions usage bounded. Switched focus accordingly.
+
+**Investigated implementing PIP-13's DLQ retry endpoint (`query_fn`'s stub, and `POST
+.../dlq/{id}/retry`) as real feature work, and deliberately did NOT build either, for reasons worth
+recording so a future session doesn't repeat the investigation or build something unsafe:**
+- `query_fn` (injected into module sandboxes) would need a live callback channel to the platform
+  mid-execution to answer an arbitrary runtime-determined query — this codebase has no such channel
+  (the same constraint documented for `load_model_fn`'s version pinning, MOD-16) and modules run
+  network-isolated by design (NFR-S3). Real implementation needs either a declared-upfront query
+  shape (like DB_LOAD's `metadata()`) or a new callback mechanism — a design task, not a quick fix.
+- A DLQ retry endpoint is actively unsafe to build naively: `ConsumerDeadLetterService.record()`
+  redacts `payload` (via `SensitiveDataRedactor`) before persisting it, so republishing the stored
+  copy would resubmit masked/corrupted data as if real — and these are messages that were
+  unparseable or addressed a deleted pipeline in the first place, so replaying the same bytes
+  mostly just fails identically anyway. **This also corrected two stale claims** that a retry
+  endpoint already existed (`docs/development/handoff.md`'s own earlier "Carried over" bullet, and
+  `requirements-specification.md`'s PIP-13 Appendix A entry) — both fixed in the previous commits
+  this session.
+
+**Implemented instead: AUD-01's "no deployment/backup/retention events" gap, for the retention
+category.** `RetentionCleanupService.runCleanup()` now records one `retention.cleanup` audit event
+(via the existing `AuditService`, `actorId = null`/`tenantId = null` — the same system-initiated
+convention `AuthResource.login`'s `auth.login.failed` already uses) summarizing which categories
+were actually cleaned up and how many rows each removed, but only when at least one category
+deleted anything — matching the existing `results.filter { it.deleted > 0 }` logging convention in
+`runScheduledCleanup()`, so a no-op run (everything retained indefinitely, or nothing past any
+configured cutoff) writes nothing. Added two tests to `RetentionCleanupServiceTest`: one confirming
+a cleanup that deletes rows writes exactly one audit event (system actor, metadata naming the
+category), one confirming a cleanup that deletes nothing writes none. Both follow the existing
+file's established patterns exactly (`QuarkusTransaction.requiringNew().run {}` around every DB
+read/write, JPQL entity loads rather than native-query column reads for text/CLOB-typed columns —
+`AuditServiceTest` already established that pattern for reading `AuditEvent.metadata` safely across
+H2/Postgres). **Verified via `mvn compile` and `mvn test-compile` only** (both exit 0) — this
+sandbox cannot execute Quarkus tests at all (JDK 21 vs. the required 25, see the earlier note in
+this document); CI is the first real test run these get. Not yet pushed as of this write-up — see
+whether the next commit's CI run is green before trusting this is correct.
+
+**Deployment/backup audit events (the rest of AUD-01's gap) remain open** — `scripts/backup/backup.sh`
+and `scripts/backup/restore.sh` are standalone shell scripts outside the JVM/`AuditService`
+entirely; wiring them into the audit trail would need a different mechanism (e.g. the script POSTing
+to an internal endpoint) and wasn't started this session.
 
 ## Sources used
 

@@ -1,5 +1,6 @@
 package com.dataturntable.service
 
+import com.dataturntable.audit.AuditService
 import com.dataturntable.config.RuntimeRoleConfig
 import com.dataturntable.pipeline.PipelineRunStatus
 import io.quarkus.scheduler.Scheduled
@@ -41,6 +42,9 @@ class RetentionCleanupService {
     @Inject
     lateinit var runtimeRoleConfig: RuntimeRoleConfig
 
+    @Inject
+    lateinit var audit: AuditService
+
     @ConfigProperty(name = "dataturntable.retention.pipeline-runs-days", defaultValue = "-1")
     var pipelineRunRetentionDays: Int = -1
 
@@ -76,13 +80,35 @@ class RetentionCleanupService {
         }
     }
 
-    /** Runs every configured category's cleanup once; each category independently no-ops if its retention is indefinite (< 0). */
-    fun runCleanup(): List<CleanupResult> = listOf(
-        cleanupPipelineRuns(),
-        cleanupAlertHistory(),
-        cleanupAuditEvents(),
-        cleanupReadings()
-    )
+    /**
+     * Runs every configured category's cleanup once; each category independently no-ops if its
+     * retention is indefinite (< 0). AUD-01: records one audit event summarizing what was deleted
+     * when at least one category actually deleted rows — a no-op run (nothing past any configured
+     * cutoff, or every category set to indefinite) writes nothing, matching the existing
+     * `results.filter { it.deleted > 0 }` logging convention in [runScheduledCleanup]. Recorded
+     * with `actorId = null` (system-initiated, no HTTP caller), the same convention
+     * `AuthResource.login` uses for `auth.login.failed`.
+     */
+    fun runCleanup(): List<CleanupResult> {
+        val results = listOf(
+            cleanupPipelineRuns(),
+            cleanupAlertHistory(),
+            cleanupAuditEvents(),
+            cleanupReadings()
+        )
+        val deleted = results.filter { it.deleted > 0 }
+        if (deleted.isNotEmpty()) {
+            audit.record(
+                actorId = null,
+                tenantId = null,
+                action = "retention.cleanup",
+                resourceType = "retention_cleanup",
+                resourceId = null,
+                metadata = deleted.associate { it.category to it.deleted }
+            )
+        }
+        return results
+    }
 
     @Transactional
     fun cleanupPipelineRuns(): CleanupResult {

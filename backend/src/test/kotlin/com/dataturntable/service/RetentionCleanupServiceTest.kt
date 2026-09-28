@@ -1,5 +1,6 @@
 package com.dataturntable.service
 
+import com.dataturntable.audit.AuditEvent
 import io.quarkus.narayana.jta.QuarkusTransaction
 import io.quarkus.test.junit.QuarkusTest
 import io.quarkus.test.junit.QuarkusTestProfile
@@ -124,6 +125,60 @@ class RetentionCleanupServiceTest {
 
     private fun countById(table: String, id: UUID): Int =
         (em.createNativeQuery("SELECT COUNT(*) FROM $table WHERE id = :id").setParameter("id", id).singleResult as Number).toInt()
+
+    /** AUD-01: a cleanup run that actually deletes rows records one audit event summarizing what was deleted. */
+    @Test
+    fun `a cleanup run that deletes rows records one retention cleanup audit event`() {
+        val oldRunId = UUID.randomUUID()
+        val oldTimestamp = Instant.now().minusSeconds(60L * 86_400)
+        var auditCountBefore = 0
+
+        QuarkusTransaction.requiringNew().run {
+            auditCountBefore = countRetentionCleanupAuditEvents()
+            em.createNativeQuery(
+                "INSERT INTO pipeline_runs (id, status, started_at) VALUES (:id, 'SUCCESS', :startedAt)"
+            ).setParameter("id", oldRunId).setParameter("startedAt", oldTimestamp).executeUpdate()
+        }
+
+        retentionCleanupService.runCleanup()
+
+        QuarkusTransaction.requiringNew().run {
+            assertEquals(auditCountBefore + 1, countRetentionCleanupAuditEvents())
+            val event = em.createQuery(
+                "SELECT a FROM AuditEvent a WHERE a.action = :action ORDER BY a.occurredAt DESC",
+                AuditEvent::class.java
+            ).setParameter("action", "retention.cleanup").resultList.first()
+            assertEquals(null, event.actorId, "system-initiated cleanup has no actor, like auth.login.failed")
+            assertEquals(null, event.tenantId)
+            assertTrue(event.metadata!!.contains("\"pipeline_runs\""), "metadata should name the pipeline_runs category: ${event.metadata}")
+        }
+    }
+
+    /** The companion half: a run that deletes nothing (nothing past the cutoff) writes no audit event at all. */
+    @Test
+    fun `a cleanup run that deletes nothing records no audit event`() {
+        val service = RetentionCleanupService().apply {
+            // `audit` is deliberately left unset (lateinit): with every category retained
+            // indefinitely, runCleanup() never enters the branch that dereferences it — this test
+            // itself proves that, the same way the pre-existing "indefinite retention" test above does.
+            this.em = this@RetentionCleanupServiceTest.em
+            this.pipelineRunRetentionDays = -1
+            this.alertHistoryRetentionDays = -1
+            this.auditEventRetentionDays = -1
+            this.readingsRetentionDays = -1
+        }
+        var auditCountBefore = 0
+        QuarkusTransaction.requiringNew().run { auditCountBefore = countRetentionCleanupAuditEvents() }
+
+        service.runCleanup()
+
+        QuarkusTransaction.requiringNew().run {
+            assertEquals(auditCountBefore, countRetentionCleanupAuditEvents())
+        }
+    }
+
+    private fun countRetentionCleanupAuditEvents(): Int =
+        (em.createNativeQuery("SELECT COUNT(*) FROM audit_events WHERE action = 'retention.cleanup'").singleResult as Number).toInt()
 
     @Test
     fun `OPS-07 cleanup folds deleted pipeline_runs into hourly aggregates before deleting them`() {
