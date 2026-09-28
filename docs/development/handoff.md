@@ -2,22 +2,20 @@
 
 This document lets another assistant or developer continue the work without the chat history.
 
-> **Read this first.** Everything is committed and pushed to `claude/datahub-lakehouse-review-6tiaf5`
-> and the working tree is clean. **The PR into `dev` is open: https://github.com/Liphip/datahub/pull/2**
-> (the owner explicitly asked for it to be opened once the branch made sense to move over — see the
-> session entry below). This session is subscribed to its activity and will keep pushing fixes for CI
-> failures and review feedback; check the PR itself for current status rather than assuming this
-> document's snapshot is still current — as of this write-up, CI had one known red job (missing
-> `DC_NVD_API_KEY` secret, not code-fixable, see below), a Codex bot review with six findings, and
-> a Copilot bot review with eleven more, **seventeen bot findings total, all triaged, all real
-> (or already fixed / reclassified), all pushed, and all 17 review threads marked resolved on
-> GitHub.** The `libexpat` CVE fix initially only patched `backend/Dockerfile`; the container-scan
-> job still failed afterward because `docker/frontend.Dockerfile` (nginx-based, also Alpine 3.24)
-> carried the same gap — fixed and **confirmed green on CI** (commit `60899b8`, run `36448680758`):
-> every job now passes except the still-open, still-not-code-fixable `DC_NVD_API_KEY` job. **PR #2
-> is effectively done from this session's side** — the only red check is the pre-existing missing-secret
-> one, which needs the owner to add a repo secret, not a code change. The full backend
-> suite on H2 is green:
+> **Read this first.** **PR #2 (`claude/datahub-lakehouse-review-6tiaf5` → `dev`) merged.**
+> https://github.com/Liphip/datahub/pull/2 — that branch's job is done and it should not receive
+> further commits (a later commit landed on it by mistake after the merge; ignore that branch
+> entirely going forward). **Work is now happening directly on `dev`** per explicit owner
+> instruction ("work directly on dev branch, continue until budget is used, keep committing and
+> documenting in between"). Everything below this point that isn't inside a dated session entry may
+> describe pre-merge state; trust the newest session entries and `git log` on `dev` over the prose.
+> All 17 PR #2 bot review findings were fixed and their threads resolved before merge. CI was fully
+> green at merge time except the still-open, not-code-fixable `DC_NVD_API_KEY` job (owner needs to
+> add that repo secret). **New finding after the merge:** `ci.yml`'s `push` trigger targeted
+> `branches: [main]`, but this repo has no `main` branch (only `master`, protected, and `dev`) — so
+> direct pushes to `dev` never ran CI automatically, only `pull_request` events did. Fixed (commit
+> `2fb9be5`): push trigger now targets `dev`. See the newest session entries for what's landed
+> directly on `dev` since the merge. The full backend suite on H2 was green pre-merge:
 > **378 tests, 0 failures, 0 errors, 22 skipped** (all skips are legitimately Postgres/Docker/
 > Python-gated — the previous 9 "unexplained" H2 skips are gone, see the relevant session entry
 > below). To reproduce the Docker/Python-gated portion on a host you need a Windows JDK 25 **and**
@@ -1457,6 +1455,58 @@ on the PR in an earlier session entry, reproduced identically on a docs-only com
 to affect `dev` itself the same way. **No further CI work is pending from this session unless a new
 failure appears or reviewers leave new comments** — the PR is watched and will keep receiving pushes
 for anything new, but as of this write-up there is nothing actionable left.
+
+## Session 2026-09-28 (continued): PR #2 merged; work continues directly on `dev`
+
+PR #2 merged into `dev` shortly after the previous entry (GitHub `pull_request.closed`,
+outcome `merged`; this session was auto-unsubscribed). The owner then explicitly asked to
+**continue working directly on `dev`** rather than opening further PRs, and to keep committing and
+documenting so another session can take over at any point. `claude/datahub-lakehouse-review-6tiaf5`
+is retired — do not build on it; one docs-only commit landed there after the merge by accident
+(recording the merge itself) and is harmless but orphaned, since that branch is no longer an
+ancestor of anything.
+
+Work done directly on `dev` since the merge, each its own commit and push:
+
+1. **`frontend/package.json`/`package-lock.json`: pinned `monaco-editor` to `0.57.0`.**
+   `npm audit` on the merged `dev` found 2 findings (1 low, 1 moderate) — four DOMPurify CVEs
+   (GHSA-c2j3-45gr-mqc4, GHSA-cmwh-pvxp-8882, GHSA-vxr8-fq34-vvx9, GHSA-55q2-fjhq-7xh7, the last a
+   moderate-severity XSS) via `dompurify@3.4.8`, bundled transitively by
+   `monaco-editor@0.56.0` (pulled in by `@monaco-editor/react`). Checked `monaco-editor@0.57.0`'s
+   own `package.json` dependencies before touching anything: it bundles `dompurify@3.4.15`, clear
+   of all four advisories, and `0.57.0` still satisfies `@monaco-editor/react@4.7.0`'s peer range
+   (`>= 0.25.0 < 1`). Added it as an explicit `package.json` dependency pinned to that exact
+   version (`npm install monaco-editor@0.57.0 --save-exact`) so it's pulled directly rather than
+   relying on hoisting. Verified: `npm audit` → 0 vulnerabilities, `tsc && vite build` clean, all
+   38 `vitest` tests pass. Confirmed on GitHub's own side too: Dependabot's own PR making the
+   identical bump (`dompurify`+`monaco-editor` together) ran CI green independently.
+2. **Verified the `ON CONFLICT`/JTA open-work item is already done, retired it from the tracker.**
+   Audited `DataResource.kt`'s two upserts (readings, `data_table_registry`) — both already check
+   the dialect upfront (`isH2(connection)` / `dbKind == "h2"`) before choosing `MERGE INTO`/manual
+   select-then-update vs. `ON CONFLICT`, matching `ConnectorLeaseService`/`EventInboxService`/
+   `PipelineDataService`. No code change needed; just crossed the item off so it stops looking like
+   open work.
+3. **Found and fixed a real CI gap: direct pushes to `dev` never ran CI.** While investigating
+   whether `dev`'s CI was green after the merge, discovered `ci.yml`'s `push` trigger was
+   `branches: [main]` — and this repo has **no `main` branch** (`git branch -a` /
+   `list_branches` show only `master`, protected, and `dev`). `pull_request` events (i.e. every PR,
+   including #2) always ran CI correctly; a **direct push straight to `dev`**, like every commit in
+   this very session, silently ran **no CI at all** until this fix. Changed the trigger to
+   `branches: [dev]` (commit `2fb9be5`) and confirmed live: that exact push produced workflow run
+   `36452073337` (event `push`, branch `dev`) — the trigger works now. This means my dependency and
+   docs commits immediately before this fix (`b258dec`, `1d53fe9`) were never verified by CI; they
+   were verified locally instead (`npm audit`, `tsc`, `vite build`, `vitest`, and — for the
+   `DataResource.kt` audit — reading the code directly, no change made). Recommend treating this
+   fix itself, and everything pushed after it, as the first `dev` commits with real CI coverage on
+   direct push.
+
+**Local test environment note:** this sandbox only has JDK 21 (`/usr/lib/jvm/java-21-openjdk-amd64`)
+and Docker's client but no running daemon (`docker info` fails with "no such file or directory" on
+the socket) — matching a limitation already documented earlier in this file. `mvn test` fails
+immediately with `UnsupportedClassVersionError` (backend compiles to Java 25 class files). No
+backend code was changed in this session's `dev` work, so this wasn't a blocker, but it means any
+future backend change here still needs either a Windows JDK 25 host or CI itself to verify —
+local `mvn test` will not work in this exact sandbox.
 
 ## Sources used
 
