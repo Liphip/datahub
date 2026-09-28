@@ -4,15 +4,18 @@ This document lets another assistant or developer continue the work without the 
 
 > **Read this first.** Everything is committed and pushed to `claude/datahub-lakehouse-review-6tiaf5`
 > and the working tree is clean. **The only thing left before landing is asking the owner to open the
-> PR into `dev`** — nothing technical is blocked. The full backend suite on H2 is green: **369 tests,
+> PR into `dev`** — nothing technical is blocked. The full backend suite on H2 is green: **370 tests,
 > 0 failures, 0 errors, 20 skipped** (all 20 are legitimately Postgres/Docker/Python-gated — the
-> previous 9 "unexplained" H2 skips are gone, see the newest session entry). To reproduce the
-> Docker/Python-gated portion on a host you need a Windows JDK 25 **and** a real `python3` on `PATH`
-> — the "Tests" section at the top has admin-free download recipes for both. Session entries below
-> are in chronological order; the newest is **"the 9 unexplained skips were dead code, not a test
-> bug"**: `ModuleService`/`UserService` and most of `TenantService` had zero live callers and were
-> removed along with the DTOs only they used, rather than re-enabling tests for code nothing calls —
-> that investigation also found and fixed a systemic bug where 15 entities had a `UNIQUE` constraint
+> previous 9 "unexplained" H2 skips are gone, see the relevant session entry below). To reproduce
+> the Docker/Python-gated portion on a host you need a Windows JDK 25 **and** a real `python3` on
+> `PATH` — the "Tests" section at the top has admin-free download recipes for both. Session entries
+> below are in chronological order; the newest is **"OPS-07 — hourly run-history aggregates"**:
+> `RetentionCleanupService` now folds `pipeline_runs` rows into `pipeline_run_hourly_stats` before
+> deleting them past the retention window, closing OPS-07 from Partial to Done (backend/API only —
+> no UI page for it yet, flagged there). Before that, **"the 9 unexplained skips were dead code, not
+> a test bug"**: `ModuleService`/`UserService` and most of `TenantService` had zero live callers and
+> were removed along with the DTOs only they used, rather than re-enabling tests for code nothing
+> calls — that investigation also found and fixed a systemic bug where 15 entities had a `UNIQUE` constraint
 > in the Flyway migration that their JPA `@Table` never mirrored, so H2's schema-from-entities test
 > database silently never enforced it (two of the 15, `alert_history.delivery_key` and
 > `module_versions`' content-fingerprint dedup, were found in a follow-up sweep after the first one
@@ -1028,6 +1031,65 @@ Re-ran `PostgresMigrationBehaviorTest` a fourth time against a fresh PostgreSQL 
 test, 0 failures, 0 errors**. All 15 fixed entities now have a database-level regression test; the
 sweep is complete — every `UNIQUE` in `V1__baseline.sql` is both declared on its entity and has a
 test proving H2 enforces it the same way Postgres does.
+
+## Session 2026-09-28 (continued): OPS-07 — hourly run-history aggregates
+
+With the constraint sweep closed out, picked up the next well-scoped, real gap the SRS traceability
+table already flagged: OPS-07 was "Partial" — `RetentionCleanupService` deleted `pipeline_runs`
+rows past their retention window, but nothing kept an aggregate behind, so operational history
+older than the retention window (default 14 days, though the shipped default is indefinite
+retention until a deployment opts in) simply vanished rather than degrading to "counts per
+pipeline and hour" as the requirement calls for. Chose this over starting M1 (micro-batch
+execution, PIP-15/NFR-P7): the SRS calls PIP-15 "the largest technical risk of the MVP" — a
+pipeline-execution architecture change (batched runs instead of one row per record) too large to
+land safely in the remaining budget of a single session, whereas OPS-07 was a bounded, self-
+contained addition.
+
+**What changed:**
+- `V1__baseline.sql`: new `pipeline_run_hourly_stats` table (`tenant_id`, `pipeline_id`,
+  `hour_bucket`, `status`, `run_count`, `UNIQUE (pipeline_id, hour_bucket, status)`), placed after
+  `tenants`/`pipelines` (both referenced) alongside the other feature-addition tables that use
+  inline `REFERENCES`, matching that section's established style.
+- `pipeline/PipelineRunHourlyStat.kt`: new entity, `findByPipeline(pipelineId, since)` finder.
+- `service/RetentionCleanupService.kt`: `cleanupPipelineRuns` now aggregates the rows it's about to
+  delete into `pipeline_run_hourly_stats` (grouped by pipeline/hour/status, hour-truncated) before
+  deleting them, via an upsert that adds to any existing bucket's count rather than replacing it —
+  a bucket can be added to across many cleanup runs as more of its hour ages past the cutoff.
+  Runs with no pipeline (shouldn't happen in practice; the FK is nullable only at the schema level)
+  are deleted without an aggregate row, since there's nothing to key one by.
+- The aggregation query is JPQL (`PipelineRun` entity, path-navigated to `pipeline.tenant.id`), not
+  native SQL: a first attempt used native SQL joining `pipeline_runs`/`pipelines` directly and hit
+  H2 returning UUID columns as raw `byte[]` rather than `java.util.UUID` — a native-query-specific
+  quirk JPQL doesn't have, since Hibernate's mapped UUID type applies either way. Caught immediately
+  by the test, not shipped.
+- The upsert itself *is* dialect-branched native SQL (`ON CONFLICT` doesn't exist on H2), following
+  the exact pattern `DataResource.upsertTableRegistryEntry` already established for the identical
+  problem — checked `dbKind` upfront rather than relying on a caught `SQLGrammarException`, which
+  would leave the surrounding JTA transaction rollback-only even though the exception looks handled
+  (see that method's comment for why).
+- `api/PipelineResource.kt`: new `GET /runs/hourly-stats?tenantId=&pipelineId=&sinceHours=`,
+  same auth/tenant-scoping pattern as the neighboring `/runs` and `/runs/summary` endpoints.
+  No UI page for it yet — flagged below, not silently skipped.
+
+**Verified:**
+- `RetentionCleanupServiceTest` gained a third test: two `SUCCESS` runs and one `FAILED` run in the
+  same hour are cleaned up into one row with `run_count=2` and one with `run_count=1`; a second
+  batch of old `SUCCESS` runs cleaned up in a *later* call increments the existing row to 3 rather
+  than inserting a second row for the same bucket (proves the upsert, not just the insert path).
+- Full H2 suite: **370 tests, 0 failures, 0 errors, 20 skipped** (369 + 1).
+- `PostgresMigrationBehaviorTest` against a fresh PostgreSQL 16 database: clean — the new table's
+  entity mapping matches the migration exactly.
+- The `ON CONFLICT` branch (the H2 test profile can't exercise it, since H2 has no `ON CONFLICT`)
+  was verified separately: ran the literal upsert SQL twice by hand against a scratch PostgreSQL
+  16 database (`psql`, not through the application) and confirmed exactly one row survives with
+  `run_count` correctly summed (2 + 3 = 5), not two rows or a naive overwrite.
+
+**Not done, flagged rather than left silent:** no UI page reads `/runs/hourly-stats` yet — this
+closes OPS-07's backend/API obligation, but a system administrator has no page to actually look at
+the aggregate trend. Whether that's a dashboard chart, a pipeline-detail tab, or something else is
+a product decision, not an engineering one, so it's left for the next session/owner rather than
+guessed at here. M1 (PIP-15/NFR-P7, micro-batch execution) remains the largest open item and the
+SRS's own suggested next milestone.
 
 ## Sources used
 

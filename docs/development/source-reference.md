@@ -32,6 +32,7 @@ often-stale comments while keeping every callable contract discoverable.
 | `module/ModuleVersion.kt` | Versioned module source/configuration entity. |
 | `pipeline/Pipeline.kt` | Pipeline graph/configuration entity. |
 | `pipeline/PipelineRun.kt` | Persisted pipeline execution state and result metadata. |
+| `pipeline/PipelineRunHourlyStat.kt` | Aggregated run counts per pipeline/hour/status (OPS-07), populated by `RetentionCleanupService` as detail rows age out. |
 | `pipeline/PipelineRunNodeLog.kt` | Per-node execution log entity. |
 | `alert/AlertChannel.kt` | Alert delivery-channel entity and channel type enum. |
 | `alert/AlertHistory.kt` | Alert attempt/history entity, severity/status enums, and recent-history lookup. |
@@ -104,7 +105,7 @@ reference; add a new route there in the same change as its handler.
 | `metadata/MetadataService.kt` | Metadata upsert with as-of versioning, identifier resolution (including merge by another identifier), relations and enrichment lookups. |
 | `pipeline/PipelineVersionService.kt` | Finds the version a run executes. |
 | `secrets/SecretService.kt` | Encrypts, versions, rotates and resolves secrets. |
-| `service/RetentionCleanupService.kt` | Deletes runs, alert history, audit events and readings past their configured age (control API only). |
+| `service/RetentionCleanupService.kt` | Deletes runs, alert history, audit events and readings past their configured age (control API only); folds deleted runs into `pipeline_run_hourly_stats` first (OPS-07). |
 
 ## Connector runtime
 

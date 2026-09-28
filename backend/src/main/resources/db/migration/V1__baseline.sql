@@ -976,6 +976,20 @@ CREATE TABLE model_artifacts (
 CREATE INDEX idx_model_artifacts_latest ON model_artifacts (module_id, name, version DESC);
 CREATE INDEX idx_model_artifacts_tenant ON model_artifacts (tenant_id);
 
+-- OPS-07: aggregated run counts per pipeline/hour/status, populated by RetentionCleanupService
+-- just before it deletes pipeline_runs rows past the detail retention window, so operational
+-- history stays inspectable in aggregate once the per-run detail is gone.
+CREATE TABLE pipeline_run_hourly_stats (
+    id uuid PRIMARY KEY,
+    tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    pipeline_id uuid NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+    hour_bucket timestamptz NOT NULL,
+    status varchar(20) NOT NULL,
+    run_count integer NOT NULL DEFAULT 0,
+    CONSTRAINT uq_pipeline_run_hourly_stats UNIQUE (pipeline_id, hour_bucket, status)
+);
+CREATE INDEX idx_pipeline_run_hourly_stats_tenant ON pipeline_run_hourly_stats (tenant_id, hour_bucket);
+
 -- ── Audit trail ──
 
 CREATE TABLE audit_events (

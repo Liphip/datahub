@@ -1,6 +1,7 @@
 package com.dataturntable.service
 
 import com.dataturntable.config.RuntimeRoleConfig
+import com.dataturntable.pipeline.PipelineRunStatus
 import io.quarkus.scheduler.Scheduled
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
@@ -10,6 +11,8 @@ import jakarta.transaction.Transactional
 import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.jboss.logging.Logger
 import java.time.Instant
+import java.time.temporal.ChronoUnit
+import java.util.UUID
 
 /**
  * FR-031: every listed data class needs an explicit configurable retention rule or explicit
@@ -22,6 +25,11 @@ import java.time.Instant
  * them; `readings` (time-series) and `audit_events`/`alert_history` are each independently
  * configurable since they have materially different useful lifetimes (audit trails typically need
  * to outlive operational data).
+ *
+ * OPS-07: `cleanupPipelineRuns` folds the rows it is about to delete into
+ * [com.dataturntable.pipeline.PipelineRunHourlyStat] (counts per pipeline/hour/status) first, so
+ * run history stays inspectable in aggregate — throughput and failure-rate trends, not individual
+ * runs — once the per-run detail past the retention window is gone.
  */
 @ApplicationScoped
 class RetentionCleanupService {
@@ -45,7 +53,12 @@ class RetentionCleanupService {
     @ConfigProperty(name = "dataturntable.retention.readings-days", defaultValue = "-1")
     var readingsRetentionDays: Int = -1
 
+    @ConfigProperty(name = "quarkus.datasource.db-kind", defaultValue = "postgresql")
+    lateinit var dbKind: String
+
     data class CleanupResult(val category: String, val retentionDays: Int, val deleted: Int)
+
+    private data class HourlyStatKey(val tenantId: UUID, val pipelineId: UUID, val hourBucket: Instant, val status: String)
 
     /**
      * Runs daily on a single owning role so a multi-replica deployment doesn't race duplicate
@@ -75,12 +88,70 @@ class RetentionCleanupService {
     fun cleanupPipelineRuns(): CleanupResult {
         if (pipelineRunRetentionDays < 0) return CleanupResult("pipeline_runs", pipelineRunRetentionDays, 0)
         val cutoff = Instant.now().minusSeconds(pipelineRunRetentionDays.toLong() * 86_400)
+        // OPS-07: before the detail is gone, fold it into pipeline_run_hourly_stats so run history
+        // stays inspectable in aggregate (per pipeline/hour/status) even past the detail window.
+        // JPQL rather than native SQL: a native query's UUID columns come back as raw bytes under
+        // H2, not java.util.UUID, while JPQL goes through Hibernate's mapped UUID type either way.
+        // Runs with no pipeline (should not happen in practice; the column is nullable at the
+        // schema level only) are excluded, since there's nothing to key an aggregate row by.
+        val finishedStatuses = listOf(PipelineRunStatus.SUCCESS, PipelineRunStatus.FAILED, PipelineRunStatus.CANCELLED, PipelineRunStatus.TIMED_OUT)
+        @Suppress("UNCHECKED_CAST")
+        val rows = em.createQuery(
+            """SELECT r.pipeline.tenant.id, r.pipeline.id, r.startedAt, r.status
+               FROM PipelineRun r
+               WHERE r.startedAt < :cutoff AND r.status IN :statuses AND r.pipeline IS NOT NULL"""
+        ).setParameter("cutoff", cutoff).setParameter("statuses", finishedStatuses).resultList as List<Array<Any>>
+
+        val counts = mutableMapOf<HourlyStatKey, Int>()
+        for (row in rows) {
+            val tenantId = row[0] as UUID
+            val pipelineId = row[1] as UUID
+            val startedAt = row[2] as Instant
+            val status = (row[3] as PipelineRunStatus).name
+            val key = HourlyStatKey(tenantId, pipelineId, startedAt.truncatedTo(ChronoUnit.HOURS), status)
+            counts[key] = (counts[key] ?: 0) + 1
+        }
+        counts.forEach { (key, count) -> upsertHourlyStat(key, count) }
+
         // Only finished runs. A run row is also the record that makes resends idempotent: once it
         // is deleted, a record resent with the same idempotency key would run again.
         val deleted = em.createNativeQuery(
             "DELETE FROM pipeline_runs WHERE started_at < :cutoff AND status IN ('SUCCESS', 'FAILED', 'CANCELLED', 'TIMED_OUT')"
         ).setParameter("cutoff", cutoff).executeUpdate()
         return CleanupResult("pipeline_runs", pipelineRunRetentionDays, deleted)
+    }
+
+    /**
+     * PostgreSQL's `ON CONFLICT` cannot be attempted against H2 (test profile) — see
+     * `DataResource.upsertTableRegistryEntry` for why the dialect is checked upfront rather than
+     * relying on a caught `SQLGrammarException`, which would still leave a surrounding JTA
+     * transaction rollback-only.
+     */
+    private fun upsertHourlyStat(key: HourlyStatKey, count: Int) {
+        if (dbKind == "h2") {
+            val existing = em.createNativeQuery(
+                "SELECT run_count FROM pipeline_run_hourly_stats WHERE pipeline_id = :pid AND hour_bucket = :hour AND status = :status"
+            ).setParameter("pid", key.pipelineId).setParameter("hour", key.hourBucket).setParameter("status", key.status)
+                .resultList.firstOrNull()
+            if (existing != null) {
+                em.createNativeQuery(
+                    "UPDATE pipeline_run_hourly_stats SET run_count = run_count + :count WHERE pipeline_id = :pid AND hour_bucket = :hour AND status = :status"
+                ).setParameter("count", count).setParameter("pid", key.pipelineId).setParameter("hour", key.hourBucket)
+                    .setParameter("status", key.status).executeUpdate()
+            } else {
+                em.createNativeQuery(
+                    "INSERT INTO pipeline_run_hourly_stats (id, tenant_id, pipeline_id, hour_bucket, status, run_count) VALUES (random_uuid(), :tid, :pid, :hour, :status, :count)"
+                ).setParameter("tid", key.tenantId).setParameter("pid", key.pipelineId).setParameter("hour", key.hourBucket)
+                    .setParameter("status", key.status).setParameter("count", count).executeUpdate()
+            }
+            return
+        }
+        em.createNativeQuery(
+            """INSERT INTO pipeline_run_hourly_stats (id, tenant_id, pipeline_id, hour_bucket, status, run_count)
+               VALUES (gen_random_uuid(), :tid, :pid, :hour, :status, :count)
+               ON CONFLICT (pipeline_id, hour_bucket, status) DO UPDATE SET run_count = pipeline_run_hourly_stats.run_count + EXCLUDED.run_count"""
+        ).setParameter("tid", key.tenantId).setParameter("pid", key.pipelineId).setParameter("hour", key.hourBucket)
+            .setParameter("status", key.status).setParameter("count", count).executeUpdate()
     }
 
     @Transactional

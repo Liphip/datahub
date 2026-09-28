@@ -643,6 +643,51 @@ class PipelineResource {
     }
 
     /**
+     * OPS-07: aggregated run counts per pipeline/hour/status for runs old enough that
+     * [com.dataturntable.service.RetentionCleanupService] has already folded their detail rows
+     * away — the per-run detail `/runs` gives out is gone past the retention window, but the
+     * throughput/failure-rate trend survives here.
+     */
+    @GET
+    @Path("/runs/hourly-stats")
+    fun getRunHourlyStats(
+        @QueryParam("tenantId") tenantId: String,
+        @QueryParam("pipelineId") pipelineId: String,
+        @QueryParam("sinceHours") sinceHours: Int?
+    ): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val tenantUuid = try {
+            parseUuid(tenantId, "tenantId")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        requireTenantAccess(currentUser, tenantId, "pipeline:read")?.let { return it }
+        val pipelineUuid = try {
+            parseUuid(pipelineId, "pipelineId")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val pipeline = em.find(Pipeline::class.java, pipelineUuid)
+        if (pipeline == null || pipeline.tenant?.id != tenantUuid) {
+            return Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
+        }
+
+        val hours = (sinceHours ?: (30 * 24)).coerceIn(1, 365 * 24)
+        val since = java.time.Instant.now().minus(java.time.Duration.ofHours(hours.toLong()))
+        val stats = com.dataturntable.pipeline.PipelineRunHourlyStat.findByPipeline(pipelineUuid, since)
+
+        return Response.ok(
+            stats.map { stat ->
+                mapOf(
+                    "hourBucket" to stat.hourBucket,
+                    "status" to stat.status,
+                    "runCount" to stat.runCount,
+                )
+            }
+        ).build()
+    }
+
+    /**
      * Cross-tenant run summary — returns pipeline stats for every tenant the calling user
      * has a membership in, in a single request.  Used by the global Dashboard overview.
      */

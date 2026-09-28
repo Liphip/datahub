@@ -825,7 +825,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | AUD-01 | + | Paper-trail requirement (extends NFR-S5). | Partial (create/update/delete of pipelines, connectors, tenants, users, memberships, roles, secrets, API keys, alert channels; run trigger/cancel/retry; login success/failure; no deployment/backup/retention events) |
 | AUD-02 – AUD-10 | + | | Open (`audit_events` table without read API, UI, hash chain or notes) |
 | OPS-01 – OPS-06 | + | System administrator persona. | Open |
-| OPS-07 | + | Run history grows by one row per record (review 2026-09-27). | Partial (`RetentionCleanupService` deletes by age; no hourly aggregates) |
+| OPS-07 | + | Run history grows by one row per record (review 2026-09-27). | Done (`RetentionCleanupService` deletes by age and folds each deleted run into `pipeline_run_hourly_stats` — counts per pipeline/hour/status — first; `GET /api/internal/v1/pipelines/runs/hourly-stats`) |
 | MET-01 – MET-10 | + | New requirements group: a metadata component per device, datapoint, endpoint and location that enriches pipelines (decision of 2026-09-27). | Done (types, templates, as-of versioning, enrich/export node types, `/metadata` UI) |
 | NFR-P1 | ~ | Scoped to multi-node autoscaling Kubernetes with a benchmark. | Open |
 | NFR-P2 | ~ | Applies to the hot tier; lakehouse visibility bounded by the commit interval. | Open (measured p99 14.8 s under backlog on one node) |
