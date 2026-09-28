@@ -520,6 +520,8 @@ External systems are reached through **connections**, owned by the system plane:
 
 Pull inputs are INPUT-only and expose a polling interval and an operator-visible last/next run (CON-13). Every credential field is stored as a secret reference; the backend rejects inline credentials, and leaving a secret field blank on edit keeps the stored reference (§7.5).
 
+Retry and redelivery semantics are per connector *direction and transport*, not per config field, so they are documented once, next to every other delivery stage's guarantee, rather than repeated in this table: see §4.9's guarantee table, rows "MQTT connectors", "Polling connectors" and "Pull inputs (FILE/FTP/SFTP/EMAIL)".
+
 A system used in both directions is used through two connectors on the same connection (CON-02).
 
 ### 7.5 Connector Secrets
@@ -679,6 +681,10 @@ Rule state lives in the `alert_rule_state` table (one row per rule node and seri
 | Slack | `webhookUrl`, optional `channel` |
 
 Channel secrets are to be stored encrypted (ALT-12).
+
+Retry semantics (10 s … 1 h backoff, 12 attempts, transactional outbox, `Idempotency-Key` for
+Webhook/REST) apply uniformly across all five channel types and are documented once in §4.9's
+guarantee table, row "Alerts" — not repeated per channel here.
 
 ### 9.4 Alert Flow
 

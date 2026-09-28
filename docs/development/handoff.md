@@ -814,9 +814,17 @@ Conflicts that were resolved in the process (the code was checked each time):
   select-then-update vs. `ON CONFLICT`, with a doc comment at `upsertTableRegistryEntry` explicitly
   citing the rollback-only trap this avoids. No caught-`SQLException`-inside-JTA pattern remains
   anywhere in this list.
-- **Documentation gaps:** per-connector and per-alert-channel configuration examples with retry
-  semantics are missing. `scripts/generate-source-function-reference.ps1` only recognises one-line
-  Kotlin/TypeScript declarations; extend it before introducing multi-line declaration styles.
+- **Documentation gaps:**
+  - ~~Per-connector/per-alert-channel retry semantics were undocumented near their config tables.~~
+    **Partially fixed.** The retry/redelivery behavior itself was *already* fully documented — §4.9's
+    guarantee table covers every connector transport and every alert channel type — it just wasn't
+    cross-referenced from §7.2 (connector config fields) or §9.3 (alert channel config fields), so a
+    reader at either table had no pointer to it. Added one cross-reference sentence under each table.
+    **Still missing:** concrete worked JSON config examples per connector/channel type (the field-name
+    tables exist; example payloads showing them filled in do not) — that part of the original gap is
+    real and still open.
+  - `scripts/generate-source-function-reference.ps1` only recognises one-line Kotlin/TypeScript
+    declarations; extend it before introducing multi-line declaration styles.
 - **Grafana `admin/admin`** exists only in the Compose dev stack. The backend itself has no default
   Grafana credentials (NFR-S11).
 - Pitfall (fixed, keep in mind): on this Quarkus version `Session.setMaxIdleTimeout` is a no-op
