@@ -1533,6 +1533,17 @@ local `mvn test` will not work in this exact sandbox.
    `workflow_dispatch` runs. **Next session or the owner should trigger it manually** (Actions tab →
    "Kafka Integration Tests (manual)" → Run workflow, on `dev`) to get the first real confirmation
    this workflow has ever had.
+5. **`ci.yml` had no `paths-ignore`, so the dev-push trigger fix (item 3) meant every docs-only
+   commit was about to start running the entire matrix** — full backend test suite, container
+   builds, image scans, SBOM generation, Kubernetes render, all ~7 jobs, ~5-10 minutes. Watched it
+   happen directly: five docs-only commits in this session each queued a full run before this fix
+   landed (commit `191e689`). Added `paths-ignore: ['**.md', 'docs/**']` to both `push` and
+   `pull_request` triggers. A commit that touches both code and docs still runs everything —
+   `paths-ignore` only skips when *every* changed file matches. **Caveat, not yet a problem:** `dev`
+   has no branch protection / required status checks today, so a doc-only push or PR simply getting
+   no CI status is harmless. If `dev` ever gets a required "CI" status check, revisit this —
+   `paths-ignore` means a doc-only PR would never satisfy it and could get stuck pending forever
+   (a well-known GitHub Actions gotcha).
 
 ## Sources used
 
