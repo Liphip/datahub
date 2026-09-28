@@ -1,12 +1,14 @@
 # DataTurntable — Software Requirements Specification (SRS)
 
-**Version:** 2.1
-**Date:** 2026-09-27
+**Version:** 2.2
+**Date:** 2026-09-28
 **Status:** Draft
 
 Version 2.0 keeps every requirement of version 1.1 under its original ID. Requirements whose wording changed, and the reason, are listed in [Appendix A](#appendix-a-traceability-to-version-11); the same appendix records the implementation status. New requirement groups: Lakehouse (LAK), Identity & Access (IAM), Audit (AUD), System Administration (OPS), Licensing (NFR-L).
 
-Version 2.1: delivery is exactly once for identified records (PIP-09, PIP-10, PIP-14, DAT-07, NFR-R2); requirements found missing in the review of 2026-09-27 were added (PIP-15, ALT-13, TEN-10, UI-20, UI-21, OPS-07, DAT-09, NFR-P7, NFR-R5, NFR-R6); section 11 orders the MVP into milestones. The review with measurements: [requirements review](../development/requirements-review.md).
+Version 2.1: delivery is exactly once for identified records (PIP-09, PIP-10, PIP-14, DAT-07, NFR-R2); requirements found missing in the review of 2026-09-27 were added (PIP-15, ALT-13, TEN-10, UI-20, UI-21, OPS-07, DAT-09, NFR-P7, NFR-R5, NFR-R6); section 11 orders the MVP into milestones.
+
+Version 2.2: this document is the **single requirements and status document** of the project. It absorbs the production-readiness plan (`production-ready-spec.json`, FR-001 – FR-032, NFR-001 – NFR-020; mapping in [Appendix C](#appendix-c-production-readiness-plan-ids)), the product goals of the former target-architecture draft (1.5), the feature support matrix (status now in Appendix A only), and the requirements review with its measurements ([Appendix B](#appendix-b-measurements-and-review-findings)). New requirements: IMP-14, PIP-16 – PIP-18, MOD-14, EXP-09, CON-17, CON-18, IAM-14, IAM-15, API-10, NFR-P8, NFR-R10, NFR-R11, NFR-S9 – NFR-S12, NFR-M7 – NFR-M9. Decisions against alternatives are recorded in section 12. How the system is built is described in the [functional specification](functional-specification.md); the running work log is [`docs/development/handoff.md`](../development/handoff.md).
 
 ---
 
@@ -23,7 +25,10 @@ Version 2.1: delivery is exactly once for identified records (PIP-09, PIP-10, PI
 9. [Integration Requirements](#9-integration-requirements)
 10. [Deployment Requirements](#10-deployment-requirements)
 11. [MVP Scope vs. Future Scope](#11-mvp-scope-vs-future-scope)
-- [Appendix A: Traceability to Version 1.1](#appendix-a-traceability-to-version-11)
+12. [Decisions and Rejected Alternatives](#12-decisions-and-rejected-alternatives)
+- [Appendix A: Traceability and Implementation Status](#appendix-a-traceability-and-implementation-status)
+- [Appendix B: Measurements and Review Findings](#appendix-b-measurements-and-review-findings)
+- [Appendix C: Production-Readiness Plan IDs](#appendix-c-production-readiness-plan-ids)
 
 ---
 
@@ -87,6 +92,22 @@ Out of scope: DataTurntable is **not** an AI/LLM platform, a general BI suite, a
 | MVP | Minimum Viable Product |
 | RBAC | Role-Based Access Control |
 | DAG | Directed Acyclic Graph |
+
+### 1.5 Product Goals
+
+These goals are not to be down-scoped; every requirement below serves at least one of them.
+
+| Goal | Meaning | Success criterion |
+| ---- | ------- | ----------------- |
+| Self-contained | One installation (one Compose file or one Helm chart). All components are bundled, deployed and lifecycle-managed by the platform; users never operate a component directly. External prerequisites: the host or cluster (with a storage class) and a backup destination. | A new installation runs without any manually operated component (DEP-03, OPS). |
+| Single UI | Everything is reached through the platform UI and its common login; Grafana is embedded behind it. | UI-15, IAM-09. |
+| Structured data hub and lakehouse | Measurements, time series, metadata and other structured records; open table format, own catalog, embedded SQL, history and replay. Unstructured payloads are not stored. | STR-08, LAK. |
+| Reliable delivery | Every input usable fire-and-forget; exactly once for identified records; no loss on failover. | IMP-10, PIP-14, NFR-R2, NFR-R7, NFR-R9. |
+| Scale | 1 billion records per day on multi-node autoscaling Kubernetes (single node not held to it), proven by a reproducible benchmark. | NFR-P1, NFR-P7. |
+| Secure multi-tenancy | Tenant isolation is an invariant enforced by the data layer; user code is hostile by default; secrets never leak. | TEN-03, NFR-S3, NFR-S8, NFR-S10. |
+| Paper trail and reproducibility | Every action with impact is audited; every run references the immutable versions it executed. | AUD, PIP-16, MOD-14. |
+| FOSS | Every bundled component is FOSS or at least freeware. | NFR-L1. |
+| Honest status | Documentation never presents planned or untested behaviour as implemented. | NFR-M9, Appendix A. |
 
 ---
 
@@ -166,6 +187,7 @@ Requirements are tagged: `MVP` = required for initial release; `V2` = planned po
 | IMP-10 | **Fire-and-forget.** Every input (REST, MQTT, WebSocket, UDP, FILE, FTP, SFTP, EMAIL) shall accept a record without the sender registering for a response and without the sender having to poll for a result. A 2xx acknowledgement means the record is durably accepted (bus write or spool) and will be processed exactly once if it carries an identity; it does not mean the pipeline has finished. Senders shall never be required to implement a response or retry protocol, because typical field devices and plant systems (SCADA, meters, PLCs, mail servers, FTP servers) cannot. | MVP |
 | IMP-11 | Pull inputs shall be polled by the platform: a connector of type FILE, FTP, SFTP or EMAIL fetches new items on a configurable interval and feeds the parsed records into the pipeline. The platform, not the sender, initiates and owns the transfer. | MVP |
 | IMP-12 | A pull input shall keep a per-connector ledger of the items it has seen, with their processing state, so that an operator can inspect what arrived and requeue a failed item individually. | MVP |
+| IMP-14 | Inbound endpoints shall protect the platform: maximum payload size, per-credential message rate, maximum WebSocket connections and an idle timeout for WebSocket sessions, all configurable; violations are rejected with a specific status and counted in metrics. | MVP |
 | IMP-13 | Unstructured payloads shall never be stored. A pulled file, mail attachment or FTP file is parsed into structured records at ingest time; only those records, and their metadata, are persisted (STR-08). | MVP |
 
 ### 4.2 Processing Pipeline
@@ -186,6 +208,9 @@ Requirements are tagged: `MVP` = required for initial release; `V2` = planned po
 | PIP-12 | Pipeline processing shall scale horizontally: work is partitioned by tenant/pipeline and processed in micro-batches by long-running workers whose number follows the load. | MVP |
 | PIP-13 | Messages that fail processing shall be routed to a dead-letter queue from which operators can inspect and requeue them. | MVP |
 | PIP-14 | A record that carries an identity — `Idempotency-Key` (HTTP), `_idempotencyKey` (WebSocket) or the IMPORT node's `deduplicateBy` fields (any source) — shall be processed, stored and alerted on exactly once, including across broker, executor and database failover and client resends. Side effects leaving the platform shall carry an idempotency key where the protocol allows it (webhook, REST). | MVP |
+| PIP-16 | Every run shall reference the immutable pipeline version (graph and node configuration) it executed; editing a pipeline creates a new version and never changes the record of past runs. | MVP |
+| PIP-17 | The pipeline graph format shall carry a schema version and shall be validated on save (node types, connector directions, module-version compatibility, acyclicity, reachable sinks); unsupported versions are rejected. | MVP |
+| PIP-18 | Runs and nodes shall follow one state machine (PENDING, QUEUED, RUNNING, CANCELLING, CANCELLED, SUCCESS, FAILED, TIMED_OUT) with defined transitions, so that crashes, duplicates, timeouts and cancellation races leave a deterministic state; runs can be cancelled and retried. | MVP |
 | PIP-15 | Execution shall not require metadata database writes per record: records are executed in micro-batches (one run per batch per partition), so that the metadata database load is independent of the record rate (NFR-P7). Run history stays inspectable per record where an identity exists. | MVP |
 
 ### 4.3 Python Module System
@@ -195,7 +220,7 @@ Requirements are tagged: `MVP` = required for initial release; `V2` = planned po
 | MOD-01 | Users with permission shall be able to write Python modules in the UI code editor. | MVP |
 | MOD-02 | The system shall support the module types `IMPORT`, `DB_LOAD`, `PROCESSING`, `MERGE`, `ALERT`, `EXPORT` and `DB_SAVE`, each with a defined Python interface contract. | MVP |
 | MOD-03 | Python modules shall run in isolated containers (Docker on a single node, pods on Kubernetes), never in the platform's own process. | MVP |
-| MOD-04 | Container instances shall have configurable resource limits (CPU, memory). | MVP |
+| MOD-04 | Container instances shall have configurable resource limits: CPU, memory, process count, temporary disk, wall-clock timeout, log/output size, network, and concurrent executions per tenant. | MVP |
 | MOD-05 | Module containers shall have no network access by default; network access is explicitly granted per module by a holder of the corresponding permission. Installing module requirements shall not require network access for the module at run time. | MVP |
 | MOD-06 | The module sandbox shall pre-install: pandas, numpy, scikit-learn; optionally PyTorch, xgboost. | MVP |
 | MOD-07 | The platform shall inject system helper functions into module execution context: `alert_fn` for alert dispatch and `query_fn` for tenant-scoped data queries. | MVP |
@@ -204,6 +229,7 @@ Requirements are tagged: `MVP` = required for initial release; `V2` = planned po
 | MOD-10 | Module code versions shall be tracked; previous versions shall be auditable. | MVP |
 | MOD-11 | Modules shall be scoped per tenant; a module in one tenant shall not be visible to another. | MVP |
 | MOD-12 | Each module version shall carry a configuration object that is passed to the module class constructor. | MVP |
+| MOD-14 | The executable content of a module version (code, dependency manifest, configuration) shall be immutable once created and identified by a content digest; a change always creates a new version. | MVP |
 | MOD-13 | Errors while loading or instantiating a module shall fail the node visibly (run log, metrics); they shall never be silently ignored. | MVP |
 
 ### 4.4 Alert Module
@@ -236,6 +262,7 @@ Requirements are tagged: `MVP` = required for initial release; `V2` = planned po
 | EXP-06 | The platform shall expose pull endpoints that external systems query: the data query API, a Grafana data source, and the Iceberg REST catalog for SQL/analytics tools (all permission-checked). | MVP |
 | EXP-07 | Users shall be able to write custom EXPORT modules in Python. | MVP |
 | EXP-08 | Export connectors shall be hot-pluggable. | MVP |
+| EXP-09 | An EXPORT node without a module shall deliver the record unchanged through its OUTPUT connector ("Send as is"), with an idempotency key per run and node. | MVP |
 
 ### 4.6 Connectors and Connections
 
@@ -258,6 +285,8 @@ Connections describe how to reach an external system (endpoint, credentials). Th
 | CON-13 | Polling connectors (REST, FILE, FTP, SFTP, EMAIL) shall expose a configurable polling interval and an operator-visible last-run/next-run state. | MVP |
 | CON-14 | The UI shall configure every pull input type with the fields the source actually needs (host, port, TLS mode, path, filename pattern, record format, mail folder, content selection, post-read action, minimum age) and shall validate them before the connector can be enabled. | MVP |
 | CON-15 | A pull input shall support a `minAge` guard so that files or mails still being written by the remote system are not read half-finished. | MVP |
+| CON-17 | Changes to a connector's configuration shall create a new connector revision; runs and deliveries reference the revision they used. | MVP |
+| CON-18 | Credentials of connectors and alert channels shall be stored as encrypted, versioned secrets that the configuration references (`secretRefs`); inline credentials in a configuration are rejected, and secrets can be rotated without editing the connector. | MVP |
 | CON-16 | After a successful read, the platform shall apply the connector's post-read action (keep, move, or delete the file; keep, move, or delete the mail) so that a re-run cannot duplicate or skip items. | MVP |
 
 ### 4.7 Storage
@@ -326,10 +355,11 @@ Connections describe how to reach an external system (endpoint, credentials). Th
 | API-03 | The API shall authenticate browser users with the platform session (HttpOnly cookie with CSRF protection) and machine clients with JWT Bearer tokens or API keys. | MVP |
 | API-04 | The management API shall support API keys for service accounts and machine clients. | MVP |
 | API-05 | API keys shall have configurable, fine-grained permission scopes and an optional expiry. | MVP |
-| API-06 | The management API shall be documented (OpenAPI/Swagger). | MVP |
+| API-06 | The management API shall be documented (OpenAPI/Swagger); the contract is generated from the code and linted in CI. | MVP |
 | API-07 | A public data ingestion API (`/api/ingest/v1/`) shall be available for external systems to push data into pipelines without using the management API. | MVP |
 | API-08 | The platform shall support OAuth2/OIDC for user authentication (see IAM-09). | MVP |
 | API-09 | The API shall enforce rate limiting (default: 100 req/min per client). | V2 |
+| API-10 | Every API error shall use one envelope (`code`, `message`, `details`) with a stable machine-readable code; constraint violations map to `400`/`409`, never `500`. | MVP |
 
 ### 4.11 Multi-Tenancy
 
@@ -350,7 +380,7 @@ Connections describe how to reach an external system (endpoint, credentials). Th
 
 | ID | Requirement | Priority |
 | -- | ----------- | -------- |
-| IAM-01 | The product shall define the permission vocabulary: stable permission names of the form `resource:action` (e.g. `pipeline:write`, `data:read`, `system.config:read`), each corresponding to an enforcement point. | MVP |
+| IAM-01 | The product shall define the permission vocabulary: stable permission names of the form `resource:action` (e.g. `pipeline:write`, `data:read`, `system.config:read`), each corresponding to an enforcement point. Permissions are matched as exact tokens (or an explicit wildcard), never by substring. | MVP |
 | IAM-02 | Each installation shall define its roles and role assignments; which permissions a role contains, and who holds it, is not fixed by the product. | MVP |
 | IAM-03 | Role assignments shall have a scope: system (whole installation) or tenant (optionally including descendants); resource scope (single pipeline or connection) is planned. | MVP (resource scope V2) |
 | IAM-04 | Role assignments shall support a validity period (start and end time), the granting user and a reason. Permissions shall be evaluated on every request, so that an assignment takes effect and expires exactly on time. | MVP |
@@ -362,6 +392,8 @@ Connections describe how to reach an external system (endpoint, credentials). Th
 | IAM-10 | The platform shall act as an OIDC client for external identity providers (e.g. Keycloak, Entra ID, AD FS), configured at run time in the UI: issuer, client, scopes, claim-to-role-assignment mapping, just-in-time user provisioning. | MVP |
 | IAM-11 | Local password login shall be restrictable to designated break-glass accounts. | MVP |
 | IAM-12 | Logout shall end the session everywhere (RP-initiated and back-channel logout); administrators shall be able to revoke sessions. | MVP |
+| IAM-14 | Access tokens shall be short-lived. Deactivating a user, changing a password or changing role assignments shall invalidate existing sessions and tokens of that user at once. | MVP |
+| IAM-15 | Administrators shall be able to see why a user has or lacks a permission in a tenant: the memberships, roles, inherited grants and system-scope assignments that apply. | MVP |
 | IAM-13 | Directory synchronisation (SCIM) for immediate revocation of IdP group changes. | V2 |
 
 ### 4.13 Audit (AUD)
@@ -422,6 +454,7 @@ A metadata object describes something the data is *about*: a device, a datapoint
 | NFR-P4 | The platform shall support horizontal scaling of the ingestion and processing layers without downtime, driven automatically by load (e.g. consumer lag). |
 | NFR-P5 | Module workers shall be ready within **10 seconds** of being started; processing an individual message shall not start a new container. |
 | NFR-P6 | Interactive SQL queries over recent data and rollups shall return within 5 seconds at the 95th percentile. |
+| NFR-P8 | Heavy UI dependencies (code editor, graph editor, charts) shall be loaded on demand and not inflate the initial page load. |
 | NFR-P7 | Metadata database writes shall not grow with the record rate: at NFR-P1 load they stay below 1,000 transactions/s (see PIP-15). |
 
 ### 5.2 Reliability & Availability
@@ -436,6 +469,8 @@ A metadata object describes something the data is *about*: a device, a datapoint
 | NFR-R6 | Ingestion shall keep accepting data while the metadata database is unavailable; only the loss of the message bus write quorum may refuse data. |
 | NFR-R7 | **Queue redundancy.** The message bus shall be replicated in the HA deployment: replication factor 3 with a minimum of 2 in-sync replicas, so that the loss of one broker node neither loses an acknowledged record nor reduces the write quorum. Durability of a record that the bus refuses shall be guaranteed by a local, fsync'd ingest spool on the ingest node, which is drained into the bus once it is available again. In Kubernetes the ingest edge runs as a StatefulSet with a persistent volume claim for that spool. |
 | NFR-R8 | Redundancy is a property of the **Kubernetes** deployment. The single-node Docker Compose reference stack runs one broker and one database and therefore cannot satisfy NFR-R5 or NFR-R7; it is documented as a development and evaluation topology that accepts the risk of losing in-flight data with the node. The UI and the health endpoints shall state this rather than implying HA. |
+| NFR-R10 | A persistent connector (broker subscription, poller, WebSocket client) shall run on exactly one instance at a time, owned through a database lease with heartbeat, expiry and a fencing token, and shall fail over to another instance without split brain. |
+| NFR-R11 | Backup and restore shall be operationally proven: a documented drill restores a backup into an empty installation and verifies the data. |
 | NFR-R9 | Fire-and-forget shall not weaken the durability guarantee: a 2xx acknowledgement (IMP-10) shall only be sent after the record is durably accepted by the bus or the spool, so a sender that never retries cannot lose data. |
 
 ### 5.3 Security
@@ -444,12 +479,16 @@ A metadata object describes something the data is *about*: a device, a datapoint
 | -- | ----------- |
 | NFR-S1 | All inter-service communication shall use TLS in production deployments. |
 | NFR-S2 | User passwords shall only be transmitted over TLS and stored server-side using BCrypt; passwords shall have at least 8 characters. |
-| NFR-S3 | Python module containers shall run as non-root users with a read-only filesystem and no network access by default. |
+| NFR-S3 | User-defined Python is hostile by default: module containers shall run as non-root users with dropped capabilities, a seccomp profile, a read-only filesystem, no network access by default and no access to the container runtime socket or platform credentials. |
 | NFR-S4 | API keys shall be stored hashed; the plaintext key shall only be shown once at creation. |
 | NFR-S5 | All user actions that modify system state shall be audit-logged (see AUD). |
 | NFR-S6 | Input data from inbound endpoints shall be sanitised before being passed to modules to prevent injection. |
 | NFR-S7 | Signing keys, database credentials and connector secrets shall be supplied per installation (secret store / Kubernetes Secrets) and never be part of images or the repository. |
 | NFR-S8 | Tenant isolation shall be enforced by the data layer itself (per-tenant database roles, catalog namespaces), not only by application checks. |
+| NFR-S9 | Connectors shall not reach loopback, private, link-local, multicast or cloud-metadata addresses unless a system administrator allowed the network; cloud metadata endpoints stay blocked in every case. The check runs when a connector is saved and on every connect (server-side request forgery, DNS rebinding). |
+| NFR-S10 | Secrets shall never appear in API responses, logs, metrics, audit records, error messages or execution metadata; logs are redacted centrally as a second line of defence. |
+| NFR-S11 | A production start shall fail instead of falling back to insecure defaults: missing signing keys, encryption keys or default credentials abort startup. |
+| NFR-S12 | The browser application shall minimise the impact of XSS: security response headers (CSP, HSTS, frame and content-type protection) and credentials kept out of script-readable storage (API-03). |
 
 ### 5.4 Maintainability & Operability
 
@@ -461,6 +500,9 @@ A metadata object describes something the data is *about*: a device, a datapoint
 | NFR-M4 | Module and connector updates shall be possible via the UI without modifying or restarting the core platform. |
 | NFR-M5 | Database schema migrations shall be automated (Flyway). |
 | NFR-M6 | Every change shall pass continuous integration (build, lint, tests against the real database engine). |
+| NFR-M7 | One request, event or run shall be traceable across ingest, message bus, execution and delivery: events carry a versioned envelope with event, correlation and causation ids; logs and metrics carry the correlation id; distributed tracing (OpenTelemetry) can be enabled. |
+| NFR-M8 | Release artifacts shall be immutable and traceable: images referenced by digest, a software bill of materials per image, and vulnerability scans of images and dependencies in CI. |
+| NFR-M9 | Documentation shall not present planned or untested behaviour as implemented. The implementation status of every requirement is kept in Appendix A and updated in the same change as the implementation. |
 
 ### 5.5 Usability
 
@@ -598,6 +640,8 @@ Permissions are additive; an auth user may hold role assignments in multiple ten
 - Basic built-in data visualisation (line/bar charts)
 - Hot-pluggable modules
 - Deduplication of system-generated duplicates
+- Immutable module and pipeline versions per run, connector revisions, secret references, single-owner connector leases (MOD-14, PIP-16, CON-17, CON-18, NFR-R10)
+- Security baseline: SSRF destination policy, secret redaction, fail-closed production start, security headers (NFR-S9 – NFR-S12)
 - Prometheus metrics, structured logging
 - Single-node Docker Compose, Kubernetes (single-instance and HA), single Helm chart
 - Reproducible 1B/day benchmark on Kubernetes
@@ -630,9 +674,38 @@ The MVP list above is the scope of release 1.0; nothing in it is optional. The m
 
 ---
 
-## Appendix A: Traceability to Version 1.1
+## 12. Decisions and Rejected Alternatives
 
-Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. Status of the implementation on 2026-09-27: **Done**, **Partial**, **Open**.
+Alternatives that were considered and not adopted, with the reason, so that they are not re-proposed without new facts.
+
+| Alternative | Decision and reason | Date / source |
+| ----------- | ------------------- | ------------- |
+| Split the backend into domain microservices behind an API gateway (former FR-029, NFR-011, NFR-012) | **Rejected.** One image with four runtime roles (`control-api`, `public-api`, `ingest-edge`, `pipeline-executor`) already scales each boundary independently (NFR-P4) and keeps single-node installations simple. A service split adds network hops, distributed transactions and operational load without a requirement that needs it. | Owner, 2026-09-28 |
+| Big-bang rewrite; one service per entity/table; repository per service | Rejected: high risk, distributed monolith, no security or scaling value. | Production-readiness plan |
+| Docker Swarm as a deployment target (former FR-030) | Removed (DEP-08). Supported: single-node Compose and Kubernetes. | Owner, 2026-09-25 |
+| Blob/file store with S3/MinIO upload and download (former FR-022) | Dropped, not deferred (STR-08). Every payload is parsed into records at ingest. | Owner, 2026-09-27 |
+| MinIO as bundled object storage | Excluded: no longer distributed as open source (see `docs/development/licenses.md`). Candidate for the lakehouse: SeaweedFS. | Licence review, 2026-09-25 |
+| Redis for connector ownership, cooldowns or caches | Not used. Durable coordination (leases, cooldowns, run claims) lives in PostgreSQL; caches are in-process. One less bundled component. | Implementation |
+| Argon2id password hashing (former FR-003) | Not adopted for now: BCrypt meets NFR-S2 and needs no extra dependency. Argon2id (via Bouncy Castle) remains a possible later change; it needs no requirement change. | Merge of `dev`, 2026-09-27 |
+| Client-side SHA-256 pre-hashing of passwords | Removed: over TLS it adds no protection, and the hash becomes a password equivalent. | NFR-S2 |
+| At-least-once delivery with deduplication only of system duplicates | Replaced by exactly once for identified records (PIP-14). | Owner, 2026-09-27 |
+| Standalone alert-rule entities evaluated outside pipelines, with multi-channel rule actions (former FR-023 in `dev`) | Replaced by built-in ALERT node types in the pipeline graph (ALT-02) with one default channel per node (ALT-10). Multi-channel actions were not carried over. | Merge of `dev`, 2026-09-27 |
+| Mounting the Docker socket into Kubernetes execution pods | Rejected: host-level privilege. Kubernetes executes modules as pods/Jobs (MOD-03). | NFR-S3 |
+| Giving user code broad database, Kafka or platform credentials | Rejected: the platform performs all external I/O (CON-05); modules get scoped data only. | NFR-S3 |
+| Storing credentials inline in connector JSON | Rejected: secrets need rotation, masking and encryption (CON-18). | Implementation |
+| Normalising every JSON document and DAG node into relational tables | Rejected: graphs and nested configuration are document-shaped (JSONB with validation); relational only where semantics need it. | Production-readiness plan |
+| A custom dashboard builder, message broker, object store or identity provider | Rejected: Grafana, Kafka, S3-compatible storage and external OIDC providers are used instead. | Production-readiness plan |
+| Kubernetes mandatory for every installation | Rejected: Compose stays supported for single-node installations (DEP-01). | Production-readiness plan |
+| Floating `latest` image tags | Rejected: images pinned by version/digest (NFR-M8). | Production-readiness plan |
+| AI features for their own sake; many new connector types without a concrete need | Rejected: not a product goal (1.3). | Production-readiness plan |
+
+---
+
+## Appendix A: Traceability and Implementation Status
+
+This appendix is the **only** place where implementation status is kept (NFR-M9). Update it in the same change as the implementation.
+
+Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.x. Status of the implementation on 2026-09-28: **Done** (built and covered by tests; for operational items also exercised on a real environment), **Partial**, **Open**. "Not on a cluster" means verified locally or with Compose but never on a real Kubernetes cluster.
 
 | ID | Change | Reason for change | Status |
 | -- | ------ | ----------------- | ------ |
@@ -642,7 +715,8 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | IMP-04 | = | | Open (UDP output exists, no listener) |
 | IMP-05 | ~ | The platform fetches via connectors and the module parses (security: no credentials in containers, CON-05). | Done |
 | IMP-06 – IMP-08 | = | | Done |
-| IMP-09 | + | Ingestion is currently unauthenticated (security review). | Open |
+| IMP-09 | + | Ingestion was unauthenticated (security review). | Done (API keys per pipeline/connector, SHA-256 stored, shown once, expiry, revocation, UI page `/api-keys`) |
+| IMP-14 | + | Ingest protections (former FR-007). | Done (payload size, per-key rate `429`, WebSocket connection limit and idle reaper) |
 | IMP-10 – IMP-13 | + | Fire-and-forget for every input, platform-owned pull inputs, per-connector item ledger, and no unstructured storage (decision of 2026-09-27). | Partial (FILE/FTP/SFTP/EMAIL poller, ledger and retry API done; UI forms done; EMail/FTP/SFTP sources usable) |
 | PIP-01, PIP-02 | = | | Done |
 | PIP-03 | ~ | Fan-in is implemented by the dedicated MERGE node type. | Done |
@@ -652,18 +726,22 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | PIP-09, PIP-10 | ~ | Exactly once for identified records (decision of 2026-09-27). | Done |
 | PIP-11 | = | | Done |
 | PIP-12 | + | Needed for NFR-P1. | Partial (keyed partitions, parallel consumers; no micro-batches, CPU-based autoscaling) |
-| PIP-13 | + | DLQ was described in the functional spec only. | Partial (DLQ topic; no inspection/requeue UI) |
+| PIP-13 | + | DLQ was described in the functional spec only. | Partial (DLQ topic and records, retry API `/api/internal/v1/events/dlq/{id}/retry`; no inspection UI) |
 | PIP-14 | + | Exactly-once delivery. | Done (verified with broker, executor and database failures) |
 | PIP-15 | + | Per-record runs cannot reach NFR-P1 (review 2026-09-27). | Open |
+| PIP-16 | + | Former FR-009. | Done (`PipelineVersion`; runs pinned to the version) |
+| PIP-17 | + | Former FR-010. | Done (`schemaVersion` 1 validated; no migration framework needed yet) |
+| PIP-18 | + | Former FR-011. | Done (state machine incl. cancel and retry) |
 | MOD-01 | = | | Done |
 | MOD-02 | ~ | Seven module types instead of four. | Done |
 | MOD-03 | ~ | Pods on Kubernetes; long-running workers instead of one container per message (NFR-P5). | Partial (Docker only) |
-| MOD-04 | = | | Done |
+| MOD-04 | ~ | Full quota list (former FR-014). | Done (Docker backend) |
 | MOD-05 | ~ | Installing requirements currently opens network access. | Partial |
 | MOD-06 | = | | Open (slim base image) |
-| MOD-07 | = | | Partial (`query_fn` is a stub) |
+| MOD-07 | = | | Partial (`query_fn` returns an empty result) |
 | MOD-08 – MOD-11 | = | | Done |
 | MOD-12, MOD-13 | + | Module config reaches the constructor; errors were previously swallowed. | Done |
+| MOD-14 | + | Former FR-008. | Done |
 | ALT-01 | = | | Done |
 | ALT-02 | ~ | Realised as built-in ALERT node types; the former rule table was never evaluated and was removed. | Done |
 | ALT-03, ALT-04 | = | | Done |
@@ -672,25 +750,29 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | ALT-08, ALT-09 | = | | Open |
 | ALT-10, ALT-11 | + | Alert delivery rework; ALT-11 via the alert outbox (attempts, retries, errors). | Done |
 | ALT-13 | + | Platform alerts on pipeline health (functional spec §4.6). | Open |
-| ALT-12 | + | Channel secrets are currently stored unencrypted. | Partial (MQTT via connector done) |
+| ALT-12 | + | Channel secrets were stored unencrypted. | Done (secret references, resolved in memory only; MQTT via connector) |
 | EXP-01 – EXP-03 | = | | Done |
 | EXP-04 | = | | Partial (UDP output in connector runtime) |
 | EXP-05 | ~ | MongoDB/MinIO replaced by hot tier + lakehouse (data focus, MinIO no longer distributed). | Partial (hot tier) |
 | EXP-06 | ~ | SimpleJSON endpoint replaced by permission-checked query API, Grafana data source and Iceberg REST catalog. | Open |
 | EXP-07, EXP-08 | = | | Done |
+| EXP-09 | + | "Send as is" (2026-09-28). | Done (§14a example, `Energy14aExampleTest`) |
 | CON-01 | ~ | File split into FILE, FTP/FTPS, SFTP and EMAIL (IMAP) pull inputs. | Done |
 | CON-02 | ~ | "BOTH" realised through connections usable in both directions. | Partial |
 | CON-03, CON-04 | ~ | Follows CON-02. | Done |
 | CON-05 | ~ | Credentials are no longer injected into containers. | Done |
 | CON-06 – CON-08 | = | | Done |
 | CON-09 – CON-12 | + | Persona model: IT provisions connections, departments use them. | Open |
-| CON-13 – CON-16 | + | Polling controls, per-type configuration forms, `minAge` guard and post-read action for pull inputs (decision of 2026-09-27). | Partial (backend sources done; UI forms done) |
-| STR-01, STR-02 | = | | Done |
+| CON-13 – CON-16 | + | Polling controls, per-type configuration forms, `minAge` guard and post-read action for pull inputs (decision of 2026-09-27). | Partial (sources, ledger, retry and UI forms done; no last-run/next-run display) |
+| CON-17 | + | Former FR-017. | Done (`ConnectorRevision`) |
+| CON-18 | + | Former FR-019. | Done (inline credentials rejected; UI stores them as secrets) |
+| STR-01 | = | | Partial (the TimescaleDB image is shipped, but pipeline tables are plain PostgreSQL tables: no hypertables, compression or continuous aggregates) |
+| STR-02 | = | | Done |
 | STR-03 | ~ | MongoDB replaced by schema evolution in the lakehouse (focus on structured data). | Open |
 | STR-04 | ~ | Object storage bundled and used for the lakehouse; MinIO excluded (no longer distributed). | Open |
 | STR-05 | ~ | Targets are hot tier and lakehouse. | Partial |
 | STR-06 | = | | Done |
-| STR-07 | ~ | Moved to MVP: required to operate 1B/day. | Open |
+| STR-07 | ~ | Moved to MVP: required to operate 1B/day. | Partial (per-category retention days, installation-wide, default unlimited; no per-tenant policy) |
 | STR-08 | + | Unstructured blob storage dropped: data_blobs table, blob endpoints, Files tab and blob config removed (decision of 2026-09-27). | Done |
 | STR-09 | + | Every record attributable to its connector/endpoint and source item. | Done |
 | LAK-01 – LAK-12 | + | Lakehouse. | Open |
@@ -708,25 +790,29 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | UI-21 | + | Accessibility. | Open |
 | API-01, API-02 | ~ | API-02 names the data API path. | Done |
 | API-03 | ~ | Browser session via cookie for reverse-proxy authentication. | Open (JWT in localStorage) |
-| API-04, API-05 | ~ | Expiry added. | Open |
-| API-06 | = | | Open |
+| API-04, API-05 | ~ | Expiry added. | Partial (keys with expiry, but grants are ingest-only; no management-API keys) |
+| API-06 | ~ | Contract generated and linted in CI. | Done |
+| API-10 | + | Former FR-028. | Done |
 | API-07 | ~ | Path `/api/ingest/v1/`. | Done |
 | API-08 | ~ | Moved to MVP. | Open |
 | API-09 | = | | Open |
 | TEN-01, TEN-02 | = | | Done |
 | TEN-03 | ~ | Isolation at database and storage level (security review found shared DB credentials). | Partial |
 | TEN-04 | = | | Done |
-| TEN-05 | ~ | Superadmin replaced by system-scope assignments; still no `is_superadmin` flag. | Partial (flag removed; root Tenant Admin still acts as superadmin) |
+| TEN-05 | ~ | Superadmin replaced by system-scope assignments. | Partial (explicit `is_platform_admin` flag separate from root-tenant administration; no system-scope role assignments yet) |
 | TEN-06, TEN-07 | = | | Done |
 | TEN-08 | ~ | Replaced: system scope grants no implicit data access. | Open |
 | TEN-09 | = | | Done |
 | TEN-10 | + | Noisy-neighbour protection for NFR-P1. | Open |
-| IAM-01, IAM-02 | + | Persona and permission model. | Partial (one permission naming style; roles editable per tenant) |
+| IAM-01, IAM-02 | + | Persona and permission model; exact-token matching (former FR-001). | Partial (one naming style, exact-token evaluation; roles editable per tenant) |
 | IAM-05 | + | Role templates. | Partial (roles seeded; not immutable, no clone/disable) |
 | IAM-03, IAM-04, IAM-06 – IAM-13 | + | Scopes, time-bounded assignments, OIDC, auth proxy, sessions. | Open |
-| AUD-01 – AUD-10 | + | Paper-trail requirement (extends NFR-S5). | Open |
+| IAM-14 | + | Former FR-004. | Done (authorization version in the token; changes invalidate sessions) |
+| IAM-15 | + | Former FR-002/FR-027. | Partial (explanation API `AuthorizationResource`; used in the Users page) |
+| AUD-01 | + | Paper-trail requirement (extends NFR-S5). | Partial (create/update/delete of pipelines, connectors, tenants, users, memberships, roles, secrets, API keys, alert channels; run trigger/cancel/retry; login success/failure; no deployment/backup/retention events) |
+| AUD-02 – AUD-10 | + | | Open (`audit_events` table without read API, UI, hash chain or notes) |
 | OPS-01 – OPS-06 | + | System administrator persona. | Open |
-| OPS-07 | + | Run history grows by one row per record (review 2026-09-27). | Open |
+| OPS-07 | + | Run history grows by one row per record (review 2026-09-27). | Partial (`RetentionCleanupService` deletes by age; no hourly aggregates) |
 | MET-01 – MET-10 | + | New requirements group: a metadata component per device, datapoint, endpoint and location that enriches pipelines (decision of 2026-09-27). | Done (types, templates, as-of versioning, enrich/export node types, `/metadata` UI) |
 | NFR-P1 | ~ | Scoped to multi-node autoscaling Kubernetes with a benchmark. | Open |
 | NFR-P2 | ~ | Applies to the hot tier; lakehouse visibility bounded by the commit interval. | Open (measured p99 14.8 s under backlog on one node) |
@@ -735,6 +821,7 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | NFR-P5 | ~ | Resolves the contradiction between per-message containers and NFR-P2. | Open |
 | NFR-P6 | + | SQL workspace. | Open |
 | NFR-P7 | + | Metadata load independent of record rate. | Open |
+| NFR-P8 | + | Former NFR-015. | Done (lazy routes; CI checks the build manifest) |
 | NFR-R1, NFR-R2 | ~ | Tied to the Kubernetes HA deployment; R2 exactly once. | Partial (verified with a local 3-broker cluster and two instances; not on Kubernetes) |
 | NFR-R5 | + | Measurable recovery objectives. | Partial (synchronous replication configured; not measured on a cluster) |
 | NFR-R6 | + | Ingest independent of the metadata database. | Done |
@@ -742,18 +829,28 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | NFR-R8 | + | Docker Compose is a single-node reference stack and cannot be redundant; stated as such instead of implying HA. | Done |
 | NFR-R9 | + | Fire-and-forget must not weaken durability: 2xx only after bus or spool acceptance. | Done |
 | NFR-R3, NFR-R4 | = | | Partial |
+| NFR-R10 | + | Former FR-018/NFR-009. | Done (two-replica fencing verified against real PostgreSQL; not on a cluster) |
+| NFR-R11 | + | Former NFR-017. | Partial (drill done with the Compose topology; not on Kubernetes, no schedule) |
 | NFR-S1 | = | | Open |
 | NFR-S2 | ~ | Client-side SHA-256 pre-hashing dropped: over TLS it adds no protection (the hash becomes the password). BCrypt storage kept; minimum length added. | Done |
-| NFR-S3 | = | | Partial (network with requirements) |
-| NFR-S4 | = | | Open |
-| NFR-S5 | ~ | Detailed in AUD. | Open |
+| NFR-S3 | ~ | Hostile-by-default (former NFR-002). | Partial (Docker backend hardened and tested with hostile modules; network opened while installing requirements; Kubernetes backend never run on a cluster) |
+| NFR-S4 | = | | Done |
+| NFR-S5 | ~ | Detailed in AUD. | Partial (see AUD-01) |
 | NFR-S6 | = | | Open |
-| NFR-S7, NFR-S8 | + | Security review (committed signing key, shared DB credentials). | Open |
+| NFR-S7 | + | Security review (committed signing key). | Done (key removed from the repository; keys mounted per installation, dev keys generated by `scripts/dev/generate-dev-keys.sh`) |
+| NFR-S8 | + | Security review (shared DB credentials). | Open (one database role for all tenants) |
+| NFR-S9 | + | Former NFR-004. | Done (`DestinationPolicy`, allow-list `dataturntable.connectors.allowed-networks`) |
+| NFR-S10 | + | Former NFR-005. | Done (call-site redaction plus a global log filter) |
+| NFR-S11 | + | Former NFR-003/FR-005. | Done |
+| NFR-S12 | + | Former NFR-006. | Partial (security headers set; the token is still in `localStorage`, see API-03) |
 | NFR-M1 | = | | Done |
 | NFR-M2 | ~ | Module output kept out of system logs. | Partial |
 | NFR-M3 | ~ | `docker compose` (v2 CLI). | Done |
 | NFR-M4, NFR-M5 | = | | Done |
-| NFR-M6 | + | No CI existed. | Open |
+| NFR-M6 | + | No CI existed. | Partial (`.github/workflows/ci.yml`: backend, frontend, OpenAPI lint, manifest rendering, PostgreSQL migrations, image scan; not yet observed green on GitHub) |
+| NFR-M7 | + | Former FR-015/FR-025/NFR-020. | Partial (event envelope and correlation ids; OpenTelemetry present, disabled by default) |
+| NFR-M8 | + | Former NFR-018. | Partial (third-party images pinned; own-image digests, SBOM and scans wired in CI but not run) |
+| NFR-M9 | + | Former NFR-019. | Done (this appendix) |
 | NFR-U1 – NFR-U3 | ~ | NFR-U3 covers all module types. | Partial |
 | NFR-L1, NFR-L2 | + | Licensing policy. | Done |
 | CON-C1 | ~ | Java 25. | Done |
@@ -778,11 +875,71 @@ Change: **=** unchanged, **~** wording changed (idea kept), **+** new in 2.0. St
 | INT-06 | ~ | OIDC in MVP; LDAP/AD via the identity provider. | Open |
 | INT-07 | + | Lakehouse access for external tools. | Open |
 | DEP-01 | = | | Done |
-| DEP-02 | ~ | HA overlay with FOSS operators. | Done (not load-tested) |
+| DEP-02 | ~ | HA overlay with FOSS operators. | Partial (manifests render in CI; never deployed to a cluster) |
 | DEP-03 | ~ | Moved to MVP; bundles all components. | Open |
 | DEP-04 – DEP-06 | = | | Partial |
 | DEP-07 | = | | Open |
 | DEP-08 | + | Swarm removed. | Done |
+
+---
+
+## Appendix B: Measurements and Review Findings
+
+Requirements review of 2026-09-27 against the implementation. Measured on one 4-core machine running everything (3 Kafka brokers, PostgreSQL 16, two application instances), pipeline without modules. Absolute numbers are not representative of a cluster; the ratios are.
+
+| Target | Result | Verdict |
+| ------ | ------ | ------- |
+| NFR-R2 no loss on failover (exactly once) | `kill -9` of a broker and of an instance under load: 6,000 acknowledged → 6,000 runs, 0 lost, 0 duplicates. PostgreSQL stopped for 15 s: 16,000 accepted with no client error, all processed once. | Met locally; to be repeated on Kubernetes. |
+| NFR-R6 ingest without the database | Ingest kept accepting during the database outage (before: 109 × `503`). | Met. |
+| NFR-P1 1B records/day (11,574/s) | Ingest 465 records/s, processing 306 runs/s on this machine. Each record costs 3–4 metadata transactions (run row, claim, completion, node log). | Not reachable with per-record runs; needs PIP-15. |
+| NFR-P2 p99 < 500 ms | p50 1.4 s, p99 14.8 s, because processing is slower than ingest and a backlog builds. | Follows from NFR-P1. |
+| NFR-P3 API p95 < 200 ms | Lists p95 4–7 ms; run summary p95 215 ms with 10,000 runs. | Met for metadata; run-history queries need OPS-07. |
+
+Findings that shaped version 2.1 and later:
+
+1. **One run per record cannot reach 1B/day.** At 11,574 records/s that is 40,000–50,000 metadata transactions per second and one billion run rows per day on a single PostgreSQL primary. Micro-batch execution (PIP-15, NFR-P7) is the largest technical risk of the MVP and comes before the lakehouse, whose writers need the same batching. Exactly-once carries over: a batch is claimed by its first offset, and identified records are deduplicated inside the batch.
+2. **Requirements contradicted the exactly-once decision** (PIP-09, PIP-10, DAT-07, NFR-R2); they now state exactly once for identified records (PIP-14), with the boundary stated honestly: records without an identity can repeat after a client resend, and external systems without idempotency support (e-mail, Slack, MQTT/UDP/file exports) can see a repeat in a crash window of milliseconds.
+3. **Missing requirements** were added: ALT-13, TEN-10, OPS-07, DAT-09, NFR-R5, NFR-R6, UI-20, UI-21.
+4. **Pilot blockers** (milestone M0): ingest authentication (IMP-09, done), signing key in the repository (NFR-S7, done), shared database role (TEN-03, NFR-S8, open), default Grafana credentials (NFR-S11), CI (NFR-M6, partial).
+
+---
+
+## Appendix C: Production-Readiness Plan IDs
+
+The production-readiness plan (`production-ready-spec.json`, merged from `dev`, removed in version 2.2) used its own IDs, which still appear in code comments, tests and CI. They map to this specification as follows.
+
+| Plan ID | SRS | Plan ID | SRS |
+| ------- | --- | ------- | --- |
+| FR-001 | IAM-01 | NFR-001 | TEN-03, NFR-S8 |
+| FR-002 | TEN-05, IAM-15 | NFR-002 | NFR-S3 |
+| FR-003 | NFR-S2 (BCrypt kept, section 12) | NFR-003 | NFR-S11 |
+| FR-004 | IAM-14 | NFR-004 | NFR-S9 |
+| FR-005 | NFR-S7, NFR-S11, DEP-06 | NFR-005 | NFR-S10 |
+| FR-006 | IMP-09 | NFR-006 | NFR-S12, API-03 |
+| FR-007 | IMP-14 | NFR-007 | PIP-14 (exactly once replaces at-least-once) |
+| FR-008 | MOD-14 | NFR-008 | PIP-18 |
+| FR-009 | PIP-16 | NFR-009 | NFR-R10 |
+| FR-010 | PIP-17 | NFR-010 | NFR-P4 (runtime roles) |
+| FR-011 | PIP-18 | NFR-011, NFR-012 | Rejected (section 12) |
+| FR-012 – FR-014 | MOD-03, MOD-04, NFR-S3 | NFR-013 | Not applicable before production data |
+| FR-015 | NFR-M7 | NFR-014 | NFR-M6 |
+| FR-016 | PIP-13, PIP-14 | NFR-015 | NFR-P8 |
+| FR-017 | CON-17 | NFR-016 | NFR-R1, NFR-R2 |
+| FR-018 | NFR-R10 | NFR-017 | NFR-R11, OPS-03 |
+| FR-019 | CON-18, ALT-12 | NFR-018 | NFR-M8 |
+| FR-020 | Design decision (JSONB), section 12 | NFR-019 | NFR-M9 |
+| FR-021 | STR-06, TEN-03 | NFR-020 | NFR-M7 |
+| FR-022 | Dropped, STR-08 | | |
+| FR-023 | ALT-02, ALT-10 (section 12) | | |
+| FR-024 | AUD | | |
+| FR-025 | NFR-M1, NFR-M2, NFR-M7 | | |
+| FR-026 | UI-15, NFR-P8 | | |
+| FR-027 | IAM-15 | | |
+| FR-028 | API-06, API-10 | | |
+| FR-029 | Rejected (section 12) | | |
+| FR-030 | DEP-01, DEP-02, DEP-08, NFR-M8 | | |
+| FR-031 | STR-07, OPS-07, AUD-09 | | |
+| FR-032 | Repository clean-up; no requirement | | |
 
 ---
 
