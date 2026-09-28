@@ -753,7 +753,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | MOD-15 | + | Model artifact persistence (owner request 2026-09-28). | Done (`ModelArtifact`/`ModelArtifactService`, `save_model_fn`/`load_model_fn` wired into `DockerService`'s Python harness; verified with a real Docker daemon: train-then-infer across two independent executions, and against real PostgreSQL) |
 | MOD-16 | + | Versioning and the STR-08 exception. | Partial (versioned, encrypted, opaque to the platform, exception recorded as DAT-10; a run does not yet log which version it read, only which version a save created) |
 | MOD-17 | + | Training pipeline. | Done |
-| MOD-18 | + | Inference pipeline, loaded once per worker. | Partial (functionally works, including hot-swap; the artifact is currently re-fetched from the database on every execution rather than cached once per warm-container process — a performance follow-up, not a correctness gap) |
+| MOD-18 | + | Inference pipeline, loaded once per worker. | Done (`ModelArtifactService` caches per module, invalidated at once on a local save; other instances pick up a save within `dataturntable.execution.model-artifact-cache-seconds`, default 60s — same instant-local/eventual-remote pattern as ingest API keys) |
 | MOD-19 | + | Hot-swap without a pipeline restart. | Done (verified: retraining under the same name and re-running inference picks up the new version) |
 | ALT-01 | = | | Done |
 | ALT-02 | ~ | Realised as built-in ALERT node types; the former rule table was never evaluated and was removed. | Done |

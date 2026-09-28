@@ -362,6 +362,26 @@ doesn't).
   limitation as the existing `DockerServiceHostileModuleTest`) — **run them for real before
   relying on this feature**, the way `DockerServiceHostileModuleTest` already is elsewhere.
 
+**Follow-up in the same session:** added the caching MOD-18 needed (`ModelArtifactService`
+preloads per module for `dataturntable.execution.model-artifact-cache-seconds` (default 60s); a
+save invalidates its own module's cache entry at once, so the training instance's very next
+execution sees it immediately, matching how `IngestAuthorizationService` already handles ingest
+API keys). `ModelArtifactServiceTest` (no Docker needed) covers versioning, the encryption
+round-trip and that a save is reflected immediately without waiting for the TTL. Full suite:
+**335 tests, 0 failures, 22 Docker-only skips.** MOD-18 is now Done in Appendix A, not Partial.
+
+**Handed off 2026-09-28** at the owner's request, mid-session, with budget still available.
+Everything above is committed and pushed to `claude/datahub-lakehouse-review-6tiaf5`. Nothing is
+half-done or uncommitted. Remaining before landing:
+1. **Run the 5 Docker-gated model-artifact tests for real** (`ModelArtifactRoundTripTest`, 4 tests;
+   plus re-confirm `DockerServiceHostileModuleTest` still passes) on a machine with a Docker
+   daemon — this sandbox has none. Same caveat as every other Docker-gated test in this repo.
+2. **Ask the owner before opening the PR into `dev`** — everything else in "Open work" below still
+   applies; nothing new blocks it.
+3. If continuing documentation-vs-implementation triage: the SRS Appendix A is current as of this
+   commit; the next reasonable target is an M0 item (TEN-03/NFR-S8 per-tenant database roles, or
+   ALT-13 platform health alerts) per the milestone table in the SRS, §11.
+
 **Honestly scoped, not overclaimed (Appendix A updated accordingly):**
 - MOD-15, MOD-17, MOD-19, DAT-10: Done.
 - MOD-16: Partial — a save records its own version; a run does **not** log which version it

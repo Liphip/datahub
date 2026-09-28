@@ -5,7 +5,10 @@ import jakarta.enterprise.context.ApplicationScoped
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
+import org.eclipse.microprofile.config.inject.ConfigProperty
+import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Persists and loads the model artifacts a PROCESSING module saves with `save_model_fn` and
@@ -25,7 +28,17 @@ import java.util.UUID
 class ModelArtifactService {
     @PersistenceContext lateinit var em: EntityManager
 
+    @ConfigProperty(name = "dataturntable.execution.model-artifact-cache-seconds", defaultValue = "60")
+    lateinit var cacheSeconds: String
+
     private val nameRegex = Regex("[a-zA-Z][a-zA-Z0-9_.-]{0,127}")
+
+    /** [preloadLatestForModule] avoids a database round trip on every execution (MOD-18): a save
+     * on this instance invalidates its module's entry at once; other instances (and a save made
+     * elsewhere) are picked up within [cacheSeconds] — the same instant-local/eventual-remote
+     * pattern already used for ingest API keys ([com.dataturntable.security.IngestAuthorizationService]). */
+    private data class CacheEntry(val loadedAt: Instant, val artifacts: Map<String, String>)
+    private val cache = ConcurrentHashMap<UUID, CacheEntry>()
 
     /** Saves [base64Data] as the next version of [name] under [moduleId]; never overwrites. */
     @Transactional
@@ -44,6 +57,7 @@ class ModelArtifactService {
         }
         em.persist(artifact)
         em.flush()
+        cache.remove(moduleId)
         return artifact
     }
 
@@ -63,13 +77,20 @@ class ModelArtifactService {
      * preload into the container before it runs (MOD-18/19). Small in practice: a module manages
      * a handful of named artifacts (e.g. one per device class), not an open-ended set.
      */
-    fun preloadLatestForModule(moduleId: UUID): Map<String, String> =
-        em.createQuery(
+    fun preloadLatestForModule(moduleId: UUID): Map<String, String> {
+        val ttl = cacheSeconds.toLongOrNull() ?: 60L
+        cache[moduleId]?.let { entry ->
+            if (entry.loadedAt.isAfter(Instant.now().minusSeconds(ttl))) return entry.artifacts
+        }
+        val fresh = em.createQuery(
             "SELECT a FROM ModelArtifact a WHERE a.moduleId = :m ORDER BY a.name, a.version DESC",
             ModelArtifact::class.java
         ).setParameter("m", moduleId).resultList
             .distinctBy { it.name }
             .associate { it.name to EncryptionUtils.decrypt(it.dataEncrypted) }
+        cache[moduleId] = CacheEntry(Instant.now(), fresh)
+        return fresh
+    }
 
     /** Every saved name under [moduleId] with its latest version, size and creation time (for a future UI). */
     fun listArtifacts(moduleId: UUID): List<ModelArtifact> =

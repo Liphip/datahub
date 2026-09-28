@@ -38,6 +38,7 @@ defaults are convenient, not production secrets. Update this page in the same ch
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `dataturntable.execution.model-artifact-cache-seconds` | `60` | How long a preloaded model artifact is cached before re-checking the database (MOD-18) |
 | `DATATURNTABLE_INGEST_SPOOL_DIR` | `${java.io.tmpdir}/…` | Local fsync'd spool for records Kafka refused (NFR-R7). Use a persistent volume in production (the Kubernetes ingest edge is a StatefulSet with a PVC) |
 | `quarkus.http.limits.max-body-size` | `1M` | Largest accepted request body; larger ingest requests get `413` (IMP-14) |
 | `dataturntable.ingest.spool-enabled` | `true` | Use the spool when Kafka refuses a record |
