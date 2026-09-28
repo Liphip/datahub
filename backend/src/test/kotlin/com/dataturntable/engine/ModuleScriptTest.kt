@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
+import java.nio.file.Files
 import java.util.Base64
 import java.util.concurrent.TimeUnit
 
@@ -14,23 +15,52 @@ class ModuleScriptTest {
 
     private val objectMapper = ObjectMapper()
 
-    private fun pythonAvailable(): Boolean =
-        runCatching { ProcessBuilder("python3", "--version").start().waitFor(5, TimeUnit.SECONDS) }.getOrDefault(false)
+    /**
+     * True only for a real interpreter, not merely a zero exit code. On Windows the Microsoft Store
+     * app-execution alias installs a `python3.exe` stub that prints "Python wurde nicht gefunden…"
+     * and still exits 0, so an exit-code-only check wrongly concludes Python exists: the tests then
+     * run against the stub and fail with that message instead of skipping. A prefix check on "Python"
+     * is not enough either — the stub's own message starts with that word — so require the version
+     * banner itself. This makes the tests skip correctly on a machine without Python, as the class
+     * comment promises.
+     */
+    private fun pythonAvailable(): Boolean = runCatching {
+        val process = ProcessBuilder("python3", "--version").redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText().trim()
+        process.waitFor(5, TimeUnit.SECONDS) && PYTHON_VERSION.matches(output)
+    }.getOrDefault(false)
+
+    private companion object {
+        /** `Python 3.13.7` — the stub prints prose that merely starts with the word "Python". */
+        private val PYTHON_VERSION = Regex("""Python \d+\.\d+.*""")
+    }
 
     private data class Run(val exitCode: Int, val output: String)
 
     private fun exec(code: String, type: ModuleType, input: Any, moduleConfig: String? = null): Run {
         val script = String(Base64.getDecoder().decode(DockerService().buildModuleScript(code, type)))
-        val process = ProcessBuilder("python3", "-c", script)
-            .also { pb ->
-                pb.environment()["INPUT_DATA"] = objectMapper.writeValueAsString(input)
-                moduleConfig?.let { pb.environment()["MODULE_CONFIG"] = it }
-            }
-            .redirectErrorStream(true)
-            .start()
-        val out = process.inputStream.bufferedReader().readText()
-        assertTrue(process.waitFor(20, TimeUnit.SECONDS), "module script timed out")
-        return Run(process.exitValue(), out)
+        // Hand the script to python as a file, not as `python3 -c <script>`. On Windows the JVM has
+        // to rebuild a command line, and the double quotes inside the generated script are mangled
+        // on the way (an f-string like f"Module ..." arrives as fModule, giving a bogus
+        // "SyntaxError: '(' was never closed"). Passing a file preserves the script byte for byte on
+        // every platform. Production does not use `-c` either: DockerService passes the script
+        // base64-encoded in __DT_BOOT__ and execs it inside the container.
+        val scriptFile = Files.createTempFile("dtt-module-script", ".py").toFile()
+        try {
+            scriptFile.writeText(script)
+            val process = ProcessBuilder("python3", scriptFile.absolutePath)
+                .also { pb ->
+                    pb.environment()["INPUT_DATA"] = objectMapper.writeValueAsString(input)
+                    moduleConfig?.let { pb.environment()["MODULE_CONFIG"] = it }
+                }
+                .redirectErrorStream(true)
+                .start()
+            val out = process.inputStream.bufferedReader().readText()
+            assertTrue(process.waitFor(20, TimeUnit.SECONDS), "module script timed out")
+            return Run(process.exitValue(), out)
+        } finally {
+            scriptFile.delete()
+        }
     }
 
     private fun run(code: String, type: ModuleType, input: Any, moduleConfig: String? = null): Map<*, *> {
