@@ -10,7 +10,11 @@ This document lets another assistant or developer continue the work without the 
 > document's snapshot is still current — as of this write-up, CI had one known red job (missing
 > `DC_NVD_API_KEY` secret, not code-fixable, see below), a Codex bot review with six findings, and
 > a Copilot bot review with eleven more, **seventeen bot findings total, all triaged, all real
-> (or already fixed / reclassified), all pushed.** The full backend suite on H2 is green:
+> (or already fixed / reclassified), all pushed, and all 17 review threads marked resolved on
+> GitHub.** The `libexpat` CVE fix initially only patched `backend/Dockerfile`; the container-scan
+> job still failed afterward because `docker/frontend.Dockerfile` (nginx-based, also Alpine 3.24)
+> carries the same gap — see the newest session entry below for the second fix. The full backend
+> suite on H2 is green:
 > **378 tests, 0 failures, 0 errors, 22 skipped** (all skips are legitimately Postgres/Docker/
 > Python-gated — the previous 9 "unexplained" H2 skips are gone, see the relevant session entry
 > below). To reproduce the Docker/Python-gated portion on a host you need a Windows JDK 25 **and**
@@ -1418,6 +1422,21 @@ build+scan the image locally to verify end to end (no Docker daemon in this sand
 here is the package-index lookup plus the standard, well-understood `apk upgrade` idiom for this
 exact class of problem — CI's own image-scan job is the actual confirmation, watch it on the next
 push.
+
+## Session 2026-09-28 (continued): PR #2 — libexpat fix missed the frontend image; all 17 review threads resolved
+
+Two follow-ups after the previous entry:
+
+1. **The container-scan job still failed after the `backend/Dockerfile` fix.** The failing image
+   was `dataturntable/frontend`, not the backend — `docker/frontend.Dockerfile`'s production stage
+   (`nginx:1.30.5-alpine3.24`) is a *separate* Alpine 3.24 base image with the same `libexpat
+   2.8.4-r0` gap; the earlier fix only touched the backend's base image. Added the same `apk
+   upgrade --no-cache` line to `docker/frontend.Dockerfile`'s production stage. Not yet confirmed
+   green on CI as of this write-up — watch the next push's "Build container images..." job.
+2. **Resolved all 17 review threads on GitHub** (6 Codex + 11 Copilot) via the GraphQL
+   `resolveReviewThread` mutation — each already had a reply from this session citing its fixing
+   commit, so this was pure bookkeeping (marking threads that were already substantively closed),
+   not new analysis.
 
 ## Sources used
 

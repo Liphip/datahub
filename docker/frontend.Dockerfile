@@ -18,6 +18,10 @@ RUN npm run build
 # Production stage
 FROM nginx:1.30.5-alpine3.24
 
+# Same libexpat CVE-2026-93990 gap as backend/Dockerfile's base image (Alpine 3.24) — see that
+# file's comment for the full explanation. Upgrading here closes it in the nginx-based image too.
+RUN apk upgrade --no-cache
+
 # Copy built assets from builder
 COPY --from=builder /app/dist /usr/share/nginx/html
 
