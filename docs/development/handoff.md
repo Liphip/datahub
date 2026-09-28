@@ -4,7 +4,7 @@ This document lets another assistant or developer continue the work without the 
 
 > **Read this first.** Everything is committed and pushed to `claude/datahub-lakehouse-review-6tiaf5`
 > and the working tree is clean. **The only thing left before landing is asking the owner to open the
-> PR into `dev`** — nothing technical is blocked. The full backend suite on H2 is green: **352 tests,
+> PR into `dev`** — nothing technical is blocked. The full backend suite on H2 is green: **369 tests,
 > 0 failures, 0 errors, 20 skipped** (all 20 are legitimately Postgres/Docker/Python-gated — the
 > previous 9 "unexplained" H2 skips are gone, see the newest session entry). To reproduce the
 > Docker/Python-gated portion on a host you need a Windows JDK 25 **and** a real `python3` on `PATH`
@@ -16,7 +16,8 @@ This document lets another assistant or developer continue the work without the 
 > in the Flyway migration that their JPA `@Table` never mirrored, so H2's schema-from-entities test
 > database silently never enforced it (two of the 15, `alert_history.delivery_key` and
 > `module_versions`' content-fingerprint dedup, were found in a follow-up sweep after the first one
-> missed a second SQL syntax the migration uses for unique constraints).
+> missed a second SQL syntax the migration uses for unique constraints). All 15 now have a
+> dedicated database-level regression test.
 > Before that, **"TEN-03/NFR-S8: per-tenant PostgreSQL database roles"** closed the last open M0
 > item, verified against a real PostgreSQL 16 instance (cross-tenant access denied at the database
 > layer, not just in application code), and corrected **MOD-15 to Partial** (artifacts are
@@ -993,15 +994,40 @@ with both new constraints declared. Grepped the full migration one more time for
 occurrence (25 table-level `CONSTRAINT ... UNIQUE` + 2 `CREATE UNIQUE INDEX`, no other syntax used)
 and cross-checked each against its entity — nothing else is missing now.
 
-**Remaining judgment call for whoever picks this up next:** the other 11 of the original 13 fixes
-(all but `CodeModule`, which already has `ModuleResourceTest.testCreateModuleRejectsDuplicateNameAndType`,
-and `AlertHistory`/`ModuleVersion`, now covered by `EntityUniqueConstraintTest`) still have no
-dedicated regression test — only `PostgresMigrationBehaviorTest`'s validate-mode pass, which this
-whole investigation proved doesn't actually catch a missing `@Table` declaration. Whether that's
-worth closing entity-by-entity or with one parameterized test is left open; nothing found in this
-pass suggests it's hiding another live bug the way `AlertHistory`/`ModuleVersion` were, but the
-sweep's own history (missed once, missed a second syntax the first time) argues for not assuming
-that without checking.
+**Closed the coverage gap for all 15.** Rather than leave the other 11 fixed entities on just
+`PostgresMigrationBehaviorTest`'s validate-mode pass (proven above not to catch this bug class),
+added direct-persistence regression tests for every one of them, in the package each entity
+already lives in:
+- `auth/ApiKeyConstraintTest.kt` — `api_keys(tenant_id, name)`, plus a same-name-different-tenant
+  positive case (the constraint must not be tenant-blind).
+- `connectors/ConnectorEntityConstraintTest.kt` — `broker_credentials` (both of its two
+  constraints, `(tenant_id, name)` and `(tenant_id, username)`), `connector_pipeline_map`,
+  `connector_revisions`, and `connector_inbox_items` (the pull-connector exactly-once ledger —
+  the one entity in the whole sweep where the missing constraint was a functional bug, not just
+  defense in depth).
+- `data/DataTableRegistryRecordConstraintTest.kt` — `data_table_registry(tenant_id, table_name)`.
+- `metadata/MetadataEntityConstraintTest.kt` — all four metadata entities:
+  `MetadataType`, `MetadataIdentifier`, `MetadataAttributeVersion`, `MetadataRelation`.
+- `tenant/RoleMembershipConstraintTest.kt` — `roles(tenant_id, name)` (plus the same
+  same-name-different-tenant positive case) and `memberships(auth_user_id, tenant_id)`.
+- `alert/EntityUniqueConstraintTest.kt` gained two more `AlertChannel` tests alongside the
+  `AlertHistory`/`ModuleVersion` ones already there.
+
+Every test persists through `EntityManager` directly, not through the owning resource/service, so
+each one proves the database constraint itself fires — independent of whatever (if any)
+application-level check sits above it, closing exactly the gap that let the `CodeModule` bug and
+the `alert_history`/`module_versions` follow-up bug both ship unnoticed. `CodeModule` itself is
+still covered separately by `ModuleResourceTest.testCreateModuleRejectsDuplicateNameAndType`,
+the one that goes through the real HTTP endpoint since that's where the original bug surfaced.
+
+**Verified after adding all 17 new tests:** full H2 suite **369 tests, 0 failures, 0 errors, 20
+skipped** (352 + 17). Every new test's log line was checked, not just its green checkmark: each
+one logs a real SQLState `23505` unique-violation from H2 before the assertion catches it, so this
+isn't 17 tests that pass by accident (e.g. a typo that never triggers the `assertThrows` body).
+Re-ran `PostgresMigrationBehaviorTest` a fourth time against a fresh PostgreSQL 16 database: **1
+test, 0 failures, 0 errors**. All 15 fixed entities now have a database-level regression test; the
+sweep is complete — every `UNIQUE` in `V1__baseline.sql` is both declared on its entity and has a
+test proving H2 enforces it the same way Postgres does.
 
 ## Sources used
 

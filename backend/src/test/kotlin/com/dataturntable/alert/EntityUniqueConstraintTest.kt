@@ -14,10 +14,12 @@ import org.junit.jupiter.api.Test
 import java.util.UUID
 
 /**
- * Regression coverage for two `UNIQUE` constraints that exist in the baseline migration as
- * `CREATE UNIQUE INDEX` (not `ALTER TABLE ... ADD CONSTRAINT UNIQUE`) and were, like the 13
- * table-level ones fixed alongside `CodeModule` earlier, missing from their entity's `@Table`
- * annotation — so H2's schema-generated-from-entities test database never enforced them.
+ * Regression coverage for `UNIQUE` constraints in the baseline migration that were missing from
+ * their entity's `@Table` annotation — so H2's schema-generated-from-entities test database never
+ * enforced them, the same class of bug first found via `CodeModule`/`ModuleResourceTest`. Two of
+ * these (`alert_history.delivery_key`, `module_versions`' fingerprint index) exist as
+ * `CREATE UNIQUE INDEX` rather than `ALTER TABLE ... ADD CONSTRAINT UNIQUE`, which is why they
+ * were missed on the first sweep that only searched for the latter syntax.
  */
 @QuarkusTest
 class EntityUniqueConstraintTest {
@@ -90,6 +92,44 @@ class EntityUniqueConstraintTest {
                 })
                 em.flush()
             }
+        }
+    }
+
+    @Test
+    fun `alert_channels rejects a second channel with the same tenant and name`() {
+        val name = "Duplicate Channel ${UUID.randomUUID()}"
+        assertThrows(PersistenceException::class.java) {
+            QuarkusTransaction.requiringNew().run {
+                val tenant = newTenant()
+                em.persist(tenant)
+                em.persist(AlertChannel().apply {
+                    this.tenant = tenant
+                    this.name = name
+                    channelType = AlertChannelType.WEBHOOK
+                    config = "{}"
+                })
+                em.persist(AlertChannel().apply {
+                    this.tenant = tenant
+                    this.name = name
+                    channelType = AlertChannelType.WEBHOOK
+                    config = "{}"
+                })
+                em.flush()
+            }
+        }
+    }
+
+    @Test
+    fun `alert_channels allows the same name across different tenants`() {
+        val name = "Shared Channel Name ${UUID.randomUUID()}"
+        QuarkusTransaction.requiringNew().run {
+            val tenantA = newTenant()
+            val tenantB = newTenant()
+            em.persist(tenantA)
+            em.persist(tenantB)
+            em.persist(AlertChannel().apply { tenant = tenantA; this.name = name; channelType = AlertChannelType.WEBHOOK; config = "{}" })
+            em.persist(AlertChannel().apply { tenant = tenantB; this.name = name; channelType = AlertChannelType.WEBHOOK; config = "{}" })
+            em.flush()
         }
     }
 }
