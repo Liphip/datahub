@@ -607,7 +607,19 @@ The schema is created by a single baseline Flyway migration; enum CHECK constrai
 
 Pipeline data lives in one schema per tenant (`tenant_<uuid>`), accessed through a per-tenant database role so that the database itself enforces isolation (NFR-S8). DB_SAVE creates or extends tables from the first row or an explicit column model; DB_LOAD reads with column selection, equality filters, ordering and limits. Retention and compression policies are configurable per tenant (STR-07).
 
-*Implementation note:* all tenants currently share one database role, and a module config can name any schema; per-tenant roles are planned.
+Each tenant has its own PostgreSQL role (`TenantDatabaseRoleService`), created lazily on first use and
+granted ownership of its `tenant_<uuid>` schema. `PipelineDataService` (DB_LOAD/DB_SAVE) and the Data
+API's query, insert, list, delete and register-table endpoints run every statement under that role
+(`SET ROLE`) for the duration of the connection, so a module config that names another tenant's schema
+— by a bug or by a malicious module — is refused by PostgreSQL's own grants, independent of what the
+application's own schema-name computation decided.
+
+*Implementation note:* this needs the connecting database user to hold `CREATEROLE`
+(`dataturntable.pipeline-data.jdbc.*` or the fallback `quarkus.datasource.*` credentials — see the
+configuration reference). Without it, provisioning fails once per tenant with a clear log line and the
+operation falls back to the connection's shared privileges: isolation then rests on the application's
+own schema check alone, the exact gap this feature exists to close. **A production installation must
+confirm the connecting user actually holds `CREATEROLE`**, or this protection is silently absent.
 
 ### 8.4 Lakehouse
 

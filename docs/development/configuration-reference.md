@@ -11,7 +11,7 @@ defaults are convenient, not production secrets. Update this page in the same ch
 |---|---|---|---|
 | `DB_HOST`, `DB_PORT`, `DB_NAME` | `localhost`, `5432`, `dataturntable` | `quarkus.datasource.jdbc.url` | Application (metadata) database |
 | `DB_USER`, `DB_PASSWORD` | `dataturntable` (none in `%prod`) | `quarkus.datasource.*` | Metadata database credentials; required in production |
-| `DATATURNTABLE_PIPELINE_DATA_JDBC_URL`, `..._USERNAME`, `..._PASSWORD` | empty | `dataturntable.pipeline-data.jdbc.*` | Separate database for tenant pipeline data (DB_LOAD/DB_SAVE); falls back to the metadata datasource |
+| `DATATURNTABLE_PIPELINE_DATA_JDBC_URL`, `..._USERNAME`, `..._PASSWORD` | empty | `dataturntable.pipeline-data.jdbc.*` | Separate database for tenant pipeline data (DB_LOAD/DB_SAVE); falls back to the metadata datasource. **On PostgreSQL, this user must hold `CREATEROLE`** so `TenantDatabaseRoleService` can provision a role per tenant (NFR-S8); without it, database-level tenant isolation of the hot tier silently falls back to the shared connection's own privileges (logged once per tenant) |
 | `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | `kafka.bootstrap.servers`, messaging channels | Kafka bootstrap address |
 | `PIPELINE_CONSUMER_CONCURRENCY` | `4` | `mp.messaging.incoming.pipeline-input.concurrency` | Parallel consumers per executor instance |
 

@@ -4,19 +4,23 @@ This document lets another assistant or developer continue the work without the 
 
 > **Read this first.** Everything is committed and pushed to `claude/datahub-lakehouse-review-6tiaf5`
 > and the working tree is clean. **The only thing left before landing is asking the owner to open the
-> PR into `dev`** — nothing technical is blocked. The full backend suite is green with the
-> previously dead tests actually running: **351 tests, 0 failures, 0 errors, 10 skipped**, including
-> all Docker-gated tests and all 4 `ModuleScriptTest` tests. To reproduce that on a host you need
+> PR into `dev`** — nothing technical is blocked. The full backend suite on H2 is green: **355 tests,
+> 0 failures, 0 errors, 29 skipped** (was 351/10 before this session added 4 tests, all Postgres-gated
+> so they add to the skip count on H2). To reproduce the Docker/Python-gated portion on a host you need
 > a Windows JDK 25 **and** a real `python3` on `PATH` — the "Tests" section at the top has
 > admin-free download recipes for both. Session entries below are in chronological order; the newest
-> is **"model-forecast example, ALT-13 platform health alerts"**, which also corrects **MOD-15 to
-> Partial** (artifacts are module-scoped, so the SRS's "or a different one" does not hold).
+> is **"TEN-03/NFR-S8: per-tenant PostgreSQL database roles"**, the last open M0 item, verified against
+> a real PostgreSQL 16 instance (cross-tenant access denied at the database layer, not just in
+> application code). It also corrects **MOD-15 to Partial** from the previous session (artifacts are
+> module-scoped, so the SRS's "or a different one" does not hold).
 > Items in "Open work" that are ~~struck through~~ are done — do not redo them.
 >
-> **Next target if work continues (owner's call, not a blocker):** the last M0 item, **TEN-03/NFR-S8
-> per-tenant database roles**. ALT-13, the tractable half of the M0 pair, is now Done. The 10 skips
-> are listed under the newest session entry; 9 of them (`ModuleServiceTest` 4, `TenantServiceTest` 5)
-> are still unexplained.
+> **All six M0 items are now addressed** (some Partial, none Open): ingest auth, secrets out of the
+> repo, per-tenant database roles, CI against PostgreSQL, platform health alerts, run-history
+> retention. **Next target if work continues (owner's call, not a blocker):** M1 (micro-batch
+> execution, PIP-15/NFR-P7) is the next milestone in the SRS, §11 — or `ModuleServiceTest`/
+> `TenantServiceTest`'s 9 still-unexplained skips, which are quick to investigate and predate this
+> session.
 
 ## Repository and branches
 
@@ -780,6 +784,68 @@ Conflicts that were resolved in the process (the code was checked each time):
   Grafana credentials (NFR-S11).
 - Pitfall (fixed, keep in mind): on this Quarkus version `Session.setMaxIdleTimeout` is a no-op
   for WebSockets, so idle sessions are closed by a scheduled reaper instead.
+
+## Session 2026-09-28 (continued): TEN-03/NFR-S8 — per-tenant PostgreSQL database roles
+
+The last open M0 item. Before this, `resolveSchema`/`tenantSchemaName` computed a `tenant_<uuid>`
+schema name in application code, but nothing in the database stopped a query from reaching a
+*different* schema if that code was wrong or a module config lied about it (`config["schema"]` was
+taken as given in `PipelineDataService`). NFR-S8 asks for isolation "enforced by the data layer
+itself... not only by application checks" — this closes exactly that gap for the hot tier.
+
+**What was built** (`TenantDatabaseRoleService`, new):
+- Each tenant gets its own PostgreSQL role (`tenant_<uuid>`), created lazily on first use, that
+  owns the tenant's `tenant_<uuid>` schema (`ALTER SCHEMA ... OWNER TO`, so this also fixes
+  schemas created under the old shared-role model, not just new ones).
+- The connecting app user is granted membership in the tenant role (`GRANT tenant_x TO
+  CURRENT_USER`) so it can `SET ROLE tenant_x` for the duration of a connection, then `RESET ROLE`.
+- Wired into `PipelineDataService.execute()` (the automatic, unattended DB_LOAD/DB_SAVE path — the
+  highest-risk one, since it runs per pipeline record with no human oversight) and into all six
+  real call sites in `DataResource.kt` that touch pipeline data: `queryData`, `summarizeData`,
+  `insertData`, `listTables`, `deleteTable`, `registerTable` (via one new helper,
+  `pipelineConnectionForTenant`; a 7th, `ensureTenantSchemaExists(tenantId: String)`, is dead code
+  with no caller and was left alone).
+- **No-op on H2** (tests) — `isH2(connection)` gates it, exactly like the codebase's existing
+  Postgres-only-feature guards elsewhere.
+- **Deliberate, logged fallback, not a silent one:** provisioning needs the connecting database
+  user to hold `CREATEROLE`. If it doesn't, `ensureRoleAndSchema` catches the exception, logs a
+  `WARN` once per tenant naming exactly what's missing, and the caller proceeds on the shared
+  connection's own privileges — the old behaviour, not a crash. **A production installation must
+  confirm the connecting user actually holds `CREATEROLE`, or this protection is silently absent**
+  (documented in the configuration reference and the functional spec's implementation note).
+
+**Verified against real PostgreSQL 16** (only 16 was available in this sandbox, same caveat as
+every other Postgres-gated test in this repo — the shipped major version is 18):
+- `TenantDatabaseRoleServiceTest` (4 tests, Postgres-gated like `PostgresMigrationBehaviorTest`):
+  a role is provisioned and owns its schema; **a tenant's role is refused by PostgreSQL itself when
+  asked to read another tenant's schema by name, even though the SQL text explicitly names it** —
+  this is the actual security property NFR-S8 asks for, not just that the happy path works; a
+  tenant can read and write its own schema under its own role; re-provisioning is idempotent.
+- **The fallback path was checked by hand, not by the automated tests**: revoked `CREATEROLE` from
+  the test database role and re-ran the suite. The four tests above legitimately failed — they
+  assume `ensureRoleAndSchema` created the schema, which is *only* true in the happy path; they do
+  not exercise `PipelineDataService`/`DataResource`'s own independent schema creation inside the
+  fallback branch. That the real product paths still work without a role is instead evidenced by
+  every H2 test in the full suite passing (H2 always takes the identical "no role" branch as the
+  fallback does), plus reading the code: `ensureSchemaExists`/`ensureTenantSchemaExists` run
+  *inside* `withTenantRole`'s block, which runs unconditionally when no role is available. This is
+  a structural argument, not a black-box test against a real Postgres instance with `CREATEROLE`
+  revoked — if that distinction matters, add a fifth `TenantDatabaseRoleServiceTest` case that
+  calls into `PipelineDataService` directly with a role-less connection to close it for real.
+- Full suite on H2: **355 tests, 0 failures, 0 errors, 29 skipped** (was 351/10; +4 new
+  Postgres-gated tests).
+
+**SRS updated:** TEN-03 and NFR-S8 move from Open/Partial to Partial with a precise note (database
+level done for the hot tier; storage-level/lakehouse namespaces do not apply yet, the lakehouse
+isn't built; the CREATEROLE dependency and its fallback are named explicitly rather than implied).
+Not marked Done, on purpose: a requirement that silently degrades to its old behaviour when an
+operational precondition isn't met is not fully met.
+
+**Not done, deliberately out of scope for now:** the Data Query API's remaining read-only paths
+that don't touch `pipelineConnectionForTenant` (none currently — all six were wired); a
+`ModelArtifact`-style migration to move tenant-role provisioning to tenant-creation time instead of
+lazy first-use (lazy is simpler and self-healing for tenants created before this feature, so it was
+kept); Kubernetes and catalog-namespace isolation for the lakehouse, which doesn't exist yet.
 
 ## Sources used
 

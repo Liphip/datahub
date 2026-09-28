@@ -43,6 +43,7 @@ class PipelineDataService(
     private val defaultUsername: String,
     @ConfigProperty(name = "quarkus.datasource.password", defaultValue = "")
     private val defaultPassword: String,
+    private val tenantDatabaseRoleService: TenantDatabaseRoleService,
 ) {
     private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
     private val identifierRegex = Regex("^[A-Za-z_][A-Za-z0-9_]*$")
@@ -65,12 +66,19 @@ class PipelineDataService(
 
         return connection().use { connection ->
             connection.autoCommit = false
-            ensureSchemaExists(connection, schema)
-
-            val result = when (moduleType) {
-                ModuleType.DB_LOAD -> executeLoad(connection, schema, table, config, inputData)
-                ModuleType.DB_SAVE -> executeSave(connection, schema, table, config, inputData, recordKeyPrefix)
-                else -> throw IllegalArgumentException("Unsupported pipeline data module type: $moduleType")
+            // NFR-S8: on PostgreSQL, isolate by database role, not only by the schema name this
+            // method computed — a module config naming another tenant's schema is then refused by
+            // PostgreSQL's own grants. No-op on H2 (tests) and a logged fallback if the connecting
+            // user lacks CREATEROLE (see TenantDatabaseRoleService).
+            val postgres = !isH2(connection)
+            if (postgres) tenantDatabaseRoleService.ensureRoleAndSchema(connection, tenantId, schema)
+            val result = tenantDatabaseRoleService.withTenantRole(connection, tenantId) {
+                ensureSchemaExists(connection, schema)
+                when (moduleType) {
+                    ModuleType.DB_LOAD -> executeLoad(connection, schema, table, config, inputData)
+                    ModuleType.DB_SAVE -> executeSave(connection, schema, table, config, inputData, recordKeyPrefix)
+                    else -> throw IllegalArgumentException("Unsupported pipeline data module type: $moduleType")
+                }
             }
             connection.commit()
 

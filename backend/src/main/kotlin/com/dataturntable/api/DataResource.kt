@@ -40,6 +40,9 @@ class DataResource {
     @Inject
     lateinit var jwt: JsonWebToken
 
+    @Inject
+    lateinit var tenantDatabaseRoleService: com.dataturntable.service.TenantDatabaseRoleService
+
     @PersistenceContext
     lateinit var em: EntityManager
 
@@ -229,7 +232,7 @@ class DataResource {
             if (conditions.isNotEmpty()) sb.append(" WHERE ").append(conditions.joinToString(" AND "))
             sb.append(" ORDER BY \"time\" DESC LIMIT ?")
 
-            val result = pipelineConnection().use { connection ->
+            val result = pipelineConnectionForTenant(tenantUuid) { connection ->
                 connection.prepareStatement(sb.toString()).use { statement ->
                     var index = 1
                     if (startInstant != null) statement.setObject(index++, Timestamp.from(startInstant))
@@ -303,7 +306,7 @@ class DataResource {
             if (conditions.isNotEmpty()) sb.append(" WHERE ").append(conditions.joinToString(" AND "))
             sb.append(" ORDER BY \"time\" DESC LIMIT :limit")
             val sql = sb.toString().replace(":start", "?").replace(":end", "?").replace(":limit", "?")
-            val rows = pipelineConnection().use { connection ->
+            val rows = pipelineConnectionForTenant(tenantUuid) { connection ->
                 connection.prepareStatement(sql).use { statement ->
                     var index = 1
                     if (startInstant != null) statement.setObject(index++, Timestamp.from(startInstant))
@@ -417,7 +420,7 @@ class DataResource {
 
         return try {
             val tableName = requireValidTableName(table)
-            pipelineConnection().use { connection ->
+            pipelineConnectionForTenant(tenantUuid) { connection ->
                 connection.autoCommit = false
                 ensureTenantSchemaExists(connection, tenantId)
                 ensureTableExists(connection, tenantId, tableName)
@@ -458,7 +461,7 @@ class DataResource {
                 tuple[0].toString() to tuple[1].toString()
             }
 
-            val tables = pipelineConnection().use { connection ->
+            val tables = pipelineConnectionForTenant(tenantUuid) { connection ->
                 connection.prepareStatement(
                     """
                     SELECT table_name
@@ -510,7 +513,7 @@ class DataResource {
         }
         
         return try {
-            pipelineConnection().use { connection ->
+            pipelineConnectionForTenant(tenantUuid) { connection ->
                 connection.createStatement().use { statement ->
                     statement.execute("""DROP TABLE IF EXISTS ${qualifiedTableName(tenantId, sanitizedTable)}""")
                 }
@@ -737,7 +740,7 @@ class DataResource {
             } else null
 
             // Ensure the physical table exists
-            pipelineConnection().use { connection ->
+            pipelineConnectionForTenant(tenantUuid) { connection ->
                 connection.autoCommit = false
                 if (tableType == "relational" && request["columns"] != null) {
                     @Suppress("UNCHECKED_CAST")
@@ -847,6 +850,21 @@ class DataResource {
         val password = configuredJdbcPassword.orElse("").ifBlank { defaultJdbcPassword }
         return DriverManager.getConnection(url, username, password)
     }
+
+    /**
+     * Like [pipelineConnection], but every statement [block] runs is executed under [tenantId]'s
+     * own database role (NFR-S8/TEN-03) on PostgreSQL: the database itself then refuses access to
+     * another tenant's schema even if a caller's SQL text named one, independent of the
+     * application-level tenant checks above. A no-op on H2 (tests) and a logged fallback if the
+     * connecting user lacks CREATEROLE — see [com.dataturntable.service.TenantDatabaseRoleService].
+     */
+    private fun <T> pipelineConnectionForTenant(tenantId: UUID, block: (Connection) -> T): T =
+        pipelineConnection().use { connection ->
+            if (!isH2(connection)) {
+                tenantDatabaseRoleService.ensureRoleAndSchema(connection, tenantId, tenantSchemaName(tenantId.toString()))
+            }
+            tenantDatabaseRoleService.withTenantRole(connection, tenantId) { block(connection) }
+        }
 
     /**
      * Evaluates the named capability or state predicate.
