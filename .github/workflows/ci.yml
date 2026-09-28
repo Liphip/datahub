@@ -261,9 +261,15 @@ jobs:
   postgresql-migrations:
     name: PostgreSQL migration smoke test
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     services:
+      # Must match the major version shipped in docker/docker-compose.dev.yml and docker/k8s
+      # (postgres:18.6-alpine3.24 / timescale/timescaledb:2.30.1-pg18); a different major version
+      # here would validate migrations against a database nothing actually deploys to.
       postgres:
-        image: postgres:16-alpine
+        image: postgres:18.6-alpine3.24
         env:
           POSTGRES_DB: dataturntable
           POSTGRES_USER: dataturntable
@@ -274,19 +280,23 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 12
     steps:
       - uses: actions/checkout@v4
-      - name: Apply every Flyway migration in version order
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Boot the application against real PostgreSQL (Flyway + Hibernate validate)
+        # This runs PostgresMigrationBehaviorTest for real, not just applying the SQL files by
+        # hand: it exercises the app's own Flyway startup and Hibernate's `validate` mode, so a
+        # migration that a raw `psql` apply would accept but that doesn't match the JPA entities
+        # (a Postgres-only feature H2 tolerates differently, a missing column, a type mismatch)
+        # fails here (NFR-M6).
         env:
-          PGHOST: localhost
-          PGPORT: '5432'
-          PGDATABASE: dataturntable
-          PGUSER: dataturntable
-          PGPASSWORD: dataturntable-ci
-        run: |
-          for migration in $(find backend/src/main/resources/db/migration -name '*.sql' | sort -V); do
-            echo "Applying ${migration}"
-            psql --set ON_ERROR_STOP=1 --file "${migration}"
-          done
-      - name: Verify critical production tables
+          DATATURNTABLE_IT_DB_URL: jdbc:postgresql://localhost:5432/dataturntable
+          DATATURNTABLE_IT_DB_USER: dataturntable
+          DATATURNTABLE_IT_DB_PASSWORD: dataturntable-ci
+        run: mvn --batch-mode test -Dtest=PostgresMigrationBehaviorTest -Dquarkus.test.profile=postgres-it
+      - name: Verify critical production tables and the STR-08 regression guard
         env:
           PGHOST: localhost
           PGPORT: '5432'

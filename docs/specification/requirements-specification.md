@@ -1,6 +1,6 @@
 # DataTurntable — Software Requirements Specification (SRS)
 
-**Version:** 2.2
+**Version:** 2.3
 **Date:** 2026-09-28
 **Status:** Draft
 
@@ -8,7 +8,7 @@ Version 2.0 keeps every requirement of version 1.1 under its original ID. Requir
 
 Version 2.1: delivery is exactly once for identified records (PIP-09, PIP-10, PIP-14, DAT-07, NFR-R2); requirements found missing in the review of 2026-09-27 were added (PIP-15, ALT-13, TEN-10, UI-20, UI-21, OPS-07, DAT-09, NFR-P7, NFR-R5, NFR-R6); section 11 orders the MVP into milestones.
 
-Version 2.2: this document is the **single requirements and status document** of the project. It absorbs the production-readiness plan (`production-ready-spec.json`, FR-001 – FR-032, NFR-001 – NFR-020; mapping in [Appendix C](#appendix-c-production-readiness-plan-ids)), the product goals of the former target-architecture draft (1.5), the feature support matrix (status now in Appendix A only), and the requirements review with its measurements ([Appendix B](#appendix-b-measurements-and-review-findings)). New requirements: IMP-14, PIP-16 – PIP-18, MOD-14, EXP-09, CON-17, CON-18, IAM-14, IAM-15, API-10, NFR-P8, NFR-R10, NFR-R11, NFR-S9 – NFR-S12, NFR-M7 – NFR-M9. Decisions against alternatives are recorded in section 12. How the system is built is described in the [functional specification](functional-specification.md); the running work log is [`docs/development/handoff.md`](../development/handoff.md).
+Version 2.2: this document is the **single requirements and status document** of the project. It absorbs the production-readiness plan (`production-ready-spec.json`, FR-001 – FR-032, NFR-001 – NFR-020; mapping in [Appendix C](#appendix-c-production-readiness-plan-ids)), the product goals of the former target-architecture draft (1.5), the feature support matrix (status now in Appendix A only), and the requirements review with its measurements ([Appendix B](#appendix-b-measurements-and-review-findings)). New requirements: IMP-14, PIP-16 – PIP-18, MOD-14 – MOD-16, EXP-09, CON-17, CON-18, IAM-14, IAM-15, API-10, NFR-P8, NFR-R10, NFR-R11, NFR-S9 – NFR-S12, NFR-M7 – NFR-M9. Version 2.3 adds MOD-17 – MOD-19 (train-and-infer machine-learning models as a pipeline use case, owner request 2026-09-28). Decisions against alternatives are recorded in section 12. How the system is built is described in the [functional specification](functional-specification.md); the running work log is [`docs/development/handoff.md`](../development/handoff.md).
 
 ---
 
@@ -48,6 +48,7 @@ DataTurntable covers:
 
 - Exposing protocol endpoints (REST, MQTT, WebSocket, UDP) for external systems to push data into pipelines, and actively pulling data from external systems
 - A non-linear (DAG) processing pipeline layer with transformation, filtering, ML capabilities, and dedicated alert evaluation
+- Training and applying machine-learning models as ordinary pipeline nodes — no dedicated model-serving infrastructure (see 4.3, MOD-17 – MOD-19)
 - Storage: a hot tier (TimescaleDB / PostgreSQL) for recent data and a lakehouse (Apache Iceberg tables on bundled S3-compatible object storage) for complete history, replay and SQL analysis
 - Routing/exporting data by pushing to external endpoints (REST, MQTT, WebSocket, UDP) or exposing pull endpoints for external systems
 - A single web UI for configuration, monitoring, pipeline management, data exploration and dashboards (Grafana embedded behind the common login)
@@ -231,6 +232,11 @@ Requirements are tagged: `MVP` = required for initial release; `V2` = planned po
 | MOD-12 | Each module version shall carry a configuration object that is passed to the module class constructor. | MVP |
 | MOD-14 | The executable content of a module version (code, dependency manifest, configuration) shall be immutable once created and identified by a content digest; a change always creates a new version. | MVP |
 | MOD-13 | Errors while loading or instantiating a module shall fail the node visibly (run log, metrics); they shall never be silently ignored. | MVP |
+| MOD-15 | A PROCESSING module shall be able to persist an arbitrary fitted-model artifact (e.g. a serialized scikit-learn/PyTorch object) under a tenant- and module-scoped name, and load the current or a specific past version of it in a later, independent execution — of the same module or a different one, in the same or a different pipeline. | MVP |
+| MOD-16 | Model artifacts shall be versioned like module and pipeline versions: saving under a name already used creates a new version rather than overwriting; every run that used one records which version. Artifacts are opaque bytes to the platform (no execution, no parsing) and are stored, encrypted at rest, in the metadata database — this is internal model state the platform itself writes and reads, not the unstructured user payload storage that STR-08 excludes. | MVP |
+| MOD-17 | Users shall be able to build a **training pipeline**: an IMPORT or DB_LOAD node feeds historical records to a PROCESSING module that fits a model (using the pre-installed scikit-learn/PyTorch/pandas, MOD-06) and saves it as a model artifact (MOD-15). Training runs like any other pipeline: triggered manually, on a schedule (an IMPORT poll interval), or by an upstream event. | MVP |
+| MOD-18 | Users shall be able to build an **inference pipeline**: a PROCESSING module loads a model artifact once per worker (not once per record) and applies it to each incoming record for classification, regression, anomaly scoring or forecasting; the result flows to EXPORT, DB_SAVE or ALERT nodes like any other PROCESSING output. | MVP |
+| MOD-19 | A worker that has loaded a model artifact shall detect that a newer version was saved and reload it without a pipeline restart, within one polling interval (default 60 s). | MVP |
 
 ### 4.4 Alert Module
 
@@ -576,6 +582,7 @@ Permissions are additive; an auth user may hold role assignments in multiple ten
 | -- | ----------- |
 | DAT-01 | The system shall accept data in any format (JSON, binary, CSV, Avro, Protobuf) at inbound endpoints; format parsing is the responsibility of the IMPORT module. |
 | DAT-02 | Internally, data shall be represented as JSON or as a pandas DataFrame when passed to PROCESSING and ALERT modules. |
+| DAT-10 | Model artifacts (MOD-15) are the one platform-managed exception to "structured data only" (STR-08): they are serialized model state, never a user-supplied file, and are never exposed through a file/blob API — only through `save_model_fn`/`load_model_fn` inside module execution. |
 | DAT-03 | The system shall store metadata (tenant info, pipeline config, module source, alert configuration, roles, audit trail) in PostgreSQL. |
 | DAT-04 | Recent time-series sensor/IoT data shall be stored in TimescaleDB (hot tier); complete history in lakehouse tables. |
 | DAT-05 | Variable-schema structured data shall be stored in lakehouse tables with schema evolution (see STR-03). |
@@ -624,6 +631,7 @@ Permissions are additive; an auth user may hold role assignments in multiple ten
 - Structured data only: no blob or file store; every payload is parsed into records (STR-08)
 - Metadata objects: user-defined types, as-of versioning, pipeline enrich/export steps, dedicated UI page (MET-01 – MET-10)
 - Custom IMPORT and EXPORT Python modules; DB_LOAD/DB_SAVE storage nodes
+- Train-and-infer machine learning: a PROCESSING module fits and saves a model, another loads and applies it — no separate ML server (MOD-15 – MOD-19)
 - Module types: IMPORT, DB_LOAD, PROCESSING, MERGE, ALERT, EXPORT, DB_SAVE
 - Graph pipeline editor with fan-out and fan-in; horizontally scaling processing; dead-letter queue
 - TimescaleDB + PostgreSQL hot tier; Iceberg lakehouse on bundled object storage with bronze retention, rollups, SQL workspace, time travel and data catalog
@@ -742,6 +750,8 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | MOD-08 – MOD-11 | = | | Done |
 | MOD-12, MOD-13 | + | Module config reaches the constructor; errors were previously swallowed. | Done |
 | MOD-14 | + | Former FR-008. | Done |
+| MOD-15, MOD-16 | + | Model artifact persistence (owner request 2026-09-28). | Open (no `save_model_fn`/`load_model_fn`, no artifact storage or versioning yet) |
+| MOD-17 – MOD-19 | + | Train-and-infer use case built on MOD-15/16 (owner request 2026-09-28). | Open (design only, functional spec §5.6/§13.6; needs MOD-15/16 first) |
 | ALT-01 | = | | Done |
 | ALT-02 | ~ | Realised as built-in ALERT node types; the former rule table was never evaluated and was removed. | Done |
 | ALT-03, ALT-04 | = | | Done |
@@ -866,6 +876,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | DAT-05 | ~ | MongoDB replaced by lakehouse schema evolution. | Open |
 | DAT-06 | ~ | Binary content not a focus; structured file import. | Open |
 | DAT-07 | ~ | Follows PIP-14. | Done |
+| DAT-10 | + | Model-artifact exception to STR-08 (owner request 2026-09-28). | Open (follows MOD-15) |
 | DAT-08 | = | | Open |
 | DAT-09 | + | Tenant offboarding and GDPR erasure. | Open |
 | INT-01 | ~ | SimpleJSON endpoint replaced by a permission-checked Grafana data source. | Open |

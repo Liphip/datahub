@@ -1,10 +1,10 @@
 # DataTurntable — Functional Specification
 
-**Version:** 2.2
+**Version:** 2.3
 **Date:** 2026-09-28
 **Status:** Draft
 
-This document describes how DataTurntable works: the target behaviour specified in the [requirements specification](requirements-specification.md) v2.2 (requirement IDs in brackets). The requirements specification is the authoritative document: it holds the goals, the requirements, the decisions against alternatives, and — in its Appendix A — the only implementation status. Where the current implementation differs substantially from the behaviour described here, a short *Implementation note* says so; it never replaces Appendix A.
+This document describes how DataTurntable works: the target behaviour specified in the [requirements specification](requirements-specification.md) v2.3 (requirement IDs in brackets). Version 2.3 adds training and applying machine-learning models as a pipeline use case (§5.6, §13.6; owner request 2026-09-28). The requirements specification is the authoritative document: it holds the goals, the requirements, the decisions against alternatives, and — in its Appendix A — the only implementation status. Where the current implementation differs substantially from the behaviour described here, a short *Implementation note* says so; it never replaces Appendix A.
 
 ---
 
@@ -84,6 +84,7 @@ UDP datagram                     ────────►                    
 3. **Batch ETL**: structured file upload (CSV/Parquet/JSON) → PROCESSING (parse/normalise) → table → EXPORT (report webhook)
 4. **Multi-source Merge**: HTTP feed + MQTT stream → each parsed separately → MERGE (fan-in) → EXPORT
 5. **Historical Analysis and Replay**: SQL over months of history in the SQL workspace; reprocess bronze data with a corrected pipeline version
+6. **Train and Apply a Model**: a training pipeline fits a model from historical readings and saves it (MOD-15); an inference pipeline loads it and scores, classifies or forecasts each incoming record — entirely inside the platform's own module workers, with no separate ML-serving service (§5.6, §13.6)
 
 ---
 
@@ -402,13 +403,58 @@ def alert_fn(severity='warning', message='', payload=None, title=None,
 
 def query_fn(query: dict) -> list[dict]:
     """Tenant-scoped read query against platform tables (hot tier and lakehouse)."""
+
+def save_model_fn(name: str, model) -> None:
+    """Persist a fitted model as a new version under `name`, scoped to the tenant and the
+    calling module (MOD-15). `model` is pickled (or the framework's own serializer, e.g.
+    `torch.save`) by the platform; the module never touches a filesystem path."""
+
+def load_model_fn(name: str, version: int | None = None):
+    """Load the current (or a specific past) version of a model saved under `name` by this
+    module in this tenant. Returns None if none has been saved yet."""
 ```
 
-*Implementation note:* `query_fn` currently returns an empty result.
+*Implementation note:* `query_fn` currently returns an empty result. `save_model_fn`/`load_model_fn`
+are specified (MOD-15 – MOD-19) but not implemented yet.
 
 ### 5.5 Module Code Storage
 
 Module source code, requirements and config are stored in the `module_versions` PostgreSQL table. Each save creates a new version record. The source is editable in the Monaco-based UI code editor. File-system storage for GitOps workflows is a future option.
+
+### 5.6 Model Artifacts (MOD-15 – MOD-16)
+
+The platform runs machine learning the same way it runs any other transformation — as a PROCESSING
+module — rather than through a dedicated model-serving component. What is missing from an ordinary
+PROCESSING module for this is **persistence across independent executions**: a training run and
+the many later inference runs are different container invocations, on different workers, possibly
+weeks apart, and each starts from a fresh filesystem.
+
+| Aspect | Design |
+| ------ | ------ |
+| What is stored | Whatever `save_model_fn` is given — a scikit-learn estimator, a PyTorch `state_dict`, or any other picklable/serializable Python object. The platform does not inspect or execute it. |
+| Scope and key | `(tenant_id, module_id, name)`; a module can save several named artifacts (e.g. one per device class). |
+| Versioning | Like `ModuleVersion` and `PipelineVersion`: saving under an existing name creates a new version, never overwrites. `load_model_fn` defaults to the latest; a run can pin an older version to reproduce a past inference exactly. |
+| Storage | A `model_artifacts` table (tenant-scoped, encrypted at rest like secrets) holding the serialized bytes and metadata (name, version, size, byte-count, created-by run id, framework hint). Not the object store, and not reachable through any file/blob API (DAT-10). |
+| Loading cost | Loaded once per worker process and cached, not once per record (MOD-18); the worker polls for a newer version so a fresh training run reaches inference without a pipeline restart (MOD-19). |
+| Why this is not STR-08 | STR-08 excludes storing a **user's unstructured payload** (a file someone uploads or sends). A model artifact is never that: it is state the platform itself creates from a module's own fit call and reads back only for that same module's own inference call. It has no independent existence a user could upload, download or browse. |
+
+Training and inference are ordinary pipelines, not a special node type:
+
+```python
+class ProcessingModule:                              # training pipeline
+    def process(self, data, query_fn=None, save_model_fn=None):
+        model = sklearn.ensemble.RandomForestRegressor().fit(data[["x1","x2"]], data["y"])
+        save_model_fn("load-forecast", model)
+        return {"trained_rows": len(data)}
+
+class ProcessingModule:                               # inference pipeline
+    _model = None
+    def process(self, data, query_fn=None, load_model_fn=None):
+        if self._model is None:
+            self._model = load_model_fn("load-forecast")
+        data["prediction"] = self._model.predict(data[["x1","x2"]])
+        return data
+```
 
 ---
 
@@ -966,6 +1012,29 @@ Because metadata objects are as-of versioned (MET-05), re-running an old pipelin
 The point of the example is the shape, not the domain: many sources of different kinds, several of them unable to take part in a request/response protocol, converging on structured records that are enriched and delivered to more than one consumer.
 
 The control process of §14a is outside the data hub: grid-state estimation, the control decision and the control channel to devices. See the example's README for the requirements it would have to meet.
+
+### 13.6 Worked Example: Train and Apply a Load-Forecast Model
+
+Two independent pipelines, connected only through a named model artifact — no ML server, no
+separate deployment step for the model.
+
+```text
+Training pipeline (triggered nightly, or on demand):
+1.  DB_LOAD reads the last 90 days of a device class's readings from the hot tier.
+2.  PROCESSING fits a scikit-learn regressor on (hour-of-day, weekday, past load) → next-hour load,
+    and calls save_model_fn("hourly-load-forecast", model). A new version is created; the previous
+    version stays available.
+
+Inference pipeline (one instance per incoming reading, running continuously):
+1.  IMPORT receives a reading (MQTT or pull input).
+2.  PROCESSING calls load_model_fn("hourly-load-forecast") once per worker (cached after that),
+    predicts the next hour's load, and adds it to the record.
+3.  ALERT compares the prediction against the metered capacity and fires if it would be exceeded.
+4.  DB_SAVE stores the enriched record for the dashboard.
+```
+
+If training is re-run with more data, the next inference call to `load_model_fn` on each worker
+picks up the new version automatically (MOD-19); nothing about the inference pipeline changes.
 
 ---
 

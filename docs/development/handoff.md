@@ -278,6 +278,50 @@ Vite and Playwright.
 - `RetentionCleanupService` runs only on the control API with background jobs enabled. It had raced
   tests in the full suite.
 
+## Session 2026-09-28 (continued): CI PostgreSQL version + ML use case
+
+**CI fix:** `postgresql-migrations` tested against `postgres:16-alpine`, applying the Flyway SQL
+files by hand with `psql` — a much weaker check than what this session ran manually (Hibernate
+`validate` mode against the app's own Flyway startup), and against the wrong major version (we
+ship PostgreSQL 18: `postgres:18.6-alpine3.24` / `timescale/timescaledb:2.30.1-pg18`). The job now
+runs `PostgresMigrationBehaviorTest` for real via Maven against `postgres:18.6-alpine3.24`, then
+keeps the `psql` table-existence and STR-08 (`data_blobs` must not exist) checks as a cheap second
+opinion. Verified locally: the exact `mvn --batch-mode test -Dtest=PostgresMigrationBehaviorTest
+-Dquarkus.test.profile=postgres-it` invocation with `DATATURNTABLE_IT_DB_URL/_USER/_PASSWORD` env
+vars passes against a fresh database (only PostgreSQL 16 was available in this sandbox — no Docker
+daemon here, so the exact 18.6-alpine3.24 image itself has not been pulled and run; the mechanism,
+env vars and Maven invocation are proven, the image tag is not). **Confirm the first real CI run
+on GitHub actually pulls and passes against postgres:18.**
+
+**New use case: train and apply ML models inside the platform (owner request 2026-09-28).**
+No dedicated ML-serving component: a PROCESSING module fits a model and persists it; another
+(or the same, in a later pipeline) loads and applies it. This needed one real design decision,
+since nothing like it existed:
+- New requirements MOD-15 – MOD-19, DAT-10 in the SRS (v2.3), status **Open** — this is design
+  only, nothing was implemented.
+- New `docs/specification/functional-specification.md` §5.6 "Model Artifacts" and §13.6 worked
+  example (load-forecast: nightly training pipeline, continuous inference pipeline, hot-swappable
+  model version).
+- Two new injected functions specified: `save_model_fn(name, model)`, `load_model_fn(name,
+  version=None)`. Not implemented — `DockerService.kt`'s Python harness only injects `alert_fn` and
+  `query_fn` today.
+- Storage: a new `model_artifacts` table (tenant + module + name, versioned, encrypted at rest like
+  secrets) is specified but not created — no Flyway migration, no entity.
+- Explicitly reconciled with STR-08 (DAT-10): a model artifact is platform-internal state a module
+  writes and reads back for itself, never a user-facing file/blob, so it doesn't reopen the
+  unstructured-storage decision.
+- README feature list updated.
+
+**To implement next** (in dependency order): `model_artifacts` migration + entity + a
+`ModelArtifactService` (save/list-versions/load, tenant-scoped, encrypted like `SecretService`) →
+wire `save_model_fn`/`load_model_fn` into the module execution harness in `DockerService.kt`
+(same pattern as `alert_fn`/`query_fn`: a Python shim that calls back into the JVM host, likely via
+a small local socket/file protocol already used for `__RESULT__`) → a
+`ModelArtifactResource` for the UI (list versions per module, size, created-by-run) → tests:
+train-then-infer across two independent module executions, version pinning, hot-swap on a new
+save. No UI page is strictly required for MVP (the Python API is enough); a simple read-only list
+under the module's detail view is a reasonable first UI step.
+
 ## Documentation map (consolidated 2026-09-28)
 
 The owner asked for one consistent story in fewer files. **The SRS is the main document and wins
