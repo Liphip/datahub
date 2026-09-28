@@ -278,6 +278,47 @@ Vite and Playwright.
 - `RetentionCleanupService` runs only on the control API with background jobs enabled. It had raced
   tests in the full suite.
 
+## In progress: documentation consolidation (owner request 2026-09-28)
+
+Goal: every document tells the same story, with fewer files. Owner decisions:
+- **The SRS (`docs/specification/requirements-specification.md`) is the main document and wins every
+  conflict.** Requirements from `production-ready-spec.json` that still make sense move into it,
+  expanding it.
+- **FR-029 (split into domain microservices behind a gateway) is dropped.** The runtime roles
+  (control-api, public-api, ingest-edge, pipeline-executor) are enough; record it as a rejected
+  alternative.
+
+Target structure:
+
+| Kept file | Absorbs |
+|---|---|
+| `README.md` | Overview and quick start only; links to the rest |
+| `docs/specification/requirements-specification.md` | Goals from `target-architecture.md` §1; still-valid FR/NFR items and rejected alternatives from `production-ready-spec.json`; the status column of `docs/operations/support-matrix.md`; findings and measurements of `docs/development/requirements-review.md` |
+| `docs/specification/functional-specification.md` | Runtime topology and ownership from `docs/development/architecture.md`; design detail from `target-architecture.md` §2–6 |
+| `docs/development/handoff.md` | The only progress log and next-steps list: `.agent-status/progress.md`, the still-relevant parts of `docs/production-ready-v1-status.md` (project policy, pitfalls), `docs/development/documentation-gaps.md` (open items), `docs/development/plan.md` (nothing current; obsolete) |
+| Reference docs, unchanged in role | `setup.md`, `configuration-reference.md`, `source-reference.md`, `source-function-reference.md` (generated), `licenses.md`, `docs/api/README.md`, `docs/operations/backup-restore.md`, the user guides |
+
+Conflicts found (fixed as the files are merged):
+- Password hashing: the README, the support matrix, FR-003 and the v1 tracker say Argon2id; the code
+  (`AuthService`, `BcryptUtil`) and the SRS (NFR-S2) say BCrypt.
+- Swarm is still "optional" in FR-030 and "Experimental" in the support matrix, but was removed
+  (SRS DEP-08).
+- MinIO (spec JSON tech stack) is excluded by licence; Redis appears in `architecture.md`, the
+  configuration reference, backup-restore and the user guides, but the code has no Redis (leases
+  are in PostgreSQL).
+- "Unauthenticated ingest" / "no API keys" / "no audit trail" / "committed `privateKey.pem`"
+  (requirements review, documentation gaps, SRS Appendix A IMP-09): ingest API keys, `AuditService`
+  and externalised JWT keys exist.
+- At-least-once (plan, support matrix NFR-007) against exactly-once (SRS PIP-14).
+- `plan.md` still describes client-side SHA-256 hashing, a Kafka topic per edge, Redis, Helm and
+  Promtail/ELK.
+- README: "1B+ readings/day" is stated as a fact, while the review measured roughly 300 runs/s per
+  node and the target applies to multi-node Kubernetes only. "TimescaleDB-optimised" is also
+  stated, but the baseline creates no hypertables.
+- `docs-site/docs/developer/*.md` are older copies of `docs/development/*` that diverged (all five
+  differ).
+- `production-ready-spec.json` tech stack is stale (React 18, Kotlin 2.3, Quarkus 3.32, Python 3.11).
+
 ## Open work (in priority order)
 
 > ### Kubernetes JWT wiring — done and render-validated
