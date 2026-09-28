@@ -5,12 +5,18 @@ This document lets another assistant or developer continue the work without the 
 > **Read this first.** Everything is committed and pushed to `claude/datahub-lakehouse-review-6tiaf5`
 > and the working tree is clean. **The only thing left before landing is asking the owner to open the
 > PR into `dev`** — nothing technical is blocked. The full backend suite is green with the
-> previously dead tests actually running: **335 tests, 0 failures, 0 errors, 10 skipped**, including
-> all 12 Docker-gated tests and all 4 `ModuleScriptTest` tests. To reproduce that on a host you need
+> previously dead tests actually running: **351 tests, 0 failures, 0 errors, 10 skipped**, including
+> all Docker-gated tests and all 4 `ModuleScriptTest` tests. To reproduce that on a host you need
 > a Windows JDK 25 **and** a real `python3` on `PATH` — the "Tests" section at the top has
 > admin-free download recipes for both. Session entries below are in chronological order; the newest
-> is **"the whole suite finally runs for real — three test defects found"**. Items in "Open work"
-> that are ~~struck through~~ are done — do not redo them.
+> is **"model-forecast example, ALT-13 platform health alerts"**, which also corrects **MOD-15 to
+> Partial** (artifacts are module-scoped, so the SRS's "or a different one" does not hold).
+> Items in "Open work" that are ~~struck through~~ are done — do not redo them.
+>
+> **Next target if work continues (owner's call, not a blocker):** the last M0 item, **TEN-03/NFR-S8
+> per-tenant database roles**. ALT-13, the tractable half of the M0 pair, is now Done. The 10 skips
+> are listed under the newest session entry; 9 of them (`ModuleServiceTest` 4, `TenantServiceTest` 5)
+> are still unexplained.
 
 ## Repository and branches
 
