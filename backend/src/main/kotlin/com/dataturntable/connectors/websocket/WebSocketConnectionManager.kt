@@ -73,6 +73,9 @@ class WebSocketConnectionManager {
     @Inject
     lateinit var redactor: SensitiveDataRedactor
 
+    @Inject
+    lateinit var destinationPolicy: com.dataturntable.connectors.DestinationPolicy
+
     @ConfigProperty(name = "dataturntable.connectors.lease.reconcile-interval-seconds", defaultValue = "10")
     var leaseReconcileIntervalSeconds: Long = 20
 
@@ -260,7 +263,7 @@ class WebSocketConnectionManager {
                     val token = decryptedConfig["authToken"]?.toString()
                     if (!token.isNullOrBlank()) header("Authorization", "Bearer $token")
                 }
-                .buildAsync(URI.create(url), listener)
+                .buildAsync(URI.create(url).also { u -> u.host?.let(destinationPolicy::check) }, listener)
                 .get(15, TimeUnit.SECONDS)
             done.get(10, TimeUnit.SECONDS)
             connectorMetrics.recordOperation("WEBSOCKET", "OUTPUT", "send", "success", startedAt)
@@ -361,7 +364,7 @@ class WebSocketConnectionManager {
                     val token = config["authToken"]?.toString()
                     if (!token.isNullOrBlank()) header("Authorization", "Bearer $token")
                 }
-                .buildAsync(URI.create(url), listener)
+                .buildAsync(URI.create(url).also { u -> u.host?.let(destinationPolicy::check) }, listener)
                 .get(15, TimeUnit.SECONDS)
             connections[connectorId] = ws
         } catch (e: Exception) {

@@ -431,6 +431,26 @@ class PipelineConsumer {
             return result.output
         }
 
+        /**
+         * Built-in EXPORT without a module: delivers the records as they are to the node's output
+         * connector, keyed like module exports so a re-executed run is not delivered twice.
+         */
+        fun executeExportPassThrough(node: GraphNode, input: Any?, order: Int): Any? {
+            val startedAt = System.currentTimeMillis()
+            executionLog.add("START EXPORT #$order send-as-is [${node.id}]")
+            val conn = node.connector ?: throw IllegalStateException("Node ${node.id}: EXPORT without a module needs an output connector")
+            if (input != null) {
+                try {
+                    connectorRuntime.deliverViaConnector(conn.connector, conn.config, input, deliveryKey = runUuid?.let { "$it:${node.id}" })
+                } catch (e: Exception) {
+                    throw IllegalStateException("Delivery via connector '${conn.connector.name}' failed: ${e.message}", e)
+                }
+            }
+            val count = (input as? List<*>)?.size ?: if (input == null) 0 else 1
+            builtinLog(node, "send-as-is:${conn.connector.name}", order, startedAt, "Delivered $count record(s) to ${conn.connector.name}")
+            return input
+        }
+
         fun executeSaveMetadata(node: GraphNode, config: SaveMetadataConfig, input: Any?, order: Int): Any? {
             val startedAt = System.currentTimeMillis()
             executionLog.add("START EXPORT #$order save-metadata [${node.id}]")
@@ -527,6 +547,7 @@ class PipelineConsumer {
             if (node.type == ModuleType.IMPORT && node.moduleVersionId == null) return executePassThrough(node, moduleInput, order)
             node.enrich?.let { return executeEnrich(node, it, moduleInput, order) }
             node.saveMetadata?.let { return executeSaveMetadata(node, it, moduleInput, order) }
+            if (node.type == ModuleType.EXPORT && node.moduleVersionId == null) return executeExportPassThrough(node, moduleInput, order)
             val version = node.moduleVersionId?.let { ModuleVersion.findById(it) }
                 ?: throw IllegalStateException("Missing module version for node ${node.id}")
             // DB_LOAD/DB_SAVE modules sit on IMPORT/EXPORT nodes; execution follows the module's own type.
@@ -752,7 +773,8 @@ class PipelineConsumer {
                 ?.let { runCatching { EnrichConfig.parse(it) }.getOrElse { e -> throw IllegalStateException("Node $nodeId: ${e.message}") } }
             val saveMetadata = (nodeMap["saveMetadata"] as? Map<*, *>)?.takeIf { nodeType == ModuleType.EXPORT && moduleVersionId == null }
                 ?.let { runCatching { SaveMetadataConfig.parse(it) }.getOrElse { e -> throw IllegalStateException("Node $nodeId: ${e.message}") } }
-            if (moduleVersionId == null && alertRule == null && enrich == null && saveMetadata == null && nodeType != ModuleType.IMPORT) return@mapNotNull null
+            val exportAsIs = nodeType == ModuleType.EXPORT && moduleVersionId == null && saveMetadata == null && connectorsByNodeId[nodeId] != null
+            if (moduleVersionId == null && alertRule == null && enrich == null && saveMetadata == null && !exportAsIs && nodeType != ModuleType.IMPORT) return@mapNotNull null
             GraphNode(
                 id = nodeId,
                 type = nodeType,

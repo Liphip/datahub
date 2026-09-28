@@ -52,6 +52,9 @@ class ConnectorRuntimeService {
     @ConfigProperty(name = "dataturntable.connectors.file.base-dir", defaultValue = "/data/files")
     lateinit var fileBaseDir: String
 
+    @Inject
+    lateinit var destinationPolicy: DestinationPolicy
+
     private val LOG = Logger.getLogger(ConnectorRuntimeService::class.java)
     private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
     private val httpClient: HttpClient = HttpClient.newBuilder()
@@ -236,6 +239,7 @@ class ConnectorRuntimeService {
         }
         val path = config["path"]?.toString()?.let { if (it.startsWith("/")) it else "/$it" } ?: ""
         val url = "$baseUrl$path"
+        URI.create(url).host?.let(destinationPolicy::check)
 
         val requestBuilder = HttpRequest.newBuilder()
             .uri(URI.create(url))
@@ -264,6 +268,7 @@ class ConnectorRuntimeService {
         val path = config["path"]?.toString()?.let { if (it.startsWith("/")) it else "/$it" } ?: ""
         val method = config["method"]?.toString()?.uppercase() ?: "POST"
         val url = "$baseUrl$path"
+        URI.create(url).host?.let(destinationPolicy::check)
         val body = if (data != null) objectMapper.writeValueAsString(data) else "{}"
 
         val requestBuilder = HttpRequest.newBuilder()

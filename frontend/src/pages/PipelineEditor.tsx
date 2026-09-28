@@ -240,7 +240,8 @@ function graphToFlow(
       mqttTopic: raw.mqttTopic as string | undefined,
       alertChannel: raw.alertChannel as string | undefined,
       alertRule: raw.alertRule as AlertRuleConfig | undefined,
-      passThrough: raw.type === 'IMPORT' && !raw.moduleVersionId,
+      // Without a module: IMPORT forwards records as received; EXPORT sends them as they are.
+      passThrough: (raw.type === 'IMPORT' || (raw.type === 'EXPORT' && !raw.saveMetadata)) && !raw.moduleVersionId,
       deduplicateBy: Array.isArray(raw.deduplicateBy) ? (raw.deduplicateBy as string[]) : undefined,
       enrich: raw.enrich as EnrichConfig | undefined,
       saveMetadata: raw.saveMetadata as SaveMetadataMapping | undefined,
@@ -858,24 +859,28 @@ function NodeConfigPanel({
       {(data.nodeType === 'PROCESSING' || data.nodeType === 'EXPORT') && (
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Step</label>
-          <div className="grid grid-cols-2 gap-1 text-xs" role="radiogroup">
-            {[
-              { builtin: false, label: 'Python module' },
-              { builtin: true, label: data.nodeType === 'PROCESSING' ? 'Enrich with metadata' : 'Save to metadata' },
-            ].map((option) => {
-              const active = Boolean(data.enrich || data.saveMetadata) === option.builtin;
+          <div className={`grid gap-1 text-xs ${data.nodeType === 'EXPORT' ? 'grid-cols-3' : 'grid-cols-2'}`} role="radiogroup">
+            {(data.nodeType === 'PROCESSING'
+              ? [
+                  { key: 'module', label: 'Python module', patch: { enrich: undefined } },
+                  { key: 'builtin', label: 'Enrich with metadata', patch: { enrich: data.enrich ?? DEFAULT_ENRICH } },
+                ]
+              : [
+                  { key: 'module', label: 'Python module', patch: { saveMetadata: undefined, passThrough: false } },
+                  { key: 'asis', label: 'Send as is', patch: { saveMetadata: undefined, passThrough: true } },
+                  { key: 'builtin', label: 'Save to metadata', patch: { saveMetadata: data.saveMetadata ?? DEFAULT_SAVE_METADATA, passThrough: false } },
+                ]
+            ).map((option) => {
+              const current = data.enrich || data.saveMetadata ? 'builtin' : data.passThrough ? 'asis' : 'module';
+              const active = current === option.key;
               return (
                 <button
-                  key={option.label}
+                  key={option.key}
                   type="button"
                   role="radio"
                   aria-checked={active}
                   disabled={!canWrite}
-                  onClick={() => onChange(!option.builtin
-                    ? { enrich: undefined, saveMetadata: undefined }
-                    : data.nodeType === 'PROCESSING'
-                      ? { enrich: data.enrich ?? DEFAULT_ENRICH }
-                      : { saveMetadata: data.saveMetadata ?? DEFAULT_SAVE_METADATA })}
+                  onClick={() => onChange(option.patch)}
                   className={`px-2 py-1 rounded-sm border ${active ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
                 >
                   {option.label}
@@ -883,6 +888,11 @@ function NodeConfigPanel({
               );
             })}
           </div>
+          {data.nodeType === 'EXPORT' && data.passThrough && (
+            <p className="text-[10px] text-gray-400 mt-1">
+              Records are delivered unchanged to the output connector, e.g. the enriched readings to a metering system.
+            </p>
+          )}
         </div>
       )}
 
@@ -1056,7 +1066,9 @@ function NodeConfigPanel({
               ))}
             </select>
             <p className="text-[10px] text-gray-400 mt-1">
-              The platform will deliver your shape() result to this connector.
+              {data.passThrough
+                ? 'The platform delivers the incoming records unchanged to this connector.'
+                : 'The platform will deliver your shape() result to this connector.'}
             </p>
           </div>
           {outputConnectors.find((c) => c.id === data.connectorId)?.connectorType === 'MQTT' && (

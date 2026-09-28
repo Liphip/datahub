@@ -70,6 +70,11 @@ class IngestAuthorizationService {
 
     private fun toCached(k: ApiKey) = k.tenant?.id?.let { CachedKey(k.id!!, it, k.abilities, k.expiresAt) }
 
+    /** Drops a revoked key from this instance's cache at once (other instances refresh within 30 s). */
+    fun forget(keyHash: String) {
+        keys = keys - keyHash
+    }
+
     @Scheduled(every = "30s", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     fun scheduledRefresh() {
         try {

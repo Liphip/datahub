@@ -1,5 +1,5 @@
 import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertHistory, DataSummaryResponse, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorInboxItem, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential, MetadataType, MetadataTemplate, SecretReference, AuthorizationExplanation, MetadataObjectSummary, MetadataObjectDetail, SaveMetadataMapping } from '../types';
+import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertHistory, DataSummaryResponse, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorInboxItem, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential, MetadataType, MetadataTemplate, SecretReference, AuthorizationExplanation, ApiKey, MetadataObjectSummary, MetadataObjectDetail, SaveMetadataMapping } from '../types';
 
 /** Error shape returned by backend endpoints (`{ error, missing }` JSON bodies). */
 export type ApiError = AxiosError<{ error?: string; message?: string; code?: string; details?: { missing?: string[] } & Record<string, unknown> }>;
@@ -1029,6 +1029,20 @@ class ApiService {
    */
   async deleteRole(id: string): Promise<void> {
     await this.client.delete(`/roles/${id}`);
+  }
+
+  // ── Ingest API keys ─────────────────────────────────────────────────────────
+
+  async getApiKeys(tenantId: string): Promise<ApiKey[]> {
+    return (await this.client.get<ApiKey[]>('/api-keys', { params: { tenantId } })).data;
+  }
+
+  async createApiKey(tenantId: string, body: { name: string; pipelineIds: string[]; connectorIds: string[]; expiresAt?: string }): Promise<ApiKey> {
+    return (await this.client.post<ApiKey>('/api-keys', body, { params: { tenantId } })).data;
+  }
+
+  async revokeApiKey(id: string): Promise<void> {
+    await this.client.delete(`/api-keys/${id}`);
   }
 
   // ── Secrets (write-only values; the API returns references) ─────────────────

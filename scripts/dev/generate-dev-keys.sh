@@ -8,9 +8,9 @@
 # backend up. The Kubernetes manifests have the same gap (see docs/development/handoff.md).
 #
 # The keys are written to secrets/dev-keys/, which is gitignored. They are DEVELOPMENT KEYS ONLY:
-# they are not secret, they are not protected by a secret store, and anyone who has this repository
-# can regenerate the identical pair. Never use them for anything but a local stack. Real
-# deployments must supply their own keypair from their secret store.
+# they are stored unencrypted on this machine and not protected by a secret store. Never use them
+# for anything but a local stack. Real deployments must supply their own keypair from their
+# secret store.
 #
 # Re-running overwrites the existing pair, which invalidates every JWT already issued.
 set -euo pipefail

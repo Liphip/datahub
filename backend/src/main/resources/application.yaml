@@ -171,6 +171,10 @@ dataturntable:
       # FILE connectors read and write only below this directory (a volume in Compose,
       # a ReadWriteMany volume on Kubernetes when several pods poll).
       base-dir: ${DATATURNTABLE_FILE_BASE_DIR:/data/files}
+    # Internal networks connectors may reach (CIDR list, e.g. "10.20.0.0/16,192.168.5.0/24").
+    # Empty: loopback, private and link-local addresses are refused (tenant admins configure
+    # connectors); cloud metadata endpoints are always refused.
+    allowed-networks: ${DATATURNTABLE_CONNECTORS_ALLOWED_NETWORKS:}
   grafana:
     dashboard:
       enabled: ${DATATURNTABLE_GRAFANA_DASHBOARD_ENABLED:false}

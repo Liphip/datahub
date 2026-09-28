@@ -166,6 +166,8 @@ The import layer sits at the boundary between the outside world and the pipeline
 
 **Pass-through IMPORT:** An IMPORT node without a module forwards each record as received. Connector deliveries are unwrapped to their payload and platform metadata (`_runId`, `_ingestedAt`, …) is removed. Structured measurements (JSON from devices, gateways or other systems) therefore reach built-in rules, sinks and modules without any code. A Python IMPORT module is only needed to parse or reshape other formats. New IMPORT nodes default to pass-through in the pipeline editor.
 
+**Send-as-is EXPORT:** An EXPORT node without a module (and without "Save to metadata") delivers its input records unchanged to the node's OUTPUT connector, with the same `Idempotency-Key` (run and node) as module exports. Records that are already in the shape the receiver expects, such as enriched readings, therefore need no code on the way out.
+
 ### 3.2 Passive Inbound Endpoints
 
 | Protocol | Endpoint / Address | Notes |
@@ -944,24 +946,26 @@ Because metadata objects are as-of versioned (MET-05), re-running an old pipelin
 
 ### 13.5 Worked Example: §14a (Example Only)
 
-§14a of BK6-22-300 (EnWG) is used here as a **worked example** of the platform. Nothing in the product is specific to it; the same building blocks serve any metering or grid-data use case.
+§14a EnWG (BK6-22-300) is used as a **worked example** of the platform. Nothing in the product is specific to it; the same building blocks serve any metering or grid-data use case. The complete example, including pipeline definitions that an automated test executes end to end, is in `docs/examples/energy-14a/`.
 
 ```text
-1.  LoRaWAN: a field gateway pushes meter readings to the MQTT connector. Fire-and-forget —
-    the gateway publishes and moves on; a 2xx-class acknowledgement is the broker PUBACK and
-    nothing more is asked of it.
-2.  SAP: meter master data and consumption data is pulled on a schedule from a mailbox (IMAP)
-    or an SFTP drop. The platform reads the item, parses it into records, and applies the
-    post-read action so the item is consumed exactly once (CON-16).
-3.  Internal: market locations are held as metadata objects (type Location) and enriched
-    onto both streams by the same "Enrich with metadata" step (MET-03).
-4.  Metering system: the enriched, validated consumption records are exported via a REST
-    connector, carrying an Idempotency-Key.
-5.  Grid calculation: the time series and rollups are read from the lakehouse by the grid
-    calculation system, either through the query API or an Iceberg table.
+1.  Master data, in any order:
+      SAP (CSV via SFTP/FTP/IMAP inbox)  → meters, their metering location (MeLo) and market location (MaLo)
+      Internal register                   → location and grid area per MaLo
+      Device registry                     → which LoRaWAN device reads which meter, from when
+    Each is a pipeline IMPORT → "Save to metadata" (MET-04), using the `energy` template.
+2.  Readings: the LoRaWAN network server pushes readings (MQTT or HTTP, fire-and-forget).
+    IMPORT deduplicates by devEUI + time.
+3.  "Enrich with metadata" (MET-03) adds meter, MaLo, location and grid area, each as valid
+    at the reading's time (a meter exchange changes the meter from its date on).
+4.  Two "Send as is" EXPORTs deliver each enriched reading to the metering system and to the
+    grid calculation, each with an Idempotency-Key.
+5.  A reading from an unknown device fails its run, which keeps the input for Retry.
 ```
 
-The point of the example is the shape, not the domain: many sources of different kinds, all of them unable to participate in a request/response protocol, converging on structured records that are enriched, stored once, and delivered to more than one consumer.
+The point of the example is the shape, not the domain: many sources of different kinds, several of them unable to take part in a request/response protocol, converging on structured records that are enriched and delivered to more than one consumer.
+
+The control process of §14a is outside the data hub: grid-state estimation, the control decision and the control channel to devices. See the example's README for the requirements it would have to meet.
 
 ---
 

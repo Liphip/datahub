@@ -400,8 +400,8 @@ export default function Tenants() {
 
       {/* Create tenant modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">Create Tenant</h2>
             {error && (
               <div className="mb-3 rounded-sm border border-red-200 bg-red-50 px-3 py-2 text-red-700 text-sm">{error}</div>
@@ -450,8 +450,8 @@ export default function Tenants() {
 
       {/* Edit tenant modal */}
       {showEditModal && editingTenant && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">Edit Tenant</h2>
             <form onSubmit={handleUpdateTenant}>
               <div className="mb-4">

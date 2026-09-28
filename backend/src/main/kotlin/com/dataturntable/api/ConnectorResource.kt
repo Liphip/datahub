@@ -1,6 +1,7 @@
 package com.dataturntable.api
 
 import com.dataturntable.connectors.inbox.INBOX_TYPES
+import com.dataturntable.connectors.DestinationPolicy
 import com.dataturntable.connectors.inbox.InboxPoller
 import com.dataturntable.connectors.AfterCommit
 import com.dataturntable.connectors.Connector
@@ -68,6 +69,9 @@ class ConnectorResource {
 
     @Inject
     lateinit var inboxPoller: InboxPoller
+
+    @Inject
+    lateinit var destinationPolicy: com.dataturntable.connectors.DestinationPolicy
 
     @Inject
     lateinit var connectorRuntime: com.dataturntable.connectors.ConnectorRuntimeService
@@ -373,32 +377,31 @@ class ConnectorResource {
         return normalized.filterKeys { it.isNotBlank() }
     }
 
-    /** Reject SSRF destinations before a REST or WebSocket connector is persisted. */
+    /** Reject SSRF destinations before a REST, WebSocket or inbox connector is persisted (see [DestinationPolicy]). */
     private fun validateExternalDestination(type: ConnectorType, config: Any): Response? {
-        if (type !in setOf(ConnectorType.REST, ConnectorType.WEBSOCKET) || config !is Map<*, *>) return null
-        val rawUrl = listOf("url", "endpoint", "baseUrl", "websocketUrl")
-            .firstNotNullOfOrNull { key -> config[key]?.toString()?.trim()?.takeIf { it.isNotBlank() } }
-            ?: return null
-        val uri = try { URI(rawUrl) } catch (_: Exception) {
-            return Response.status(400).entity(mapOf("error" to "Connector destination must be a valid URL")).build()
+        if (config !is Map<*, *>) return null
+        val host = when (type) {
+            ConnectorType.REST, ConnectorType.WEBSOCKET -> {
+                val rawUrl = listOf("url", "endpoint", "baseUrl", "websocketUrl")
+                    .firstNotNullOfOrNull { key -> config[key]?.toString()?.trim()?.takeIf { it.isNotBlank() } }
+                    ?: return null
+                val uri = try { URI(rawUrl) } catch (_: Exception) {
+                    return Response.status(400).entity(mapOf("error" to "Connector destination must be a valid URL")).build()
+                }
+                if (uri.scheme !in setOf("http", "https", "ws", "wss") || uri.host.isNullOrBlank() || uri.userInfo != null) {
+                    return Response.status(400).entity(mapOf("error" to "Connector destination must be an absolute HTTP or WebSocket URL without credentials")).build()
+                }
+                uri.host
+            }
+            ConnectorType.FTP, ConnectorType.SFTP, ConnectorType.EMAIL -> config["host"]?.toString()?.takeIf { it.isNotBlank() } ?: return null
+            else -> return null
         }
-        if (uri.scheme !in setOf("http", "https", "ws", "wss") || uri.host.isNullOrBlank() || uri.userInfo != null) {
-            return Response.status(400).entity(mapOf("error" to "Connector destination must be an absolute HTTP or WebSocket URL without credentials")).build()
+        return try {
+            destinationPolicy.check(host)
+            null
+        } catch (e: DestinationPolicy.ProhibitedDestinationException) {
+            Response.status(400).entity(mapOf("error" to e.message)).build()
         }
-        val addresses = try { InetAddress.getAllByName(uri.host) } catch (_: Exception) {
-            return Response.status(400).entity(mapOf("error" to "Connector destination host could not be resolved")).build()
-        }
-        if (addresses.any(::isProhibitedDestination)) {
-            return Response.status(400).entity(mapOf("error" to "Connector destination must not target loopback, private, link-local, or metadata networks")).build()
-        }
-        return null
-    }
-
-    private fun isProhibitedDestination(address: InetAddress): Boolean {
-        val host = address.hostAddress.substringBefore('%')
-        return address.isAnyLocalAddress || address.isLoopbackAddress || address.isLinkLocalAddress ||
-            address.isSiteLocalAddress || address.isMulticastAddress || host == "169.254.169.254" ||
-            host.equals("fd00:ec2::254", ignoreCase = true)
     }
 
     /**

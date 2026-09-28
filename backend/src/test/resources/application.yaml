@@ -50,3 +50,5 @@ dataturntable:
   connectors:
     file:
       base-dir: target/test-files
+    # Tests run their receivers and servers on loopback.
+    allowed-networks: 127.0.0.0/8

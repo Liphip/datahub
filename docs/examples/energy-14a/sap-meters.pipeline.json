@@ -1,0 +1,34 @@
+{
+  "name": "SAP meter master data",
+  "description": "Meters with their metering and market locations from an SAP export (CSV via a FILE, FTP or SFTP inbox, or pushed to the ingest API).",
+  "graphDefinition": {
+    "nodes": [
+      { "id": "in", "type": "IMPORT", "label": "SAP export" },
+      {
+        "id": "meters", "type": "EXPORT", "label": "Meters",
+        "saveMetadata": {
+          "type": "meter",
+          "match": { "scheme": "sap.equipment", "field": "EQUNR" },
+          "nameField": "SERNR",
+          "identifiers": { "meter_number": "SERNR" },
+          "attributes": { "manufacturer": "HERST", "phases": "PHASEN" },
+          "relations": [{ "relation": "metering_location", "type": "metering_location", "scheme": "melo", "field": "MELO", "create": true }],
+          "validFromField": "AB"
+        }
+      },
+      {
+        "id": "melo", "type": "EXPORT", "label": "Metering → market location",
+        "saveMetadata": {
+          "type": "metering_location",
+          "match": { "scheme": "melo", "field": "MELO" },
+          "relations": [{ "relation": "market_location", "type": "market_location", "scheme": "malo", "field": "MALO", "create": true }],
+          "validFromField": "AB"
+        }
+      }
+    ],
+    "edges": [
+      { "source": "in", "target": "meters" },
+      { "source": "in", "target": "melo" }
+    ]
+  }
+}

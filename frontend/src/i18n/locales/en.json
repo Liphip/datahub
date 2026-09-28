@@ -112,7 +112,8 @@
     "alerts": "Alerts",
     "users": "Users",
     "tenants": "Tenants",
-    "metadata": "Metadata"
+    "metadata": "Metadata",
+    "apiKeys": "API keys"
   },
   "auth": {
     "login": "Login",
@@ -1007,5 +1008,33 @@
     "schemeRequired": "At least one identifier scheme is required.",
     "schemesHint": "One per line: scheme, optionally followed by a regular expression the values must match.",
     "relationsHint": "One per line: relation -> target type key."
+  },
+  "apiKeys": {
+    "title": "API keys",
+    "intro": "Devices and systems that push data (HTTP ingest API, WebSocket) authenticate with an API key in the X-API-Key header. Each key is granted exact pipelines or input connectors.",
+    "create": "Create API key",
+    "name": "Name",
+    "namePlaceholder": "e.g. LoRaWAN gateway north",
+    "pipelines": "Pipelines",
+    "connectors": "Input connectors",
+    "expires": "Expires (optional)",
+    "grants": "Grants",
+    "lastUsed": "Last used",
+    "never": "never",
+    "noExpiry": "no expiry",
+    "active": "Active",
+    "revoked": "Revoked",
+    "expired": "Expired",
+    "revoke": "Revoke",
+    "revokeConfirm": "Revoke {{name}}? Senders using it are refused immediately.",
+    "none": "No API keys yet.",
+    "createdTitle": "Copy the key now",
+    "createdHint": "The key is shown only once. Store it in the sending system; it cannot be retrieved later.",
+    "copy": "Copy",
+    "copied": "Copied",
+    "example": "Example request",
+    "done": "Done",
+    "selectOne": "Select at least one pipeline or connector.",
+    "noPermission": "You do not have permission to manage API keys."
   }
 }

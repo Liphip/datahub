@@ -196,7 +196,8 @@
             {
                 "id": "FR-022",
                 "requirement": "Provide reliable authenticated blob upload/download/delete and migrate scalable payload storage to S3-compatible storage such as MinIO/S3.",
-                "priority": "must-have",
+                "priority": "dropped",
+                "status_note": "Dropped (not deferred): the data hub stores structured records only. Files, mails and FTP/SFTP items are parsed at the ingest boundary; only parsed records are persisted. S3-compatible storage remains for lakehouse data files.",
                 "acceptance_criteria": "The existing browser download works with authentication; production authorization can issue a short-lived object-specific signed URL or authenticated stream; metadata/object operations expose pending/available/failed/delete states and failed operations do not create silent permanent orphans."
             },
             {

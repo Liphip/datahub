@@ -1,4 +1,4 @@
-# Handoff: DataTurntable review and merge (state 2026-09-27)
+# Handoff: DataTurntable review and merge (state 2026-09-28)
 
 This document lets another assistant or developer continue the work without the chat history.
 
@@ -7,9 +7,12 @@ This document lets another assistant or developer continue the work without the 
 - Repository: `liphip/datahub` ("DataTurntable").
 - Working branch: `claude/datahub-lakehouse-review-6tiaf5`. Push only there. `dev` gets changes through a PR.
 - The last commit on the working branch merges `origin/dev` (commit `84b2b5f`) into the branch. It is marked **WIP**: the backend suite passes, and some follow-ups are listed below.
-- **State of the working tree:** 32 changed entries (29 modified, 1 deleted, 2 untracked), nothing
-  committed or pushed — on top of `91ae153`. Everything renders and the full backend suite is
-  green; see "Open work" for the remaining items and for what is still unverified.
+- **State:** the pull-input UI, blob removal and JWT fixes are committed in `3b7fcd7`. The
+  follow-up work in "Session 2026-09-28" below is committed on top of it. Check
+  `git log origin/claude/datahub-lakehouse-review-6tiaf5` to see whether it was pushed.
+- **Working rule (owner, 2026-09-28):** keep this file current, and commit and push to the working
+  branch regularly, so another tool can take over at any time. Pushing to the working branch needs
+  no further confirmation. Opening the PR into `dev` still does.
 - **Never `git add -A` here.** `secrets/dev-keys/signing.pem` is a private key; it is correctly
   ignored, but stage by path and re-check `git status` before committing.
 - Stack:
@@ -90,7 +93,7 @@ This document lets another assistant or developer continue the work without the 
 - REST polls deduplicate each record by `deduplicateBy`.
 - The source item is acknowledged only after Kafka has the data. There are 11 tests with embedded servers.
 
-**Connector UI for the pull inputs (uncommitted)**
+**Connector UI for the pull inputs**
 - `frontend/src/pages/Connectors.tsx` now creates and edits `FTP`, `SFTP`, `EMAIL` and inbox-`FILE`
   (types added to `Connector['connectorType']` in `types/index.ts`), with directory inbox fields
   `path`, `pattern`, `format`, `afterRead`, `minAgeSeconds` replacing the old FILE fields.
@@ -104,7 +107,7 @@ This document lets another assistant or developer continue the work without the 
   (`GET /connectors/{id}/inbox`, `POST …/inbox/{itemId}/retry`).
 - 5 new tests in `frontend/src/__tests__/pages/Connectors.test.tsx`.
 
-**Unstructured blob storage removed (uncommitted)** — the platform stores records, not payloads.
+**Unstructured blob storage removed** — the platform stores records, not payloads.
 Files, mails, FTP/SFTP items, attachments and binary frames are parsed at the ingest boundary and
 only the parsed records are persisted; the source item stays where the remote system put it.
 - Deleted `DataBlobRecord.kt` and the whole blob block in `DataResource.kt` (config, endpoints, SQL,
@@ -121,7 +124,7 @@ only the parsed records are persisted; the source item stays where the remote sy
 - CI's schema check now asserts `data_table_registry` and `connectors` instead of `data_blobs`.
 - S3-compatible object storage is still used, but only for lakehouse data files.
 
-**Dev JWT key generation (uncommitted)** — the backend sets
+**Dev JWT key generation** — the backend sets
 `DATATURNTABLE_JWT_SIGNING_KEY_LOCATION` / `..._PUBLIC_KEY_LOCATION` with no default, and nothing in
 Compose provided them, so no backend could ever verify a token.
 - `scripts/dev/generate-dev-keys.sh` generates a throwaway RSA pair into `secrets/dev-keys/`
@@ -208,6 +211,73 @@ published port: `postgresql: { ports: !override [] }` (needs Compose ≥ v2.24; 
   - Alert channels and history are paginated (`{items,…}`).
   - `ApiError.details.missing`.
 
+## Session 2026-09-28
+
+These changes were verified against a live stack: the jar with PostgreSQL 16 and Kafka, plus
+Vite and Playwright.
+
+**§14a example as a real use of the product** (`docs/examples/energy-14a/`, `Energy14aExampleTest`):
+- Four pipeline definitions: SAP meters, internal locations, LoRaWAN devices and LoRaWAN readings.
+- Readings are enriched with meter, market location, location and grid area, using the metadata
+  that was valid at the reading's time. The meter exchange on 1 June is covered.
+- The enriched readings are delivered to two REST systems.
+- A resend with the same `Idempotency-Key` produces no second delivery.
+- A reading from an unknown device fails its run.
+- §13.5 of the functional specification describes the example as it is built.
+- It was also run live through the ingest API with an API key.
+
+**EXPORT "Send as is"**
+- An EXPORT node without a module delivers the record unchanged through its OUTPUT connector.
+- The delivery key is `<runId>:<nodeId>`.
+- Validation requires an OUTPUT connector of the same tenant.
+- The editor offers three options: Python module, Send as is, and Save to metadata.
+
+**Metadata merge by other identifier**
+- When `match` finds nothing, `upsert` resolves the other identifiers of the request (same type
+  only) and adds the match identifier to that object.
+- This keeps a placeholder, for example a meter created from the device registry, from being
+  duplicated when SAP later delivers the full record.
+
+**`DestinationPolicy` (SSRF guard)**
+- Connectors cannot reach loopback, private, link-local, multicast or ULA addresses unless they are
+  inside `dataturntable.connectors.allowed-networks` (`DATATURNTABLE_CONNECTORS_ALLOWED_NETWORKS`,
+  CIDR list).
+- Cloud metadata endpoints are always blocked.
+- The check runs when a connector is saved and again on every connect, for REST, WebSocket,
+  FTP/SFTP/IMAP and outbound delivery.
+- Tests allow `127.0.0.0/8`.
+
+**Ingest API keys** (`ApiKeyResource`, `/api/internal/v1/api-keys`, needs `secret:manage`)
+- A key is granted exact pipelines and INPUT connectors.
+- The key is shown once and stored as SHA-256.
+- Keys can have an expiry and are audited (`apikey.created` / `apikey.revoked`).
+- Revoking a key drops it from the local cache at once; other instances drop it within 30 s.
+- The UI page is `/api-keys`, visible with `secret:manage`.
+
+**Verification (2026-09-28, after all changes above)**
+- Backend `mvn clean test -Dquarkus.http.test-port=0`: 327 tests, 0 failures, 18 Docker skips.
+- `PostgresMigrationBehaviorTest` passes against an empty PostgreSQL 16 database.
+- Frontend: `tsc` clean, eslint shows 0 errors (warnings only; hook-dependency warnings predate this
+  work), vitest 38/38, `npm run build` passes.
+- Pitfalls:
+  - Always pass `-Dquarkus.http.test-port=0`; a running stack holds 8081.
+  - Run `clean` after deleting entities. A stale `DataBlobRecord.class` in `target/` made the
+    PostgreSQL IT fail schema validation ("missing table data_blobs"). H2 does not notice this
+    because it creates its schema from the entities.
+- The `connectors(tenant_id, name)` unique constraint was already in the PostgreSQL baseline. The
+  entity now declares it too, so H2 matches. Three tests that reused fixed connector names were
+  fixed.
+
+**Fixes found by the browser pass**
+- Tailwind 4 dropped `bg-opacity-*`, so modal overlays were opaque. Modals also could not scroll, so
+  the SFTP form was unreachable. All modals now use `bg-black/50` and `max-h-[90vh] overflow-y-auto`.
+- The Vite proxy key `/api` also captured `/api-keys`; it is now `/api/`.
+- Choosing an inbox connector type enables polling.
+- A duplicate connector name returned 500. `TransientFailureMapper` now maps SQLState 23505/23503 to
+  409 and 23502/23514 to 400, and `connectors(tenant_id, name)` has a unique constraint.
+- `RetentionCleanupService` runs only on the control API with background jobs enabled. It had raced
+  tests in the full suite.
+
 ## Open work (in priority order)
 
 > ### Kubernetes JWT wiring — done and render-validated
@@ -234,20 +304,23 @@ published port: `postgresql: { ports: !override [] }` (needs Compose ≥ v2.24; 
 > **This is render-validated only — it has never been run against a cluster.** The Secret also
 > ships empty, so a real deploy still has to populate it.
 
-1. **Check and land the merge** (the only remaining item from the previous list; nothing has been
-   committed or pushed yet — the work above is uncommitted on top of `91ae153`).
+1. **Land the merge.** Everything is committed and pushed, and the browser pass (item 7) is done
+   (see "Session 2026-09-28"). What remains is opening the PR into `dev`.
    - The live smoke test has been run against a real Compose stack (PostgreSQL + Kafka + both API
      roles): health, Flyway migration, setup/login/`/me`, SFTP connector create, inbox, blob routes
      404, and no `data_blobs` table. Three real defects were found and fixed by doing this
      (items 3 and 4 below) — none of them were visible from the unit tests. A browser-level
      Vite/Playwright pass is still outstanding (item 7).
-   - Then push to `claude/datahub-lakehouse-review-6tiaf5` and open a PR into `dev`, following its
-     PR template if one exists. **Ask before pushing or opening the PR.**
+   - Open a PR into `dev`, following its PR template if one exists. **Ask the owner before opening
+     the PR.**
    - Mention in the PR:
      - BCrypt instead of Argon2id; `dev`'s SRS asks for Argon2id, so Bouncy Castle is a possible follow-up.
      - Rule multi-channel actions from `dev` are not carried over.
      - The alert UI supports one channel per ALERT node.
-      - The blob/S3-MinIO storage requirement (FR-022) was dropped, not deferred.
+      - The blob/S3-MinIO storage requirement (FR-022) was dropped, not deferred
+        (`production-ready-spec.json` marks it `dropped`).
+      - New: connector destination allow-list (`DATATURNTABLE_CONNECTORS_ALLOWED_NETWORKS`) — an
+        upgrade that talks to internal hosts must set it. Also new: ingest API key management.
       - The datasource/JWT startup fixes also unblock the Kubernetes topology, which still needs a
         populated `dataturntable-jwt-keys` Secret and a live-cluster run to be trustworthy — see
         item 3. Say "render-validated only", not "working".

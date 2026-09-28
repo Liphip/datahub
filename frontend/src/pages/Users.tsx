@@ -816,8 +816,8 @@ export default function Users() {
 
       {/* Invite user modal */}
       {showInviteModal && canInviteUsers && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">{t('users.inviteUser')}</h2>
             <form onSubmit={handleInviteUser}>
               <div className="mb-4">
@@ -865,7 +865,7 @@ export default function Users() {
 
       {/* Role create/edit modal */}
       {showRoleModal && canManageTenant && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">{editingRole ? 'Edit Role' : 'Create Role'}</h2>
             <form onSubmit={handleSaveRole}>

@@ -55,7 +55,8 @@ class RetentionCleanupService {
      */
     @Scheduled(every = "{dataturntable.retention.check-interval}", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     fun runScheduledCleanup() {
-        if (!runtimeRoleConfig.isControlApi()) return
+        // Background work is off in tests (dataturntable.runtime.background-enabled), like the other jobs.
+        if (!runtimeRoleConfig.backgroundEnabled() || !runtimeRoleConfig.isControlApi()) return
         val results = runCleanup()
         results.filter { it.deleted > 0 }.forEach {
             LOG.infof("Retention cleanup: removed %d %s row(s) older than %d day(s)", it.deleted, it.category, it.retentionDays)

@@ -26,6 +26,14 @@ class TransientFailureMapper {
     fun transaction(e: QuarkusTransactionException): Response = map(e)
 
     private fun map(e: Exception): Response {
+        // Constraint violations are the client's input, not an outage: a resend would fail the same way.
+        val sqlState = generateSequence<Throwable>(e) { it.cause }.take(20)
+            .filterIsInstance<java.sql.SQLException>().firstNotNullOfOrNull { it.sqlState }
+        when (sqlState) {
+            "23505" -> return Response.status(409).entity(mapOf("error" to "An entry with this name or key already exists")).build()
+            "23503" -> return Response.status(409).entity(mapOf("error" to "The entry is referenced by, or refers to, another entry")).build()
+            "23502", "23514" -> return Response.status(400).entity(mapOf("error" to "The request violates a data constraint")).build()
+        }
         // A rolled-back transaction left nothing behind, so the client can safely resend.
         val rolledBack = generateSequence<Throwable>(e) { it.cause }.take(20).any { it is RollbackException }
         if (rolledBack || isTransientInfrastructureFailure(e)) {

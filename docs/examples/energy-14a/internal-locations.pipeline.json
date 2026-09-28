@@ -1,0 +1,32 @@
+{
+  "name": "Internal location register",
+  "description": "Location and grid area per market location from the internal master data system.",
+  "graphDefinition": {
+    "nodes": [
+      { "id": "in", "type": "IMPORT", "label": "Location register" },
+      {
+        "id": "malo", "type": "EXPORT", "label": "Market location → location",
+        "saveMetadata": {
+          "type": "market_location",
+          "match": { "scheme": "malo", "field": "malo" },
+          "attributes": { "direction": "direction" },
+          "relations": [{ "relation": "location", "type": "location", "scheme": "location_id", "field": "site", "create": true }]
+        }
+      },
+      {
+        "id": "site", "type": "EXPORT", "label": "Location → grid area",
+        "saveMetadata": {
+          "type": "location",
+          "match": { "scheme": "location_id", "field": "site" },
+          "nameField": "street",
+          "attributes": { "street": "street", "postalCode": "postalCode", "city": "city", "lat": "lat", "lon": "lon" },
+          "relations": [{ "relation": "grid_area", "type": "grid_area", "scheme": "grid_area_id", "field": "gridArea", "create": true }]
+        }
+      }
+    ],
+    "edges": [
+      { "source": "in", "target": "malo" },
+      { "source": "in", "target": "site" }
+    ]
+  }
+}

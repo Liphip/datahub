@@ -647,7 +647,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
 
           {/* Create table modal */}
           {showCreateModal && canWriteData && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
               <div className="w-full max-w-lg rounded-lg bg-white p-6 max-h-[90vh] overflow-y-auto">
                 <h2 className="mb-4 text-xl font-bold">{t('data.createTable')}</h2>
                 <div className="mb-4">
@@ -747,8 +747,8 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
 
           {/* Delete table confirm */}
           {confirmDelete && canWriteData && selectedTable && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-              <div className="w-full max-w-md rounded-lg bg-white p-6">
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+              <div className="w-full max-w-md rounded-lg bg-white p-6 max-h-[90vh] overflow-y-auto">
                 <h2 className="mb-2 text-xl font-bold">{t('data.deleteTable')}</h2>
                 <p className="mb-4 text-sm text-gray-600">{t('data.deleteTableConfirm', { name: selectedTable })}</p>
                 <div className="flex justify-end space-x-2">

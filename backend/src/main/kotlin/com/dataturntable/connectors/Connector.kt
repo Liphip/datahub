@@ -7,7 +7,7 @@ import java.time.Instant
 import java.util.UUID
 
 @Entity
-@Table(name = "connectors")
+@Table(name = "connectors", uniqueConstraints = [jakarta.persistence.UniqueConstraint(columnNames = ["tenant_id", "name"])])
 /**
  * Defines the class `Connector`, the contract implemented by this source unit.
  */

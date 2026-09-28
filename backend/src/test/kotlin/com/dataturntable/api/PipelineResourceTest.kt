@@ -219,7 +219,7 @@ class PipelineResourceTest {
             .contentType("application/json")
             .body(
                 mapOf(
-                    "name" to "Output Connector",
+                    "name" to "Output Connector ${java.util.UUID.randomUUID()}",
                     "connectorType" to "MQTT",
                     "direction" to "OUTPUT",
                     "config" to mapOf("topic" to "out/topic")
@@ -348,7 +348,7 @@ class PipelineResourceTest {
                         .contentType("application/json")
                         .body(
                             mapOf(
-                                "name" to "Output Connector",
+                                "name" to "Output Connector ${java.util.UUID.randomUUID()}",
                                 "connectorType" to "MQTT",
                                 "direction" to "OUTPUT",
                                 "config" to mapOf("topic" to "dt/mismatch/out")

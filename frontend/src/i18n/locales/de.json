@@ -112,7 +112,8 @@
     "alerts": "Alarme",
     "users": "Benutzer",
     "tenants": "Mandanten",
-    "metadata": "Metadaten"
+    "metadata": "Metadaten",
+    "apiKeys": "API-Schlüssel"
   },
   "auth": {
     "login": "Anmelden",
@@ -1007,5 +1008,33 @@
     "schemeRequired": "Mindestens ein Kennungsschema ist erforderlich.",
     "schemesHint": "Eine pro Zeile: Schema, optional gefolgt von einem regulären Ausdruck, dem die Werte entsprechen müssen.",
     "relationsHint": "Eine pro Zeile: Beziehung -> Schlüssel des Zieltyps."
+  },
+  "apiKeys": {
+    "title": "API-Schlüssel",
+    "intro": "Geräte und Systeme, die Daten senden (HTTP-Ingest-API, WebSocket), authentifizieren sich mit einem API-Schlüssel im Header X-API-Key. Jeder Schlüssel wird für bestimmte Pipelines oder Eingangs-Konnektoren freigegeben.",
+    "create": "API-Schlüssel erstellen",
+    "name": "Name",
+    "namePlaceholder": "z. B. LoRaWAN-Gateway Nord",
+    "pipelines": "Pipelines",
+    "connectors": "Eingangs-Konnektoren",
+    "expires": "Läuft ab (optional)",
+    "grants": "Freigaben",
+    "lastUsed": "Zuletzt genutzt",
+    "never": "nie",
+    "noExpiry": "kein Ablauf",
+    "active": "Aktiv",
+    "revoked": "Widerrufen",
+    "expired": "Abgelaufen",
+    "revoke": "Widerrufen",
+    "revokeConfirm": "{{name}} widerrufen? Absender damit werden sofort abgewiesen.",
+    "none": "Noch keine API-Schlüssel.",
+    "createdTitle": "Schlüssel jetzt kopieren",
+    "createdHint": "Der Schlüssel wird nur einmal angezeigt. Hinterlegen Sie ihn im sendenden System; er kann später nicht abgerufen werden.",
+    "copy": "Kopieren",
+    "copied": "Kopiert",
+    "example": "Beispielaufruf",
+    "done": "Fertig",
+    "selectOne": "Mindestens eine Pipeline oder einen Konnektor auswählen.",
+    "noPermission": "Sie haben keine Berechtigung, API-Schlüssel zu verwalten."
   }
 }

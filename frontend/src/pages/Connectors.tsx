@@ -1126,7 +1126,7 @@ export default function Connectors() {
                 </div>
               </div>
               
-              <div className="flex justify-end space-x-2">
+              <div className="flex flex-wrap justify-end gap-x-3 gap-y-1">
                 <button
                   onClick={() => handleTestConnection(connector)}
                   disabled={testingId === connector.id}
@@ -1233,8 +1233,8 @@ export default function Connectors() {
       )}
 
       {usageModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-start justify-between mb-4 gap-3">
               <div>
                 <h2 className="text-xl font-bold">Connector Usage</h2>
@@ -1294,8 +1294,8 @@ export default function Connectors() {
       )}
 
       {impactModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-3xl w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-start justify-between mb-4 gap-3">
               <div>
                 <h2 className="text-xl font-bold">Connector Impact</h2>
@@ -1466,8 +1466,8 @@ export default function Connectors() {
       )}
 
       {disconnectImpactModal && pendingDisconnectConnector && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-2">Confirm Disconnect</h2>
             <p className="text-sm text-gray-700 mb-3">
               Disconnecting <strong>{pendingDisconnectConnector.name}</strong> affects
@@ -1518,8 +1518,8 @@ export default function Connectors() {
       )}
 
       {inboxModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-4xl w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-start justify-between mb-4 gap-3">
               <div>
                 <h2 className="text-xl font-bold">Read Items — {inboxModal.name}</h2>
@@ -1674,8 +1674,8 @@ export default function Connectors() {
       )}
 
       {showModal && canWriteConnectors && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">
               {editingConnector ? 'Edit Connector' : 'Create Connector'}
             </h2>
@@ -1711,6 +1711,7 @@ export default function Connectors() {
                         connectorType: nextType,
                         // Inbox types only read; they have no output side.
                         direction: isInbox(nextType) ? 'INPUT' : formData.direction,
+                        pollingEnabled: isInbox(nextType) ? true : formData.pollingEnabled,
                         config: initialConfigByType(nextType, formData.config),
                       });
                     }}
@@ -2006,8 +2007,8 @@ export default function Connectors() {
       )}
 
       {showCloneModal && cloneSource && canWriteConnectors && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">Clone Connector</h2>
             <div className="space-y-4">
               <div className="text-sm text-gray-600">
@@ -2077,8 +2078,8 @@ export default function Connectors() {
       )}
 
       {showBrokerModal && canManageBrokerUsers && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-slate-900 rounded-lg p-6 max-w-lg w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-slate-900 rounded-lg p-6 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4 text-slate-900 dark:text-slate-100">
               {editingBrokerCredential ? 'Edit MQTT Broker User' : 'Create MQTT Broker User'}
             </h2>

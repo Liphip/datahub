@@ -99,7 +99,14 @@ class InboxPoller {
 
     data class PollResult(val queued: Int, val acknowledged: Int, val failed: Int, val skipped: Int, val waiting: Int)
 
-    fun open(connector: Connector, config: Map<String, Any?>): InboxSource = when (connector.connectorType) {
+    @Inject lateinit var destinationPolicy: com.dataturntable.connectors.DestinationPolicy
+
+    fun open(connector: Connector, config: Map<String, Any?>): InboxSource {
+        if (connector.connectorType != ConnectorType.FILE) config.str("host")?.let(destinationPolicy::check)
+        return openSource(connector, config)
+    }
+
+    private fun openSource(connector: Connector, config: Map<String, Any?>): InboxSource = when (connector.connectorType) {
         ConnectorType.FILE -> DirectorySource(FileSandbox(fileBaseDir), config)
         ConnectorType.FTP -> FtpSource(config)
         ConnectorType.SFTP -> SftpSource(config)

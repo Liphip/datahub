@@ -182,8 +182,15 @@ class MetadataService {
 
         var created = false
         var changed = false
-        val existing = resolveForWrite(tenantId, request.match.scheme, request.match.value, request.validFrom ?: Instant.now())
-        val objectId = existing ?: run {
+        val lookupAt = request.validFrom ?: Instant.now()
+        // Sources know an object by different identifiers and arrive in any order: an object
+        // another source created (e.g. a meter known only by its number from the device registry)
+        // is found through the other identifiers of this record and completed, not duplicated.
+        val byMatch = resolveForWrite(tenantId, request.match.scheme, request.match.value, lookupAt)
+        val byOther = if (byMatch != null) null else request.identifiers.entries.firstNotNullOfOrNull { (scheme, value) ->
+            resolveForWrite(tenantId, scheme, value, lookupAt)?.takeIf { em.find(MetadataObject::class.java, it)?.typeId == type.id }
+        }
+        val objectId = byMatch ?: byOther ?: run {
             created = true
             createObject(tenantId, type, request.name ?: request.match.value, request.match.scheme, request.match.value, request.validFrom)
         }
@@ -195,6 +202,7 @@ class MetadataService {
             "Identifier ${request.match.scheme}=${request.match.value} belongs to an object of another type")
         if (request.name != null && request.name != obj.name) { obj.name = request.name; changed = true }
 
+        if (byOther != null && setIdentifier(tenantId, objectId, request.match.scheme, request.match.value, at, explicit)) changed = true
         request.identifiers.forEach { (scheme, value) -> if (setIdentifier(tenantId, objectId, scheme, value, at, explicit)) changed = true }
         if (request.attributes.isNotEmpty() && setAttributes(objectId, coerceAttributes(type, request.attributes), request.replaceAttributes, at, explicit, request.source)) changed = true
         val relationSchema = parseList(type.relationSchema)

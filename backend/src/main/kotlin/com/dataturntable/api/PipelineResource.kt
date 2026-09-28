@@ -228,6 +228,20 @@ class PipelineResource {
                 continue
             }
 
+            // EXPORT without a module sends the records as they are to its output connector.
+            if (nodeType == "EXPORT" && nodeMap["moduleVersionId"] == null) {
+                val connectorId = nodeMap["connectorId"] as? String
+                    ?: return "Node $nodeId (EXPORT) needs a module, 'Save to metadata' or an output connector"
+                val connector = runCatching { UUID.fromString(connectorId) }.getOrNull()
+                    ?.let { em.find(Connector::class.java, it) }
+                    ?: return "Node $nodeId references missing connector: $connectorId"
+                if (connector.tenant?.id != tenantId) return "Node $nodeId references connector from another tenant"
+                if (connector.direction?.name != "OUTPUT") {
+                    return "Node $nodeId (EXPORT) requires OUTPUT connector direction (found ${connector.direction?.name})"
+                }
+                continue
+            }
+
             // IMPORT without a module is the built-in pass-through: records flow on as received.
             if (nodeType == "IMPORT" && nodeMap["moduleVersionId"] == null) {
                 val connectorId = nodeMap["connectorId"] as? String ?: continue   // HTTP/WebSocket push by pipeline id

@@ -98,7 +98,7 @@ class ConnectorResourceTest {
         return QuarkusTransaction.requiringNew().call<String> {
             val tenant = em.find(Tenant::class.java, java.util.UUID.fromString(tenantId))
             val connector = Connector().apply {
-                this.name = "Legacy Inline Config Connector"
+                this.name = "Legacy Inline Config Connector ${java.util.UUID.randomUUID()}"
                 this.tenant = tenant
                 this.connectorType = Connector.ConnectorType.MQTT
                 this.direction = Connector.Direction.INPUT

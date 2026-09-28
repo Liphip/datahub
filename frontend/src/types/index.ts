@@ -684,3 +684,15 @@ export interface ConnectorInboxItem {
   queuedAt?: string;
   acknowledgedAt?: string;
 }
+
+/** Ingest credential for devices and systems that push data; `key` is only present right after creation. */
+export interface ApiKey {
+  id: string;
+  name: string;
+  pipelineIds: string[];
+  connectorIds: string[];
+  expiresAt?: string | null;
+  lastUsedAt?: string | null;
+  isActive: boolean;
+  key?: string;
+}
