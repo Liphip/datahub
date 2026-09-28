@@ -131,8 +131,14 @@ jobs:
           load: true
           tags: dataturntable/frontend:ci-${{ github.sha }}
 
+      # v0.29.0 (this workflow's previous pin) is one of the 76 version tags force-pushed to
+      # credential-stealing malware in the March 2026 trivy-action supply-chain compromise
+      # (GHSA-69fq-xp46-6x23) and no longer resolves at all. v0.35.0+ is unaffected (released
+      # after the compromise, protected by GitHub's immutable-releases feature); pinned to the
+      # latest such release rather than a hand-copied commit SHA this session couldn't
+      # independently verify against GitHub's API (out of scope for this repo's access).
       - name: Scan backend image for vulnerabilities
-        uses: aquasecurity/trivy-action@0.29.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: dataturntable/backend:ci-${{ github.sha }}
           format: table
@@ -140,7 +146,7 @@ jobs:
           exit-code: '1'
 
       - name: Scan frontend image for vulnerabilities
-        uses: aquasecurity/trivy-action@0.29.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: dataturntable/frontend:ci-${{ github.sha }}
           format: table
