@@ -12,7 +12,9 @@ import io.quarkus.test.junit.QuarkusTestProfile
  *
  * Uses the PostgreSQL database named by `DATATURNTABLE_IT_DB_URL` (with `DATATURNTABLE_IT_DB_USER`
  * and `DATATURNTABLE_IT_DB_PASSWORD`; the database is emptied first) or, without it, a Dev
- * Services container, which needs a Docker daemon. Tests are skipped when neither is available.
+ * Services container when this profile is explicitly requested
+ * (`-Dquarkus.test.profile=postgres-it`), which needs a Docker daemon. Tests are skipped
+ * otherwise — deliberately not just "whenever Docker happens to be present", see `available()`.
  */
 class PostgresTestProfile : QuarkusTestProfile {
     override fun getConfigProfile(): String = "postgres-it"
@@ -48,9 +50,21 @@ class PostgresTestProfile : QuarkusTestProfile {
     ))
 
     companion object {
-        /** A configured database or a Docker daemon for Dev Services. */
+        /**
+         * A configured database, or an explicit opt-in to this profile via the CLI flag this
+         * class's own doc comment documents (`-Dquarkus.test.profile=postgres-it`), for the
+         * Dev Services fallback. Deliberately **not** "a Docker daemon is present": on a CI
+         * runner that also builds container images (or any developer machine with Docker
+         * installed), that's true unconditionally, which made this test auto-enable inside a
+         * plain `mvn test` run that never opted into this profile — `application-postgres-it.yaml`
+         * (which sets `db-kind: postgresql`) is only loaded when the profile is active at
+         * augmentation time, so the app then tried the default `%test` H2 URL with whatever
+         * datasource driver the mismatched state left selected, and failed to boot before the
+         * test body ever ran. Caught by CI's plain "Backend tests" job, not by this session's
+         * own local runs, which always passed the CLI flag explicitly.
+         */
         @JvmStatic
         fun available(): Boolean = System.getenv("DATATURNTABLE_IT_DB_URL") != null ||
-            java.io.File("/var/run/docker.sock").exists() || System.getenv("DOCKER_HOST") != null
+            System.getProperty("quarkus.test.profile") == "postgres-it"
     }
 }
