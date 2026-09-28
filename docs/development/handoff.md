@@ -802,7 +802,9 @@ Conflicts that were resolved in the process (the code was checked each time):
   exactly-once failover test on a cluster (NFR-R2).
 - **DLQ:** there is a retry API but no inspection UI (PIP-13). `.agent-status` planned an end-to-end
   replay test through the broker (`/api/internal/v1/events/dlq/{id}/retry`), and a Kafka-backed IT
-  workflow exists (`.github/workflows/integration-tests-kafka.yml`) that has never run on GitHub.
+  workflow exists (`.github/workflows/integration-tests-kafka.yml`) that **had two bugs (wrong JDK,
+  nonexistent default test class) that would have failed its first-ever trigger — fixed, but still
+  not actually run; see the newest session entry.**
 - **OpenTelemetry:** spans do not carry the platform's correlation/run ids yet, and there is no
   collector to verify against (NFR-M7).
 - **Graph schema migrations** (PIP-17): only version 1 exists; write the migration framework when a
@@ -1515,6 +1517,22 @@ immediately with `UnsupportedClassVersionError` (backend compiles to Java 25 cla
 backend code was changed in this session's `dev` work, so this wasn't a blocker, but it means any
 future backend change here still needs either a Windows JDK 25 host or CI itself to verify —
 local `mvn test` will not work in this exact sandbox.
+
+4. **Fixed two bugs in `integration-tests-kafka.yml` (the manual Kafka IT workflow) that would have
+   made it fail immediately on its first-ever trigger.** This workflow has never been run on GitHub
+   (per this doc's own earlier "Carried over" note). Reading it closely found: (a) `java-version:
+   '17'`, while `backend/pom.xml`'s `maven.compiler.release` is `25` (matching `ci.yml`'s four other
+   JDK setups) — a straight compile failure; (b) its default `-Dtest` pattern,
+   `EventOutboxReplayIT`, **does not exist anywhere in the codebase** — confirmed by
+   `find backend -iname "*Outbox*"` (nothing) — nor does `EventOutboxReplayE2EIT`, referenced only
+   in a doc comment on `PipelineConsumerDlqIT` as the pattern it followed. The only real
+   Kafka-gated (`KafkaTestResource`) integration test left in the suite is `PipelineConsumerDlqIT`;
+   made it the new default (commit `4ea2ce9`). **Not yet verified by an actual run** — this session
+   attempted `mcp__github__actions_run_trigger` (`run_workflow`) on `dev` and got `403 Resource not
+   accessible by integration`; this session's GitHub access apparently can't dispatch
+   `workflow_dispatch` runs. **Next session or the owner should trigger it manually** (Actions tab →
+   "Kafka Integration Tests (manual)" → Run workflow, on `dev`) to get the first real confirmation
+   this workflow has ever had.
 
 ## Sources used
 
