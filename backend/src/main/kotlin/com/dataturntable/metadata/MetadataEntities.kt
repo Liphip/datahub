@@ -6,12 +6,13 @@ import jakarta.persistence.GeneratedValue
 import jakarta.persistence.GenerationType
 import jakarta.persistence.Id
 import jakarta.persistence.Table
+import jakarta.persistence.UniqueConstraint
 import java.time.Instant
 import java.util.UUID
 
 /** Kind of metadata object with the attributes, identifier schemes and relations it has. */
 @Entity
-@Table(name = "metadata_types")
+@Table(name = "metadata_types", uniqueConstraints = [UniqueConstraint(columnNames = ["tenant_id", "type_key"])])
 open class MetadataType {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -76,7 +77,7 @@ open class MetadataObject {
 
 /** Identifier of an object in a source system during a period (null bounds are open). */
 @Entity
-@Table(name = "metadata_identifiers")
+@Table(name = "metadata_identifiers", uniqueConstraints = [UniqueConstraint(columnNames = ["tenant_id", "scheme", "id_value", "valid_from"])])
 open class MetadataIdentifier {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -103,7 +104,7 @@ open class MetadataIdentifier {
 
 /** One version of an object's attributes. */
 @Entity
-@Table(name = "metadata_attributes")
+@Table(name = "metadata_attributes", uniqueConstraints = [UniqueConstraint(columnNames = ["object_id", "valid_from"])])
 open class MetadataAttributeVersion {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -131,7 +132,7 @@ open class MetadataAttributeVersion {
 
 /** Directed relation between two objects during a period, e.g. meter → market_location. */
 @Entity
-@Table(name = "metadata_relations")
+@Table(name = "metadata_relations", uniqueConstraints = [UniqueConstraint(columnNames = ["from_object_id", "relation", "to_object_id", "valid_from"])])
 open class MetadataRelation {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

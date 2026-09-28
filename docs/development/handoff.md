@@ -4,23 +4,27 @@ This document lets another assistant or developer continue the work without the 
 
 > **Read this first.** Everything is committed and pushed to `claude/datahub-lakehouse-review-6tiaf5`
 > and the working tree is clean. **The only thing left before landing is asking the owner to open the
-> PR into `dev`** — nothing technical is blocked. The full backend suite on H2 is green: **355 tests,
-> 0 failures, 0 errors, 29 skipped** (was 351/10 before this session added 4 tests, all Postgres-gated
-> so they add to the skip count on H2). To reproduce the Docker/Python-gated portion on a host you need
-> a Windows JDK 25 **and** a real `python3` on `PATH` — the "Tests" section at the top has
-> admin-free download recipes for both. Session entries below are in chronological order; the newest
-> is **"TEN-03/NFR-S8: per-tenant PostgreSQL database roles"**, the last open M0 item, verified against
-> a real PostgreSQL 16 instance (cross-tenant access denied at the database layer, not just in
-> application code). It also corrects **MOD-15 to Partial** from the previous session (artifacts are
+> PR into `dev`** — nothing technical is blocked. The full backend suite on H2 is green: **349 tests,
+> 0 failures, 0 errors, 20 skipped** (all 20 are legitimately Postgres/Docker/Python-gated — the
+> previous 9 "unexplained" H2 skips are gone, see the newest session entry). To reproduce the
+> Docker/Python-gated portion on a host you need a Windows JDK 25 **and** a real `python3` on `PATH`
+> — the "Tests" section at the top has admin-free download recipes for both. Session entries below
+> are in chronological order; the newest is **"the 9 unexplained skips were dead code, not a test
+> bug"**: `ModuleService`/`UserService` and most of `TenantService` had zero live callers and were
+> removed along with the DTOs only they used, rather than re-enabling tests for code nothing calls —
+> that investigation also found and fixed a systemic bug where 13 entities had a `UNIQUE` constraint
+> in the Flyway migration that their JPA `@Table` never mirrored, so H2's schema-from-entities test
+> database silently never enforced it.
+> Before that, **"TEN-03/NFR-S8: per-tenant PostgreSQL database roles"** closed the last open M0
+> item, verified against a real PostgreSQL 16 instance (cross-tenant access denied at the database
+> layer, not just in application code), and corrected **MOD-15 to Partial** (artifacts are
 > module-scoped, so the SRS's "or a different one" does not hold).
 > Items in "Open work" that are ~~struck through~~ are done — do not redo them.
 >
 > **All six M0 items are now addressed** (some Partial, none Open): ingest auth, secrets out of the
 > repo, per-tenant database roles, CI against PostgreSQL, platform health alerts, run-history
 > retention. **Next target if work continues (owner's call, not a blocker):** M1 (micro-batch
-> execution, PIP-15/NFR-P7) is the next milestone in the SRS, §11 — or `ModuleServiceTest`/
-> `TenantServiceTest`'s 9 still-unexplained skips, which are quick to investigate and predate this
-> session.
+> execution, PIP-15/NFR-P7) is the next milestone in the SRS, §11.
 
 ## Repository and branches
 
@@ -846,6 +850,122 @@ that don't touch `pipelineConnectionForTenant` (none currently — all six were 
 `ModelArtifact`-style migration to move tenant-role provisioning to tenant-creation time instead of
 lazy first-use (lazy is simpler and self-healing for tenants created before this feature, so it was
 kept); Kubernetes and catalog-namespace isolation for the lakehouse, which doesn't exist yet.
+
+## Session 2026-09-28 (continued): the 9 unexplained skips were dead code, not a test bug
+
+An earlier session flagged `ModuleServiceTest` (4 tests) and `TenantServiceTest` (5 tests) as
+"still unexplained" `@Disabled` skips. Investigated instead of leaving them as a permanent mystery.
+
+**Finding: the services under test were almost entirely dead code.** `ModuleResource` and
+`TenantResource` — like every other resource in this codebase — do their CRUD directly with
+`EntityManager`, not through a service layer. `ModuleService` and its DTOs (`dto/ModuleDto.kt`:
+`CodeModuleDto`, `CreateModuleRequest`, `ModuleVersionDto`, `CreateModuleVersionRequest`,
+`TagVersionRequest`) had **zero callers anywhere** outside their own disabled test. `TenantService`
+was live, but only one of its eight methods was ever called: `createDefaultRoles` (from
+`TenantResource` and `AuthResource`'s first-run setup). Its other seven methods (`createTenant`,
+`getTenant`, `getTenantTree`, `getTenantChildren`, `getTenantWithChildren`, `updateTenant`,
+`deleteTenant`, `toDto`) and `dto/TenantDto.kt` (`TenantDto`, `CreateTenantRequest`,
+`UpdateTenantRequest`) were dead too — including an injected `userService` field in `TenantService`
+that was never once referenced in a method body. That injection was the only thing keeping
+`UserService.kt` reachable from a live class; once removed, `UserService` itself (user CRUD,
+`changePassword`) turned out to have **zero callers anywhere**, main or test — `AuthUserResource`
+does its own user CRUD directly, same pattern. `dto/UserDto.kt` stays: it's genuinely still used
+by `AuthDto.kt`, `AuthService.kt` and `JwtAuth.kt`, independent of the dead `UserService`.
+
+**What changed, matching the owner's standing rule (no backward-compatibility code, dead code
+removed rather than preserved):**
+- Deleted: `service/ModuleService.kt`, `service/UserService.kt`, `dto/ModuleDto.kt`,
+  `dto/TenantDto.kt`, `test/service/ModuleServiceTest.kt`.
+- `service/TenantService.kt` trimmed to its one live method, `createDefaultRoles`, with the unused
+  `userService` injection and `objectMapper` (only used by the removed methods) also removed.
+- `test/service/TenantServiceTest.kt` rewritten, `@Disabled` removed: one real test that
+  `createDefaultRoles` seeds Viewer (read-only, default), Editor (writes, not tenant-admin) and
+  Tenant Admin (the full set, including `tenant:manage`) with the right, *distinct* ability sets —
+  not just that three roles exist — and one real test of `Tenant.isDescendantOf`/`getAncestorIds`
+  across three hierarchy levels, which never depended on `TenantService` at all (it tests entity
+  methods directly) and had no coverage elsewhere.
+- `docs/development/source-reference.md` updated (removed the four dead-file rows, added the
+  missing `TenantDatabaseRoleService.kt` row the previous session's commit had omitted).
+  `docs/development/source-function-reference.md` is generated (no `pwsh` here, same carried-over
+  limitation as before) — hand-stripped only the now-nonexistent-file sections, since a dead link in
+  a reference document is actively wrong, not just stale; did not attempt to hand-sync the
+  surviving files' function lists.
+
+**Verified:** compiles clean; full suite on H2 **348 tests, 0 failures, 0 errors, 20 skipped** (was
+355/29: −9 dead-code tests removed [4 `ModuleServiceTest` + 5 old `TenantServiceTest`], +2 new
+`TenantServiceTest` tests, both passing for real, not skipped). The skip count now exactly matches
+the legitimately Postgres/Docker/Python-gated tests — **no more unexplained skips.**
+
+**Checked, not assumed — and found a real, separate bug this way.** `ModuleService.createModule`
+had an explicit duplicate-name check (`CodeModule.findByTenantAndName`) that `ModuleResource`'s own
+create endpoint doesn't repeat in application code. `code_modules` does have a real
+`UNIQUE (tenant_id, name, module_type)` constraint in the baseline migration, and
+`TransientFailureMapper` is a genuinely global exception mapper (bare `@ServerExceptionMapper`
+methods on a top-level class, not resource-scoped) that already maps SQLState `23505` to a clean
+`409` everywhere — so the reasoning "the database and the global mapper cover it" looked right.
+**It wasn't, on H2:** a regression test (`ModuleResourceTest.testCreateModuleRejectsDuplicateNameAndType`)
+first returned `201` for the second, duplicate module — because `CodeModule`'s `@Table` annotation
+never declared the constraint (only the migration did), so H2's schema-from-entities test database
+never created it. This is the exact same class of bug fixed for `Connector` earlier in this
+session (`connectors/Connector.kt`, `uniqueConstraints`) — it clearly wasn't a one-off, so it's
+worth checking other entities backed by a migration-only unique constraint. Fixed by adding the
+matching `uniqueConstraints` to `CodeModule`'s `@Table` annotation; the regression test now passes,
+and `PostgresMigrationBehaviorTest` still passes (Hibernate `validate` mode doesn't fail on a
+constraint the DB has and the entity didn't declare, so this mismatch was invisible to it — the
+only thing that caught it was actually exercising the behavior). No other deleted method's
+behavior was found to be missing: `TenantService.createTenant`'s dead code had no duplicate-name
+check either, and its unused `userService` field was never called by any of its methods, so
+nothing there was lost.
+
+**Swept the whole codebase for the same class of bug.** If `CodeModule` had a migration-only
+constraint invisible to H2, it clearly wasn't the only one: cross-checked every `UNIQUE (...)` in
+`db/migration/V1__baseline.sql` (24 total) against the owning entity's `@Table`/`@Column`
+declaration. Found and fixed 12 more entities with the identical gap — constraint in the
+migration, never mirrored on the entity, so H2's schema-from-entities test database silently never
+created it:
+
+- `alert/AlertChannel.kt` — `(tenant_id, name)`
+- `auth/ApiKey.kt` — `(tenant_id, name)`
+- `connectors/BrokerCredential.kt` — `(tenant_id, name)` and `(tenant_id, username)` (two constraints)
+- `connectors/ConnectorPipelineMap.kt` — `(connector_id, pipeline_id, node_id)`
+- `connectors/ConnectorRevision.kt` — `(connector_id, revision)`
+- `connectors/inbox/InboxPoller.kt` (`ConnectorInboxItem`) — `(connector_id, item_key)` — the
+  exactly-once pull-connector ledger; this one is functionally significant, not just cosmetic
+- `data/DataTableRegistryRecord.kt` — `(tenant_id, table_name)`
+- `metadata/MetadataEntities.kt` — four entities in one file: `MetadataType`
+  `(tenant_id, type_key)`, `MetadataIdentifier` `(tenant_id, scheme, id_value, valid_from)`,
+  `MetadataAttributeVersion` `(object_id, valid_from)`, `MetadataRelation`
+  `(from_object_id, relation, to_object_id, valid_from)`
+- `module/ModelArtifact.kt` — `(module_id, name, version)` — this one was this codebase's own
+  gap from when the entity was first written, not carried over from anywhere else
+- `module/ModuleVersion.kt` — `(module_id, version)`
+- `tenant/Membership.kt` — `(auth_user_id, tenant_id)`
+- `tenant/Role.kt` — `(tenant_id, name)`
+
+Checked and correctly left alone (already covered, no fix needed):
+- `pipeline/Pipeline.kt` (`kafkaConsumerGroup`) and `auth/User.kt` (`email`) already use
+  `@Column(unique = true)`, the single-column equivalent of a table-level constraint.
+- `grafana/GrafanaSyncState.kt` already declares its `uniqueConstraints` correctly — missed on the
+  first single-line grep because its `@Table(...)` is a multi-line block; verified directly before
+  concluding it needed no change.
+- `MetadataObject` (in `MetadataEntities.kt`) has no unique constraint in the migration, so none
+  was added.
+
+**Verified after the full sweep:** compiles clean; full H2 suite **349 tests, 0 failures, 0
+errors, 20 skipped** (the one net new test is `ModuleResourceTest.testCreateModuleRejectsDuplicateNameAndType`
+added above). Ran `PostgresMigrationBehaviorTest` a second time against a fresh real PostgreSQL 16
+database (`constraint_sweep_test`) after all 13 entity changes: **1 test, 0 failures, 0 errors** —
+Hibernate `validate` mode still accepts every entity's schema as matching the migration exactly,
+confirming none of the 13 additions over- or under-declares what's actually in `V1__baseline.sql`.
+Database dropped after the run.
+
+**Not yet done, flagged for whoever picks this up next:** none of these 13 fixes has a dedicated
+regression test the way `CodeModule` now does — that one test exists because writing it was what
+surfaced the bug, not because every entity needed one. Whether it's worth adding a duplicate-insert
+test per entity (or a single parameterized test asserting all 24 migration constraints round-trip
+through Hibernate metadata) is a judgment call for the next session/owner; the `PostgresMigrationBehaviorTest`
+validate-mode pass gives some confidence but, per the finding above, provably doesn't catch this
+exact class of bug on its own.
 
 ## Sources used
 

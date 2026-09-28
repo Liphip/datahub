@@ -986,16 +986,6 @@ The scanner recognizes declarations written on one line. When a new declaration 
 | [TenantContextDto](../../backend/src/main/kotlin/com/dataturntable/dto/AuthDto.kt:48) | class | Defines the class contract used by this source unit. |
 | [UserDto](../../backend/src/main/kotlin/com/dataturntable/dto/AuthDto.kt:57) | class | Defines the class contract used by this source unit. |
 
-## `backend/src/main/kotlin/com/dataturntable/dto/ModuleDto.kt`
-
-| Declaration | Kind | Functionality |
-|---|---|---|
-| [CodeModuleDto](../../backend/src/main/kotlin/com/dataturntable/dto/ModuleDto.kt:9) | class | Defines the class contract used by this source unit. |
-| [CreateModuleRequest](../../backend/src/main/kotlin/com/dataturntable/dto/ModuleDto.kt:25) | class | Defines the class contract used by this source unit. |
-| [ModuleVersionDto](../../backend/src/main/kotlin/com/dataturntable/dto/ModuleDto.kt:34) | class | Defines the class contract used by this source unit. |
-| [CreateModuleVersionRequest](../../backend/src/main/kotlin/com/dataturntable/dto/ModuleDto.kt:50) | class | Defines the class contract used by this source unit. |
-| [TagVersionRequest](../../backend/src/main/kotlin/com/dataturntable/dto/ModuleDto.kt:60) | class | Defines the class contract used by this source unit. |
-
 ## `backend/src/main/kotlin/com/dataturntable/dto/PermissionDto.kt`
 
 | Declaration | Kind | Functionality |
@@ -1008,14 +998,6 @@ The scanner recognizes declarations written on one line. When a new declaration 
 | [UpdateRoleRequest](../../backend/src/main/kotlin/com/dataturntable/dto/PermissionDto.kt:85) | class | Defines the class contract used by this source unit. |
 | [PermissionCheckRequest](../../backend/src/main/kotlin/com/dataturntable/dto/PermissionDto.kt:95) | class | Defines the class contract used by this source unit. |
 | [PermissionCheckResponse](../../backend/src/main/kotlin/com/dataturntable/dto/PermissionDto.kt:102) | class | Defines the class contract used by this source unit. |
-
-## `backend/src/main/kotlin/com/dataturntable/dto/TenantDto.kt`
-
-| Declaration | Kind | Functionality |
-|---|---|---|
-| [TenantDto](../../backend/src/main/kotlin/com/dataturntable/dto/TenantDto.kt:8) | class | Defines the class contract used by this source unit. |
-| [CreateTenantRequest](../../backend/src/main/kotlin/com/dataturntable/dto/TenantDto.kt:22) | class | Defines the class contract used by this source unit. |
-| [UpdateTenantRequest](../../backend/src/main/kotlin/com/dataturntable/dto/TenantDto.kt:32) | class | Defines the class contract used by this source unit. |
 
 ## `backend/src/main/kotlin/com/dataturntable/engine/DockerService.kt`
 
@@ -1682,25 +1664,6 @@ The scanner recognizes declarations written on one line. When a new declaration 
 | [resolveGrafanaRole](../../backend/src/main/kotlin/com/dataturntable/service/GrafanaSyncService.kt:345) | function | Implements the named behavior for this source unit. |
 | [slugify](../../backend/src/main/kotlin/com/dataturntable/service/GrafanaSyncService.kt:365) | function | Implements the named behavior for this source unit. |
 
-## `backend/src/main/kotlin/com/dataturntable/service/ModuleService.kt`
-
-| Declaration | Kind | Functionality |
-|---|---|---|
-| [ModuleService](../../backend/src/main/kotlin/com/dataturntable/service/ModuleService.kt:21) | class | Defines the class contract used by this source unit. |
-| [contentFingerprint](../../backend/src/main/kotlin/com/dataturntable/service/ModuleService.kt:31) | function | Implements the named behavior for this source unit. |
-| [getModules](../../backend/src/main/kotlin/com/dataturntable/service/ModuleService.kt:50) | function | Retrieves or enumerates the requested state. |
-| [getModulesByType](../../backend/src/main/kotlin/com/dataturntable/service/ModuleService.kt:57) | function | Retrieves or enumerates the requested state. |
-| [getModule](../../backend/src/main/kotlin/com/dataturntable/service/ModuleService.kt:64) | function | Retrieves or enumerates the requested state. |
-| [createModule](../../backend/src/main/kotlin/com/dataturntable/service/ModuleService.kt:73) | function | Creates or persists the requested state. |
-| [deleteModule](../../backend/src/main/kotlin/com/dataturntable/service/ModuleService.kt:98) | function | Removes, stops, or releases the requested state. |
-| [getVersions](../../backend/src/main/kotlin/com/dataturntable/service/ModuleService.kt:107) | function | Retrieves or enumerates the requested state. |
-| [getVersion](../../backend/src/main/kotlin/com/dataturntable/service/ModuleService.kt:114) | function | Retrieves or enumerates the requested state. |
-| [getVersionByTag](../../backend/src/main/kotlin/com/dataturntable/service/ModuleService.kt:122) | function | Retrieves or enumerates the requested state. |
-| [createVersion](../../backend/src/main/kotlin/com/dataturntable/service/ModuleService.kt:131) | function | Creates or persists the requested state. |
-| [tagVersion](../../backend/src/main/kotlin/com/dataturntable/service/ModuleService.kt:156) | function | Implements the named behavior for this source unit. |
-| [toDto](../../backend/src/main/kotlin/com/dataturntable/service/ModuleService.kt:166) | function | Converts a value into the representation required by its caller. |
-| [toVersionDto](../../backend/src/main/kotlin/com/dataturntable/service/ModuleService.kt:186) | function | Converts a value into the representation required by its caller. |
-
 ## `backend/src/main/kotlin/com/dataturntable/service/PipelineDataService.kt`
 
 | Declaration | Kind | Functionality |
@@ -1753,19 +1716,6 @@ The scanner recognizes declarations written on one line. When a new declaration 
 | [updateTenant](../../backend/src/main/kotlin/com/dataturntable/service/TenantService.kt:116) | function | Updates the requested state. |
 | [deleteTenant](../../backend/src/main/kotlin/com/dataturntable/service/TenantService.kt:133) | function | Removes, stops, or releases the requested state. |
 | [toDto](../../backend/src/main/kotlin/com/dataturntable/service/TenantService.kt:142) | function | Converts a value into the representation required by its caller. |
-
-## `backend/src/main/kotlin/com/dataturntable/service/UserService.kt`
-
-| Declaration | Kind | Functionality |
-|---|---|---|
-| [UserService](../../backend/src/main/kotlin/com/dataturntable/service/UserService.kt:20) | class | Defines the class contract used by this source unit. |
-| [getUsersByTenant](../../backend/src/main/kotlin/com/dataturntable/service/UserService.kt:29) | function | Retrieves or enumerates the requested state. |
-| [getUser](../../backend/src/main/kotlin/com/dataturntable/service/UserService.kt:36) | function | Retrieves or enumerates the requested state. |
-| [createUser](../../backend/src/main/kotlin/com/dataturntable/service/UserService.kt:45) | function | Creates or persists the requested state. |
-| [updateUser](../../backend/src/main/kotlin/com/dataturntable/service/UserService.kt:90) | function | Updates the requested state. |
-| [deleteUser](../../backend/src/main/kotlin/com/dataturntable/service/UserService.kt:136) | function | Removes, stops, or releases the requested state. |
-| [changePassword](../../backend/src/main/kotlin/com/dataturntable/service/UserService.kt:148) | function | Implements the named behavior for this source unit. |
-| [toDto](../../backend/src/main/kotlin/com/dataturntable/service/UserService.kt:165) | function | Converts a value into the representation required by its caller. |
 
 ## `backend/src/main/kotlin/com/dataturntable/tenant/Membership.kt`
 
@@ -2525,16 +2475,6 @@ The scanner recognizes declarations written on one line. When a new declaration 
 | [testEnsureGrafanaUserReusesExistingUser](../../backend/src/test/kotlin/com/dataturntable/service/GrafanaProvisioningServiceTest.kt:138) | function | Verifies the named behavior. |
 | [respond](../../backend/src/test/kotlin/com/dataturntable/service/GrafanaProvisioningServiceTest.kt:175) | function | Verifies the named behavior. |
 | [JsonHandler](../../backend/src/test/kotlin/com/dataturntable/service/GrafanaProvisioningServiceTest.kt:184) | class | Defines the class contract used by this source unit. |
-
-## `backend/src/test/kotlin/com/dataturntable/service/ModuleServiceTest.kt`
-
-| Declaration | Kind | Functionality |
-|---|---|---|
-| [ModuleServiceTest](../../backend/src/test/kotlin/com/dataturntable/service/ModuleServiceTest.kt:17) | class | Defines the class contract used by this source unit. |
-| [testCreateModule](../../backend/src/test/kotlin/com/dataturntable/service/ModuleServiceTest.kt:24) | function | Verifies the named behavior. |
-| [testGetModules](../../backend/src/test/kotlin/com/dataturntable/service/ModuleServiceTest.kt:53) | function | Verifies the named behavior. |
-| [testCreateModuleVersion](../../backend/src/test/kotlin/com/dataturntable/service/ModuleServiceTest.kt:77) | function | Verifies the named behavior. |
-| [testModuleVersioning](../../backend/src/test/kotlin/com/dataturntable/service/ModuleServiceTest.kt:113) | function | Verifies the named behavior. |
 
 ## `backend/src/test/kotlin/com/dataturntable/service/PipelineDataServiceTest.kt`
 

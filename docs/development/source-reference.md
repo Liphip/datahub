@@ -88,10 +88,9 @@ reference; add a new route there in the same change as its handler.
 | Source | Responsibility and key function family |
 |---|---|
 | `service/AuthService.kt` | Authenticates credentials, provisions setup users, creates JWTs, and resolves user context. |
-| `service/UserService.kt` | User CRUD/business rules independent of HTTP transport. |
-| `service/TenantService.kt` | Tenant creation, hierarchy traversal, inherited/default configuration, and tenant validation. |
-| `service/ModuleService.kt` | Module/version creation, lookup, and version lifecycle policy. |
-| `service/PipelineDataService.kt` | Tenant schema/table creation and parameterized pipeline-data access. |
+| `service/TenantService.kt` | Seeds a new tenant's default role templates (Viewer/Editor/Tenant Admin). Tenant CRUD is `TenantResource`'s own; a same-shaped, unused service layer for it, `ModuleService.kt`, `UserService.kt` and the request/response DTOs only they used were removed as dead code. |
+| `service/PipelineDataService.kt` | Tenant schema/table creation and parameterized pipeline-data access, under the tenant's own database role where available (`TenantDatabaseRoleService`, NFR-S8). |
+| `service/TenantDatabaseRoleService.kt` | Provisions and switches into a per-tenant PostgreSQL role so cross-tenant access is refused by the database itself (NFR-S8/TEN-03). |
 | `service/GrafanaSyncService.kt` | Builds and synchronizes Grafana resources for supported scopes. |
 | `service/GrafanaProvisioningService.kt` | Provisions datasources/dashboards against a configured Grafana instance. |
 | `alert/AlertDispatcher.kt` | Evaluates condition trees, observes cooldowns, records alert history, and dispatches per channel. |
@@ -179,9 +178,7 @@ reference; add a new route there in the same change as its handler.
 | Source | Responsibility |
 |---|---|
 | `dto/AuthDto.kt` | Login/setup/token/current-user request and response shapes. |
-| `dto/TenantDto.kt` | Tenant, hierarchy, defaults, and diagnostics shapes. |
 | `dto/PermissionDto.kt` | Role permission request/response shapes. |
-| `dto/ModuleDto.kt` | Module/version request and response shapes. |
 
 ## Frontend application
 

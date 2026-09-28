@@ -9,7 +9,7 @@ import java.time.Instant
 import java.util.UUID
 
 @Entity
-@Table(name = "module_versions")
+@Table(name = "module_versions", uniqueConstraints = [UniqueConstraint(columnNames = ["module_id", "version"])])
 /**
  * Defines the class `ModuleVersion`, the contract implemented by this source unit.
  */

@@ -6,6 +6,7 @@ import jakarta.persistence.GeneratedValue
 import jakarta.persistence.GenerationType
 import jakarta.persistence.Id
 import jakarta.persistence.Table
+import jakarta.persistence.UniqueConstraint
 import java.time.Instant
 import java.util.UUID
 
@@ -21,7 +22,7 @@ import java.util.UUID
  * one module's own execution writes and reads back for itself, never a user-facing file (DAT-10).
  */
 @Entity
-@Table(name = "model_artifacts")
+@Table(name = "model_artifacts", uniqueConstraints = [UniqueConstraint(columnNames = ["module_id", "name", "version"])])
 class ModelArtifact {
     @Id @GeneratedValue(strategy = GenerationType.UUID) var id: UUID? = null
     @Column(name = "tenant_id", nullable = false) var tenantId: UUID? = null

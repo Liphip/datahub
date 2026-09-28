@@ -17,7 +17,7 @@ enum class AlertChannelType {
 }
 
 @Entity
-@Table(name = "alert_channels")
+@Table(name = "alert_channels", uniqueConstraints = [UniqueConstraint(columnNames = ["tenant_id", "name"])])
 /**
  * Defines the class `AlertChannel`, the contract implemented by this source unit.
  */

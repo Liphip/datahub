@@ -141,6 +141,27 @@ class ModuleResourceTest {
     }
 
     @Test
+    fun testCreateModuleRejectsDuplicateNameAndType() {
+        // No application-level check does this (ModuleResource creates modules directly, unlike
+        // the removed ModuleService.createModule, which is why this needs its own test) — the
+        // `code_modules(tenant_id, name, module_type)` unique constraint plus the global
+        // TransientFailureMapper (SQLState 23505 -> 409) are what actually enforce it.
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = firstTenantId(token)
+        val name = "Duplicate Module ${UUID.randomUUID()}"
+        createModule(token, tenantId, name)
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType(ContentType.JSON)
+            .body(mapOf("name" to name, "moduleType" to "PROCESSING", "tenantId" to tenantId))
+        .`when`()
+            .post("/api/internal/v1/modules")
+        .then()
+            .statusCode(409)
+    }
+
+    @Test
     fun testListModulesRejectsInvalidTypeFilter() {
         val token = TestAuthHelpers.createAdminToken()
         val tenantId = given()

@@ -16,6 +16,7 @@ import jakarta.persistence.GeneratedValue
 import jakarta.persistence.GenerationType
 import jakarta.persistence.Id
 import jakarta.persistence.Table
+import jakarta.persistence.UniqueConstraint
 import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.jboss.logging.Logger
 import java.time.Instant
@@ -33,7 +34,7 @@ val INBOX_TYPES = setOf(ConnectorType.FILE, ConnectorType.FTP, ConnectorType.SFT
  * - FAILED: the content cannot be parsed or is too large; the item stays in the source.
  */
 @Entity
-@Table(name = "connector_inbox_items")
+@Table(name = "connector_inbox_items", uniqueConstraints = [UniqueConstraint(columnNames = ["connector_id", "item_key"])])
 open class ConnectorInboxItem {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
