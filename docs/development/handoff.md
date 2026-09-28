@@ -3,8 +3,11 @@
 This document lets another assistant or developer continue the work without the chat history.
 
 > **Read this first.** Everything is committed and pushed to `claude/datahub-lakehouse-review-6tiaf5`
-> and the working tree is clean. **The only thing left before landing is asking the owner to open the
-> PR into `dev`** — nothing technical is blocked. The full backend suite on H2 is green: **370 tests,
+> and the working tree is clean. **The PR into `dev` is open: https://github.com/Liphip/datahub/pull/2**
+> (the owner explicitly asked for it to be opened once the branch made sense to move over — see the
+> session entry below). This session is subscribed to its activity and will keep pushing fixes for CI
+> failures and review feedback; check the PR itself for current status rather than assuming this
+> document's snapshot is still current. The full backend suite on H2 is green: **370 tests,
 > 0 failures, 0 errors, 20 skipped** (all 20 are legitimately Postgres/Docker/Python-gated — the
 > previous 9 "unexplained" H2 skips are gone, see the relevant session entry below). To reproduce
 > the Docker/Python-gated portion on a host you need a Windows JDK 25 **and** a real `python3` on
@@ -30,7 +33,8 @@ This document lets another assistant or developer continue the work without the 
 > **All six M0 items are now addressed** (some Partial, none Open): ingest auth, secrets out of the
 > repo, per-tenant database roles, CI against PostgreSQL, platform health alerts, run-history
 > retention. **Next target if work continues (owner's call, not a blocker):** M1 (micro-batch
-> execution, PIP-15/NFR-P7) is the next milestone in the SRS, §11.
+> execution, PIP-15/NFR-P7) is the next milestone in the SRS, §11 — deliberately not started on
+> this branch/PR; see the "PR #2 opened" session entry for why.
 
 ## Repository and branches
 
@@ -42,7 +46,9 @@ This document lets another assistant or developer continue the work without the 
   `git log origin/claude/datahub-lakehouse-review-6tiaf5` to see whether it was pushed.
 - **Working rule (owner, 2026-09-28):** keep this file current, and commit and push to the working
   branch regularly, so another tool can take over at any time. Pushing to the working branch needs
-  no further confirmation. Opening the PR into `dev` still does.
+  no further confirmation. **PR #2 into `dev` is now open** (https://github.com/Liphip/datahub/pull/2)
+  — the owner asked for it to be opened once the branch made sense, per the session entry below;
+  further pushes to the working branch land on the open PR automatically.
 - **Never `git add -A` here.** `secrets/dev-keys/signing.pem` is a private key; it is correctly
   ignored, but stage by path and re-check `git status` before committing.
 - Stack:
@@ -1090,6 +1096,35 @@ the aggregate trend. Whether that's a dashboard chart, a pipeline-detail tab, or
 a product decision, not an engineering one, so it's left for the next session/owner rather than
 guessed at here. M1 (PIP-15/NFR-P7, micro-batch execution) remains the largest open item and the
 SRS's own suggested next milestone.
+
+## Session 2026-09-28 (continued): PR #2 opened into `dev`
+
+The owner asked to keep going and to "create PR when it makes sense to move over to dev branch" —
+a standing instruction that supersedes the earlier "ask the owner before opening the PR" rule
+recorded throughout this document's history (that rule stood the entire session up to this point;
+this entry is the first exception to it, made on an explicit new instruction, not a unilateral
+decision).
+
+**Why now:** the branch was 46 commits ahead of `origin/dev` and **0 commits behind** — no merge
+conflicts possible — with the full H2 suite green (370/0/0/20) and every change since the last
+`dev` merge individually verified (see the session entries above). Opening a PR doesn't merge
+anything; it starts CI on GitHub and gives the owner/reviewers a page to read and comment on
+without blocking further work, which can keep landing as new commits on the same PR.
+
+**Opened:** https://github.com/Liphip/datahub/pull/2 (`claude/datahub-lakehouse-review-6tiaf5` →
+`dev`), with a body summarizing the 46 commits by theme (exactly-once delivery, metadata,
+fire-and-forget ingest, HA hardening, model artifacts, per-tenant DB roles, OPS-07, the platform/
+dependency work, and this session's hardening pass) plus the explicit known-open-items list (M1
+not started, OPS-07 has no UI yet, a few SRS items still `Partial`/`Open`) and a test-plan
+checklist. Subscribed this session to the PR's activity (`subscribe_pr_activity`): CI failures and
+review comments will now arrive as events and get worked per the standing PR-babysitting rules —
+pushed fixes for anything in scope, a comment explaining anything that isn't.
+
+**Not done as part of opening the PR:** did not touch CI configuration, did not pre-emptively fix
+anything speculative — the plan is to react to whatever GitHub's own CI run and any human review
+actually surface, not to guess at problems that may not exist. `NFR-M6`'s traceability status
+("CI... not yet observed green on GitHub Actions itself") is exactly what this PR's own CI run
+will finally settle either way.
 
 ## Sources used
 
