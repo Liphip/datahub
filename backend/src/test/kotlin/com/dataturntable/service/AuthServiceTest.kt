@@ -11,14 +11,10 @@ import io.quarkus.test.junit.QuarkusTest
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
-import jakarta.transaction.Transactional
-import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeEach
+import io.quarkus.test.TestTransaction
 import org.junit.jupiter.api.Test
 
-import org.mindrot.jbcrypt.BCrypt
-import java.security.MessageDigest
-import java.util.Base64
+import java.util.UUID
 
 import org.junit.jupiter.api.Assertions.*
 
@@ -31,28 +27,16 @@ class AuthServiceTest {
     @PersistenceContext
     lateinit var em: EntityManager
     
-    @BeforeEach
-    @Transactional
-    fun cleanup() {
-        em.createNativeQuery("SET REFERENTIAL_INTEGRITY FALSE").executeUpdate()
-        try {
-            em.createQuery("DELETE FROM ApiKey").executeUpdate()
-            em.createQuery("DELETE FROM Membership").executeUpdate()
-            em.createQuery("DELETE FROM User").executeUpdate()
-            em.createQuery("DELETE FROM Role").executeUpdate()
-            em.createQuery("DELETE FROM Tenant").executeUpdate()
-        } finally {
-            em.createNativeQuery("SET REFERENTIAL_INTEGRITY TRUE").executeUpdate()
-        }
+    /** Setup requires an empty user table; every test rolls back, so other tests keep their users. */
+    private fun withoutUsers() {
+        em.createQuery("DELETE FROM Membership").executeUpdate()
+        em.createQuery("DELETE FROM User").executeUpdate()
     }
 
-    @AfterEach
-    @Transactional
-    fun cleanupAfter() = cleanup()
-    
     @Test
-    @Transactional
+    @TestTransaction
     fun testSetupCreatesInitialUser() {
+        withoutUsers()
         val request = SetupRequest(email = "admin@example.com")
         val response = authService.setup(request)
         
@@ -67,8 +51,9 @@ class AuthServiceTest {
     }
     
     @Test
-    @Transactional
+    @TestTransaction
     fun testSetupFailsWhenUsersExist() {
+        withoutUsers()
         val request = SetupRequest(email = "admin@example.com")
         authService.setup(request)
         
@@ -79,14 +64,17 @@ class AuthServiceTest {
     }
     
     @Test
-    @Transactional
+    @TestTransaction
     fun testLoginWithValidCredentials() {
+        withoutUsers()
         val setupRequest = SetupRequest(email = "admin@example.com")
         val setupResponse = authService.setup(setupRequest)
         
+        val password = setupResponse.password
+        
         val loginRequest = LoginRequest(
             email = "admin@example.com",
-            password = setupResponse.password
+            password = password
         )
         
         val response = authService.login(loginRequest)
@@ -98,14 +86,18 @@ class AuthServiceTest {
     }
     
     @Test
-    @Transactional
-    fun testLoginWithInvalidPassword() {
+    @TestTransaction
+    fun testLoginWithInvalidPasswordHash() {
+        withoutUsers()
         val setupRequest = SetupRequest(email = "admin@example.com")
         authService.setup(setupRequest)
         
+        // Backend double-hashes, so wrong hash should fail
+        val wrongHash = "wrongpassword"
+        
         val loginRequest = LoginRequest(
             email = "admin@example.com",
-            password = "wrongpassword"
+            password = wrongHash
         )
         
         assertThrows(SecurityException::class.java) {
@@ -114,11 +106,12 @@ class AuthServiceTest {
     }
     
     @Test
-    @Transactional
+    @TestTransaction
     fun testLoginWithNonexistentUser() {
+        withoutUsers()
         val loginRequest = LoginRequest(
             email = "nonexistent@example.com",
-            password = "some-password"
+            password = "somehash"
         )
         
         assertThrows(SecurityException::class.java) {
@@ -127,14 +120,17 @@ class AuthServiceTest {
     }
     
     @Test
-    @Transactional
+    @TestTransaction
     fun testLoginGeneratesValidJwt() {
+        withoutUsers()
         val setupRequest = SetupRequest(email = "admin@example.com")
         val setupResponse = authService.setup(setupRequest)
         
+        val password = setupResponse.password
+        
         val loginRequest = LoginRequest(
             email = "admin@example.com",
-            password = setupResponse.password
+            password = password
         )
         
         val response = authService.login(loginRequest)
@@ -144,8 +140,9 @@ class AuthServiceTest {
     }
     
     @Test
-    @Transactional
+    @TestTransaction
     fun testSetupCreatesRootTenant() {
+        withoutUsers()
         val request = SetupRequest(email = "admin@example.com")
         val response = authService.setup(request)
         
@@ -157,8 +154,9 @@ class AuthServiceTest {
     }
     
     @Test
-    @Transactional
+    @TestTransaction
     fun testSetupGeneratesStrongPassword() {
+        withoutUsers()
         val request = SetupRequest(email = "admin@example.com")
         val response = authService.setup(request)
         
@@ -170,26 +168,4 @@ class AuthServiceTest {
         assertTrue(password.any { !it.isLetterOrDigit() })
     }
     
-    @Test
-    @Transactional
-    fun `legacy BCrypt SHA-256 password migrates to Argon2id on login`() {
-        val password = "LegacyPass!123"
-        val user = User().apply {
-            email = "legacy@example.com"
-            passwordHash = BCrypt.hashpw(hashPassword(password), BCrypt.gensalt())
-            isActive = true
-        }
-        em.persist(user)
-        em.flush()
-
-        authService.login(LoginRequest(email = user.email!!, password = password))
-
-        assertTrue(user.passwordHash!!.startsWith("\$argon2id\$"))
-    }
-
-    private fun hashPassword(password: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val hash = digest.digest(password.toByteArray())
-        return Base64.getEncoder().encodeToString(hash)
-    }
 }

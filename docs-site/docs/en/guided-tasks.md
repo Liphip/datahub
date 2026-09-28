@@ -64,6 +64,21 @@ Expected result: run record appears and moves to success/failure state.
 4. Enter tenant name and defaults.
 5. Save and verify tree placement.
 
+## Task 8: Investigate a performance regression
+
+1. Find the start of the regression in the dashboard trends.
+2. In Grafana, compare p95 latency before and after.
+3. In Loki, look for error bursts or retry loops.
+4. Check recent module and pipeline version changes.
+5. Roll back to the previous version if the risk stays high.
+
+## Task 9: Validate tenant access (admin)
+
+1. Create a read-only test user.
+2. Assign the Viewer role in a non-production tenant.
+3. Verify the user can view but cannot change anything.
+4. Record the evidence (screenshots and an audit note).
+
 ## Practical Tips
 
 - Change one thing at a time.

@@ -9,7 +9,7 @@ import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
-import org.mindrot.jbcrypt.BCrypt
+import io.quarkus.elytron.security.common.BcryptUtil
 
 import io.restassured.RestAssured.given
 import org.hamcrest.CoreMatchers.*
@@ -38,14 +38,12 @@ class ModuleResourceTest {
 
     fun createNonMemberToken(): String {
         val email = "module-viewer@example.com"
-        val passwordHash = java.util.Base64.getEncoder().encodeToString(
-            java.security.MessageDigest.getInstance("SHA-256").digest("ViewerPass!123".toByteArray())
-        )
+        val password = "ViewerPass!123"
 
         QuarkusTransaction.requiringNew().run {
             val user = User().apply {
                 this.email = email
-                this.passwordHash = BCrypt.hashpw(passwordHash, BCrypt.gensalt())
+                this.passwordHash = BcryptUtil.bcryptHash(password)
                 this.isActive = true
                 this.createdAt = java.time.Instant.now()
                 this.updatedAt = java.time.Instant.now()
@@ -56,7 +54,7 @@ class ModuleResourceTest {
 
         return given()
             .contentType(ContentType.JSON)
-            .body(mapOf("email" to email, "passwordHash" to passwordHash))
+            .body(mapOf("email" to email, "password" to password))
         .`when`()
             .post("/api/internal/v1/auth/login")
         .then()
@@ -140,6 +138,27 @@ class ModuleResourceTest {
         .then()
             .statusCode(400)
             .body("error", equalTo("Invalid module type"))
+    }
+
+    @Test
+    fun testCreateModuleRejectsDuplicateNameAndType() {
+        // No application-level check does this (ModuleResource creates modules directly, unlike
+        // the removed ModuleService.createModule, which is why this needs its own test) — the
+        // `code_modules(tenant_id, name, module_type)` unique constraint plus the global
+        // TransientFailureMapper (SQLState 23505 -> 409) are what actually enforce it.
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = firstTenantId(token)
+        val name = "Duplicate Module ${UUID.randomUUID()}"
+        createModule(token, tenantId, name)
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType(ContentType.JSON)
+            .body(mapOf("name" to name, "moduleType" to "PROCESSING", "tenantId" to tenantId))
+        .`when`()
+            .post("/api/internal/v1/modules")
+        .then()
+            .statusCode(409)
     }
 
     @Test

@@ -1,16 +1,32 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
-import api from '../services/api';
-import type { Connector, BrokerCredential, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, StatusCheck } from '../types';
+import api, { type ApiError } from '../services/api';
+import { hasSecret, withSecretRefs } from '../lib/secrets';
+import type {
+  Connector,
+  BrokerCredential,
+  ConnectorImpactSummary,
+  ConnectorInboxItem,
+  ConnectorReferenceSummary,
+  ConnectorStatus,
+  StatusCheck,
+} from '../types';
 
-const connectorTypes = ['MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'CUSTOM'] as const;
+const connectorTypes = ['MQTT', 'REST', 'WEBSOCKET', 'UDP', 'FILE', 'FTP', 'SFTP', 'EMAIL', 'CUSTOM'] as const;
 const directions = ['INPUT', 'OUTPUT'] as const;
 /**
  * Defines the type `ConnectorType`, the contract implemented by this source unit.
  */
 type ConnectorType = typeof connectorTypes[number];
+
+/** Pull connectors polled as inboxes: the platform reads items and acknowledges them at the source. */
+const inboxTypes = ['FILE', 'FTP', 'SFTP', 'EMAIL'] as const;
+const pollingTypes = ['REST', ...inboxTypes] as const;
+
+const isInbox = (type: ConnectorType) => (inboxTypes as readonly string[]).includes(type);
+const supportsPolling = (type: ConnectorType) => (pollingTypes as readonly string[]).includes(type);
 
 /**
  * Defines the type `ConnectorConfigField`, the contract implemented by this source unit.
@@ -18,11 +34,24 @@ type ConnectorType = typeof connectorTypes[number];
 type ConnectorConfigField = {
   key: string;
   label: string;
-  type?: 'text' | 'url' | 'number' | 'password';
+  type?: 'text' | 'url' | 'number' | 'password' | 'select' | 'textarea';
   placeholder?: string;
   required?: boolean;
   hint?: string;
+  /** Fixed choices for `select`; the first entry is the platform default. */
+  options?: readonly string[];
+  /** The value is stored as a secret and the connector keeps only a reference. */
+  sensitive?: boolean;
 };
+
+const afterReadOptions = ['move', 'delete', 'keep'] as const;
+const formatOptions = ['auto', 'csv', 'json', 'jsonl', 'text', 'binary'] as const;
+
+/** Fields shared by the file-like inboxes: which items are read and what happens afterwards. */
+const inboxItemFields: ConnectorConfigField[] = [
+  { key: 'pattern', label: 'File Name Pattern', placeholder: '*.csv', hint: 'Glob on the item name. Empty reads every file.' },
+  { key: 'format', label: 'Format', type: 'select', options: formatOptions, hint: 'auto decides by file extension and content. CSV and JSON lines become records.' },
+];
 
 const connectorConfigSchema: Record<ConnectorType, ConnectorConfigField[]> = {
   MQTT: [
@@ -33,26 +62,76 @@ const connectorConfigSchema: Record<ConnectorType, ConnectorConfigField[]> = {
     },
     { key: 'clientId', label: 'Client ID', placeholder: 'dt-edge-ingest' },
     { key: 'username', label: 'Username' },
-    { key: 'password', label: 'Password', type: 'password' },
+    { key: 'password', label: 'Password', type: 'password', sensitive: true },
   ],
   REST: [
     { key: 'baseUrl', label: 'Base URL', type: 'url', required: true, placeholder: 'https://api.example.com' },
     { key: 'path', label: 'Path', placeholder: '/ingest' },
     { key: 'method', label: 'Method', placeholder: 'POST' },
-    { key: 'authToken', label: 'Auth Token', type: 'password' },
+    { key: 'authToken', label: 'Auth Token', type: 'password', sensitive: true },
   ],
   WEBSOCKET: [
     { key: 'url', label: 'WebSocket URL', type: 'url', required: true, placeholder: 'wss://stream.example.com/events' },
     { key: 'path', label: 'Path', placeholder: '/socket' },
-    { key: 'authToken', label: 'Auth Token', type: 'password' },
+    { key: 'authToken', label: 'Auth Token', type: 'password', sensitive: true },
   ],
   UDP: [
     { key: 'host', label: 'Host', required: true, placeholder: 'udp-gateway.internal' },
     { key: 'port', label: 'Port', type: 'number', required: true, placeholder: '5140' },
   ],
   FILE: [
-    { key: 'path', label: 'File Path', required: true, placeholder: '/var/data/input.ndjson' },
-    { key: 'format', label: 'Format', placeholder: 'jsonl' },
+    {
+      key: 'path', label: 'Directory', required: true, placeholder: 'inbox',
+      hint: 'Directory below the file connector base directory. Point it at a subfolder of that directory, not at a single file.',
+    },
+    ...inboxItemFields,
+    { key: 'afterRead', label: 'After Read', type: 'select', options: afterReadOptions, hint: 'move files into .processed, delete them, or keep them.' },
+    { key: 'minAgeSeconds', label: 'Minimum Age (s)', type: 'number', placeholder: '10', hint: 'Skip files modified less than this ago, so half-written files are not read.' },
+  ],
+  FTP: [
+    { key: 'host', label: 'Host', required: true, placeholder: 'ftp.example.com' },
+    { key: 'port', label: 'Port', type: 'number', placeholder: '21' },
+    { key: 'tls', label: 'TLS', type: 'select', options: ['explicit', 'implicit', 'none'], hint: 'FTPS verifies the server certificate against the JVM truststore.' },
+    { key: 'username', label: 'Username', required: true, placeholder: 'anonymous' },
+    { key: 'password', label: 'Password', type: 'password', sensitive: true },
+    { key: 'path', label: 'Remote Directory', required: true, placeholder: '/upload' },
+    ...inboxItemFields,
+    { key: 'afterRead', label: 'After Read', type: 'select', options: afterReadOptions },
+    { key: 'minAgeSeconds', label: 'Minimum Age (s)', type: 'number', placeholder: '10' },
+  ],
+  SFTP: [
+    { key: 'host', label: 'Host', required: true, placeholder: 'sftp.example.com' },
+    { key: 'port', label: 'Port', type: 'number', placeholder: '22' },
+    { key: 'username', label: 'Username', required: true },
+    { key: 'password', label: 'Password', type: 'password', sensitive: true },
+    {
+      key: 'privateKey', label: 'Private Key', type: 'textarea', sensitive: true,
+      placeholder: '-----BEGIN OPENSSH PRIVATE KEY-----',
+      hint: 'OpenSSH or PEM key text. Leave key and password empty to authenticate with neither.',
+    },
+    { key: 'passphrase', label: 'Key Passphrase', type: 'password', sensitive: true },
+    {
+      key: 'hostKeyFingerprint', label: 'Host Key Fingerprint', placeholder: 'SHA256:base64…',
+      hint: 'Required. The server key is trusted only when it matches; the first connection reports the fingerprint the server presented.',
+    },
+    { key: 'path', label: 'Remote Directory', required: true, placeholder: '/upload' },
+    ...inboxItemFields,
+    { key: 'afterRead', label: 'After Read', type: 'select', options: afterReadOptions },
+    { key: 'minAgeSeconds', label: 'Minimum Age (s)', type: 'number', placeholder: '10' },
+  ],
+  EMAIL: [
+    { key: 'host', label: 'IMAP Host', required: true, placeholder: 'imap.example.com' },
+    { key: 'port', label: 'Port', type: 'number', placeholder: '993' },
+    { key: 'tls', label: 'TLS', type: 'select', options: ['implicit', 'starttls', 'none'], hint: 'implicit = port 993, starttls = port 143.' },
+    { key: 'username', label: 'Username', required: true },
+    { key: 'password', label: 'Password', type: 'password', sensitive: true },
+    { key: 'folder', label: 'Folder', placeholder: 'INBOX' },
+    {
+      key: 'content', label: 'Read', type: 'select', options: ['attachments', 'body'],
+      hint: 'attachments parses every attachment (filtered by the pattern); body takes the plain text part.',
+    },
+    { key: 'pattern', label: 'Attachment Pattern', placeholder: '*.csv' },
+    { key: 'afterRead', label: 'After Read', type: 'select', options: ['seen', 'move', 'delete', 'keep'], hint: 'Messages are read with PEEK; only this step changes the mailbox.' },
   ],
   CUSTOM: [
     { key: 'handler', label: 'Handler ID', placeholder: 'custom.transform.v1' },
@@ -66,9 +145,9 @@ const connectorConfigSchema: Record<ConnectorType, ConnectorConfigField[]> = {
 const initialConfigByType = (type: ConnectorType, existing?: Record<string, unknown>) => {
   const fields = connectorConfigSchema[type] || [];
   return fields.reduce<Record<string, string>>((acc, field) => {
-    if (field.type === 'password') {
-      // Never pre-fill password fields — the API masks them as "********".
-      // Leave blank: backend will preserve the stored value when the field is empty.
+    if (field.sensitive) {
+      // Never pre-fill credential fields — the backend stores them as secrets and never
+      // returns them. Leave blank: an empty value keeps the secret that is already stored.
       acc[field.key] = '';
     } else {
       const value = existing?.[field.key];
@@ -77,6 +156,10 @@ const initialConfigByType = (type: ConnectorType, existing?: Record<string, unkn
     return acc;
   }, {});
 };
+
+/** Config fields whose values must be stored as secrets. */
+const sensitiveKeysOf = (type: ConnectorType) =>
+  (connectorConfigSchema[type] || []).filter((field) => field.sensitive).map((field) => field.key);
 
 export default function Connectors() {
   const { t } = useTranslation();
@@ -87,10 +170,10 @@ export default function Connectors() {
    * Evaluates the named capability or state predicate.
    */
   const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
-  const canManageTenant = hasAbility('manage:tenant');
-  const canReadConnectors = canManageTenant || hasAbility('read:connector') || hasAbility('write:connector') || hasAbility('delete:connector');
-  const canWriteConnectors = canManageTenant || hasAbility('write:connector');
-  const canDeleteConnectors = canManageTenant || hasAbility('delete:connector');
+  const canManageTenant = hasAbility('tenant:manage');
+  const canReadConnectors = canManageTenant || hasAbility('connector:read') || hasAbility('connector:write') || hasAbility('connector:delete');
+  const canWriteConnectors = canManageTenant || hasAbility('connector:write');
+  const canDeleteConnectors = canManageTenant || hasAbility('connector:delete');
   const canManageBrokerUsers = canManageTenant;
   const canReadBrokerUsers = canReadConnectors;
   const [connectors, setConnectors] = useState<Connector[]>([]);
@@ -152,6 +235,10 @@ export default function Connectors() {
   const [loadingModalStatus, setLoadingModalStatus] = useState(false);
   const [disconnectImpactModal, setDisconnectImpactModal] = useState<ConnectorImpactSummary | null>(null);
   const [pendingDisconnectConnector, setPendingDisconnectConnector] = useState<Connector | null>(null);
+  const [inboxModal, setInboxModal] = useState<Connector | null>(null);
+  const [inboxItems, setInboxItems] = useState<ConnectorInboxItem[]>([]);
+  const [loadingInbox, setLoadingInbox] = useState(false);
+  const [retryingInboxItemId, setRetryingInboxItemId] = useState<string | null>(null);
   const [brokerForm, setBrokerForm] = useState({
     name: '',
     username: '',
@@ -367,7 +454,8 @@ export default function Connectors() {
       setShowBrokerModal(false);
       setEditingBrokerCredential(null);
       showToast(editingBrokerCredential ? 'Broker credential updated' : 'Broker credential created', 'success');
-    } catch (err: any) {
+    } catch (caught) {
+      const err = caught as ApiError;
       setError(err?.response?.data?.error || 'Failed to save broker credential');
     } finally {
       setSavingBrokerCredential(false);
@@ -390,7 +478,8 @@ export default function Connectors() {
       await loadBrokerCredentials(tenantId);
       await loadConnectors(tenantId);
       showToast('Broker credential deleted', 'success');
-    } catch (err: any) {
+    } catch (caught) {
+      const err = caught as ApiError;
       setError(err?.response?.data?.error || 'Failed to delete broker credential');
     } finally {
       setDeletingBrokerCredentialId(null);
@@ -407,7 +496,8 @@ export default function Connectors() {
       setRevealedBrokerPassword(rotated.password || '');
       if (tenantId) await loadBrokerCredentials(tenantId);
       showToast('Broker credential password rotated', 'success');
-    } catch (err: any) {
+    } catch (caught) {
+      const err = caught as ApiError;
       setError(err?.response?.data?.error || 'Failed to rotate broker credential password');
     } finally {
       setRotatingBrokerCredentialId(null);
@@ -434,7 +524,7 @@ export default function Connectors() {
     const config = Object.entries(formData.config).reduce<Record<string, unknown>>((acc, [key, value]) => {
       const trimmed = value.trim();
       if (!trimmed) return acc;
-      if (key === 'port') {
+      if (key === 'port' || key === 'minAgeSeconds') {
         const parsed = Number(trimmed);
         acc[key] = Number.isFinite(parsed) ? parsed : trimmed;
       } else {
@@ -448,6 +538,18 @@ export default function Connectors() {
       delete config.password;
     }
     return config;
+  };
+
+  /**
+   * Moves every credential out of the config and into a secret. The backend rejects inline
+   * credentials, so the connector keeps only `secretRefs`. An empty field keeps the secret
+   * that the edited connector already has.
+   */
+  const buildConnectorConfigWithSecrets = async (tid: string): Promise<Record<string, unknown>> => {
+    const plain = buildConnectorConfig();
+    const sensitiveKeys = sensitiveKeysOf(formData.connectorType);
+    if (sensitiveKeys.length === 0) return plain;
+    return withSecretRefs(tid, plain, sensitiveKeys, editingConnector?.config, `connector.${formData.name || formData.connectorType}`);
   };
 
   /**
@@ -466,15 +568,15 @@ export default function Connectors() {
 
       if (editingConnector) {
         const requiredMissing = connectorConfigSchema[formData.connectorType]
-          // Password fields are intentionally left blank when editing (backend preserves existing value)
-          .filter((field) => field.required && field.type !== 'password' && !formData.config[field.key]?.trim())
+          // Credential fields stay blank when editing; the stored secret is kept.
+          .filter((field) => field.required && !field.sensitive && !formData.config[field.key]?.trim())
           .map((field) => field.label);
         if (requiredMissing.length > 0) {
           setError(`Missing required config fields: ${requiredMissing.join(', ')}`);
           return;
         }
 
-        const parsedConfig = buildConnectorConfig();
+        const parsedConfig = await buildConnectorConfigWithSecrets(tenantId);
 
         const updatePayload: Partial<Connector> = {
           name: formData.name,
@@ -496,7 +598,7 @@ export default function Connectors() {
           return;
         }
 
-        const config = buildConnectorConfig();
+        const config = await buildConnectorConfigWithSecrets(tenantId);
 
         await api.createConnector(
           tenantId,
@@ -556,7 +658,8 @@ export default function Connectors() {
       setConfirmDeleteId(null);
       setError('');
       showToast('Connector deleted', 'success');
-    } catch (err: any) {
+    } catch (caught) {
+      const err = caught as ApiError;
       console.error('Error deleting connector:', err);
       setError(err?.response?.data?.error || 'Failed to delete connector');
     } finally {
@@ -575,7 +678,8 @@ export default function Connectors() {
         : await api.connectConnector(connector.id);
       setConnectors((prev) => prev.map((c) => (c.id === connector.id ? { ...c, ...updated } : c)));
       showToast(connector.isActive ? 'Connector disconnected' : 'Connector connected', 'success');
-    } catch (err: any) {
+    } catch (caught) {
+      const err = caught as ApiError;
       if (connector.isActive && err?.response?.status === 409 && options?.forceDisconnect !== true) {
         try {
           const impact = await api.getConnectorImpact(connector.id, impactWindowHours, { activeOnly: true, riskAtLeast: impactRiskAtLeast });
@@ -634,8 +738,9 @@ export default function Connectors() {
       } else {
         showToast(result.message || 'Connector test succeeded', 'success');
       }
-    } catch (err: any) {
-      const missing = err?.response?.data?.missing;
+    } catch (caught) {
+      const err = caught as ApiError;
+      const missing = err?.response?.data?.details?.missing;
       if (Array.isArray(missing) && missing.length > 0) {
         showToast(`Missing config: ${missing.join(', ')}`, 'error');
       } else {
@@ -685,7 +790,8 @@ export default function Connectors() {
       showToast(cloned.message || 'Connector cloned as disconnected copy', 'success');
       setShowCloneModal(false);
       setCloneSource(null);
-    } catch (err: any) {
+    } catch (caught) {
+      const err = caught as ApiError;
       setError(err?.response?.data?.error || 'Failed to clone connector');
     } finally {
       setCloningId(null);
@@ -700,7 +806,8 @@ export default function Connectors() {
     try {
       const usage = await api.getConnectorReferences(connector.id);
       setUsageModal(usage);
-    } catch (err: any) {
+    } catch (caught) {
+      const err = caught as ApiError;
       setError(err?.response?.data?.error || 'Failed to load connector usage');
     } finally {
       setLoadingUsageId(null);
@@ -724,10 +831,51 @@ export default function Connectors() {
       setImpactActiveOnly(activeOnly);
       setImpactRiskAtLeast(riskAtLeast);
       setImpactModal(impact);
-    } catch (err: any) {
+    } catch (caught) {
+      const err = caught as ApiError;
       setError(err?.response?.data?.error || 'Failed to load connector impact');
     } finally {
       setLoadingImpactId(null);
+    }
+  };
+
+  /**
+   * Opens the ledger of items an inbox connector has read, newest first.
+   */
+  const handleViewInbox = async (connector: Connector) => {
+    setInboxModal(connector);
+    setInboxItems([]);
+    setLoadingInbox(true);
+    try {
+      setInboxItems(await api.getConnectorInboxItems(connector.id));
+    } catch (caught) {
+      const err = caught as ApiError;
+      setInboxModal(null);
+      setError(err?.response?.data?.error || 'Failed to load inbox items');
+    } finally {
+      setLoadingInbox(false);
+    }
+  };
+
+  /**
+   * Forgets a failed item so the next poll reads it again, e.g. after the format was fixed.
+   */
+  const handleRetryInboxItem = async (item: ConnectorInboxItem) => {
+    if (!inboxModal) return;
+    if (!canWriteConnectors) {
+      showToast('You do not have permission to manage connectors', 'error');
+      return;
+    }
+    setRetryingInboxItemId(item.id);
+    try {
+      await api.retryConnectorInboxItem(inboxModal.id, item.id);
+      setInboxItems((prev) => prev.filter((row) => row.id !== item.id));
+      showToast(`${item.name} will be read again on the next poll`, 'success');
+    } catch (caught) {
+      const err = caught as ApiError;
+      showToast(err?.response?.data?.error || 'Failed to retry inbox item', 'error');
+    } finally {
+      setRetryingInboxItemId(null);
     }
   };
 
@@ -779,6 +927,9 @@ export default function Connectors() {
       case 'WEBSOCKET': return 'bg-purple-100 text-purple-800';
       case 'UDP': return 'bg-orange-100 text-orange-800';
       case 'FILE': return 'bg-gray-100 text-gray-800';
+      case 'FTP': return 'bg-cyan-100 text-cyan-800';
+      case 'SFTP': return 'bg-teal-100 text-teal-800';
+      case 'EMAIL': return 'bg-amber-100 text-amber-800';
       default: return 'bg-yellow-100 text-yellow-800';
     }
   };
@@ -799,8 +950,8 @@ export default function Connectors() {
     return (
       <div className="px-4 py-6 sm:px-0">
         <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-gray-200 rounded w-1/4"></div>
-          <div className="h-32 bg-gray-200 rounded"></div>
+          <div className="h-8 bg-gray-200 rounded-sm w-1/4"></div>
+          <div className="h-32 bg-gray-200 rounded-sm"></div>
         </div>
       </div>
     );
@@ -827,7 +978,7 @@ export default function Connectors() {
       )}
 
       {revealedBrokerPassword && (
-        <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">
+        <div className="mb-4 rounded-sm border border-amber-300 bg-amber-50 px-4 py-3 text-amber-900">
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="font-semibold text-sm">MQTT broker password (shown once)</div>
@@ -847,7 +998,7 @@ export default function Connectors() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">{t('connectors.title')}</h1>
           <p className="mt-1 text-sm text-gray-600">
-            Manage protocol interface definitions (MQTT, REST, WebSocket, UDP, etc.)
+            Manage protocol interface definitions (MQTT, REST, WebSocket, UDP, FTP, SFTP, e-mail, directories)
           </p>
         </div>
         {canWriteConnectors && (
@@ -901,7 +1052,7 @@ export default function Connectors() {
       </div>
 
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-sm">
           {error}
         </div>
       )}
@@ -937,13 +1088,13 @@ export default function Connectors() {
                   <h3 className="text-lg font-semibold text-gray-900 truncate">{connector.name}</h3>
                 </div>
                 <div className="flex space-x-1 shrink-0">
-                  <span className={`px-2 py-1 text-xs font-medium rounded ${getTypeColor(connector.connectorType)}`}>
+                  <span className={`px-2 py-1 text-xs font-medium rounded-sm ${getTypeColor(connector.connectorType)}`}>
                     {connector.connectorType}
                   </span>
-                  <span className={`px-2 py-1 text-xs font-medium rounded ${getDirectionColor(connector.direction)}`}>
+                  <span className={`px-2 py-1 text-xs font-medium rounded-sm ${getDirectionColor(connector.direction)}`}>
                     {connector.direction}
                   </span>
-                  <span className={`px-2 py-1 text-xs font-medium rounded ${connector.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-700'}`}>
+                  <span className={`px-2 py-1 text-xs font-medium rounded-sm ${connector.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-700'}`}>
                     {connector.isActive ? 'Connected' : 'Disconnected'}
                   </span>
                 </div>
@@ -958,6 +1109,15 @@ export default function Connectors() {
                   Broker User ID: <code>{connector.config.brokerCredentialId}</code>
                 </p>
               )}
+
+              {(isInbox(connector.connectorType) || Boolean((connector.config?.secretRefs as Record<string, unknown> | undefined))) && (
+                <p className="text-xs text-slate-600 mb-2">
+                  {isInbox(connector.connectorType) && <>Reads waiting items, then acknowledges them at the source.</>}
+                  {Boolean((connector.config?.secretRefs as Record<string, unknown> | undefined)) && (
+                    <>{(isInbox(connector.connectorType) ? ' ' : '')}Credentials are stored as secrets.</>
+                  )}
+                </p>
+              )}
               
               <div className="text-xs text-gray-500 mb-3">
                 Created: {new Date(connector.createdAt).toLocaleDateString()}
@@ -966,7 +1126,7 @@ export default function Connectors() {
                 </div>
               </div>
               
-              <div className="flex justify-end space-x-2">
+              <div className="flex flex-wrap justify-end gap-x-3 gap-y-1">
                 <button
                   onClick={() => handleTestConnection(connector)}
                   disabled={testingId === connector.id}
@@ -988,6 +1148,14 @@ export default function Connectors() {
                 >
                   {loadingImpactId === connector.id ? 'Loading...' : 'Impact'}
                 </button>
+                {isInbox(connector.connectorType) && connector.direction === 'INPUT' && (
+                  <button
+                    onClick={() => handleViewInbox(connector)}
+                    className="text-sky-700 hover:text-sky-900 text-sm"
+                  >
+                    Items
+                  </button>
+                )}
                 {canWriteConnectors && (
                   <button
                     onClick={() => handleToggleConnection(connector)}
@@ -1065,8 +1233,8 @@ export default function Connectors() {
       )}
 
       {usageModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-start justify-between mb-4 gap-3">
               <div>
                 <h2 className="text-xl font-bold">Connector Usage</h2>
@@ -1098,7 +1266,7 @@ export default function Connectors() {
                           <div className="text-xs text-gray-500">{reference.pipelineId}</div>
                         </td>
                         <td className="py-2 pr-3">
-                          <span className={`px-2 py-0.5 rounded text-xs ${reference.pipelineIsActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>
+                          <span className={`px-2 py-0.5 rounded-sm text-xs ${reference.pipelineIsActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>
                             {reference.pipelineIsActive ? 'Active' : 'Inactive'}
                           </span>
                         </td>
@@ -1126,8 +1294,8 @@ export default function Connectors() {
       )}
 
       {impactModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-3xl w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-start justify-between mb-4 gap-3">
               <div>
                 <h2 className="text-xl font-bold">Connector Impact</h2>
@@ -1142,7 +1310,7 @@ export default function Connectors() {
               {([1, 24, 168] as const).map((hours) => (
                 <button
                   key={hours}
-                  className={`px-2 py-0.5 rounded text-xs border ${impactWindowHours === hours ? 'border-indigo-500 text-indigo-700 bg-white' : 'border-slate-300 text-slate-700 bg-slate-50'}`}
+                  className={`px-2 py-0.5 rounded-sm text-xs border ${impactWindowHours === hours ? 'border-indigo-500 text-indigo-700 bg-white' : 'border-slate-300 text-slate-700 bg-slate-50'}`}
                   onClick={async () => {
                     if (!impactModal) return;
                     const connector = connectors.find((item) => item.id === impactModal.connectorId);
@@ -1157,7 +1325,7 @@ export default function Connectors() {
             <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
               <span className="text-gray-600">Filters:</span>
               <button
-                className={`px-2 py-0.5 rounded border ${impactActiveOnly ? 'border-indigo-500 text-indigo-700 bg-white' : 'border-slate-300 text-slate-700 bg-slate-50'}`}
+                className={`px-2 py-0.5 rounded-sm border ${impactActiveOnly ? 'border-indigo-500 text-indigo-700 bg-white' : 'border-slate-300 text-slate-700 bg-slate-50'}`}
                 onClick={async () => {
                   if (!impactModal) return;
                   const connector = connectors.find((item) => item.id === impactModal.connectorId);
@@ -1170,7 +1338,7 @@ export default function Connectors() {
               {(['LOW', 'MEDIUM', 'HIGH'] as const).map((level) => (
                 <button
                   key={level}
-                  className={`px-2 py-0.5 rounded border ${impactRiskAtLeast === level ? 'border-indigo-500 text-indigo-700 bg-white' : 'border-slate-300 text-slate-700 bg-slate-50'}`}
+                  className={`px-2 py-0.5 rounded-sm border ${impactRiskAtLeast === level ? 'border-indigo-500 text-indigo-700 bg-white' : 'border-slate-300 text-slate-700 bg-slate-50'}`}
                   onClick={async () => {
                     if (!impactModal) return;
                     const connector = connectors.find((item) => item.id === impactModal.connectorId);
@@ -1234,7 +1402,7 @@ export default function Connectors() {
                           </div>
                         </td>
                         <td className="py-2 pr-3">
-                          <span className={`px-2 py-0.5 rounded text-xs ${pipeline.pipelineIsActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>
+                          <span className={`px-2 py-0.5 rounded-sm text-xs ${pipeline.pipelineIsActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>
                             {pipeline.pipelineIsActive ? 'Active' : 'Inactive'}
                           </span>
                         </td>
@@ -1298,25 +1466,25 @@ export default function Connectors() {
       )}
 
       {disconnectImpactModal && pendingDisconnectConnector && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-2">Confirm Disconnect</h2>
             <p className="text-sm text-gray-700 mb-3">
               Disconnecting <strong>{pendingDisconnectConnector.name}</strong> affects
               {' '}<strong>{disconnectImpactModal.activeImpactedPipelineCount || 0}</strong> active pipeline(s).
             </p>
             <div className="grid grid-cols-3 gap-2 mb-4 text-xs">
-              <div className="rounded border border-red-200 bg-red-50 p-2 text-red-800">
+              <div className="rounded-sm border border-red-200 bg-red-50 p-2 text-red-800">
                 High risk: <strong>{disconnectImpactModal.highRiskCount || 0}</strong>
               </div>
-              <div className="rounded border border-amber-200 bg-amber-50 p-2 text-amber-800">
+              <div className="rounded-sm border border-amber-200 bg-amber-50 p-2 text-amber-800">
                 Medium risk: <strong>{disconnectImpactModal.mediumRiskCount || 0}</strong>
               </div>
-              <div className="rounded border border-emerald-200 bg-emerald-50 p-2 text-emerald-800">
+              <div className="rounded-sm border border-emerald-200 bg-emerald-50 p-2 text-emerald-800">
                 Low risk: <strong>{disconnectImpactModal.lowRiskCount || 0}</strong>
               </div>
             </div>
-            <div className="max-h-48 overflow-y-auto border border-gray-200 rounded p-2 text-xs text-gray-700 mb-4">
+            <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-sm p-2 text-xs text-gray-700 mb-4">
               {disconnectImpactModal.impactedPipelines.slice(0, 8).map((pipeline) => (
                 <div key={pipeline.pipelineId} className="py-1 border-b border-gray-100 last:border-0">
                   <strong>{pipeline.pipelineName}</strong> - {pipeline.riskLevel || 'LOW'} risk, latest {pipeline.latestRunStatus || 'N/A'}
@@ -1345,6 +1513,85 @@ export default function Connectors() {
                 Disconnect Anyway
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {inboxModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start justify-between mb-4 gap-3">
+              <div>
+                <h2 className="text-xl font-bold">Read Items — {inboxModal.name}</h2>
+                <p className="text-sm text-gray-600">
+                  Every item this connector has read, newest first. An item is acknowledged at the source
+                  only after its data is in the queue, so nothing is lost. FAILED items stay at the source
+                  and can be read again after the settings were fixed.
+                </p>
+              </div>
+              <button className="btn-secondary" onClick={() => setInboxModal(null)}>Close</button>
+            </div>
+            {loadingInbox ? (
+              <p className="text-sm text-gray-500">Loading items…</p>
+            ) : inboxItems.length === 0 ? (
+              <p className="text-sm text-gray-500">
+                Nothing read yet. Items appear here after the first poll finds something at the source.
+              </p>
+            ) : (
+              <div className="overflow-x-auto max-h-96">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left border-b border-gray-200">
+                      <th className="py-2 pr-3">Item</th>
+                      <th className="py-2 pr-3">Size</th>
+                      <th className="py-2 pr-3">State</th>
+                      <th className="py-2 pr-3">Chunks</th>
+                      <th className="py-2 pr-3">Records</th>
+                      <th className="py-2 pr-3">Seen</th>
+                      <th className="py-2 pr-3">Acknowledged</th>
+                      <th className="py-2 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inboxItems.map((item) => (
+                      <tr key={item.id} className="border-b border-gray-100 last:border-0 align-top">
+                        <td className="py-2 pr-3">
+                          <div className="font-medium text-gray-900 break-all">{item.name}</div>
+                          {item.error && <div className="text-xs text-red-700 break-all">{item.error}</div>}
+                        </td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{item.size != null ? `${item.size} B` : '—'}</td>
+                        <td className="py-2 pr-3">
+                          <span className={`px-2 py-0.5 rounded-sm text-xs ${
+                            item.status === 'DONE' ? 'bg-emerald-100 text-emerald-800'
+                              : item.status === 'FAILED' ? 'bg-red-100 text-red-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            {item.status}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3">{item.chunks}</td>
+                        <td className="py-2 pr-3">{item.records ?? '—'}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap">{new Date(item.firstSeenAt).toLocaleString()}</td>
+                        <td className="py-2 pr-3 whitespace-nowrap">
+                          {item.acknowledgedAt ? new Date(item.acknowledgedAt).toLocaleString() : '—'}
+                        </td>
+                        <td className="py-2 text-right">
+                          {item.status === 'FAILED' && (
+                            <button
+                              className="text-indigo-700 hover:text-indigo-900 text-xs disabled:opacity-40"
+                              disabled={!canWriteConnectors || retryingInboxItemId === item.id}
+                              onClick={() => void handleRetryInboxItem(item)}
+                            >
+                              {retryingInboxItemId === item.id ? 'Retrying…' : 'Retry on next poll'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1383,14 +1630,14 @@ export default function Connectors() {
                       <td className="px-3 py-2">
                         <div className="flex flex-wrap gap-1">
                           {credential.allowedTopics.map((topic) => (
-                            <span key={`${credential.id}-${topic}`} className="rounded bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-xs">
+                            <span key={`${credential.id}-${topic}`} className="rounded-sm bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-xs">
                               {topic}
                             </span>
                           ))}
                         </div>
                       </td>
                       <td className="px-3 py-2">
-                        <span className={`text-xs px-2 py-0.5 rounded ${credential.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}`}>
+                        <span className={`text-xs px-2 py-0.5 rounded-sm ${credential.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}`}>
                           {credential.isActive ? 'Active' : 'Inactive'}
                         </span>
                         <div className="text-xs text-slate-500 mt-1">
@@ -1427,8 +1674,8 @@ export default function Connectors() {
       )}
 
       {showModal && canWriteConnectors && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">
               {editingConnector ? 'Edit Connector' : 'Create Connector'}
             </h2>
@@ -1436,10 +1683,11 @@ export default function Connectors() {
             <form onSubmit={handleSubmit}>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="connector-name" className="block text-sm font-medium text-gray-700 mb-1">
                     Name
                   </label>
                   <input
+                    id="connector-name"
                     type="text"
                     required
                     value={formData.name}
@@ -1450,35 +1698,42 @@ export default function Connectors() {
                 </div>
                 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="connector-type" className="block text-sm font-medium text-gray-700 mb-1">
                     Type
                   </label>
                   <select
+                    id="connector-type"
                     value={formData.connectorType}
                     onChange={(e) => {
                       const nextType = e.target.value as ConnectorType;
                       setFormData({
                         ...formData,
                         connectorType: nextType,
+                        // Inbox types only read; they have no output side.
+                        direction: isInbox(nextType) ? 'INPUT' : formData.direction,
+                        pollingEnabled: isInbox(nextType) ? true : formData.pollingEnabled,
                         config: initialConfigByType(nextType, formData.config),
                       });
                     }}
                     className="input"
                   >
                     {connectorTypes.map((type) => (
-                      <option key={type} value={type}>{type}</option>
+                      <option key={type} value={type}>{type}{isInbox(type) ? ' (inbox)' : ''}</option>
                     ))}
                   </select>
                 </div>
                 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label htmlFor="connector-direction" className="block text-sm font-medium text-gray-700 mb-1">
                     Direction
                   </label>
                   <select
+                    id="connector-direction"
                     value={formData.direction}
                     onChange={(e) => setFormData({ ...formData, direction: e.target.value as Connector['direction'] })}
                     className="input"
+                    disabled={isInbox(formData.connectorType)}
+                    title={isInbox(formData.connectorType) ? 'Inbox connectors only receive data' : undefined}
                   >
                     {directions.map((dir) => (
                       <option key={dir} value={dir}>{dir}</option>
@@ -1486,12 +1741,12 @@ export default function Connectors() {
                   </select>
                 </div>
                 
-                <div className="rounded border border-slate-200 dark:border-slate-700 p-3">
+                <div className="rounded-sm border border-slate-200 dark:border-slate-700 p-3">
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">
                     {formData.connectorType} Configuration
                   </label>
                   {formData.connectorType === 'MQTT' && (
-                    <div className="mb-3 rounded border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/30 p-2">
+                    <div className="mb-3 rounded-sm border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/30 p-2">
                       <p className="text-xs text-blue-900 dark:text-blue-200 mb-2">
                         Quick setup: use the integrated broker or localhost, then adjust as needed.
                       </p>
@@ -1541,14 +1796,14 @@ export default function Connectors() {
                         <button
                           type="button"
                           onClick={() => applyMqttPreset('internal')}
-                          className="px-2 py-1 text-xs rounded border border-blue-300 text-blue-800 bg-white hover:bg-blue-100"
+                          className="px-2 py-1 text-xs rounded-sm border border-blue-300 text-blue-800 bg-white hover:bg-blue-100"
                         >
                           Use {mqttDefaults?.integratedBrokerLabel || 'Integrated Broker'}
                         </button>
                         <button
                           type="button"
                           onClick={() => applyMqttPreset('external')}
-                          className="px-2 py-1 text-xs rounded border border-blue-300 text-blue-800 bg-white hover:bg-blue-100"
+                          className="px-2 py-1 text-xs rounded-sm border border-blue-300 text-blue-800 bg-white hover:bg-blue-100"
                         >
                           Use Localhost
                         </button>
@@ -1560,39 +1815,83 @@ export default function Connectors() {
                     </div>
                   )}
                   <div className="grid grid-cols-1 gap-3">
-                    {(connectorConfigSchema[formData.connectorType] || []).map((field) => (
-                      <div key={field.key}>
-                        <label className="block text-sm text-slate-600 dark:text-slate-300 mb-1">
-                          {field.label}{field.required ? ' *' : ''}
-                        </label>
-                        <input
-                          type={field.type || 'text'}
-                          value={formData.config[field.key] || ''}
-                          onChange={(e) => setFormData({
-                            ...formData,
-                            config: { ...formData.config, [field.key]: e.target.value },
-                          })}
-                          className="input"
-                          placeholder={
-                            field.type === 'password' && editingConnector
-                              ? 'leave blank to keep existing'
-                              : field.placeholder
-                          }
-                          required={field.required && !editingConnector}
-                          disabled={
-                            formData.connectorType === 'MQTT'
-                            && Boolean((formData.config.brokerCredentialId || '').trim())
-                            && (field.key === 'username' || field.key === 'password')
-                          }
-                        />
-                        {field.hint && <p className="text-xs text-slate-500 mt-1">{field.hint}</p>}
-                      </div>
-                    ))}
+                    {(connectorConfigSchema[formData.connectorType] || []).map((field) => {
+                      const locked =
+                        formData.connectorType === 'MQTT'
+                        && Boolean((formData.config.brokerCredentialId || '').trim())
+                        && (field.key === 'username' || field.key === 'password');
+                      const stored = Boolean(field.sensitive) && hasSecret(editingConnector?.config, field.key);
+                      const placeholder = stored
+                        ? 'stored as a secret — leave empty to keep'
+                        : field.placeholder;
+                      return (
+                        <div key={field.key}>
+                          <div className="flex items-baseline gap-1 mb-1">
+                            <label htmlFor={`connector-${field.key}`} className="block text-sm text-slate-600 dark:text-slate-300">
+                              {field.label}
+                            </label>
+                            {field.required && <span className="text-sm text-red-600" title="required">*</span>}
+                            {stored && <span className="text-xs text-emerald-700">secret stored</span>}
+                          </div>
+                          {field.type === 'select' ? (
+                            <select
+                              id={`connector-${field.key}`}
+                              value={formData.config[field.key] || ''}
+                              onChange={(e) => setFormData({
+                                ...formData,
+                                config: { ...formData.config, [field.key]: e.target.value },
+                              })}
+                              className="input"
+                            >
+                              <option value="">platform default</option>
+                              {(field.options || []).map((option) => (
+                                <option key={option} value={option}>{option}</option>
+                              ))}
+                            </select>
+                          ) : field.type === 'textarea' ? (
+                            <textarea
+                              id={`connector-${field.key}`}
+                              rows={4}
+                              value={formData.config[field.key] || ''}
+                              onChange={(e) => setFormData({
+                                ...formData,
+                                config: { ...formData.config, [field.key]: e.target.value },
+                              })}
+                              className="input font-mono text-xs"
+                              placeholder={placeholder}
+                              disabled={locked}
+                            />
+                          ) : (
+                            <input
+                              id={`connector-${field.key}`}
+                              type={field.type || 'text'}
+                              value={formData.config[field.key] || ''}
+                              onChange={(e) => setFormData({
+                                ...formData,
+                                config: { ...formData.config, [field.key]: e.target.value },
+                              })}
+                              className="input"
+                              placeholder={placeholder}
+                              required={field.required && !editingConnector}
+                              disabled={locked}
+                            />
+                          )}
+                          {field.hint && <p className="text-xs text-slate-500 mt-1">{field.hint}</p>}
+                        </div>
+                      );
+                    })}
                   </div>
                   <p className="mt-2 text-xs text-slate-500">
                     Direction: <strong>{formData.direction}</strong> — INPUT connectors receive data; OUTPUT connectors deliver data.
                   </p>
-                  {formData.direction === 'INPUT' && (formData.connectorType === 'REST' || formData.connectorType === 'FILE') && (
+                  {isInbox(formData.connectorType) && formData.direction === 'INPUT' && (
+                    <p className="mt-2 text-xs text-blue-800 dark:text-blue-300">
+                      Fire-and-forget: every waiting item is queued first and acknowledged at the source afterwards,
+                      so a sender that only drops a file or sends a mail loses nothing. Failed items are listed in
+                      the item ledger of this connector.
+                    </p>
+                  )}
+                  {formData.direction === 'INPUT' && supportsPolling(formData.connectorType) && (
                     <div className="mt-3 space-y-2">
                       <div className="flex items-center gap-3">
                         <label className="flex items-center gap-2 text-sm cursor-pointer">
@@ -1600,11 +1899,15 @@ export default function Connectors() {
                             type="checkbox"
                             checked={formData.pollingEnabled}
                             onChange={(e) => setFormData((prev) => ({ ...prev, pollingEnabled: e.target.checked }))}
-                            className="rounded"
+                            className="rounded-sm"
                           />
                           <span className="font-medium text-gray-700">Enable polling</span>
                         </label>
-                        <span className="text-xs text-slate-400">(platform periodically fetches from this connector)</span>
+                        <span className="text-xs text-slate-400">
+                          {isInbox(formData.connectorType)
+                            ? '(platform reads the waiting items on this interval)'
+                            : '(platform periodically fetches from this connector)'}
+                        </span>
                       </div>
                       {formData.pollingEnabled && (
                         <div>
@@ -1639,7 +1942,7 @@ export default function Connectors() {
               
               {/* Runtime status — shown only when editing an existing connector */}
               {editingConnector && (
-                <div className="mt-4 rounded border border-slate-200 p-3">
+                <div className="mt-4 rounded-sm border border-slate-200 p-3">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-medium text-slate-700">Runtime status</span>
                     <button
@@ -1704,8 +2007,8 @@ export default function Connectors() {
       )}
 
       {showCloneModal && cloneSource && canWriteConnectors && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">Clone Connector</h2>
             <div className="space-y-4">
               <div className="text-sm text-gray-600">
@@ -1775,8 +2078,8 @@ export default function Connectors() {
       )}
 
       {showBrokerModal && canManageBrokerUsers && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-slate-900 rounded-lg p-6 max-w-lg w-full mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-slate-900 rounded-lg p-6 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4 text-slate-900 dark:text-slate-100">
               {editingBrokerCredential ? 'Edit MQTT Broker User' : 'Create MQTT Broker User'}
             </h2>

@@ -29,3 +29,11 @@
 - relevant metric query screenshot
 - log snippets with context
 - mitigation already attempted
+
+## Operational tips
+
+- Keep release notes with *what changed*, *why*, *risk* and *rollback*.
+- Always record the time zone with timestamps in incidents.
+- Query a narrow time window first, then widen it.
+- Change one major variable per release window.
+- Regularly remove stale modules and unused connectors.

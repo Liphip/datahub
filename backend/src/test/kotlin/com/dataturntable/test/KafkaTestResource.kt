@@ -1,14 +1,14 @@
 package com.dataturntable.test
 
 import io.quarkus.test.common.QuarkusTestResourceLifecycleManager
-import org.testcontainers.containers.KafkaContainer
+import org.testcontainers.kafka.KafkaContainer
 import org.testcontainers.utility.DockerImageName
 
 class KafkaTestResource : QuarkusTestResourceLifecycleManager {
     private lateinit var kafka: KafkaContainer
 
     override fun start(): MutableMap<String, String> {
-        kafka = KafkaContainer(DockerImageName.parse("confluentinc/cp-kafka:7.4.0"))
+        kafka = KafkaContainer(DockerImageName.parse("apache/kafka:4.3.1"))
         kafka.start()
         val bootstrap = kafka.bootstrapServers
         // Make it available as a system property for tests that read it directly

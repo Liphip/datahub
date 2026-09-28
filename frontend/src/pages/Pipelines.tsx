@@ -1,8 +1,9 @@
-import { type ChangeEvent, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { type ChangeEvent, useEffect, useEffectEvent, useRef, useState } from 'react';
+import { useNow } from '../hooks/useNow';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
-import api from '../services/api';
+import api, { type ApiError } from '../services/api';
 import type { Pipeline, PipelineRun, PipelineRunLineage, PipelineRunSummary, TenantLineageDefaults, TenantLineageDefaultsConfig, TenantLineageDefaultsDiagnostics, TenantPipelineRun } from '../types';
 
 /**
@@ -119,6 +120,7 @@ const LINEAGE_STATUS_OPTIONS: LineageStatusFilter[] = ['ALL', 'INFLIGHT', 'TERMI
 const TENANT_LINEAGE_FIELDS: TenantLineageDefaultsField[] = ['safeScopePolicy', 'defaultFetchMode', 'defaultDepth', 'maxDepthCap'];
 
 export default function Pipelines() {
+  const now = useNow();
   const { t } = useTranslation();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
   const navigate = useNavigate();
@@ -307,10 +309,10 @@ export default function Pipelines() {
    * Evaluates the named capability or state predicate.
    */
   const hasAbility = (ability: string) => Boolean(user?.superadmin || abilities.includes('*') || abilities.includes(ability));
-  const canReadPipelines = hasAbility('pipeline:read') || hasAbility('pipeline:write') || hasAbility('pipeline:execute') || hasAbility('manage:tenant');
-  const canWritePipelines = hasAbility('pipeline:write') || hasAbility('manage:tenant');
+  const canReadPipelines = hasAbility('pipeline:read') || hasAbility('pipeline:write') || hasAbility('pipeline:execute') || hasAbility('tenant:manage');
+  const canWritePipelines = hasAbility('pipeline:write') || hasAbility('tenant:manage');
   const canExecutePipelines = hasAbility('pipeline:execute') || canWritePipelines;
-  const canManageTenantSettings = hasAbility('manage:tenant');
+  const canManageTenantSettings = hasAbility('tenant:manage');
 
   /**
    * Implements `showToast` for this source unit.
@@ -501,7 +503,7 @@ export default function Pipelines() {
    */
   const addHoursIso = (baseIso: string, hours: number) => {
     const baseMs = Date.parse(baseIso);
-    const safeBase = Number.isFinite(baseMs) ? baseMs : Date.now();
+    const safeBase = Number.isFinite(baseMs) ? baseMs : now;
     return new Date(safeBase + hours * 60 * 60 * 1000).toISOString();
   };
 
@@ -511,7 +513,7 @@ export default function Pipelines() {
   const isSafeDefaultExpired = (safe?: LineageSafeDefault) => {
     if (!safe?.expiresAt) return false;
     const expiresAtMs = Date.parse(safe.expiresAt);
-    return Number.isFinite(expiresAtMs) ? expiresAtMs <= Date.now() : false;
+    return Number.isFinite(expiresAtMs) ? expiresAtMs <= now : false;
   };
 
   /**
@@ -862,52 +864,6 @@ export default function Pipelines() {
    * Implements `useEffect` for this source unit.
    */
   useEffect(() => {
-    if (!bucketStart || !bucketEnd) return;
-
-    /**
-     * Implements `onKeyDown` for this source unit.
-     */
-    const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const tagName = target?.tagName?.toLowerCase();
-      const isTypingTarget = tagName === 'input' || tagName === 'textarea' || (target?.isContentEditable ?? false);
-
-      if (event.key === '/' && !isTypingTarget) {
-        event.preventDefault();
-        bucketQueryInputRef.current?.focus();
-        return;
-      }
-
-      if (isTypingTarget) return;
-
-      if (event.key.toLowerCase() === 'f') {
-        event.preventDefault();
-        applyBucketStatusFilter('FAILED');
-      } else if (event.key.toLowerCase() === 'r') {
-        event.preventDefault();
-        applyBucketStatusFilter('RUNNING');
-      } else if (event.key.toLowerCase() === 'a') {
-        event.preventDefault();
-        applyBucketStatusFilter('ALL');
-      } else if (event.key.toLowerCase() === 'n') {
-        event.preventDefault();
-        triagePresetNameInputRef.current?.focus();
-      } else if (event.key.toLowerCase() === 'p') {
-        event.preventDefault();
-        if (visibleTriagePresets.length > 0) {
-          applyTriagePreset(visibleTriagePresets[0]);
-        }
-      }
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [bucketStartParam, bucketSeconds, searchParams.toString(), triagePresets, triagePresetTagFilter, triagePresetSortMode]);
-
-  /**
-   * Implements `useEffect` for this source unit.
-   */
-  useEffect(() => {
     if (!tenantId || pipelines.length === 0) return;
 
     const hasActiveRuns = Object.values(runsMap).some((runs) =>
@@ -1028,7 +984,8 @@ export default function Pipelines() {
       await loadDetailedPipelineRuns(pipelineId, detailFiltersByPipeline[pipelineId]);
       await loadPipelineSummary(pipelineId);
       showToast('Run cancelled', 'success');
-    } catch (error: any) {
+    } catch (caught) {
+      const error = caught as ApiError;
       showToast(error?.response?.data?.error || 'Failed to cancel run', 'error');
     } finally {
       setCancellingRunId(null);
@@ -1051,7 +1008,8 @@ export default function Pipelines() {
       await loadDetailedPipelineRuns(pipelineId, detailFiltersByPipeline[pipelineId]);
       await loadPipelineSummary(pipelineId);
       showToast('Run retried', 'success');
-    } catch (error: any) {
+    } catch (caught) {
+      const error = caught as ApiError;
       showToast(error?.response?.data?.error || 'Failed to retry run', 'error');
     } finally {
       setRetryingRunId(null);
@@ -1259,9 +1217,7 @@ export default function Pipelines() {
   /**
    * Implements `graphNodeCount` for this source unit.
    */
-  const graphNodeCount = (p: Pipeline) =>
-    (p.graphDefinition?.nodes?.length ?? 0) ||
-    (1 + (p.processingModuleVersionIds?.length ?? 0) + (p.exportModuleVersionIds?.length ?? 0));
+  const graphNodeCount = (p: Pipeline) => p.graphDefinition?.nodes?.length ?? 0;
 
   const getRunMetricNumber = (run: PipelineRun, key: string): number | null => {
     const metrics = run.metrics as Record<string, unknown> | undefined;
@@ -1526,7 +1482,8 @@ export default function Pipelines() {
       await refreshTenantDefaultsDiagnostics(tenantId);
       showToast('Tenant lineage defaults updated', 'success');
       await handleLoadRunLineage(pipelineId, runId, depth, undefined, undefined, mode, policy);
-    } catch (err: any) {
+    } catch (caught) {
+      const err = caught as ApiError;
       if (err?.response?.status === 409) {
         showToast('Tenant defaults changed elsewhere. Resolve conflict to continue.', 'error');
         trackTenantDefaultsConflict(tenantId);
@@ -2126,12 +2083,53 @@ export default function Pipelines() {
     return 0;
   });
 
+  /** Keyboard shortcuts for the run-bucket view (`/`, f, r, a, n, p). */
+  const onShortcutKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    const target = event.target as HTMLElement | null;
+    const tagName = target?.tagName?.toLowerCase();
+    const isTypingTarget = tagName === 'input' || tagName === 'textarea' || (target?.isContentEditable ?? false);
+
+    if (event.key === '/' && !isTypingTarget) {
+      event.preventDefault();
+      bucketQueryInputRef.current?.focus();
+      return;
+    }
+
+    if (isTypingTarget) return;
+
+    if (event.key.toLowerCase() === 'f') {
+      event.preventDefault();
+      applyBucketStatusFilter('FAILED');
+    } else if (event.key.toLowerCase() === 'r') {
+      event.preventDefault();
+      applyBucketStatusFilter('RUNNING');
+    } else if (event.key.toLowerCase() === 'a') {
+      event.preventDefault();
+      applyBucketStatusFilter('ALL');
+    } else if (event.key.toLowerCase() === 'n') {
+      event.preventDefault();
+      triagePresetNameInputRef.current?.focus();
+    } else if (event.key.toLowerCase() === 'p') {
+      event.preventDefault();
+      if (visibleTriagePresets.length > 0) {
+        applyTriagePreset(visibleTriagePresets[0]);
+      }
+    }
+  });
+
+  const hasBucket = Boolean(bucketStart && bucketEnd);
+  useEffect(() => {
+    if (!hasBucket) return;
+    window.addEventListener('keydown', onShortcutKeyDown);
+    return () => window.removeEventListener('keydown', onShortcutKeyDown);
+  }, [hasBucket]);
+
   /**
    * Implements `formatPresetLastUsed` for this source unit.
    */
   const formatPresetLastUsed = (value?: string) => {
     if (!value) return 'never';
-    const ms = Date.now() - new Date(value).getTime();
+    const ms = now - new Date(value).getTime();
     const seconds = Math.max(0, Math.floor(ms / 1000));
     if (seconds < 60) return `${seconds}s ago`;
     const minutes = Math.floor(seconds / 60);
@@ -2302,7 +2300,7 @@ export default function Pipelines() {
       )}
 
       {bucketStart && bucketEnd && (
-        <div className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        <div className="mb-3 rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
           Bucket filter active: <span className="font-medium">{bucketStart.toLocaleString()}</span> to <span className="font-medium">{bucketEnd.toLocaleString()}</span>.
           <button onClick={clearBucketFilter} className="ml-2 text-primary-700 hover:text-primary-900">Clear bucket</button>
         </div>
@@ -2333,19 +2331,19 @@ export default function Pipelines() {
             />
             <button
               onClick={saveCurrentTriagePreset}
-              className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
+              className="px-2 py-1 rounded-sm border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
             >
               Save preset
             </button>
             <button
               onClick={exportTriagePresets}
-              className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
+              className="px-2 py-1 rounded-sm border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
             >
               Export
             </button>
             <button
               onClick={triggerImportTriagePresets}
-              className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
+              className="px-2 py-1 rounded-sm border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
             >
               Import
             </button>
@@ -2375,7 +2373,7 @@ export default function Pipelines() {
             {triagePresets.length > 0 && (
               <button
                 onClick={resetAllPresetUsage}
-                className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
+                className="px-2 py-1 rounded-sm border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
                 title="Reset usage stats for all presets"
               >
                 Reset usage
@@ -2394,7 +2392,7 @@ export default function Pipelines() {
                 {visibleTriagePresets.slice(0, 8).map((preset) => (
                   <span
                     key={preset.name}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded border border-gray-200 bg-gray-50 text-[11px]"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-sm border border-gray-200 bg-gray-50 text-[11px]"
                     title={`Used ${preset.useCount || 0} times, last used ${formatPresetLastUsed(preset.lastUsedAt)}`}
                   >
                     <button
@@ -2450,17 +2448,17 @@ export default function Pipelines() {
           </div>
 
           {pendingPresetAction && (
-            <div className="mb-3 flex items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <div className="mb-3 flex items-center gap-2 rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
               <span>{pendingPresetActionLabel}</span>
               <button
                 onClick={confirmPendingPresetAction}
-                className="px-2 py-0.5 rounded border border-amber-300 bg-white hover:bg-amber-100"
+                className="px-2 py-0.5 rounded-sm border border-amber-300 bg-white hover:bg-amber-100"
               >
                 Confirm
               </button>
               <button
                 onClick={() => setPendingPresetAction(null)}
-                className="px-2 py-0.5 rounded border border-amber-300 bg-white hover:bg-amber-100"
+                className="px-2 py-0.5 rounded-sm border border-amber-300 bg-white hover:bg-amber-100"
               >
                 Cancel
               </button>
@@ -2472,7 +2470,7 @@ export default function Pipelines() {
             <div className="flex items-center gap-2">
               <button
                 onClick={clearAllTriageFilters}
-                className="px-2 py-1 rounded border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 text-xs"
+                className="px-2 py-1 rounded-sm border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 text-xs"
               >
                 Clear all triage
               </button>
@@ -2487,13 +2485,13 @@ export default function Pipelines() {
               <button
                 onClick={handleManualBucketRefresh}
                 disabled={loadingBucketRuns}
-                className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
+                className="px-2 py-1 rounded-sm border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
               >
                 {loadingBucketRuns ? 'Refreshing...' : 'Refresh now'}
               </button>
               <button
                 onClick={copyTriageLink}
-                className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
+                className="px-2 py-1 rounded-sm border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
               >
                 Copy link
               </button>
@@ -2508,14 +2506,14 @@ export default function Pipelines() {
               </select>
               <button
                 onClick={toggleShortcutHints}
-                className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
+                className="px-2 py-1 rounded-sm border border-gray-300 text-gray-700 hover:bg-gray-50 text-xs"
               >
                 {showShortcutHints ? 'Hide shortcuts' : 'Show shortcuts'}
               </button>
               {bucketPipelineIdFilter && (
                 <button
                   onClick={() => navigate(`/pipelines/${bucketPipelineIdFilter}`)}
-                  className="px-2 py-1 rounded border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs"
+                  className="px-2 py-1 rounded-sm border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs"
                   title={pinnedPipelineName ? `Open ${pinnedPipelineName}` : 'Open pinned pipeline'}
                 >
                   Open pinned
@@ -2525,12 +2523,12 @@ export default function Pipelines() {
           </div>
           {showShortcutHints && (
             <div className="mb-2 flex flex-wrap gap-2 text-[11px] text-gray-600">
-              <span className="px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50">`/` focus search</span>
-              <span className="px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50">`f` failed</span>
-              <span className="px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50">`r` running</span>
-              <span className="px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50">`a` all</span>
-              <span className="px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50">`n` new preset</span>
-              <span className="px-1.5 py-0.5 rounded border border-gray-300 bg-gray-50">`p` apply top preset</span>
+              <span className="px-1.5 py-0.5 rounded-sm border border-gray-300 bg-gray-50">`/` focus search</span>
+              <span className="px-1.5 py-0.5 rounded-sm border border-gray-300 bg-gray-50">`f` failed</span>
+              <span className="px-1.5 py-0.5 rounded-sm border border-gray-300 bg-gray-50">`r` running</span>
+              <span className="px-1.5 py-0.5 rounded-sm border border-gray-300 bg-gray-50">`a` all</span>
+              <span className="px-1.5 py-0.5 rounded-sm border border-gray-300 bg-gray-50">`n` new preset</span>
+              <span className="px-1.5 py-0.5 rounded-sm border border-gray-300 bg-gray-50">`p` apply top preset</span>
             </div>
           )}
           {bucketLastRefreshedAt && (
@@ -2554,25 +2552,25 @@ export default function Pipelines() {
             <div className="mb-3 flex flex-wrap gap-2 text-xs">
               <button
                 onClick={() => applyBucketStatusFilter('FAILED')}
-                className="px-2 py-1 rounded border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                className="px-2 py-1 rounded-sm border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
               >
                 Failed: {bucketStatusCounts.failed}
               </button>
               <button
                 onClick={() => applyBucketStatusFilter('RUNNING')}
-                className="px-2 py-1 rounded border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                className="px-2 py-1 rounded-sm border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
               >
                 Running/Pending: {bucketStatusCounts.running}
               </button>
               <button
                 onClick={() => applyBucketStatusFilter('SUCCESS')}
-                className="px-2 py-1 rounded border border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
+                className="px-2 py-1 rounded-sm border border-green-200 bg-green-50 text-green-700 hover:bg-green-100"
               >
                 Success: {bucketStatusCounts.success}
               </button>
               <button
                 onClick={() => applyBucketStatusFilter('ALL')}
-                className="px-2 py-1 rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                className="px-2 py-1 rounded-sm border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
               >
                 All statuses
               </button>
@@ -2646,7 +2644,7 @@ export default function Pipelines() {
                           </Link>
                           <button
                             onClick={() => applyBucketPipelineIdFilter(run.pipelineId)}
-                            className="px-1.5 py-0.5 rounded border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-[10px]"
+                            className="px-1.5 py-0.5 rounded-sm border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-[10px]"
                           >
                             Only
                           </button>
@@ -2682,7 +2680,7 @@ export default function Pipelines() {
       )}
 
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-sm">
           {error}
         </div>
       )}
@@ -2691,8 +2689,8 @@ export default function Pipelines() {
         <div className="space-y-4">
           {[1, 2, 3].map(i => (
             <div key={i} className="card animate-pulse">
-              <div className="h-4 bg-gray-200 rounded w-1/3 mb-2"></div>
-              <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+              <div className="h-4 bg-gray-200 rounded-sm w-1/3 mb-2"></div>
+              <div className="h-3 bg-gray-200 rounded-sm w-1/2"></div>
             </div>
           ))}
         </div>
@@ -2831,9 +2829,9 @@ export default function Pipelines() {
                 )}
 
                 {expandedPipelineId === pipeline.id && (
-                  <div className="mt-4 rounded border border-gray-200 bg-gray-50 p-3">
+                  <div className="mt-4 rounded-sm border border-gray-200 bg-gray-50 p-3">
                     <div className="text-xs font-semibold text-gray-700 mb-2">Run Details</div>
-                    <div className="mb-3 rounded border border-indigo-100 bg-indigo-50 p-2">
+                    <div className="mb-3 rounded-sm border border-indigo-100 bg-indigo-50 p-2">
                       <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                         <div className="text-[11px] font-semibold text-indigo-900">Reliability Snapshot</div>
                         <div className="flex items-center gap-2">
@@ -2896,7 +2894,7 @@ export default function Pipelines() {
                                         showToast('Failed to load bucket runs', 'error');
                                       }
                                     }}
-                                    className={`w-2 rounded-sm ${bucket.failedRuns > 0 ? 'bg-red-500' : bucket.inFlightRuns > 0 ? 'bg-amber-400' : bucket.totalRuns > 0 ? 'bg-emerald-500' : 'bg-indigo-200'}`}
+                                    className={`w-2 rounded-xs ${bucket.failedRuns > 0 ? 'bg-red-500' : bucket.inFlightRuns > 0 ? 'bg-amber-400' : bucket.totalRuns > 0 ? 'bg-emerald-500' : 'bg-indigo-200'}`}
                                     style={{ height: `${height}px` }}
                                   />
                                 );
@@ -2919,7 +2917,7 @@ export default function Pipelines() {
                                   showToast('Failed to load failed runs', 'error');
                                 }
                               }}
-                              className="px-2 py-0.5 rounded border border-red-300 text-red-700 bg-white"
+                              className="px-2 py-0.5 rounded-sm border border-red-300 text-red-700 bg-white"
                             >
                               Failed only
                             </button>
@@ -2938,7 +2936,7 @@ export default function Pipelines() {
                                   showToast('Failed to load running runs', 'error');
                                 }
                               }}
-                              className="px-2 py-0.5 rounded border border-amber-300 text-amber-800 bg-white"
+                              className="px-2 py-0.5 rounded-sm border border-amber-300 text-amber-800 bg-white"
                             >
                               Running only
                             </button>
@@ -2956,7 +2954,7 @@ export default function Pipelines() {
                                   showToast('Failed to clear run filters', 'error');
                                 }
                               }}
-                              className="px-2 py-0.5 rounded border border-indigo-300 text-indigo-800 bg-white"
+                              className="px-2 py-0.5 rounded-sm border border-indigo-300 text-indigo-800 bg-white"
                             >
                               Clear filters
                             </button>
@@ -3024,7 +3022,7 @@ export default function Pipelines() {
                                     void handleRefreshRun(pipeline.id, selectedRun.id);
                                   }}
                                   disabled={refreshingRunId === selectedRun.id}
-                                  className="px-2 py-0.5 rounded border border-slate-300 text-slate-700 bg-white"
+                                  className="px-2 py-0.5 rounded-sm border border-slate-300 text-slate-700 bg-white"
                                 >
                                   {refreshingRunId === selectedRun.id ? 'Refreshing...' : 'Refresh run'}
                                 </button>
@@ -3034,7 +3032,7 @@ export default function Pipelines() {
                                     void handleLoadRunLineage(pipeline.id, selectedRun.id);
                                   }}
                                   disabled={loadingLineageRunId === selectedRun.id}
-                                  className="px-2 py-0.5 rounded border border-indigo-200 text-indigo-700 bg-white"
+                                  className="px-2 py-0.5 rounded-sm border border-indigo-200 text-indigo-700 bg-white"
                                 >
                                   {loadingLineageRunId === selectedRun.id
                                     ? 'Loading lineage...'
@@ -3048,7 +3046,7 @@ export default function Pipelines() {
                                     }}
                                     disabled={cancellingRunId === selectedRun.id || !canExecutePipelines}
                                     title={!canExecutePipelines ? 'You need pipeline execute permission to cancel runs' : undefined}
-                                    className="px-2 py-0.5 rounded border border-red-300 text-red-700 bg-white"
+                                    className="px-2 py-0.5 rounded-sm border border-red-300 text-red-700 bg-white"
                                   >
                                     {cancellingRunId === selectedRun.id ? 'Cancelling...' : 'Cancel run'}
                                   </button>
@@ -3061,21 +3059,21 @@ export default function Pipelines() {
                                     }}
                                     disabled={retryingRunId === selectedRun.id || !canExecutePipelines}
                                     title={!canExecutePipelines ? 'You need pipeline execute permission to retry runs' : undefined}
-                                    className="px-2 py-0.5 rounded border border-indigo-300 text-indigo-700 bg-white"
+                                    className="px-2 py-0.5 rounded-sm border border-indigo-300 text-indigo-700 bg-white"
                                   >
                                     {retryingRunId === selectedRun.id ? 'Retrying...' : 'Retry run'}
                                   </button>
                                 )}
                               </div>
                               {lineageByRunId[selectedRun.id] && (
-                                <div className="rounded border border-indigo-100 bg-indigo-50 p-2 text-[11px] text-indigo-900">
+                                <div className="rounded-sm border border-indigo-100 bg-indigo-50 p-2 text-[11px] text-indigo-900">
                                   <div className="font-semibold mb-1">Retry Lineage</div>
                                   <div className="mb-2 flex flex-wrap items-center gap-2">
-                                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">Mode: {lineageFetchModeByRunId[selectedRun.id] ?? (lineageByRunId[selectedRun.id].includeDetails ? 'DETAILS' : 'SUMMARY')}</span>
-                                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">Direction: {lineageByRunId[selectedRun.id].direction ?? lineageDirectionByRunId[selectedRun.id] ?? 'both'}</span>
-                                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">Status: {lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL'}</span>
-                                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-900">Depth: {lineageByRunId[selectedRun.id].maxDepth ?? lineageDepthByRunId[selectedRun.id] ?? lineageByRunId[selectedRun.id].defaultDepth ?? 20}</span>
-                                    <span className={`px-2 py-0.5 rounded border ${lineageByRunId[selectedRun.id].ancestorsTruncated || lineageByRunId[selectedRun.id].descendantsTruncated ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-300 bg-emerald-50 text-emerald-900'}`}>
+                                    <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white text-indigo-900">Mode: {lineageFetchModeByRunId[selectedRun.id] ?? (lineageByRunId[selectedRun.id].includeDetails ? 'DETAILS' : 'SUMMARY')}</span>
+                                    <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white text-indigo-900">Direction: {lineageByRunId[selectedRun.id].direction ?? lineageDirectionByRunId[selectedRun.id] ?? 'both'}</span>
+                                    <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white text-indigo-900">Status: {lineageStatusFilterByRunId[selectedRun.id] ?? 'ALL'}</span>
+                                    <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white text-indigo-900">Depth: {lineageByRunId[selectedRun.id].maxDepth ?? lineageDepthByRunId[selectedRun.id] ?? lineageByRunId[selectedRun.id].defaultDepth ?? 20}</span>
+                                    <span className={`px-2 py-0.5 rounded-sm border ${lineageByRunId[selectedRun.id].ancestorsTruncated || lineageByRunId[selectedRun.id].descendantsTruncated ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-300 bg-emerald-50 text-emerald-900'}`}>
                                       {lineageByRunId[selectedRun.id].ancestorsTruncated || lineageByRunId[selectedRun.id].descendantsTruncated ? 'Truncated' : 'Complete'}
                                     </span>
                                   </div>
@@ -3084,21 +3082,21 @@ export default function Pipelines() {
                                     if (!safe) return null;
                                     return (
                                       <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-indigo-800">
-                                        <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                        <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">
                                           Safe defaults ({safe.scope.toLowerCase()}): {safe.mode} d{safe.depth}
                                         </span>
                                         {safe.expiresAt && (
-                                          <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                          <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">
                                             expires: {new Date(safe.expiresAt).toLocaleString()}
                                           </span>
                                         )}
                                         {safe.reason && (
-                                          <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                          <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">
                                             reason: {safe.reason.toLowerCase().replace(/_/g, ' ')}
                                           </span>
                                         )}
                                         <button
-                                          className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                          className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                           onClick={(e) => {
                                             e.preventDefault();
                                             void handleLoadRunLineage(
@@ -3114,7 +3112,7 @@ export default function Pipelines() {
                                           Apply safe defaults
                                         </button>
                                         <button
-                                          className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                          className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                           onClick={(e) => {
                                             e.preventDefault();
                                             refreshSafeDefaultTtl(safe.scope, safe.targetId);
@@ -3124,7 +3122,7 @@ export default function Pipelines() {
                                         </button>
                                         {safe.scope === 'RUN' ? (
                                           <button
-                                            className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                            className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                             onClick={(e) => {
                                               e.preventDefault();
                                               moveSafeDefaultScope('RUN', selectedRun.id, 'PIPELINE', pipeline.id);
@@ -3134,7 +3132,7 @@ export default function Pipelines() {
                                           </button>
                                         ) : (
                                           <button
-                                            className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                            className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                             onClick={(e) => {
                                               e.preventDefault();
                                               moveSafeDefaultScope('PIPELINE', pipeline.id, 'RUN', selectedRun.id);
@@ -3144,7 +3142,7 @@ export default function Pipelines() {
                                           </button>
                                         )}
                                         <button
-                                          className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                          className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                           onClick={(e) => {
                                             e.preventDefault();
                                             forgetSafeDefault(safe.scope, safe.targetId);
@@ -3154,7 +3152,7 @@ export default function Pipelines() {
                                         </button>
                                         {Object.keys(lineageSafeDefaultsByRunId).length > 1 && (
                                           <button
-                                            className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                            className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                             onClick={(e) => {
                                               e.preventDefault();
                                               clearAllSafeDefaults();
@@ -3174,12 +3172,12 @@ export default function Pipelines() {
                                       Estimated payload: ~{formatApproxBytes(lineageByRunId[selectedRun.id].estimatedPayloadBytes)}
                                       {' '}for {lineageByRunId[selectedRun.id].estimatedNodesInResponse ?? (1 + lineageByRunId[selectedRun.id].ancestors.length + lineageByRunId[selectedRun.id].descendants.length)} nodes
                                     </span>
-                                    <span className={`px-2 py-0.5 rounded border ${lineageByRunId[selectedRun.id].estimatedPayloadClass === 'LARGE' ? 'border-amber-300 bg-amber-50 text-amber-900' : lineageByRunId[selectedRun.id].estimatedPayloadClass === 'MEDIUM' ? 'border-sky-300 bg-sky-50 text-sky-900' : 'border-emerald-300 bg-emerald-50 text-emerald-900'}`}>
+                                    <span className={`px-2 py-0.5 rounded-sm border ${lineageByRunId[selectedRun.id].estimatedPayloadClass === 'LARGE' ? 'border-amber-300 bg-amber-50 text-amber-900' : lineageByRunId[selectedRun.id].estimatedPayloadClass === 'MEDIUM' ? 'border-sky-300 bg-sky-50 text-sky-900' : 'border-emerald-300 bg-emerald-50 text-emerald-900'}`}>
                                       {(lineageByRunId[selectedRun.id].estimatedPayloadClass || 'SMALL').toLowerCase()}
                                     </span>
                                     {lineageByRunId[selectedRun.id].estimatedPayloadClass === 'LARGE' && (lineageFetchModeByRunId[selectedRun.id] ?? (lineageByRunId[selectedRun.id].includeDetails ? 'DETAILS' : 'SUMMARY')) === 'DETAILS' && (
                                       <button
-                                        className="px-2 py-0.5 rounded border border-amber-300 bg-white text-amber-900"
+                                        className="px-2 py-0.5 rounded-sm border border-amber-300 bg-white text-amber-900"
                                         onClick={(e) => {
                                           e.preventDefault();
                                           const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
@@ -3199,9 +3197,9 @@ export default function Pipelines() {
                                   </div>
                                   <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-indigo-800">
                                     <span>Server timing:</span>
-                                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">query {lineageByRunId[selectedRun.id].lineageQueryMs ?? 0} ms</span>
-                                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">build {lineageByRunId[selectedRun.id].lineageBuildMs ?? 0} ms</span>
-                                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">total {lineageByRunId[selectedRun.id].lineageTotalMs ?? 0} ms</span>
+                                    <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">query {lineageByRunId[selectedRun.id].lineageQueryMs ?? 0} ms</span>
+                                    <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">build {lineageByRunId[selectedRun.id].lineageBuildMs ?? 0} ms</span>
+                                    <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">total {lineageByRunId[selectedRun.id].lineageTotalMs ?? 0} ms</span>
                                   </div>
                                   {(() => {
                                     const perf = lineagePerfHistoryByRunId[selectedRun.id] ?? [];
@@ -3213,7 +3211,7 @@ export default function Pipelines() {
                                     if (!showHint) return null;
 
                                     return (
-                                      <div className="mb-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
+                                      <div className="mb-2 rounded-sm border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-900">
                                         <div className="mb-1">
                                           {regression
                                             ? `Timing regression: latest ${latest?.totalMs ?? 0} ms vs median ${Math.round(baseline)} ms`
@@ -3224,7 +3222,7 @@ export default function Pipelines() {
                                         </div>
                                         <div className="flex flex-wrap items-center gap-2">
                                           <button
-                                            className="px-2 py-0.5 rounded border border-amber-400 bg-white"
+                                            className="px-2 py-0.5 rounded-sm border border-amber-400 bg-white"
                                             onClick={(e) => {
                                               e.preventDefault();
                                               const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
@@ -3241,7 +3239,7 @@ export default function Pipelines() {
                                             Use summary mode
                                           </button>
                                           <button
-                                            className="px-2 py-0.5 rounded border border-amber-400 bg-white"
+                                            className="px-2 py-0.5 rounded-sm border border-amber-400 bg-white"
                                             onClick={(e) => {
                                               e.preventDefault();
                                               const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
@@ -3264,7 +3262,7 @@ export default function Pipelines() {
                                   })()}
                                   <div className="mb-2 flex flex-wrap items-end gap-2 text-[11px] text-indigo-800">
                                     <span>Recent loads:</span>
-                                    <div className="flex items-end gap-1 rounded border border-indigo-200 bg-white px-2 py-1">
+                                    <div className="flex items-end gap-1 rounded-sm border border-indigo-200 bg-white px-2 py-1">
                                       {(lineagePerfHistoryByRunId[selectedRun.id] ?? []).map((sample, index, arr) => {
                                         const maxMs = Math.max(1, ...arr.map((item) => item.totalMs || 0));
                                         const maxBytes = Math.max(1, ...arr.map((item) => item.payloadBytes || 0));
@@ -3272,8 +3270,8 @@ export default function Pipelines() {
                                         const payloadHeight = Math.max(2, Math.round((sample.payloadBytes / maxBytes) * 16));
                                         return (
                                           <div key={`${selectedRun.id}-lineage-sample-${index}`} className="flex items-end gap-[2px]" title={`Load ${index + 1}: ${sample.totalMs} ms, ~${formatApproxBytes(sample.payloadBytes)}`}>
-                                            <span className="w-[3px] rounded-sm bg-indigo-500" style={{ height: `${timingHeight}px` }} />
-                                            <span className="w-[3px] rounded-sm bg-sky-400" style={{ height: `${payloadHeight}px` }} />
+                                            <span className="w-[3px] rounded-xs bg-indigo-500" style={{ height: `${timingHeight}px` }} />
+                                            <span className="w-[3px] rounded-xs bg-sky-400" style={{ height: `${payloadHeight}px` }} />
                                           </div>
                                         );
                                       })}
@@ -3290,7 +3288,7 @@ export default function Pipelines() {
                                       return (
                                         <button
                                           key={`${selectedRun.id}-lineage-mode-${mode}`}
-                                          className={`px-2 py-0.5 rounded border ${active ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-indigo-300 bg-white text-indigo-800'}`}
+                                          className={`px-2 py-0.5 rounded-sm border ${active ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-indigo-300 bg-white text-indigo-800'}`}
                                           onClick={(e) => {
                                             e.preventDefault();
                                             const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
@@ -3316,7 +3314,7 @@ export default function Pipelines() {
                                       return (
                                         <button
                                           key={`${selectedRun.id}-lineage-safe-policy-${policy}`}
-                                          className={`px-2 py-0.5 rounded border ${active ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-indigo-300 bg-white text-indigo-800'}`}
+                                          className={`px-2 py-0.5 rounded-sm border ${active ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-indigo-300 bg-white text-indigo-800'}`}
                                           onClick={(e) => {
                                             e.preventDefault();
                                             const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
@@ -3337,24 +3335,24 @@ export default function Pipelines() {
                                     })}
                                   </div>
                                   <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-indigo-800">
-                                    <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                    <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">
                                       Tenant defaults: {tenantLineageDefaults.defaultFetchMode} d{tenantLineageDefaults.defaultDepth} cap d{tenantLineageDefaults.maxDepthCap} {tenantLineageDefaults.safeScopePolicy.toLowerCase()}
                                     </span>
-                                    <span className={`px-2 py-0.5 rounded border ${tenantDefaultsPollStatus === 'OFFLINE' ? 'border-red-300 bg-red-50 text-red-800' : tenantDefaultsPollStatus === 'STALE' ? 'border-amber-300 bg-amber-50 text-amber-900' : tenantDefaultsPollStatus === 'FRESH' ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-slate-300 bg-slate-50 text-slate-700'}`}>
+                                    <span className={`px-2 py-0.5 rounded-sm border ${tenantDefaultsPollStatus === 'OFFLINE' ? 'border-red-300 bg-red-50 text-red-800' : tenantDefaultsPollStatus === 'STALE' ? 'border-amber-300 bg-amber-50 text-amber-900' : tenantDefaultsPollStatus === 'FRESH' ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-slate-300 bg-slate-50 text-slate-700'}`}>
                                       Poll: {tenantDefaultsPollStatus.toLowerCase()}
                                     </span>
                                     {tenantDefaultsPollCheckedAt && (
-                                      <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                      <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">
                                         Checked: {new Date(tenantDefaultsPollCheckedAt).toLocaleTimeString()}
                                       </span>
                                     )}
                                     {tenantDefaultsPollOfflineFailures > 0 && (
-                                      <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                      <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">
                                         Offline retries: {tenantDefaultsPollOfflineFailures}
                                       </span>
                                     )}
                                     <button
-                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                       disabled={checkingTenantDefaultsNow || Date.now() < tenantDefaultsPollCooldownUntil || !tenantId}
                                       onClick={(e) => {
                                         e.preventDefault();
@@ -3364,7 +3362,7 @@ export default function Pipelines() {
                                       {checkingTenantDefaultsNow ? 'Checking...' : 'Check now'}
                                     </button>
                                     <button
-                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                       onClick={(e) => {
                                         e.preventDefault();
                                         setShowTenantPollDebug((prev) => !prev);
@@ -3373,7 +3371,7 @@ export default function Pipelines() {
                                       {showTenantPollDebug ? 'Hide poll details' : 'Poll details'}
                                     </button>
                                     <button
-                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                       onClick={(e) => {
                                         e.preventDefault();
                                         void copyTenantDefaultsDiagnostics(pipeline.id, selectedRun.id);
@@ -3383,11 +3381,11 @@ export default function Pipelines() {
                                     </button>
                                     {tenantDefaultsStaleLatest && (
                                       <>
-                                        <span className="px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900">
+                                        <span className="px-2 py-0.5 rounded-sm border border-amber-300 bg-amber-50 text-amber-900">
                                           Defaults may be stale
                                         </span>
                                         <button
-                                          className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                          className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                           onClick={(e) => {
                                             e.preventDefault();
                                             setTenantLineageDefaults(tenantDefaultsStaleLatest);
@@ -3400,7 +3398,7 @@ export default function Pipelines() {
                                           Refresh latest
                                         </button>
                                         <button
-                                          className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                          className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                           onClick={(e) => {
                                             e.preventDefault();
                                             const depth = lineageDepthByRunId[selectedRun.id] ?? tenantLineageDefaults.defaultDepth ?? 20;
@@ -3419,16 +3417,16 @@ export default function Pipelines() {
                                     )}
                                     {tenantId && tenantDefaultsConflictTelemetry[tenantId] && (
                                       <>
-                                        <span className="px-2 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900">
+                                        <span className="px-2 py-0.5 rounded-sm border border-amber-300 bg-amber-50 text-amber-900">
                                           Conflicts this session: {tenantDefaultsConflictTelemetry[tenantId].count}
                                         </span>
                                         {tenantDefaultsConflictTelemetry[tenantId].lastConflictAt && (
-                                          <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                          <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">
                                             Last: {new Date(tenantDefaultsConflictTelemetry[tenantId].lastConflictAt as string).toLocaleString()}
                                           </span>
                                         )}
                                         <button
-                                          className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                          className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                           onClick={(e) => {
                                             e.preventDefault();
                                             if (!tenantId) return;
@@ -3441,49 +3439,49 @@ export default function Pipelines() {
                                     )}
                                     {tenantDefaultsDiagnostics && (
                                       <>
-                                        <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                        <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">
                                           200/304: {tenantDefaultsDiagnostics.get200Count}/{tenantDefaultsDiagnostics.get304Count}
                                         </span>
-                                        <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                        <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">
                                           Conflicts: {tenantDefaultsDiagnostics.patchConflictCount}/{tenantDefaultsDiagnostics.patchSuccessCount + tenantDefaultsDiagnostics.patchConflictCount}
                                         </span>
-                                        <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                        <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">
                                           Resets: {tenantDefaultsDiagnostics.resetCount ?? 0}
                                         </span>
                                         {tenantDefaultsDiagnostics.lastResetAt && (
-                                          <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                          <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">
                                             Last reset: {new Date(tenantDefaultsDiagnostics.lastResetAt).toLocaleString()}
                                           </span>
                                         )}
                                         {tenantDefaultsDiagnostics.windows?.h1 && (
-                                          <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                          <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">
                                             1h: 200/304 {tenantDefaultsDiagnostics.windows.h1.get200Count}/{tenantDefaultsDiagnostics.windows.h1.get304Count} · conf {(tenantDefaultsDiagnostics.windows.h1.patchConflictRate * 100).toFixed(0)}%
                                           </span>
                                         )}
                                         {tenantDefaultsDiagnostics.windows?.h24 && (
-                                          <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                          <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">
                                             24h: 200/304 {tenantDefaultsDiagnostics.windows.h24.get200Count}/{tenantDefaultsDiagnostics.windows.h24.get304Count} · conf {(tenantDefaultsDiagnostics.windows.h24.patchConflictRate * 100).toFixed(0)}%
                                           </span>
                                         )}
                                         {tenantDefaultsDiagnostics.advisory && (
-                                          <span className={`px-2 py-0.5 rounded border ${tenantDefaultsDiagnostics.advisory.health === 'HOT' ? 'border-red-300 bg-red-50 text-red-900' : tenantDefaultsDiagnostics.advisory.health === 'WATCH' ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-300 bg-emerald-50 text-emerald-900'}`}>
+                                          <span className={`px-2 py-0.5 rounded-sm border ${tenantDefaultsDiagnostics.advisory.health === 'HOT' ? 'border-red-300 bg-red-50 text-red-900' : tenantDefaultsDiagnostics.advisory.health === 'WATCH' ? 'border-amber-300 bg-amber-50 text-amber-900' : 'border-emerald-300 bg-emerald-50 text-emerald-900'}`}>
                                             Advisory: {tenantDefaultsDiagnostics.advisory.health} ({tenantDefaultsDiagnostics.advisory.reasons.length === 0 ? 'No signals' : tenantDefaultsDiagnostics.advisory.reasons.join(', ')})
                                           </span>
                                         )}
                                         {tenantDefaultsDiagnostics.advisory && tenantDefaultsDiagnostics.advisory.recommendedActions[0] !== 'NONE' && (
-                                          <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                          <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">
                                             Suggested: {tenantDefaultsDiagnostics.advisory.recommendedActions.join(', ')}
                                           </span>
                                         )}
                                         {tenantDefaultsDiagnostics.advisory?.policy && (
-                                          <span className="px-2 py-0.5 rounded border border-indigo-200 bg-white">
+                                          <span className="px-2 py-0.5 rounded-sm border border-indigo-200 bg-white">
                                             Policy: watch {(tenantDefaultsDiagnostics.advisory.policy.conflictWatchRate * 100).toFixed(0)}% · hot {(tenantDefaultsDiagnostics.advisory.policy.conflictHotRate * 100).toFixed(0)}%
                                           </span>
                                         )}
                                       </>
                                     )}
                                     <button
-                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                       disabled={loadingTenantDefaultsDiagnostics || !tenantId}
                                       onClick={(e) => {
                                         e.preventDefault();
@@ -3494,7 +3492,7 @@ export default function Pipelines() {
                                       {loadingTenantDefaultsDiagnostics ? 'Refreshing metrics...' : 'Refresh metrics'}
                                     </button>
                                     <button
-                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                       disabled={resettingTenantDefaultsDiagnostics || !tenantId}
                                       onClick={(e) => {
                                         e.preventDefault();
@@ -3504,7 +3502,7 @@ export default function Pipelines() {
                                       Reset metrics
                                     </button>
                                     {showTenantDefaultsResetConfirm && (
-                                      <div className="w-full mt-2 p-3 rounded border border-amber-300 bg-amber-50">
+                                      <div className="w-full mt-2 p-3 rounded-sm border border-amber-300 bg-amber-50">
                                         <p className="text-xs text-amber-900 mb-2">
                                           Reset all lineage diagnostics counters for this tenant? This clears read/conflict counts, windows, and advisory state.
                                         </p>
@@ -3520,14 +3518,14 @@ export default function Pipelines() {
                                         </label>
                                         <div className="flex gap-2">
                                           <button
-                                            className="px-2 py-1 rounded border border-amber-400 bg-white text-amber-800 text-xs"
+                                            className="px-2 py-1 rounded-sm border border-amber-400 bg-white text-amber-800 text-xs"
                                             disabled={resettingTenantDefaultsDiagnostics}
                                             onClick={() => { setShowTenantDefaultsResetConfirm(false); setTenantDefaultsResetReason(''); }}
                                           >
                                             Cancel
                                           </button>
                                           <button
-                                            className="px-2 py-1 rounded border border-amber-500 bg-amber-100 text-amber-900 text-xs"
+                                            className="px-2 py-1 rounded-sm border border-amber-500 bg-amber-100 text-amber-900 text-xs"
                                             disabled={resettingTenantDefaultsDiagnostics || !tenantId}
                                             onClick={(e) => {
                                               e.preventDefault();
@@ -3543,7 +3541,7 @@ export default function Pipelines() {
                                     {canManageTenantSettings && (
                                       <button
                                         disabled={savingTenantLineageDefaults}
-                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                        className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                         onClick={(e) => {
                                           e.preventDefault();
                                           void saveTenantLineageDefaultsFromCurrent(pipeline.id, selectedRun.id);
@@ -3554,7 +3552,7 @@ export default function Pipelines() {
                                     )}
                                   </div>
                                   {showTenantPollDebug && (
-                                    <div className="mb-2 flex flex-wrap items-center gap-3 text-[11px] text-indigo-900 rounded border border-indigo-200 bg-white px-2 py-1">
+                                    <div className="mb-2 flex flex-wrap items-center gap-3 text-[11px] text-indigo-900 rounded-sm border border-indigo-200 bg-white px-2 py-1">
                                       <span>Interval: {Math.round(tenantDefaultsPollIntervalMs / 1000)}s</span>
                                       <span>Offline retries: {tenantDefaultsPollOfflineFailures}</span>
                                       <span>
@@ -3572,7 +3570,7 @@ export default function Pipelines() {
                                       return (
                                         <button
                                           key={`${selectedRun.id}-lineage-direction-${option}`}
-                                          className={`px-2 py-0.5 rounded border ${active ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-indigo-300 bg-white text-indigo-800'}`}
+                                          className={`px-2 py-0.5 rounded-sm border ${active ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-indigo-300 bg-white text-indigo-800'}`}
                                           onClick={(e) => {
                                             e.preventDefault();
                                             const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
@@ -3616,7 +3614,7 @@ export default function Pipelines() {
                                         <button
                                           key={`${selectedRun.id}-lineage-status-${option}`}
                                           disabled={disabled}
-                                          className={`px-2 py-0.5 rounded border ${active ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-indigo-300 bg-white text-indigo-800'} ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                          className={`px-2 py-0.5 rounded-sm border ${active ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-indigo-300 bg-white text-indigo-800'} ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                                           onClick={(e) => {
                                             e.preventDefault();
                                             if (disabled) return;
@@ -3638,7 +3636,7 @@ export default function Pipelines() {
                                   <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
                                     <span className="text-indigo-800">Quick presets:</span>
                                     <button
-                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                       onClick={(e) => {
                                         e.preventDefault();
                                         const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
@@ -3654,7 +3652,7 @@ export default function Pipelines() {
                                       Failures only
                                     </button>
                                     <button
-                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                       onClick={(e) => {
                                         e.preventDefault();
                                         const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
@@ -3670,7 +3668,7 @@ export default function Pipelines() {
                                       In-flight only
                                     </button>
                                     <button
-                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                       onClick={(e) => {
                                         e.preventDefault();
                                         const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
@@ -3686,7 +3684,7 @@ export default function Pipelines() {
                                       Completed only
                                     </button>
                                     <button
-                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                       onClick={(e) => {
                                         e.preventDefault();
                                         const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
@@ -3702,7 +3700,7 @@ export default function Pipelines() {
                                       Clear status filter
                                     </button>
                                     <button
-                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                       onClick={(e) => {
                                         e.preventDefault();
                                         void copyLineageLink(pipeline.id, selectedRun.id);
@@ -3711,7 +3709,7 @@ export default function Pipelines() {
                                       Copy lineage link
                                     </button>
                                     <button
-                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                       onClick={(e) => {
                                         e.preventDefault();
                                         void resetLineageView(pipeline.id, selectedRun.id);
@@ -3721,14 +3719,14 @@ export default function Pipelines() {
                                     </button>
                                   </div>
                                   <div className="mb-2 flex flex-wrap gap-2">
-                                    <span className={`px-2 py-0.5 rounded border ${(lineageByRunId[selectedRun.id].rootRunInView ?? false) ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
+                                    <span className={`px-2 py-0.5 rounded-sm border ${(lineageByRunId[selectedRun.id].rootRunInView ?? false) ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
                                       Root {(lineageByRunId[selectedRun.id].rootRunInView ?? false) ? 'loaded' : 'hidden by filters'}
                                     </span>
-                                    <span className={`px-2 py-0.5 rounded border ${(lineageByRunId[selectedRun.id].latestDescendantRunInView ?? false) ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
+                                    <span className={`px-2 py-0.5 rounded-sm border ${(lineageByRunId[selectedRun.id].latestDescendantRunInView ?? false) ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-amber-300 bg-amber-50 text-amber-900'}`}>
                                       Latest retry {(lineageByRunId[selectedRun.id].latestDescendantRunInView ?? false) ? 'loaded' : 'hidden or unavailable'}
                                     </span>
                                     <button
-                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                       onClick={(e) => {
                                         e.preventDefault();
                                         const rootId = lineageByRunId[selectedRun.id].rootRunId;
@@ -3747,7 +3745,7 @@ export default function Pipelines() {
                                       Go to root
                                     </button>
                                     <button
-                                      className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                      className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                       onClick={(e) => {
                                         e.preventDefault();
                                         const latestId = lineageByRunId[selectedRun.id].latestDescendantRunId;
@@ -3770,7 +3768,7 @@ export default function Pipelines() {
                                     <div className="mb-2 flex items-center gap-2">
                                       <span className="text-xs text-indigo-800">Lineage truncated at depth {lineageByRunId[selectedRun.id].maxDepth ?? lineageDepthByRunId[selectedRun.id] ?? 20}</span>
                                       <button
-                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                        className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                         onClick={(e) => {
                                           e.preventDefault();
                                           const currentDepth = lineageDepthByRunId[selectedRun.id] ?? 20;
@@ -3808,7 +3806,7 @@ export default function Pipelines() {
                                           });
                                           setSelectedRunIdByPipeline((prev) => ({ ...prev, [pipeline.id]: run.id }));
                                         }}
-                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                        className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                       >
                                         Ancestor {run.id.slice(0, 6)} (d{run.lineageDepth ?? -1})
                                       </button>
@@ -3825,7 +3823,7 @@ export default function Pipelines() {
                                           });
                                           setSelectedRunIdByPipeline((prev) => ({ ...prev, [pipeline.id]: run.id }));
                                         }}
-                                        className="px-2 py-0.5 rounded border border-indigo-300 bg-white"
+                                        className="px-2 py-0.5 rounded-sm border border-indigo-300 bg-white"
                                       >
                                         Descendant {run.id.slice(0, 6)} (+{run.lineageDepth ?? 1})
                                       </button>
@@ -3847,14 +3845,14 @@ export default function Pipelines() {
                               {Array.isArray(executionLog) && executionLog.length > 0 && (
                                 <div>
                                   <div className="font-semibold text-gray-800 mb-1">Execution Timeline</div>
-                                  <pre className="mt-1 max-h-28 overflow-auto rounded bg-white border border-gray-200 p-2 text-[11px] text-gray-700">{executionLog.join('\n')}</pre>
+                                  <pre className="mt-1 max-h-28 overflow-auto rounded-sm bg-white border border-gray-200 p-2 text-[11px] text-gray-700">{executionLog.join('\n')}</pre>
                                 </div>
                               )}
                               {Array.isArray(moduleLogs) && moduleLogs.length > 0 && (
                                 <div className="space-y-2">
                                   <div className="font-semibold text-gray-800">Module Logs</div>
                                   {moduleLogs.map((moduleLog, index) => (
-                                    <div key={`${selectedRun.id}-log-${index}`} className="rounded border border-gray-200 bg-white p-2">
+                                    <div key={`${selectedRun.id}-log-${index}`} className="rounded-sm border border-gray-200 bg-white p-2">
                                       <div className="flex flex-wrap gap-3 mb-1 text-[11px]">
                                         <span>Stage: <strong>{moduleLog.stage}</strong></span>
                                         {moduleLog.order != null && <span>Order: <strong>{moduleLog.order}</strong></span>}
@@ -3864,7 +3862,7 @@ export default function Pipelines() {
                                         {moduleLog.exitCode != null && <span>Exit: <strong>{moduleLog.exitCode}</strong></span>}
                                       </div>
                                       {moduleLog.connector && (
-                                        <div className="mb-2 rounded border border-blue-100 bg-blue-50 px-2 py-1 text-[11px] text-blue-900">
+                                        <div className="mb-2 rounded-sm border border-blue-100 bg-blue-50 px-2 py-1 text-[11px] text-blue-900">
                                           <span className="mr-3">Connector: <strong>{moduleLog.connector.name || moduleLog.connector.id || 'unknown'}</strong></span>
                                           {moduleLog.connector.connectorType && <span className="mr-3">Type: <strong>{moduleLog.connector.connectorType}</strong></span>}
                                           {moduleLog.connector.direction && <span className="mr-3">Direction: <strong>{moduleLog.connector.direction}</strong></span>}
@@ -3876,18 +3874,18 @@ export default function Pipelines() {
                                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                                         <div>
                                           <div className="font-medium text-gray-700 mb-1">stdout</div>
-                                          <pre className="max-h-32 overflow-auto rounded bg-gray-50 border border-gray-200 p-2 text-[11px] text-gray-700 whitespace-pre-wrap">{moduleLog.stdout || '(empty)'}</pre>
+                                          <pre className="max-h-32 overflow-auto rounded-sm bg-gray-50 border border-gray-200 p-2 text-[11px] text-gray-700 whitespace-pre-wrap">{moduleLog.stdout || '(empty)'}</pre>
                                         </div>
                                         <div>
                                           <div className="font-medium text-gray-700 mb-1">stderr</div>
-                                          <pre className="max-h-32 overflow-auto rounded bg-gray-50 border border-gray-200 p-2 text-[11px] text-gray-700 whitespace-pre-wrap">{moduleLog.stderr || '(empty)'}</pre>
+                                          <pre className="max-h-32 overflow-auto rounded-sm bg-gray-50 border border-gray-200 p-2 text-[11px] text-gray-700 whitespace-pre-wrap">{moduleLog.stderr || '(empty)'}</pre>
                                         </div>
                                       </div>
                                     </div>
                                   ))}
                                 </div>
                               )}
-                              <pre className="mt-2 max-h-40 overflow-auto rounded bg-white border border-gray-200 p-2 text-[11px] text-gray-700">
+                              <pre className="mt-2 max-h-40 overflow-auto rounded-sm bg-white border border-gray-200 p-2 text-[11px] text-gray-700">
                                 {JSON.stringify(resultPayload, null, 2)}
                               </pre>
                             </div>
@@ -3920,15 +3918,15 @@ export default function Pipelines() {
       )}
 
       {tenantDefaultsConflict && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-2">Tenant Defaults Conflict</h2>
             <p className="text-sm text-gray-600 mb-4">
               Another admin updated tenant defaults while you were saving from this lineage context.
             </p>
             <div className="space-y-2 mb-4 max-h-80 overflow-auto pr-1">
               {TENANT_LINEAGE_FIELDS.map((field) => (
-                <div key={`tenant-defaults-conflict-${field}`} className="border border-gray-200 rounded p-2">
+                <div key={`tenant-defaults-conflict-${field}`} className="border border-gray-200 rounded-sm p-2">
                   <div className="text-xs font-semibold text-gray-700 mb-1">{field}</div>
                   <div className="text-xs text-gray-600 mb-2">
                     <span className="mr-3">Latest: {String(tenantDefaultsConflict.latest[field])}</span>
@@ -3936,13 +3934,13 @@ export default function Pipelines() {
                   </div>
                   <div className="flex gap-2">
                     <button
-                      className={`px-2 py-0.5 rounded border ${tenantDefaultsConflict.mergeChoice[field] === 'LATEST' ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-gray-300 bg-white text-gray-700'}`}
+                      className={`px-2 py-0.5 rounded-sm border ${tenantDefaultsConflict.mergeChoice[field] === 'LATEST' ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-gray-300 bg-white text-gray-700'}`}
                       onClick={() => setTenantDefaultsConflict((prev) => prev ? ({ ...prev, mergeChoice: { ...prev.mergeChoice, [field]: 'LATEST' } }) : prev)}
                     >
                       Use latest
                     </button>
                     <button
-                      className={`px-2 py-0.5 rounded border ${tenantDefaultsConflict.mergeChoice[field] === 'MINE' ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-gray-300 bg-white text-gray-700'}`}
+                      className={`px-2 py-0.5 rounded-sm border ${tenantDefaultsConflict.mergeChoice[field] === 'MINE' ? 'border-indigo-500 bg-indigo-100 text-indigo-900' : 'border-gray-300 bg-white text-gray-700'}`}
                       onClick={() => setTenantDefaultsConflict((prev) => prev ? ({ ...prev, mergeChoice: { ...prev.mergeChoice, [field]: 'MINE' } }) : prev)}
                     >
                       Use mine
@@ -3988,8 +3986,8 @@ export default function Pipelines() {
       )}
 
       {showCreateModal && canWritePipelines && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">Create Pipeline</h2>
             <form onSubmit={handleCreatePipeline}>
               <div className="mb-4">

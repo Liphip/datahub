@@ -11,8 +11,8 @@ import java.util.UUID
 
 /**
  * Closes NFR-014: the default `mvn test` run uses H2 with Hibernate `drop-and-create`, which
- * never actually executes the Flyway migrations that define the real production schema (see
- * production-ready-v1-status.md, "Historical architectural note"). This class boots the full
+ * never actually executes the Flyway migrations that define the real production schema (SRS
+ * NFR-M6). This class boots the full
  * application against a real PostgreSQL instance (via Quarkus Dev Services/Testcontainers) with
  * schema generation set to `validate` and Flyway migrations applied at startup — so a broken
  * migration, a JPA entity that doesn't match the migrated schema, or a Postgres-only SQL feature
@@ -23,6 +23,7 @@ import java.util.UUID
  */
 @QuarkusTest
 @TestProfile(PostgresTestProfile::class)
+@org.junit.jupiter.api.condition.EnabledIf("com.dataturntable.test.PostgresTestProfile#available")
 class PostgresMigrationBehaviorTest {
     @Test
     fun `application boots against the migrated PostgreSQL schema and JSONB, secret round-trips behave correctly`() {

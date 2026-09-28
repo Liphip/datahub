@@ -5,10 +5,14 @@ import com.dataturntable.connectors.Connector.Direction
 import com.dataturntable.connectors.mqtt.MqttConnectionManager
 import com.dataturntable.connectors.websocket.WebSocketConnectionManager
 import com.dataturntable.security.EncryptionUtils
+import jakarta.persistence.EntityManager
+import jakarta.persistence.PersistenceContext
 import com.dataturntable.security.SensitiveDataRedactor
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
+import com.dataturntable.connectors.inbox.FileSandbox
 import jakarta.inject.Inject
+import org.eclipse.microprofile.config.inject.ConfigProperty
 import org.jboss.logging.Logger
 import java.net.URI
 import java.net.http.HttpClient
@@ -30,7 +34,7 @@ import java.time.Duration
  * Connector behaviour per type:
  *   REST  INPUT  → HTTP GET  to baseUrl+path; returns response body as Map
  *   REST  OUTPUT → HTTP POST to baseUrl+path with shaped payload as JSON body
- *   MQTT  INPUT  → data already arrived via MqttIngestService push; fetch is a no-op
+ *   MQTT  INPUT  → data already arrived via MqttConnectionManager push; fetch is a no-op
  *   MQTT  OUTPUT → publish JSON payload to configured topic (via MqttPublishService)
  *   WEBSOCKET INPUT  → push-based; fetch is a no-op
  *   WEBSOCKET OUTPUT → send JSON payload over the configured WebSocket
@@ -44,6 +48,12 @@ import java.time.Duration
  * Defines the class `ConnectorRuntimeService`, the contract implemented by this source unit.
  */
 class ConnectorRuntimeService {
+
+    @ConfigProperty(name = "dataturntable.connectors.file.base-dir", defaultValue = "/data/files")
+    lateinit var fileBaseDir: String
+
+    @Inject
+    lateinit var destinationPolicy: DestinationPolicy
 
     private val LOG = Logger.getLogger(ConnectorRuntimeService::class.java)
     private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
@@ -60,6 +70,8 @@ class ConnectorRuntimeService {
     @Inject
     lateinit var connectorMetrics: ConnectorMetrics
 
+    @PersistenceContext
+    lateinit var em: EntityManager
     @Inject
     lateinit var secretReferenceResolver: ConnectorSecretReferenceResolver
 
@@ -88,7 +100,11 @@ class ConnectorRuntimeService {
         return try {
             val result = when (connector.connectorType) {
                 ConnectorType.REST     -> fetchRestInput(decryptedConfig)
-                ConnectorType.FILE     -> fetchFileInput(decryptedConfig)
+                // Inboxes are read by InboxPoller, which acknowledges items at the source.
+                ConnectorType.FILE,
+                ConnectorType.FTP,
+                ConnectorType.SFTP,
+                ConnectorType.EMAIL    -> null
                 // Push-based connectors: data was already delivered by the ingest trigger
                 ConnectorType.MQTT,
                 ConnectorType.WEBSOCKET,
@@ -120,7 +136,12 @@ class ConnectorRuntimeService {
      * Deliver shaped data via an OUTPUT connector on behalf of the platform.
      * Called after the EXPORT module has run and produced its result.
      */
-    fun deliverViaConnector(connector: Connector, decryptedConfig: Map<String, Any?>, data: Any?) {
+    /**
+     * Delivers [data] through an OUTPUT connector. [deliveryKey] identifies this delivery
+     * (run and node): it is sent as `Idempotency-Key` on REST so that a receiver can drop the
+     * repeat of a delivery that is re-executed after a failover.
+     */
+    fun deliverViaConnector(connector: Connector, decryptedConfig: Map<String, Any?>, data: Any?, deliveryKey: String? = null) {
         val startedAt = System.nanoTime()
         if (connector.direction != Direction.OUTPUT) {
             LOG.warnf("deliverViaConnector called on INPUT connector %s — skipping", connector.id)
@@ -135,11 +156,14 @@ class ConnectorRuntimeService {
         }
         try {
             when (connector.connectorType) {
-                ConnectorType.REST      -> deliverRestOutput(decryptedConfig, data)
+                ConnectorType.REST      -> deliverRestOutput(decryptedConfig, data, deliveryKey)
                 ConnectorType.FILE      -> deliverFileOutput(decryptedConfig, data)
                 ConnectorType.MQTT      -> deliverMqttOutput(decryptedConfig, data, connector)
                 ConnectorType.WEBSOCKET -> deliverWebSocketOutput(decryptedConfig, data, connector)
                 ConnectorType.UDP       -> deliverUdpOutput(decryptedConfig, data)
+                ConnectorType.FTP,
+                ConnectorType.SFTP,
+                ConnectorType.EMAIL     -> throw IllegalArgumentException("${connector.connectorType} connectors are input only")
                 ConnectorType.CUSTOM    -> LOG.infof("CUSTOM connector %s — no-op deliver", connector.id)
                 null                    -> Unit
             }
@@ -180,6 +204,29 @@ class ConnectorRuntimeService {
         return secretReferenceResolver.resolve(connector, config)
     }
 
+    /**
+     * Decrypted config plus platform-side secrets needed to talk to the external system
+     * (MQTT broker credentials are resolved from the tenant's credential store).
+     * Never pass the result to module containers.
+     */
+    fun resolveRuntimeConfig(connector: Connector): Map<String, Any?> {
+        val config = decryptConfig(connector).toMutableMap()
+        if (connector.connectorType == ConnectorType.MQTT) {
+            val credentialId = config["brokerCredentialId"]?.toString()
+                ?.let { runCatching { java.util.UUID.fromString(it) }.getOrNull() }
+            val credential = credentialId?.let { em.find(BrokerCredential::class.java, it) }
+            if (credential != null && credential.tenant?.id == connector.tenant?.id && credential.isActive) {
+                config["username"] = credential.username
+                credential.passwordEncrypted
+                    ?.let { runCatching { EncryptionUtils.decrypt(it) }.getOrNull() }
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { config["password"] = it }
+                config["brokerCredentialName"] = credential.name
+            }
+        }
+        return config
+    }
+
     // ── REST ─────────────────────────────────────────────────────────────────
 
     /**
@@ -192,6 +239,7 @@ class ConnectorRuntimeService {
         }
         val path = config["path"]?.toString()?.let { if (it.startsWith("/")) it else "/$it" } ?: ""
         val url = "$baseUrl$path"
+        URI.create(url).host?.let(destinationPolicy::check)
 
         val requestBuilder = HttpRequest.newBuilder()
             .uri(URI.create(url))
@@ -214,40 +262,47 @@ class ConnectorRuntimeService {
     /**
      * Implements `deliverRestOutput` for this source unit.
      */
-    private fun deliverRestOutput(config: Map<String, Any?>, data: Any?) {
-        val baseUrl = config["baseUrl"]?.toString()?.trimEnd('/') ?: run {
-            LOG.warn("REST OUTPUT connector missing baseUrl — skipping deliver")
-            return
-        }
+    private fun deliverRestOutput(config: Map<String, Any?>, data: Any?, deliveryKey: String?) {
+        val baseUrl = config["baseUrl"]?.toString()?.trimEnd('/')
+            ?: throw IllegalArgumentException("REST OUTPUT connector has no baseUrl")
         val path = config["path"]?.toString()?.let { if (it.startsWith("/")) it else "/$it" } ?: ""
         val method = config["method"]?.toString()?.uppercase() ?: "POST"
         val url = "$baseUrl$path"
+        URI.create(url).host?.let(destinationPolicy::check)
         val body = if (data != null) objectMapper.writeValueAsString(data) else "{}"
 
         val requestBuilder = HttpRequest.newBuilder()
             .uri(URI.create(url))
             .timeout(Duration.ofSeconds(30))
             .header("Content-Type", "application/json")
-
+        deliveryKey?.let { requestBuilder.header("Idempotency-Key", it) }
         applyRestHeaders(requestBuilder, config)
-
         when (method) {
             "PUT"   -> requestBuilder.PUT(HttpRequest.BodyPublishers.ofString(body))
             "PATCH" -> requestBuilder.method("PATCH", HttpRequest.BodyPublishers.ofString(body))
             else    -> requestBuilder.POST(HttpRequest.BodyPublishers.ofString(body))
         }
+        val request = requestBuilder.build()
 
-        LOG.infof("REST OUTPUT deliver: %s %s", method, redactor.text(url))
-        try {
-            val response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString())
-            LOG.infof("REST OUTPUT response: HTTP %d", response.statusCode())
-            if (response.statusCode() >= 400) {
-                LOG.warnf("REST OUTPUT returned error status %d: %s", response.statusCode(), redactor.text(response.body().take(200)))
+        // Transient failures (network, 429, 5xx) are retried briefly; anything left fails the
+        // run, which keeps its input for Retry. Other 4xx answers are not retried.
+        var lastError: String? = null
+        for (attempt in 1..REST_ATTEMPTS) {
+            try {
+                val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+                val status = response.statusCode()
+                if (status in 200..299) {
+                    LOG.debugf("REST OUTPUT %s %s -> %d", method, url, status)
+                    return
+                }
+                lastError = "HTTP $status: ${response.body().take(200)}"
+                if (status != 429 && status < 500) break
+            } catch (e: Exception) {
+                lastError = e.message ?: e.javaClass.simpleName
             }
-        } catch (e: Exception) {
-            LOG.errorf("REST OUTPUT deliver failed: %s", redactor.text(e.message))
-            throw RuntimeException("REST connector deliver failed: ${e.message}", e)
+            if (attempt < REST_ATTEMPTS) Thread.sleep(1000L * attempt * attempt)
         }
+        throw RuntimeException("REST connector delivery to ${redactor.text(url)} failed: ${redactor.text(lastError)}")
     }
 
     /**
@@ -271,27 +326,15 @@ class ConnectorRuntimeService {
     // ── FILE ─────────────────────────────────────────────────────────────────
 
     /**
-     * Implements `fetchFileInput` for this source unit.
-     */
-    private fun fetchFileInput(config: Map<String, Any?>): Any? {
-        val path = config["path"]?.toString() ?: return null
-        return try {
-            val content = java.io.File(path).readText()
-            parseResponseBody(content)
-        } catch (e: Exception) {
-            LOG.errorf("FILE INPUT read failed at %s: %s", path, e.message)
-            throw RuntimeException("FILE connector read failed: ${e.message}", e)
-        }
-    }
-
-    /**
      * Implements `deliverFileOutput` for this source unit.
      */
     private fun deliverFileOutput(config: Map<String, Any?>, data: Any?) {
         val path = config["path"]?.toString() ?: return
         val body = if (data != null) objectMapper.writeValueAsString(data) else "{}"
         try {
-            java.io.File(path).writeText(body)
+            val file = FileSandbox(fileBaseDir).resolve(path)
+            java.nio.file.Files.createDirectories(file.parent)
+            java.nio.file.Files.writeString(file, body)
             LOG.infof("FILE OUTPUT wrote %d bytes to %s", body.length, path)
         } catch (e: Exception) {
             LOG.errorf("FILE OUTPUT write failed at %s: %s", path, e.message)
@@ -363,5 +406,9 @@ class ConnectorRuntimeService {
         } catch (_: Exception) {
             body
         }
+    }
+
+    private companion object {
+        const val REST_ATTEMPTS = 3
     }
 }

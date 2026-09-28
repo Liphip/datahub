@@ -3,8 +3,10 @@ package com.dataturntable.engine
 import com.dataturntable.pipeline.PipelineRun
 import com.dataturntable.pipeline.PipelineRunNodeLog
 import com.dataturntable.pipeline.PipelineRunStatus
+import com.dataturntable.pipeline.TriggerType
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.persistence.EntityManager
+import jakarta.persistence.LockModeType
 import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
 import org.jboss.logging.Logger
@@ -32,15 +34,80 @@ class PipelineLogWriter {
 
     // ── Run lifecycle ────────────────────────────────────────────────────────
 
-    @Transactional(Transactional.TxType.REQUIRES_NEW)
+    /** Kafka coordinates of the record being processed; null when not known (tests, direct calls). */
+    data class RecordSource(val partition: Int, val offset: Long)
+
     /**
-     * Implements `markRunning` for this source unit.
+     * Claims a run for execution, creating its row when the record comes from machine
+     * ingest (those runs are only created here, so ingest does not depend on the database).
+     *
+     * Returns false — the record must be skipped — when the run already finished, was
+     * cancelled, or is RUNNING for a different Kafka record: a second copy of the same run
+     * (client resend with the same idempotency key). A RUNNING run claimed by this very
+     * record is the redelivery after its executor died, so it is claimed again and its
+     * partial node logs are discarded.
      */
-    fun markRunning(runId: UUID) {
-        val run = em.find(PipelineRun::class.java, runId) ?: return
-        if (PipelineRunStatus.entries.any { it == run.status && com.dataturntable.pipeline.PipelineRunStateMachine.terminal(it) }) return
-        run.markRunning()
-        em.merge(run)
+    @Transactional(Transactional.TxType.REQUIRES_NEW)
+    fun claimRun(
+        runId: UUID,
+        pipelineId: UUID? = null,
+        triggerType: TriggerType = TriggerType.DATA,
+        queuedAt: Instant? = null,
+        retryOfRunId: UUID? = null,
+        source: RecordSource? = null,
+        /** Version the record was queued for; null: the pipeline's latest version. */
+        pipelineVersionId: UUID? = null,
+    ): Boolean {
+        if (pipelineId != null) {
+            // The run executes the graph of this immutable version, even if the pipeline was
+            // edited while the record waited in the queue. Machine ingest (PipelineRunQueue,
+            // persistRun = false) deliberately never touches the database at enqueue time —
+            // that's what lets it keep accepting records during a database outage (NFR-R6) —
+            // so it can't stamp pipelineVersionId into the Kafka message itself, unlike a
+            // synchronous HTTP-triggered run (persistRun = true, pinned immediately in
+            // PipelineRunQueue.createRun). For that path, reconstruct "the version active when
+            // the record was queued" from queuedAt (already carried in the message) instead of
+            // picking whatever version happens to be latest right now: if the pipeline was
+            // edited after the record queued but before this run claims it, the record must
+            // still run the version that was live at enqueue time, not the new one.
+            val versionId = pipelineVersionId ?: em.createQuery(
+                if (queuedAt != null) {
+                    "SELECT v.id FROM PipelineVersion v WHERE v.pipeline.id = :p AND v.createdAt <= :queuedAt ORDER BY v.version DESC"
+                } else {
+                    "SELECT v.id FROM PipelineVersion v WHERE v.pipeline.id = :p ORDER BY v.version DESC"
+                },
+                UUID::class.java
+            ).setParameter("p", pipelineId).also { if (queuedAt != null) it.setParameter("queuedAt", queuedAt) }
+                .setMaxResults(1).resultList.firstOrNull()
+            em.createNativeQuery(
+                "INSERT INTO pipeline_runs (id, pipeline_id, status, trigger_type, started_at, queued_at, retry_of_run_id, pipeline_version_id) " +
+                    "VALUES (?1, ?2, 'PENDING', ?3, ?4, ?5, ?6, ?7) ON CONFLICT DO NOTHING"
+            ).setParameter(1, runId).setParameter(2, pipelineId).setParameter(3, triggerType.name)
+                .setParameter(4, java.sql.Timestamp.from(Instant.now()))
+                .setParameter(5, queuedAt?.let { java.sql.Timestamp.from(it) })
+                .setParameter(6, retryOfRunId)
+                .setParameter(7, versionId)
+                .executeUpdate()
+        }
+        val run = em.find(PipelineRun::class.java, runId, LockModeType.PESSIMISTIC_WRITE) ?: return false
+        val reaped = run.status == PipelineRunStatus.FAILED && run.errorMessage == PendingRunReaper.REAPED_MESSAGE
+        when {
+            run.status == PipelineRunStatus.PENDING || reaped -> Unit
+            run.status == PipelineRunStatus.RUNNING -> {
+                val claimedByOther = source != null && run.recordPartition != null &&
+                    (run.recordPartition != source.partition || run.recordOffset != source.offset)
+                if (claimedByOther) return false
+                em.createQuery("DELETE FROM PipelineRunNodeLog l WHERE l.run.id = :id").setParameter("id", runId).executeUpdate()
+            }
+            else -> return false
+        }
+        run.errorMessage = null
+        run.completedAt = null
+        run.status = PipelineRunStatus.RUNNING
+        run.startedAt = Instant.now()
+        if (run.queuedAt == null) run.queuedAt = queuedAt
+        source?.let { run.recordPartition = it.partition; run.recordOffset = it.offset }
+        return true
     }
 
     @Transactional(Transactional.TxType.REQUIRES_NEW)
@@ -59,12 +126,13 @@ class PipelineLogWriter {
     /**
      * Implements `markFailed` for this source unit.
      */
-    fun markFailed(runId: UUID, errorMessage: String?, metrics: String?) {
+    fun markFailed(runId: UUID, errorMessage: String?, metrics: String?, input: String? = null) {
         val run = em.find(PipelineRun::class.java, runId) ?: return
         if (com.dataturntable.pipeline.PipelineRunStateMachine.terminal(run.status)) return
         run.markFailed(errorMessage)
         run.errorMessage = errorMessage
         run.metrics = metrics
+        run.inputPayload = input
         em.merge(run)
     }
 
@@ -75,18 +143,6 @@ class PipelineLogWriter {
     fun isCancelled(runId: UUID): Boolean {
         val run = em.find(PipelineRun::class.java, runId) ?: return false
         return run.status == PipelineRunStatus.CANCELLED
-    }
-
-    @Transactional(Transactional.TxType.REQUIRES_NEW)
-    /**
-     * Updates the requested state.
-     */
-    fun setRetryOfRunId(runId: UUID, retryOfRunId: UUID) {
-        val run = em.find(PipelineRun::class.java, runId) ?: return
-        if (run.retryOfRunId == null) {
-            run.retryOfRunId = retryOfRunId
-            em.merge(run)
-        }
     }
 
     // ── Node logs ────────────────────────────────────────────────────────────

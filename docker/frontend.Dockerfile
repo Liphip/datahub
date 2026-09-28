@@ -1,15 +1,13 @@
 # Build stage
-FROM node:20-alpine AS builder
+FROM node:24.21.0-alpine3.24 AS builder
 
 WORKDIR /app
 
 # Copy package files
 COPY frontend/package*.json ./
 
-# TODO: Use the lockfile-enforcing npm ci command
-# Details: package-lock.json is copied into this image, but npm install may update the dependency resolution during builds. npm ci produces repeatable, fail-fast frontend images from the committed lockfile.
-# Install dependencies
-RUN npm install
+# Install exactly the dependency tree recorded in the committed lockfile
+RUN npm ci
 
 # Copy source code
 COPY frontend/ ./
@@ -18,7 +16,11 @@ COPY frontend/ ./
 RUN npm run build
 
 # Production stage
-FROM nginx:alpine
+FROM nginx:1.30.5-alpine3.24
+
+# Same libexpat CVE-2026-93990 gap as backend/Dockerfile's base image (Alpine 3.24) — see that
+# file's comment for the full explanation. Upgrading here closes it in the nginx-based image too.
+RUN apk upgrade --no-cache
 
 # Copy built assets from builder
 COPY --from=builder /app/dist /usr/share/nginx/html

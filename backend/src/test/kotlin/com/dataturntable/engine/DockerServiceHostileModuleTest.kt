@@ -24,6 +24,7 @@ import java.util.UUID
  * path (bypassing WarmContainerPool), matching the documented rule that custom-limit requests must
  * not reuse another job's sandboxed container.
  */
+@org.junit.jupiter.api.condition.EnabledIf("com.dataturntable.test.DockerAvailability#available")
 @QuarkusTest
 class DockerServiceHostileModuleTest {
 

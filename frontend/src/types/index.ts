@@ -222,9 +222,6 @@ export interface Pipeline {
   tenantId?: string;
   name: string;
   description?: string;
-  importModuleVersionId?: string;
-  processingModuleVersionIds: string[];
-  exportModuleVersionIds: string[];
   graphDefinition?: {
     nodes: Array<Record<string, unknown> & { moduleId?: string; moduleVersionId?: string }>;
     edges: Array<Record<string, unknown>>;
@@ -377,39 +374,22 @@ export interface AlertChannel {
 }
 
 /**
- * Defines the interface `AlertRule`, the contract implemented by this source unit.
- */
-export interface AlertRule {
-  id: string;
-  tenantId?: string;
-  pipelineId?: string;
-  channelId?: string;
-  channelIds?: string[];
-  actions?: Array<{ id?: string; channelId: string; channelName?: string; channelType?: AlertChannel['channelType'] }>;
-  name: string;
-  description?: string;
-  condition?: Record<string, unknown> | string;
-  severity?: 'INFO' | 'WARNING' | 'CRITICAL' | 'ERROR';
-  message?: string;
-  enabled: boolean;
-  cooldownSeconds?: number;
-  createdAt?: string;
-}
-
-/**
  * Defines the interface `AlertHistory`, the contract implemented by this source unit.
  */
 export interface AlertHistory {
   id: string;
   tenantId?: string;
-  ruleId?: string;
   channelId?: string;
   severity: 'INFO' | 'WARNING' | 'CRITICAL' | 'ERROR';
   title: string;
   message?: string;
   payload?: Record<string, unknown>;
-  sentAt: string;
-  status: 'PENDING' | 'SENT' | 'FAILED' | 'RETRY';
+  createdAt: string;
+  sentAt?: string;
+  status: 'PENDING' | 'SENDING' | 'SENT' | 'SUPPRESSED' | 'FAILED';
+  attempts?: number;
+  nextAttemptAt?: string;
+  lastError?: string;
 }
 
 /**
@@ -445,7 +425,7 @@ export interface Connector {
   id: string;
   tenantId?: string;
   name: string;
-  connectorType: 'MQTT' | 'REST' | 'WEBSOCKET' | 'UDP' | 'FILE' | 'CUSTOM';
+  connectorType: 'MQTT' | 'REST' | 'WEBSOCKET' | 'UDP' | 'FILE' | 'FTP' | 'SFTP' | 'EMAIL' | 'CUSTOM';
   direction: 'INPUT' | 'OUTPUT';
   config: Record<string, unknown>;
   description?: string;
@@ -579,17 +559,6 @@ export interface ModuleLog {
 }
 
 /**
- * Defines the interface `DataBlob`, the contract implemented by this source unit.
- */
-export interface DataBlob {
-  id: string;
-  name: string;
-  contentType: string;
-  sizeBytes: number;
-  createdAt: string;
-}
-
-/**
  * Defines the interface `DataTableRegistrationResult`, the contract implemented by this source unit.
  */
 export interface DataTableRegistrationResult {
@@ -621,4 +590,109 @@ export interface TenantRunSummary {
     failedRuns: number;
     inFlightRuns: number;
   }[];
+}
+
+/** Metadata: kinds of objects (meter, location, ...) with their schemas. */
+export interface MetadataType {
+  id: string;
+  tenantId: string;
+  typeKey: string;
+  name: string;
+  description?: string;
+  attributeSchema: { name: string; type?: string; description?: string; unit?: string }[];
+  identifierSchemes: { scheme: string; name?: string; pattern?: string }[];
+  relationSchema: { relation: string; targetType?: string; many?: boolean }[];
+  template?: string;
+  objectCount: number;
+}
+
+export interface MetadataTemplate {
+  key: string;
+  name: string;
+  description: string;
+  types: string[];
+}
+
+export interface MetadataObjectSummary {
+  id: string;
+  name: string;
+  typeKey: string;
+  typeName: string;
+  identifiers: Record<string, string>;
+  attributes: Record<string, unknown>;
+  updatedAt: string;
+}
+
+export interface MetadataPeriod {
+  validFrom?: string | null;
+  validTo?: string | null;
+}
+
+export interface MetadataObjectDetail {
+  id: string;
+  name: string;
+  typeKey: string;
+  typeName: string;
+  at: string;
+  identifiers: Record<string, string>;
+  attributes: Record<string, unknown>;
+  identifierHistory: ({ scheme: string; value: string } & MetadataPeriod)[];
+  attributeHistory: ({ attributes: Record<string, unknown>; source?: string; changedAt: string } & MetadataPeriod)[];
+  relations: ({ relation: string; target: { id: string; name: string; typeKey: string } } & MetadataPeriod)[];
+  referencedBy: ({ relation: string; source: { id: string; name: string; typeKey: string } } & MetadataPeriod)[];
+}
+
+/** Mapping of records to metadata objects (the saveMetadata node / import config). */
+export interface SaveMetadataMapping {
+  type: string;
+  match: { scheme: string; field: string };
+  nameField?: string;
+  identifiers?: Record<string, string>;
+  attributes?: Record<string, string> | '*';
+  relations?: { relation: string; type?: string; scheme: string; field: string; create?: boolean }[];
+  validFromField?: string;
+}
+
+/** Built-in PROCESSING step: adds metadata valid at the record's time to every record. */
+export interface EnrichConfig {
+  match: { scheme: string; field: string };
+  timestampField?: string;
+  outputs: { as: string; path?: string[] }[];
+  onMissing?: 'keep' | 'drop' | 'fail';
+}
+
+/** Reference to a stored secret; the value itself is never returned. */
+export interface SecretReference {
+  id: string;
+  name?: string;
+  version: number;
+}
+
+/**
+ * Defines the interface `ConnectorInboxItem`, one row of the ledger that makes reading
+ * from a pull connector exactly-once (directory, FTP/FTPS, SFTP, IMAP).
+ */
+export interface ConnectorInboxItem {
+  id: string;
+  name: string;
+  size?: number;
+  status: 'QUEUED' | 'DONE' | 'FAILED';
+  chunks: number;
+  records?: number;
+  error?: string;
+  firstSeenAt: string;
+  queuedAt?: string;
+  acknowledgedAt?: string;
+}
+
+/** Ingest credential for devices and systems that push data; `key` is only present right after creation. */
+export interface ApiKey {
+  id: string;
+  name: string;
+  pipelineIds: string[];
+  connectorIds: string[];
+  expiresAt?: string | null;
+  lastUsedAt?: string | null;
+  isActive: boolean;
+  key?: string;
 }

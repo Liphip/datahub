@@ -4,6 +4,7 @@ import jakarta.persistence.Column
 import jakarta.persistence.Entity
 import jakarta.persistence.Id
 import jakarta.persistence.Table
+import jakarta.persistence.UniqueConstraint
 import java.time.Instant
 import java.util.UUID
 
@@ -14,7 +15,7 @@ import java.util.UUID
  * entity directly).
  */
 @Entity
-@Table(name = "data_table_registry")
+@Table(name = "data_table_registry", uniqueConstraints = [UniqueConstraint(columnNames = ["tenant_id", "table_name"])])
 class DataTableRegistryRecord {
     @Id var id: UUID? = null
     @Column(name = "tenant_id", nullable = false) var tenantId: UUID? = null

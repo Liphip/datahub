@@ -1,0 +1,30 @@
+{
+  "name": "LoRaWAN meter readings",
+  "description": "Readings enriched with meter, market location, location and grid area, valid at the reading's time, then delivered to the metering system and the grid calculation.",
+  "graphDefinition": {
+    "nodes": [
+      { "id": "in", "type": "IMPORT", "label": "LoRaWAN uplinks", "deduplicateBy": ["devEUI", "time"] },
+      {
+        "id": "enrich", "type": "PROCESSING", "label": "Add metadata",
+        "enrich": {
+          "match": { "scheme": "lorawan.devEUI", "field": "devEUI" },
+          "timestampField": "time",
+          "outputs": [
+            { "as": "meter", "path": ["meter"] },
+            { "as": "marketLocation", "path": ["meter", "metering_location", "market_location"] },
+            { "as": "location", "path": ["meter", "metering_location", "market_location", "location"] },
+            { "as": "gridArea", "path": ["meter", "metering_location", "market_location", "location", "grid_area"] }
+          ],
+          "onMissing": "fail"
+        }
+      },
+      { "id": "metering", "type": "EXPORT", "label": "Metering system", "connectorId": "${meteringConnectorId}" },
+      { "id": "grid", "type": "EXPORT", "label": "Grid calculation", "connectorId": "${gridConnectorId}" }
+    ],
+    "edges": [
+      { "source": "in", "target": "enrich" },
+      { "source": "enrich", "target": "metering" },
+      { "source": "enrich", "target": "grid" }
+    ]
+  }
+}

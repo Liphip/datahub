@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { DataBlob, DataSummaryResponse } from '../types';
+import type { DataSummaryResponse } from '../types';
 
 /**
  * Defines the type `DataTable`, the contract implemented by this source unit.
@@ -101,9 +101,9 @@ function DataBarChart({ bars }: { bars: Array<{ label: string; count: number; av
               {entry.count} rows • avg {formatMetric(entry.avgValue)}
             </span>
           </div>
-          <div className="h-2 overflow-hidden rounded bg-slate-100">
+          <div className="h-2 overflow-hidden rounded-sm bg-slate-100">
             <div
-              className="h-full rounded bg-gradient-to-r from-cyan-500 to-sky-500"
+              className="h-full rounded-sm bg-linear-to-r from-cyan-500 to-sky-500"
               style={{ width: `${(entry.count / maxCount) * 100}%` }}
             />
           </div>
@@ -126,7 +126,7 @@ export default function Data() {
 
   const tenantId = selectedTenantId || user?.tenantId || tenantContexts[0]?.tenantId;
 
-  const [activeTab, setActiveTab] = useState<'tables' | 'files' | 'grafana'>('tables');
+  const [activeTab, setActiveTab] = useState<'tables' | 'grafana'>('tables');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [error, setError] = useState('');
 
@@ -152,15 +152,6 @@ export default function Data() {
   const [tagField, setTagField] = useState('location');
   const [topTags, setTopTags] = useState(8);
   const [sdkCalloutOpen, setSdkCalloutOpen] = useState(false);
-
-  // Files tab state
-  const [blobs, setBlobs] = useState<DataBlob[]>([]);
-  const [blobsLoading, setBlobsLoading] = useState(false);
-  const [blobPage, setBlobPage] = useState(0);
-  const [blobHasMore, setBlobHasMore] = useState(false);
-  const [uploadingBlob, setUploadingBlob] = useState(false);
-  const [deletingBlobId, setDeletingBlobId] = useState<string | null>(null);
-  const [confirmDeleteBlobId, setConfirmDeleteBlobId] = useState<string | null>(null);
 
   /**
    * Implements `showToast` for this source unit.
@@ -219,25 +210,6 @@ export default function Data() {
   };
 
   /**
-   * Implements `fetchBlobs` for this source unit.
-   */
-  const fetchBlobs = async (tenant: string, page = 0) => {
-    setBlobsLoading(true);
-    try {
-      const result = await api.getDataBlobs(tenant, page);
-      setBlobs(result.blobs);
-      setBlobPage(result.page);
-      setBlobHasMore(result.hasMore);
-    } catch (err) {
-      console.error('Error fetching blobs:', err);
-      setBlobs([]);
-      setBlobHasMore(false);
-    } finally {
-      setBlobsLoading(false);
-    }
-  };
-
-  /**
    * Implements `useEffect` for this source unit.
    */
   useEffect(() => {
@@ -263,15 +235,6 @@ export default function Data() {
     };
     load();
   }, [tenantId, canReadData, t]);
-
-  /**
-   * Implements `useEffect` for this source unit.
-   */
-  useEffect(() => {
-    if (activeTab === 'files' && tenantId && canReadData) {
-      fetchBlobs(tenantId);
-    }
-  }, [activeTab, tenantId, canReadData]);
 
   const selectedTableInfo = tables.find((t) => t.name === selectedTable);
   const isTimeSeries = !selectedTableInfo || selectedTableInfo.type === 'timeseries';
@@ -407,71 +370,12 @@ export default function Data() {
     URL.revokeObjectURL(url);
   };
 
-  /**
-   * Processes the named request, event, or operation.
-   */
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!canWriteData) { showToast(t('data.permissionCreateTable'), 'error'); return; }
-    if (!tenantId || !e.target.files?.[0]) return;
-    const file = e.target.files[0];
-    setUploadingBlob(true);
-    try {
-      await api.uploadDataBlob(tenantId, file);
-      await fetchBlobs(tenantId, 0);
-      showToast('File uploaded', 'success');
-    } catch {
-      showToast('Failed to upload file', 'error');
-    } finally {
-      setUploadingBlob(false);
-      e.target.value = '';
-    }
-  };
-
-  /**
-   * Processes the named request, event, or operation.
-   */
-  const handleDeleteBlob = async (blobId: string) => {
-    if (!canWriteData) { showToast(t('data.permissionDeleteTable'), 'error'); return; }
-    if (!tenantId) return;
-    setDeletingBlobId(blobId);
-    try {
-      await api.deleteDataBlob(tenantId, blobId);
-      await fetchBlobs(tenantId, blobPage);
-      setConfirmDeleteBlobId(null);
-      showToast('File deleted', 'success');
-    } catch {
-      showToast('Failed to delete file', 'error');
-    } finally {
-      setDeletingBlobId(null);
-    }
-  };
-
-  /**
-   * Processes the named request, event, or operation.
-   */
-  const handleDownloadBlob = async (blob: DataBlob) => {
-    if (!tenantId) return;
-    const download = await api.downloadDataBlob(tenantId, blob.id);
-    const url = URL.createObjectURL(download);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = blob.name;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const formatBytes = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
-
   if (loading) {
     return (
       <div className="px-4 py-6">
         <div className="card animate-pulse">
-          <div className="mb-4 h-4 w-1/3 rounded bg-gray-200" />
-          <div className="h-32 rounded bg-gray-200" />
+          <div className="mb-4 h-4 w-1/3 rounded-sm bg-gray-200" />
+          <div className="h-32 rounded-sm bg-gray-200" />
         </div>
       </div>
     );
@@ -503,7 +407,7 @@ export default function Data() {
   return (
     <div className="px-4 py-6 sm:px-0">
       {toast && (
-        <div className={`fixed right-4 top-4 z-50 rounded px-4 py-3 text-sm text-white shadow-lg ${toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
+        <div className={`fixed right-4 top-4 z-50 rounded-sm px-4 py-3 text-sm text-white shadow-lg ${toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
           {toast.message}
         </div>
       )}
@@ -514,7 +418,7 @@ export default function Data() {
 
       {/* Tab switcher */}
       <div className="mb-6 flex space-x-2">
-        {(['tables', 'files', 'grafana'] as const).map((tab) => (
+        {(['tables', 'grafana'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -527,13 +431,13 @@ export default function Data() {
         ))}
       </div>
 
-      {error && <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-red-700">{error}</div>}
+      {error && <div className="mb-4 rounded-sm border border-red-200 bg-red-50 px-4 py-3 text-red-700">{error}</div>}
 
       {/* Tables tab */}
       {activeTab === 'tables' && (
         <div>
           {/* SDK snippet callout */}
-          <div className="mb-4 rounded border border-slate-200 bg-slate-50">
+          <div className="mb-4 rounded-sm border border-slate-200 bg-slate-50">
             <button
               onClick={() => setSdkCalloutOpen(!sdkCalloutOpen)}
               className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-100"
@@ -543,7 +447,7 @@ export default function Data() {
             </button>
             {sdkCalloutOpen && (
               <div className="px-4 pb-4">
-                <pre className="rounded bg-slate-900 text-slate-100 text-xs font-mono px-4 py-3 overflow-x-auto whitespace-pre">{`# In your module code, use the dt helpers:
+                <pre className="rounded-sm bg-slate-900 text-slate-100 text-xs font-mono px-4 py-3 overflow-x-auto whitespace-pre">{`# In your module code, use the dt helpers:
 
 # Write to a time-series table:
 dt.write_table('my_table', [
@@ -592,7 +496,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-sm font-semibold text-slate-800">
                   Query: <span className="font-mono">{selectedTable}</span>
-                  <span className="ml-2 px-2 py-0.5 text-xs rounded bg-slate-100 text-slate-600">
+                  <span className="ml-2 px-2 py-0.5 text-xs rounded-sm bg-slate-100 text-slate-600">
                     {selectedTableInfo?.type || 'timeseries'}
                   </span>
                 </h2>
@@ -633,7 +537,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
                 ) : (
                   <div className="md:col-span-2">
                     <label className="mb-1 block text-xs font-medium text-gray-600">Relational querying</label>
-                    <div className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                    <div className="rounded-sm border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
                       Ad hoc SQL filters are intentionally disabled here. Use Grafana or a DB_LOAD module for scoped relational querying.
                     </div>
                   </div>
@@ -690,7 +594,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
           )}
 
           {summaryLoading && (
-            <div className="mb-4 rounded border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-700">
+            <div className="mb-4 rounded-sm border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-700">
               Updating summary charts…
             </div>
           )}
@@ -743,7 +647,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
 
           {/* Create table modal */}
           {showCreateModal && canWriteData && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
               <div className="w-full max-w-lg rounded-lg bg-white p-6 max-h-[90vh] overflow-y-auto">
                 <h2 className="mb-4 text-xl font-bold">{t('data.createTable')}</h2>
                 <div className="mb-4">
@@ -772,7 +676,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
                 </div>
 
                 {newTableType === 'timeseries' ? (
-                  <div className="mb-4 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  <div className="mb-4 rounded-sm border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
                     <p className="font-medium mb-1">Fixed schema:</p>
                     <p className="font-mono text-xs">time (TIMESTAMPTZ), device_id (TEXT), value (FLOAT), tags (JSONB)</p>
                     <p className="mt-2 text-xs text-slate-500">Time-series tables always use this schema. Data is partitioned by time.</p>
@@ -843,8 +747,8 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
 
           {/* Delete table confirm */}
           {confirmDelete && canWriteData && selectedTable && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-              <div className="w-full max-w-md rounded-lg bg-white p-6">
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+              <div className="w-full max-w-md rounded-lg bg-white p-6 max-h-[90vh] overflow-y-auto">
                 <h2 className="mb-2 text-xl font-bold">{t('data.deleteTable')}</h2>
                 <p className="mb-4 text-sm text-gray-600">{t('data.deleteTableConfirm', { name: selectedTable })}</p>
                 <div className="flex justify-end space-x-2">
@@ -861,104 +765,15 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
         </div>
       )}
 
-      {/* Files tab */}
-      {activeTab === 'files' && (
-        <div>
-          <div className="mb-4 flex items-center justify-between">
-            <p className="text-sm text-gray-600">Upload and manage binary files (blobs) for this tenant.</p>
-            {canWriteData && (
-              <label className="btn-primary text-sm cursor-pointer">
-                {uploadingBlob ? 'Uploading…' : 'Upload File'}
-                <input type="file" className="hidden" onChange={handleFileUpload} disabled={uploadingBlob} />
-              </label>
-            )}
-          </div>
-
-          {blobsLoading ? (
-            <div className="card animate-pulse"><div className="h-4 bg-gray-200 rounded w-1/3"></div></div>
-          ) : blobs.length === 0 ? (
-            <div className="card text-center py-12">
-              <p className="text-gray-500 mb-2">No files uploaded yet.</p>
-              {canWriteData && (
-                <p className="text-sm text-gray-400">Use the Upload File button to add files.</p>
-              )}
-            </div>
-          ) : (
-            <div className="card overflow-hidden">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Uploaded</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {blobs.map((blob) => (
-                    <tr key={blob.id}>
-                      <td className="px-6 py-4 text-sm font-medium text-gray-900">{blob.name}</td>
-                      <td className="px-6 py-4 text-sm text-gray-500">{blob.contentType}</td>
-                      <td className="px-6 py-4 text-sm text-gray-500">{formatBytes(blob.sizeBytes)}</td>
-                      <td className="px-6 py-4 text-sm text-gray-500">{new Date(blob.createdAt).toLocaleString()}</td>
-                      <td className="px-6 py-4 text-right text-sm">
-                        <button onClick={() => handleDownloadBlob(blob)} className="text-blue-600 hover:text-blue-800 mr-3">
-                          Download
-                        </button>
-                        {canWriteData && (
-                          confirmDeleteBlobId === blob.id ? (
-                            <span className="space-x-2">
-                              <span className="text-gray-500 text-xs">Delete?</span>
-                              <button onClick={() => handleDeleteBlob(blob.id)} disabled={deletingBlobId === blob.id} className="text-red-600 hover:text-red-800">
-                                {deletingBlobId === blob.id ? '…' : 'Yes'}
-                              </button>
-                              <button onClick={() => setConfirmDeleteBlobId(null)} className="text-gray-500 hover:text-gray-700">No</button>
-                            </span>
-                          ) : (
-                            <button onClick={() => setConfirmDeleteBlobId(blob.id)} className="text-red-600 hover:text-red-800">
-                              Delete
-                            </button>
-                          )
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="flex items-center justify-between border-t border-gray-200 px-4 py-3">
-                <span className="text-sm text-gray-500">Page {blobPage + 1}</span>
-                <div className="flex gap-2">
-                  <button
-                    className="btn-secondary text-sm"
-                    disabled={blobsLoading || blobPage === 0}
-                    onClick={() => tenantId && fetchBlobs(tenantId, blobPage - 1)}
-                  >
-                    Previous
-                  </button>
-                  <button
-                    className="btn-secondary text-sm"
-                    disabled={blobsLoading || !blobHasMore}
-                    onClick={() => tenantId && fetchBlobs(tenantId, blobPage + 1)}
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Grafana tab */}
       {activeTab === 'grafana' && (
         <div className="space-y-4">
-          <div className="rounded border border-blue-200 bg-blue-50 px-4 py-4">
+          <div className="rounded-sm border border-blue-200 bg-blue-50 px-4 py-4">
             <h2 className="text-base font-semibold text-blue-900 mb-2">Grafana Data Explorer</h2>
             <p className="text-sm text-blue-800 mb-3">
               Use the PostgreSQL datasource in Grafana to query your data tables directly. Tenant data lives in a dedicated schema and tables are addressed as:
             </p>
-            <div className="rounded bg-white border border-blue-200 px-3 py-2 flex items-center justify-between gap-2 mb-3">
+            <div className="rounded-sm bg-white border border-blue-200 px-3 py-2 flex items-center justify-between gap-2 mb-3">
               <code className="text-sm font-mono text-slate-800">{tableSchema}.{'<table_name>'}</code>
               <button
                 onClick={() => navigator.clipboard.writeText(tableSchema).then(() => showToast('Copied schema', 'success'))}
@@ -972,7 +787,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
             </p>
           </div>
 
-          <div className="rounded border border-slate-200 bg-slate-50 px-4 py-3">
+          <div className="rounded-sm border border-slate-200 bg-slate-50 px-4 py-3">
             <p className="text-sm text-slate-700 mb-2">
               Grafana is available at: <a href={grafanaUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-mono">{grafanaUrl}</a>
             </p>
@@ -981,7 +796,7 @@ rows = dt.input_data  # list of dicts from the upstream node`}</pre>
             </p>
           </div>
 
-          <div className="rounded border border-slate-200 overflow-hidden" style={{ height: 600 }}>
+          <div className="rounded-sm border border-slate-200 overflow-hidden" style={{ height: 600 }}>
             <iframe
               src={grafanaUrl}
               className="w-full h-full"

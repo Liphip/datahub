@@ -44,7 +44,7 @@ spec:
     spec:
       containers:
         - name: monitoring-grafana
-          image: grafana/grafana:11.1.4
+          image: grafana/grafana:13.2.2
           ports:
             - containerPort: 3000
               name: http
@@ -64,13 +64,13 @@ spec:
             - name: GF_DATABASE_USER
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: monitoring-db-user
+                  name: monitoring-db-credentials
+                  key: username
             - name: GF_DATABASE_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: monitoring-db-password
+                  name: monitoring-db-credentials
+                  key: password
           volumeMounts:
             - name: datasources
               mountPath: /etc/grafana/provisioning/datasources
@@ -124,9 +124,9 @@ data:
         access: proxy
         url: pipeline-postgresql:5432
         database: pipeline_data
-        user: pipeline_data
+        user: ${PIPELINE_DB_USER}
         secureJsonData:
-          password: changeme-pipeline
+          password: ${PIPELINE_DB_PASSWORD}
         jsonData:
           sslmode: disable
           postgresVersion: 1500
@@ -154,7 +154,7 @@ spec:
     spec:
       containers:
         - name: dashboard-grafana
-          image: grafana/grafana:11.1.4
+          image: grafana/grafana:13.2.2
           ports:
             - containerPort: 3000
               name: http
@@ -171,14 +171,30 @@ spec:
               value: "true"
             - name: GF_DATABASE_TYPE
               value: postgres
+            - name: PIPELINE_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: pipeline-db-credentials
+                  key: username
+            - name: PIPELINE_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pipeline-db-credentials
+                  key: password
             - name: GF_DATABASE_HOST
               value: dashboard-postgresql:5432
             - name: GF_DATABASE_NAME
               value: dashboard
             - name: GF_DATABASE_USER
-              value: dashboard
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-db-credentials
+                  key: username
             - name: GF_DATABASE_PASSWORD
-              value: dashboard
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-db-credentials
+                  key: password
           volumeMounts:
             - name: datasources
               mountPath: /etc/grafana/provisioning/datasources
@@ -251,20 +267,26 @@ spec:
     spec:
       containers:
         - name: dashboard-postgres
-          image: postgres:16-alpine
+          image: postgres:18.6-alpine3.24
           ports:
             - containerPort: 5432
               name: postgres
           env:
             - name: POSTGRES_USER
-              value: dashboard
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-db-credentials
+                  key: username
             - name: POSTGRES_PASSWORD
-              value: dashboard
+              valueFrom:
+                secretKeyRef:
+                  name: dashboard-db-credentials
+                  key: password
             - name: POSTGRES_DB
               value: dashboard
           volumeMounts:
             - name: dashboard-postgres-data
-              mountPath: /var/lib/postgresql/data
+              mountPath: /var/lib/postgresql
       volumes:
         - name: dashboard-postgres-data
           persistentVolumeClaim:

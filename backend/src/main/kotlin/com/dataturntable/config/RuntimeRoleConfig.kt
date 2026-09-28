@@ -49,10 +49,6 @@ class RuntimeRoleConfig(
      */
     fun requiresKafka(): Boolean = ownsIngestRuntime() || ownsPipelineRuntime()
     /**
-     * Validates or normalizes input before the caller continues.
-     */
-    fun requiresRedis(): Boolean = ownsIngestRuntime() || ownsPipelineRuntime()
-    /**
      * Implements `exposesPublicMonitoring` for this source unit.
      */
     fun exposesPublicMonitoring(): Boolean = isPublicApi()

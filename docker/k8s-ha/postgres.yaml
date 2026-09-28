@@ -1,0 +1,90 @@
+# PostgreSQL clusters managed by CloudNativePG (Apache-2.0).
+# Each cluster bootstraps its database owner from the same basic-auth Secret
+# the single-node deployment uses (docker/k8s/storage/secrets.yaml).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: app-db
+spec:
+  instances: 3
+  # A commit returns only after one standby has the WAL: a primary failover loses no
+  # committed transaction (RPO 0). With one of three instances down writes continue.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
+  bootstrap:
+    initdb:
+      database: dataturntable
+      owner: dataturntable
+      secret:
+        name: app-db-credentials
+  storage:
+    size: 20Gi
+---
+# Pipeline data. Uses the CloudNativePG PostgreSQL image; the TimescaleDB
+# extension is not part of it (see README).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: pipeline-db
+spec:
+  instances: 3
+  # A commit returns only after one standby has the WAL: a primary failover loses no
+  # committed transaction (RPO 0). With one of three instances down writes continue.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
+  bootstrap:
+    initdb:
+      database: pipeline_data
+      owner: pipeline_data
+      secret:
+        name: pipeline-db-credentials
+  storage:
+    size: 100Gi
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: monitoring-db
+spec:
+  instances: 2
+  # Two instances: synchronous while the standby is up, but writes continue without it.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: preferred
+  bootstrap:
+    initdb:
+      database: monitoring
+      owner: monitoring
+      secret:
+        name: monitoring-db-credentials
+  storage:
+    size: 10Gi
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: dashboard-db
+spec:
+  instances: 2
+  # Two instances: synchronous while the standby is up, but writes continue without it.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: preferred
+  bootstrap:
+    initdb:
+      database: dashboard
+      owner: dashboard
+      secret:
+        name: dashboard-db-credentials
+  storage:
+    size: 10Gi

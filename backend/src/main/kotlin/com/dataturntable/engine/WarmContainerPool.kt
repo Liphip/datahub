@@ -87,7 +87,7 @@ class WarmContainerPool {
     @Inject
     lateinit var runtimeRoleConfig: RuntimeRoleConfig
 
-    @ConfigProperty(name = "dataturntable.docker.module.base-image", defaultValue = "python:3.11-slim")
+    @ConfigProperty(name = "dataturntable.docker.module.base-image", defaultValue = "python:3.14.7-slim-trixie")
     lateinit var baseImage: String
 
     @ConfigProperty(name = "dataturntable.docker.resources.cpu-limit", defaultValue = "1.0")
@@ -222,6 +222,10 @@ class WarmContainerPool {
             "--network", if (needsNetwork) "bridge" else "none",
             "--user", "1000:1000",
             "--read-only",
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true",
+            "--pids-limit", "128",
+            "--ulimit", "nofile=1024:1024",
             "--tmpfs", "/tmp:size=256m",   // pip --target /tmp/packages goes here
             "--tmpfs", "/.cache",          // pip cache dir (user 1000 can't write to / otherwise)
             "--cpu-shares", (cpuLimit.toDouble() * 1024).toInt().toString(),

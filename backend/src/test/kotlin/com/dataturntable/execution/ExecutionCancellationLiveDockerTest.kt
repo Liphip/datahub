@@ -41,6 +41,7 @@ class TightGlobalExecutionQuotaProfile : QuarkusTestProfile {
 
 @QuarkusTest
 @TestProfile(TightGlobalExecutionQuotaProfile::class)
+@org.junit.jupiter.api.condition.EnabledIf("com.dataturntable.test.DockerAvailability#available")
 class ExecutionCancellationLiveDockerTest {
 
     @Inject

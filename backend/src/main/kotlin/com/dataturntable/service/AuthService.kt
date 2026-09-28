@@ -12,8 +12,7 @@ import jakarta.persistence.PersistenceContext
 import jakarta.transaction.Transactional
 import jakarta.ws.rs.NotFoundException
 import org.eclipse.microprofile.jwt.JsonWebToken
-import org.mindrot.jbcrypt.BCrypt
-import de.mkammerer.argon2.Argon2Factory
+import io.quarkus.elytron.security.common.BcryptUtil
 import java.security.SecureRandom
 import java.util.HashSet
 import java.util.UUID
@@ -46,20 +45,8 @@ class AuthService {
             throw SecurityException("Invalid credentials")
         }
         
-        val rawPassword = request.password?.takeIf { it.isNotBlank() }
-        val legacyPasswordHash = request.passwordHash?.takeIf { it.isNotBlank() }
-        val valid = when {
-            rawPassword != null && user.passwordHash?.startsWith("\$argon2id\$") == true -> safeVerifyArgon2(rawPassword, user.passwordHash!!)
-            rawPassword != null -> legacyPasswordCandidates(rawPassword).any { safeBCryptCheck(it, user.passwordHash) }
-            legacyPasswordHash != null && user.passwordHash?.startsWith("\$argon2id\$") == true -> safeVerifyArgon2(legacyPasswordHash, user.passwordHash!!)
-            legacyPasswordHash != null -> safeBCryptCheck(legacyPasswordHash, user.passwordHash)
-            else -> false
-        }
-        if (!valid) {
+        if (!BcryptUtil.matches(request.password, user.passwordHash)) {
             throw SecurityException("Invalid credentials")
-        }
-        if (rawPassword != null && user.passwordHash?.startsWith("\$argon2id\$") != true) {
-            user.passwordHash = hashArgon2(rawPassword)
         }
         
         user.lastLoginAt = java.time.Instant.now()
@@ -158,20 +145,11 @@ class AuthService {
         em.flush()
         
         val generatedPassword = generateRandomPassword(16)
-        // passwordHash is a deprecated transport alias retained for existing setup clients.
-        // It is treated as an opaque credential and is still stored only as Argon2id.
-        val password = request.password?.takeIf { it.isNotBlank() }
-            ?: request.passwordHash?.takeIf { it.isNotBlank() }
-            ?: generatedPassword
-        val responsePassword = when {
-            !request.password.isNullOrBlank() -> request.password
-            !request.passwordHash.isNullOrBlank() -> request.passwordHash
-            else -> generatedPassword
-        }
+        val responsePassword = request.password?.takeIf { it.isNotBlank() } ?: generatedPassword
         
         val user = User().apply {
             this.email = request.email
-            this.passwordHash = hashArgon2(password)
+            this.passwordHash = BcryptUtil.bcryptHash(responsePassword)
             this.firstName = "Admin"
             this.lastName = "User"
             this.isActive = true
@@ -209,34 +187,6 @@ class AuthService {
         )
     }
 
-    /**
-     * Evaluates the named capability or state predicate.
-     */
-    private fun legacyPasswordCandidates(password: String): List<String> {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-        val hash = digest.digest(password.toByteArray())
-        return listOf(password, java.util.Base64.getEncoder().encodeToString(hash))
-    }
-
-    private fun safeBCryptCheck(candidate: String, storedHash: String?): Boolean =
-        try {
-            storedHash != null && BCrypt.checkpw(candidate, storedHash)
-        } catch (e: IllegalArgumentException) {
-            false
-        }
-
-    private fun hashArgon2(password: String): String =
-        Argon2Factory.create(Argon2Factory.Argon2Types.ARGON2id).hash(3, 65536, 1, password.toCharArray())
-
-    private fun verifyArgon2(password: String, encodedHash: String): Boolean =
-        Argon2Factory.create(Argon2Factory.Argon2Types.ARGON2id).verify(encodedHash, password.toCharArray())
-
-    private fun safeVerifyArgon2(password: String, encodedHash: String): Boolean =
-        try {
-            verifyArgon2(password, encodedHash)
-        } catch (e: Exception) {
-            false
-        }
     
     /**
      * Implements `generateJwtToken` for this source unit.

@@ -14,7 +14,6 @@ import org.eclipse.microprofile.health.Startup
 import org.jboss.logging.Logger
 import java.net.InetSocketAddress
 import java.net.Socket
-import java.net.URI
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicBoolean
@@ -104,47 +103,6 @@ class KafkaHealthCheck : HealthCheck {
             LOG.error("Kafka health check failed", e)
             HealthCheckResponse.builder()
                 .name("kafka")
-                .down()
-                .withData("error", e.message ?: "unknown")
-                .build()
-        }
-    }
-}
-
-@ApplicationScoped
-/**
- * Defines the class `RedisHealthCheck`, the contract implemented by this source unit.
- */
-class RedisHealthCheck : HealthCheck {
-
-    private val LOG = Logger.getLogger(RedisHealthCheck::class.java)
-
-    @ConfigProperty(name = "quarkus.redis.hosts", defaultValue = "redis://localhost:6379")
-    lateinit var redisHosts: String
-
-    @Inject
-    lateinit var runtimeRoleConfig: RuntimeRoleConfig
-
-    @Readiness
-    override fun call(): HealthCheckResponse {
-        if (!runtimeRoleConfig.requiresRedis()) {
-            return HealthCheckResponse.builder()
-                .name("redis")
-                .up()
-                .withData("skipped", true)
-                .withData("role", runtimeRoleConfig.role.name)
-                .build()
-        }
-        return try {
-            val endpoint = redisHosts.split(",")
-                .mapNotNull(::parseRedisEndpoint)
-                .firstOrNull()
-                ?: return HealthCheckResponse.down("redis")
-            checkSocket("redis", endpoint)
-        } catch (e: Exception) {
-            LOG.error("Redis health check failed", e)
-            HealthCheckResponse.builder()
-                .name("redis")
                 .down()
                 .withData("error", e.message ?: "unknown")
                 .build()
@@ -276,20 +234,6 @@ private fun checkSocket(name: String, endpoint: String): HealthCheckResponse {
         .withData("endpoint", "$host:$port")
         .withData("latencyMs", latencyMs)
         .build()
-}
-
-/**
- * Parses external or persisted input into the required representation.
- */
-private fun parseRedisEndpoint(value: String): String? {
-    val trimmed = value.trim()
-    if (trimmed.isBlank()) return null
-    return if (trimmed.contains("://")) {
-        val uri = URI.create(trimmed)
-        if (uri.host == null || uri.port <= 0) null else "${uri.host}:${uri.port}"
-    } else {
-        trimmed
-    }
 }
 
 /**

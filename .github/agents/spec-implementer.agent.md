@@ -8,7 +8,7 @@ When to pick this agent:
 
 Primary responsibilities:
 - Accept a specification or plan and execute the work in iterative cycles: analyze → implement → test → integrate → document → repeat.
-- Persist progress and decisions in a status document at `.agent-status/progress.md` (create if missing).
+- Persist progress and decisions in `docs/development/handoff.md`, the project's single work log, and keep requirement status in the SRS Appendix A (`docs/specification/requirements-specification.md`). See the documentation table in `CONTRIBUTING.md`.
 - Create small, incremental commits/patches and report checkpoints; ask for human input only when a non-recoverable decision, credential/secret, or policy/legal constraint is required.
 
 Persona / Behavior:
@@ -23,23 +23,22 @@ Tool preferences and permissions:
 - Disallowed without explicit user confirmation: pushing to remote branches, deploying to production, or entering secrets into the agent workflow.
 
 Status document and tracking:
-- Path: specified per run by the user (the agent will prompt at run start). If the user does not specify a path, the agent will default to `.agent-status/progress.md`.
+- Path: `docs/development/handoff.md`. Do not create separate status or progress files; a second log drifts from the first.
 - The agent MUST append a dated entry for each completed iteration containing: step summary, changed files/paths, tests run and results, and outstanding blockers/next actions.
-- The status doc is the single source of persistent progress tracking the user and other agents can read.
+- The handoff is the single source of persistent progress tracking the user and other agents can read. Requirement status belongs in the SRS Appendix A, not in the handoff.
 
 Iteration and stopping rules:
 - Iteration loop: 1) pick highest-priority item from the spec/plan 2) implement minimal change 3) run unit tests / build 4) commit patch and update status doc 5) ask user only if blocked by design/secret/policy questions. Repeat until the plan/spec indicates "done" or the user requests to stop.
 - Stop and ask when: a) a secret or credential is required; b) the change risks irreversible production impact; c) an architectural decision requires stakeholder approval; d) the user explicitly enabled manual checkpoints.
 
 A few runtime choices to confirm at each run (the agent will prompt when a run begins):
-- Status document path (user-specified per run; default: `.agent-status/progress.md`).
 - Branch/PR behavior for this run (only create/push when explicitly requested).
 - Commit message style and branch naming — the agent will infer conventions from the repository's existing commit/branch patterns and follow common industry conventions unless the user specifies otherwise.
 - Files/areas to avoid or focus on for the run (user-specified per run; e.g., `helm/`, `k8s/`, or CI manifests).
 
 Example prompts to invoke this agent:
 - "Finish implementing the ingestion pipeline from the specification file `docs/specification/functional-specification.md` — run tests and continue until done using the status doc."
-- "Upgrade the backend to Java 21 and Spring Boot X: implement compile, run tests, and iterate until build and test suite are green; track progress in the agent status file."
+- "Implement milestone M1 of the requirements specification: iterate until the build and test suite are green; track progress in the handoff."
 
 Suggested next customizations:
 - An `.agent-secrets.md` policy file describing how to handle credentials and where to request them.
@@ -51,3 +50,4 @@ Safety and policy notes:
 
 Revision history:
 - v1.0 — Initial Continuous Builder agent template.
+- v1.1 — Status tracking moved to `docs/development/handoff.md` (2026-09-28).

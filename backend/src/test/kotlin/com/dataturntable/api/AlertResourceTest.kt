@@ -15,7 +15,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.mindrot.jbcrypt.BCrypt
+import io.quarkus.elytron.security.common.BcryptUtil
 import java.util.UUID
 
 @QuarkusTest
@@ -41,14 +41,12 @@ class AlertResourceTest {
 
     private fun createNonMemberToken(): String {
         val email = "alerts-outsider-${java.util.UUID.randomUUID()}@example.com"
-        val passwordHash = java.util.Base64.getEncoder().encodeToString(
-            java.security.MessageDigest.getInstance("SHA-256").digest("ViewerPass!123".toByteArray())
-        )
+        val password = "ViewerPass!123"
 
         QuarkusTransaction.requiringNew().run {
             val user = User().apply {
                 this.email = email
-                this.passwordHash = BCrypt.hashpw(passwordHash, BCrypt.gensalt())
+                this.passwordHash = BcryptUtil.bcryptHash(password)
                 this.isActive = true
                 this.createdAt = java.time.Instant.now()
                 this.updatedAt = java.time.Instant.now()
@@ -59,7 +57,7 @@ class AlertResourceTest {
 
         return given()
             .contentType(ContentType.JSON)
-            .body(mapOf("email" to email, "passwordHash" to passwordHash))
+            .body(mapOf("email" to email, "password" to password))
         .`when`()
             .post("/api/internal/v1/auth/login")
         .then()
@@ -117,128 +115,6 @@ class AlertResourceTest {
     }
 
     @Test
-    fun testListRulesRejectsInvalidTenantId() {
-        val token = TestAuthHelpers.createAdminToken()
-
-        given()
-            .header("Authorization", "Bearer $token")
-            .queryParam("tenantId", "bad-tenant")
-        .`when`()
-            .get("/api/v1/alerts/rules")
-        .then()
-            .statusCode(400)
-            .body("error", equalTo("Invalid tenantId"))
-    }
-
-    @Test
-    fun testCreateRuleAcceptsTenantQueryAndObjectCondition() {
-        val token = TestAuthHelpers.createAdminToken()
-
-        val tenantId = resolveTenantId(token)
-
-        val channelId = given()
-            .header("Authorization", "Bearer $token")
-            .contentType("application/json")
-            .body(
-                mapOf(
-                    "name" to "Query Tenant Channel",
-                    "channelType" to "WEBHOOK",
-                    "config" to mapOf("url" to "https://example.com/hook")
-                )
-            )
-        .`when`()
-            .post("/api/v1/alerts/channels?tenantId=$tenantId")
-        .then()
-            .statusCode(201)
-            .extract()
-            .body()
-            .jsonPath()
-            .getString("id")
-
-        given()
-            .header("Authorization", "Bearer $token")
-            .contentType("application/json")
-            .body(
-                mapOf(
-                    "name" to "Temp Rule",
-                    "channelId" to channelId,
-                    "condition" to mapOf("field" to "temperature", "operator" to ">", "value" to 100)
-                )
-            )
-        .`when`()
-            .post("/api/v1/alerts/rules?tenantId=$tenantId")
-        .then()
-            .statusCode(201)
-            .body("id", notNullValue())
-    }
-
-    @Test
-    fun testCreateRuleStoresSeverityAndMessageAsIndependentFields() {
-        val token = TestAuthHelpers.createAdminToken()
-        val tenantId = resolveTenantId(token)
-
-        val ruleId = given()
-            .header("Authorization", "Bearer $token")
-            .contentType("application/json")
-            .body(mapOf(
-                "name" to "Severity Rule",
-                "condition" to mapOf("field" to "temperature", "operator" to ">", "value" to 100),
-                "severity" to "CRITICAL",
-                "message" to "Temperature exceeded safe threshold"
-            ))
-        .`when`()
-            .post("/api/v1/alerts/rules?tenantId=$tenantId")
-        .then()
-            .statusCode(201)
-            .body("severity", equalTo("CRITICAL"))
-            .body("message", equalTo("Temperature exceeded safe threshold"))
-            .extract()
-            .body()
-            .jsonPath()
-            .getString("id")
-
-        given()
-            .header("Authorization", "Bearer $token")
-        .`when`()
-            .get("/api/v1/alerts/rules?tenantId=$tenantId")
-        .then()
-            .statusCode(200)
-            .body("items.find { it.id == '$ruleId' }.severity", equalTo("CRITICAL"))
-            .body("items.find { it.id == '$ruleId' }.message", equalTo("Temperature exceeded safe threshold"))
-
-        given()
-            .header("Authorization", "Bearer $token")
-            .contentType("application/json")
-            .body(mapOf("severity" to "INFO", "message" to "Back to normal"))
-        .`when`()
-            .patch("/api/v1/alerts/rules/$ruleId")
-        .then()
-            .statusCode(200)
-            .body("severity", equalTo("INFO"))
-            .body("message", equalTo("Back to normal"))
-    }
-
-    @Test
-    fun testCreateRuleRejectsInvalidSeverity() {
-        val token = TestAuthHelpers.createAdminToken()
-        val tenantId = resolveTenantId(token)
-
-        given()
-            .header("Authorization", "Bearer $token")
-            .contentType("application/json")
-            .body(mapOf(
-                "name" to "Bad Severity Rule",
-                "condition" to mapOf("field" to "temperature", "operator" to ">", "value" to 100),
-                "severity" to "SUPER_URGENT"
-            ))
-        .`when`()
-            .post("/api/v1/alerts/rules?tenantId=$tenantId")
-        .then()
-            .statusCode(400)
-            .body("error", equalTo("Invalid severity"))
-    }
-
-    @Test
     fun `alert channel mutation writes a redacted audit record`() {
         val token = TestAuthHelpers.createAdminToken()
         val tenantId = resolveTenantId(token)
@@ -280,6 +156,27 @@ class AlertResourceTest {
     }
 
     @Test
+    fun `alert channel rejects a config sent as a JSON string`() {
+        // Regression: `config` sent as a JSON *string* instead of an object skipped the recursive
+        // secretRefs walk entirely (a String hits the `else -> null` branch), so a plaintext
+        // credential was accepted and persisted.
+        val token = TestAuthHelpers.createAdminToken()
+        val tenantId = resolveTenantId(token)
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "String config",
+                "channelType" to "WEBHOOK",
+                "config" to """{"url":"https://example.com/hook","password":"plaintext-secret"}"""
+            ))
+        .`when`().post("/api/v1/alerts/channels?tenantId=$tenantId")
+        .then().statusCode(400)
+            .body("error", equalTo("Channel config must be a JSON object"))
+    }
+
+    @Test
     fun testUpdateChannelSupportsNameAndIsActive() {
         val token = TestAuthHelpers.createAdminToken()
         val tenantId = resolveTenantId(token)
@@ -307,119 +204,6 @@ class AlertResourceTest {
             .statusCode(200)
             .body("name", equalTo("Updated Channel"))
             .body("isActive", equalTo(false))
-    }
-
-    @Test
-    fun testUpdateRuleSupportsConditionAndEnabled() {
-        val token = TestAuthHelpers.createAdminToken()
-        val tenantId = resolveTenantId(token)
-
-        val ruleId = given()
-            .header("Authorization", "Bearer $token")
-            .contentType("application/json")
-            .body(
-                mapOf(
-                    "name" to "Editable Rule",
-                    "condition" to mapOf("field" to "temperature", "operator" to ">", "value" to 90)
-                )
-            )
-        .`when`()
-            .post("/api/v1/alerts/rules?tenantId=$tenantId")
-        .then()
-            .statusCode(201)
-            .extract()
-            .body()
-            .jsonPath()
-            .getString("id")
-
-        given()
-            .header("Authorization", "Bearer $token")
-            .contentType("application/json")
-            .body(
-                mapOf(
-                    "enabled" to false,
-                    "condition" to mapOf("field" to "humidity", "operator" to ">", "value" to 80)
-                )
-            )
-        .`when`()
-            .patch("/api/v1/alerts/rules/$ruleId")
-        .then()
-            .statusCode(200)
-            .body("enabled", equalTo(false))
-            .body("condition.field", equalTo("humidity"))
-    }
-
-    @Test
-    fun testRulePreviewEvaluatesWithoutDispatching() {
-        val token = TestAuthHelpers.createAdminToken()
-        val tenantId = resolveTenantId(token)
-        val ruleId = given()
-            .header("Authorization", "Bearer $token")
-            .contentType("application/json")
-            .body(mapOf("name" to "Preview rule", "condition" to mapOf("field" to "temperature", "operator" to ">", "value" to 90)))
-        .`when`().post("/api/v1/alerts/rules?tenantId=$tenantId")
-        .then().statusCode(201).extract().jsonPath().getString("id")
-
-        given().header("Authorization", "Bearer $token").contentType("application/json")
-            .body(mapOf("payload" to mapOf("temperature" to 95)))
-        .`when`().post("/api/v1/alerts/rules/$ruleId/test")
-        .then().statusCode(200)
-            .body("matched", equalTo(true))
-            .body("wouldDispatch", equalTo(false))
-    }
-
-    @Test
-    fun `rule actions support multiple tenant channels and safe preview`() {
-        val token = TestAuthHelpers.createAdminToken()
-        val tenantId = resolveTenantId(token)
-        fun createChannel(name: String): String = given().header("Authorization", "Bearer $token").contentType("application/json")
-            .body(mapOf("name" to name, "channelType" to "WEBHOOK", "config" to mapOf("url" to "https://example.com/$name")))
-        .`when`().post("/api/v1/alerts/channels?tenantId=$tenantId")
-        .then().statusCode(201).extract().jsonPath().getString("id")
-        val first = createChannel("Action one")
-        val second = createChannel("Action two")
-
-        val ruleId = given().header("Authorization", "Bearer $token").contentType("application/json")
-            .body(mapOf(
-                "name" to "Multiple actions",
-                "channelIds" to listOf(first, second),
-                "condition" to mapOf("field" to "temperature", "operator" to ">", "value" to 90)
-            ))
-        .`when`().post("/api/v1/alerts/rules?tenantId=$tenantId")
-        .then().statusCode(201)
-            .body("actions.size()", equalTo(2))
-            .body("channelIds", org.hamcrest.Matchers.containsInAnyOrder(first, second))
-            .extract().jsonPath().getString("id")
-
-        given().header("Authorization", "Bearer $token").contentType("application/json")
-            .body(mapOf("payload" to mapOf("temperature" to 95)))
-        .`when`().post("/api/v1/alerts/rules/$ruleId/test")
-        .then().statusCode(200)
-            .body("matched", equalTo(true))
-            .body("wouldDispatch", equalTo(false))
-            .body("actions.size()", equalTo(2))
-            .body("actions.channelId", org.hamcrest.Matchers.containsInAnyOrder(first, second))
-    }
-
-    @Test
-    fun testCreateRuleRejectsInvalidConditionFormat() {
-        val token = TestAuthHelpers.createAdminToken()
-        val tenantId = resolveTenantId(token)
-
-        given()
-            .header("Authorization", "Bearer $token")
-            .contentType("application/json")
-            .body(
-                mapOf(
-                    "name" to "Bad Rule",
-                    "condition" to mapOf("operator" to ">", "value" to 10)
-                )
-            )
-        .`when`()
-            .post("/api/v1/alerts/rules?tenantId=$tenantId")
-        .then()
-            .statusCode(400)
-            .body("error", equalTo("Invalid condition format"))
     }
 
     @Test

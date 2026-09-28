@@ -35,16 +35,6 @@ discovery.relabel "containers" {
   }
 
   rule {
-    source_labels = ["__meta_docker_container_label_com_docker_stack_namespace"]
-    target_label  = "stack"
-  }
-
-  rule {
-    source_labels = ["__meta_docker_container_label_com_docker_swarm_service_name"]
-    target_label  = "swarm_service"
-  }
-
-  rule {
     source_labels = ["__meta_docker_container_log_stream"]
     target_label  = "stream"
   }

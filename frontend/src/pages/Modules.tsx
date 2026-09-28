@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
-import api from '../services/api';
+import api, { type ApiError } from '../services/api';
 import type { CodeModule } from '../types';
 
 const MODULE_TYPES = ['IMPORT', 'DB_LOAD', 'PROCESSING', 'MERGE', 'EXPORT', 'DB_SAVE', 'ALERT'] as const;
@@ -67,7 +67,8 @@ export default function Modules() {
       try {
         await loadModules(tenantId, filter);
         setError('');
-      } catch (err: any) {
+      } catch (caught) {
+        const err = caught as ApiError;
         const status = err?.response?.status;
         if (status === 403) {
           setError(t('modules.permissionViewModules'));
@@ -142,7 +143,7 @@ export default function Modules() {
       )}
 
       {error && (
-        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded flex justify-between">
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-sm flex justify-between">
           <span>{error}</span>
           <button onClick={() => setError('')} className="ml-4 text-red-400 hover:text-red-600">✕</button>
         </div>
@@ -166,8 +167,8 @@ export default function Modules() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {[1, 2, 3].map(i => (
             <div key={i} className="card animate-pulse">
-              <div className="h-4 bg-gray-200 rounded w-1/2 mb-4"></div>
-              <div className="h-3 bg-gray-200 rounded w-3/4"></div>
+              <div className="h-4 bg-gray-200 rounded-sm w-1/2 mb-4"></div>
+              <div className="h-3 bg-gray-200 rounded-sm w-3/4"></div>
             </div>
           ))}
         </div>
@@ -188,7 +189,7 @@ export default function Modules() {
                     <h3 className="text-lg font-semibold text-gray-900 group-hover:text-primary-600 truncate">
                       {module.name}
                     </h3>
-                    <span className={`shrink-0 ml-2 px-2 py-1 text-xs font-medium rounded ${moduleTypeColors[module.moduleType]}`}>
+                    <span className={`shrink-0 ml-2 px-2 py-1 text-xs font-medium rounded-sm ${moduleTypeColors[module.moduleType]}`}>
                       {t(`modules.${module.moduleType.toLowerCase()}`)}
                     </span>
                   </div>
@@ -240,8 +241,8 @@ export default function Modules() {
       )}
 
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">{t('modules.createModule')}</h2>
             <form onSubmit={handleCreateModule}>
               <div className="mb-4">

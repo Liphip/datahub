@@ -1,4 +1,4 @@
-FROM maven:3.9-eclipse-temurin-21 AS build
+FROM maven:3.9.16-eclipse-temurin-25 AS build
 
 WORKDIR /app
 
@@ -7,9 +7,12 @@ COPY backend/src src
 
 RUN --mount=type=cache,target=/root/.m2 mvn -B package -DskipTests
 
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:25.0.4_7-jre-alpine-3.24
 
-RUN apk add --no-cache docker-cli
+# apk upgrade first: docker-cli's own dependency chain can pull an Alpine package (e.g. libexpat)
+# older than the version already patched in the 3.24 stable repo, which Trivy then flags even
+# though a fix is available — upgrading everything already-installed closes exactly that gap.
+RUN apk upgrade --no-cache && apk add --no-cache docker-cli
 
 WORKDIR /app
 
@@ -20,6 +23,7 @@ COPY --from=build /app/target/quarkus-app/quarkus/ ./quarkus/
 
 EXPOSE 8080
 
-ENV JAVA_OPTS="-Xmx512m -Xms256m"
+# Heap sized from the container memory limit instead of a fixed -Xmx
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75"
 
-CMD ["java", "-jar", "quarkus-run.jar"]
+CMD ["sh", "-c", "exec java $JAVA_OPTS -jar quarkus-run.jar"]

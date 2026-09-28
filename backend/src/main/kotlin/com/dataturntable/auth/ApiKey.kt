@@ -8,7 +8,7 @@ import java.util.UUID
 
 /** A non-interactive credential used only by explicitly granted ingestion surfaces. */
 @Entity
-@Table(name = "api_keys")
+@Table(name = "api_keys", uniqueConstraints = [UniqueConstraint(columnNames = ["tenant_id", "name"])])
 class ApiKey : PanacheBase() {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)

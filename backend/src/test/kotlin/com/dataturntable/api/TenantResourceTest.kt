@@ -3,7 +3,6 @@ package com.dataturntable.api
 import com.dataturntable.auth.User
 import com.dataturntable.alert.AlertChannel
 import com.dataturntable.alert.AlertHistory
-import com.dataturntable.alert.AlertRule
 import com.dataturntable.tenant.Membership
 import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
@@ -20,7 +19,7 @@ import jakarta.transaction.Transactional
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.mindrot.jbcrypt.BCrypt
+import io.quarkus.elytron.security.common.BcryptUtil
 
 import io.restassured.RestAssured.given
 import org.hamcrest.CoreMatchers.*
@@ -42,7 +41,6 @@ class TenantResourceTest {
             em.createQuery("DELETE FROM Role").executeUpdate()
             em.createQuery("DELETE FROM User").executeUpdate()
             em.createQuery("DELETE FROM AlertChannel").executeUpdate()
-            em.createQuery("DELETE FROM AlertRule").executeUpdate()
             em.createQuery("DELETE FROM AlertHistory").executeUpdate()
             em.createQuery("DELETE FROM Tenant").executeUpdate()
         } finally {
@@ -56,14 +54,12 @@ class TenantResourceTest {
 
     fun createNonAdminToken(): String {
         val email = "viewer@example.com"
-        val passwordHash = java.util.Base64.getEncoder().encodeToString(
-            java.security.MessageDigest.getInstance("SHA-256").digest("ViewerPass!123".toByteArray())
-        )
+        val password = "ViewerPass!123"
 
         QuarkusTransaction.requiringNew().run {
             val user = User().apply {
                 this.email = email
-                this.passwordHash = BCrypt.hashpw(passwordHash, BCrypt.gensalt())
+                this.passwordHash = BcryptUtil.bcryptHash(password)
                 this.isActive = true
                 this.createdAt = java.time.Instant.now()
                 this.updatedAt = java.time.Instant.now()
@@ -74,7 +70,7 @@ class TenantResourceTest {
 
         return given()
             .contentType(ContentType.JSON)
-            .body(mapOf("email" to email, "passwordHash" to passwordHash))
+            .body(mapOf("email" to email, "password" to password))
         .`when`()
             .post("/api/internal/v1/auth/login")
         .then()
@@ -87,9 +83,7 @@ class TenantResourceTest {
 
     fun createTenantManagerToken(tenantId: String): String {
         val email = "tenant-admin@example.com"
-        val passwordHash = java.util.Base64.getEncoder().encodeToString(
-            java.security.MessageDigest.getInstance("SHA-256").digest("TenantPass!123".toByteArray())
-        )
+        val password = "TenantPass!123"
 
         QuarkusTransaction.requiringNew().run {
             val tenantUuid = java.util.UUID.fromString(tenantId)
@@ -107,7 +101,7 @@ class TenantResourceTest {
 
             val user = User().apply {
                 this.email = email
-                this.passwordHash = BCrypt.hashpw(passwordHash, BCrypt.gensalt())
+                this.passwordHash = BcryptUtil.bcryptHash(password)
                 this.isActive = true
                 this.createdAt = java.time.Instant.now()
                 this.updatedAt = java.time.Instant.now()
@@ -129,7 +123,7 @@ class TenantResourceTest {
 
         return given()
             .contentType(ContentType.JSON)
-            .body(mapOf("email" to email, "passwordHash" to passwordHash, "tenantId" to tenantId))
+            .body(mapOf("email" to email, "password" to password, "tenantId" to tenantId))
         .`when`()
             .post("/api/internal/v1/auth/login")
         .then()

@@ -115,7 +115,7 @@ class MembershipResource {
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "manage:tenant")) {
+        if (!SecurityUtils.hasAbility(currentUser, "tenant:manage")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
 
@@ -144,7 +144,7 @@ class MembershipResource {
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "manage:tenant")) {
+        if (!SecurityUtils.hasAbility(currentUser, "tenant:manage")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
 
@@ -218,7 +218,7 @@ class MembershipResource {
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "manage:tenant")) {
+        if (!SecurityUtils.hasAbility(currentUser, "tenant:manage")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
 
@@ -266,7 +266,7 @@ class MembershipResource {
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "manage:tenant")) {
+        if (!SecurityUtils.hasAbility(currentUser, "tenant:manage")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
 

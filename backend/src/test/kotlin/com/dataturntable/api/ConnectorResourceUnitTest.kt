@@ -1,5 +1,6 @@
 package com.dataturntable.api
 
+import com.dataturntable.test.TestAuthHelpers
 import io.quarkus.test.junit.QuarkusTest
 import io.restassured.RestAssured
 import org.junit.jupiter.api.Test
@@ -8,10 +9,11 @@ import org.junit.jupiter.api.Test
 class ConnectorResourceUnitTest {
 
     @Test
-    fun testListWithoutTenantIdReturns400() {
+    fun testListWithoutTenantIdFallsBackToTokenTenant() {
         RestAssured.given()
+            .header("Authorization", "Bearer ${TestAuthHelpers.createAdminToken()}")
             .`when`().get("/api/internal/v1/connectors")
             .then()
-            .statusCode(401)
+            .statusCode(200)
     }
 }

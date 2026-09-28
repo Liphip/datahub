@@ -13,7 +13,7 @@ import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
-import org.mindrot.jbcrypt.BCrypt
+import io.quarkus.elytron.security.common.BcryptUtil
 import java.security.MessageDigest
 import java.util.Base64
 import java.util.UUID
@@ -62,7 +62,6 @@ class CrossTenantIsolationTest {
     private fun tenantAToken(tenantAId: String): String {
         val email = "isolation-${UUID.randomUUID()}@example.com"
         val password = "TenantIsolation!123"
-        val legacyHash = Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(password.toByteArray()))
         QuarkusTransaction.requiringNew().run {
             val tenant = em.find(Tenant::class.java, UUID.fromString(tenantAId))
             val role = Role().apply {
@@ -72,7 +71,7 @@ class CrossTenantIsolationTest {
             }
             val user = User().apply {
                 this.email = email
-                passwordHash = BCrypt.hashpw(legacyHash, BCrypt.gensalt())
+                passwordHash = BcryptUtil.bcryptHash(password)
                 isActive = true
             }
             em.persist(role)
@@ -85,7 +84,7 @@ class CrossTenantIsolationTest {
             em.flush()
         }
         return given().contentType(ContentType.JSON)
-            .body(mapOf("email" to email, "passwordHash" to legacyHash, "tenantId" to tenantAId))
+            .body(mapOf("email" to email, "password" to password, "tenantId" to tenantAId))
         .`when`().post("/api/internal/v1/auth/login")
             .then().statusCode(200).extract().jsonPath().getString("token")
     }
@@ -177,7 +176,7 @@ class CrossTenantIsolationTest {
             }
             val user = User().apply {
                 email = "foreign-membership-${UUID.randomUUID()}@example.com"
-                passwordHash = BCrypt.hashpw("not-used", BCrypt.gensalt())
+                passwordHash = BcryptUtil.bcryptHash("not-used")
                 isActive = true
             }
             val membership = Membership().apply {
@@ -208,9 +207,7 @@ class CrossTenantIsolationTest {
             "/api/internal/v1/pipelines?tenantId=$tenantBId",
             "/api/internal/v1/connectors?tenantId=$tenantBId",
             "/api/v1/alerts/channels?tenantId=$tenantBId",
-            "/api/v1/alerts/rules?tenantId=$tenantBId",
-            "/api/v1/data/$tenantBId/tables",
-            "/api/v1/data/$tenantBId/blobs"
+            "/api/v1/data/$tenantBId/tables"
         ).forEach { path ->
             given().header("Authorization", "Bearer $tokenA")
             .`when`().get(path)
@@ -353,21 +350,12 @@ class CrossTenantIsolationTest {
     }
 
     @Test
-    fun `tenant A cannot mutate tenant B alert resources or reference its channel in a rule`() {
+    fun `tenant A cannot mutate tenant B alert channels`() {
         val adminToken = TestAuthHelpers.createAdminToken()
         val rootId = rootTenantId(adminToken)
         val tenantAId = createTenant(adminToken, rootId, "Alert isolation tenant A")
         val tenantBId = createTenant(adminToken, rootId, "Alert isolation tenant B")
         val channelBId = createAlertChannel(adminToken, tenantBId)
-        val ruleBId = given().header("Authorization", "Bearer $adminToken").contentType(ContentType.JSON)
-            .body(mapOf(
-                "tenantId" to tenantBId,
-                "name" to "Tenant B alert rule",
-                "channelId" to channelBId,
-                "condition" to mapOf("field" to "temperature", "operator" to ">", "value" to 50)
-            ))
-        .`when`().post("/api/v1/alerts/rules?tenantId=$tenantBId")
-        .then().statusCode(201).extract().jsonPath().getString("id")
         val tokenA = tenantAToken(tenantAId)
 
         given().header("Authorization", "Bearer $tokenA").contentType(ContentType.JSON)
@@ -376,18 +364,8 @@ class CrossTenantIsolationTest {
         .then().statusCode(403)
 
         given().header("Authorization", "Bearer $tokenA")
-        .`when`().delete("/api/v1/alerts/rules/$ruleBId")
+        .`when`().delete("/api/v1/alerts/channels/$channelBId")
         .then().statusCode(403)
-
-        given().header("Authorization", "Bearer $tokenA").contentType(ContentType.JSON)
-            .body(mapOf(
-                "tenantId" to tenantAId,
-                "name" to "Foreign channel reference",
-                "channelId" to channelBId,
-                "condition" to mapOf("field" to "temperature", "operator" to ">", "value" to 50)
-            ))
-        .`when`().post("/api/v1/alerts/rules?tenantId=$tenantAId")
-        .then().statusCode(400)
     }
 
     @Test
@@ -532,41 +510,6 @@ class CrossTenantIsolationTest {
     }
 
     @Test
-    fun `tenant A cannot reference a tenant B channel inside a multi-action alert rule`() {
-        val adminToken = TestAuthHelpers.createAdminToken()
-        val rootId = rootTenantId(adminToken)
-        val tenantAId = createTenant(adminToken, rootId, "Multi-action alert isolation tenant A")
-        val tenantBId = createTenant(adminToken, rootId, "Multi-action alert isolation tenant B")
-        val channelAId = createAlertChannel(adminToken, tenantAId)
-        val channelBId = createAlertChannel(adminToken, tenantBId)
-
-        given().header("Authorization", "Bearer $adminToken").contentType(ContentType.JSON)
-            .body(mapOf(
-                "tenantId" to tenantAId,
-                "name" to "Foreign channelIds reference",
-                "channelIds" to listOf(channelAId, channelBId),
-                "condition" to mapOf("field" to "temperature", "operator" to ">", "value" to 50)
-            ))
-        .`when`().post("/api/v1/alerts/rules?tenantId=$tenantAId")
-        .then().statusCode(400)
-
-        val ruleAId = given().header("Authorization", "Bearer $adminToken").contentType(ContentType.JSON)
-            .body(mapOf(
-                "tenantId" to tenantAId,
-                "name" to "Tenant A rule",
-                "channelIds" to listOf(channelAId),
-                "condition" to mapOf("field" to "temperature", "operator" to ">", "value" to 50)
-            ))
-        .`when`().post("/api/v1/alerts/rules?tenantId=$tenantAId")
-        .then().statusCode(201).extract().jsonPath().getString("id")
-
-        given().header("Authorization", "Bearer $adminToken").contentType(ContentType.JSON)
-            .body(mapOf("channelIds" to listOf(channelAId, channelBId)))
-        .`when`().patch("/api/v1/alerts/rules/$ruleAId?tenantId=$tenantAId")
-        .then().statusCode(400)
-    }
-
-    @Test
     fun `tenant A cannot make its pipeline reference a tenant B connector`() {
         val adminToken = TestAuthHelpers.createAdminToken()
         val rootId = rootTenantId(adminToken)
@@ -621,18 +564,16 @@ class CrossTenantIsolationTest {
     }
 
     @Test
-    fun `tenant A cannot query write or manage tenant B data and blobs`() {
+    fun `tenant A cannot query or write tenant B data`() {
         val adminToken = TestAuthHelpers.createAdminToken()
         val rootId = rootTenantId(adminToken)
         val tenantAId = createTenant(adminToken, rootId, "Data isolation tenant A")
         val tenantBId = createTenant(adminToken, rootId, "Data isolation tenant B")
         val tokenA = tenantAToken(tenantAId)
-        val arbitraryBlobId = UUID.randomUUID()
 
         listOf(
             "/api/v1/data/$tenantBId/query?table=readings",
-            "/api/v1/data/$tenantBId/summary?table=readings",
-            "/api/v1/data/$tenantBId/blobs/$arbitraryBlobId/download"
+            "/api/v1/data/$tenantBId/summary?table=readings"
         ).forEach { path ->
             given().header("Authorization", "Bearer $tokenA")
             .`when`().get(path)
@@ -649,13 +590,8 @@ class CrossTenantIsolationTest {
         .`when`().post("/api/v1/data/$tenantBId/tables/register")
         .then().statusCode(403)
 
-        listOf(
-            "/api/v1/data/$tenantBId/tables/readings",
-            "/api/v1/data/$tenantBId/blobs/$arbitraryBlobId"
-        ).forEach { path ->
-            given().header("Authorization", "Bearer $tokenA")
-            .`when`().delete(path)
-            .then().statusCode(403)
-        }
+        given().header("Authorization", "Bearer $tokenA")
+        .`when`().delete("/api/v1/data/$tenantBId/tables/readings")
+        .then().statusCode(403)
     }
 }

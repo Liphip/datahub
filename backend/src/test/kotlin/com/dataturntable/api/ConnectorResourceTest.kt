@@ -17,7 +17,7 @@ import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
-import org.mindrot.jbcrypt.BCrypt
+import io.quarkus.elytron.security.common.BcryptUtil
 
 import io.restassured.RestAssured.given
 import org.hamcrest.CoreMatchers.*
@@ -48,14 +48,12 @@ class ConnectorResourceTest {
 
     private fun createNonMemberToken(): String {
         val email = "connector-outsider-${java.util.UUID.randomUUID()}@example.com"
-        val passwordHash = java.util.Base64.getEncoder().encodeToString(
-            java.security.MessageDigest.getInstance("SHA-256").digest("ViewerPass!123".toByteArray())
-        )
+        val password = "ViewerPass!123"
 
         QuarkusTransaction.requiringNew().run {
             val user = User().apply {
                 this.email = email
-                this.passwordHash = BCrypt.hashpw(passwordHash, BCrypt.gensalt())
+                this.passwordHash = BcryptUtil.bcryptHash(password)
                 this.isActive = true
                 this.createdAt = java.time.Instant.now()
                 this.updatedAt = java.time.Instant.now()
@@ -66,7 +64,7 @@ class ConnectorResourceTest {
 
         return given()
             .contentType(ContentType.JSON)
-            .body(mapOf("email" to email, "passwordHash" to passwordHash))
+            .body(mapOf("email" to email, "password" to password))
         .`when`()
             .post("/api/internal/v1/auth/login")
         .then()
@@ -100,7 +98,7 @@ class ConnectorResourceTest {
         return QuarkusTransaction.requiringNew().call<String> {
             val tenant = em.find(Tenant::class.java, java.util.UUID.fromString(tenantId))
             val connector = Connector().apply {
-                this.name = "Legacy Inline Config Connector"
+                this.name = "Legacy Inline Config Connector ${java.util.UUID.randomUUID()}"
                 this.tenant = tenant
                 this.connectorType = Connector.ConnectorType.MQTT
                 this.direction = Connector.Direction.INPUT
@@ -186,6 +184,64 @@ class ConnectorResourceTest {
             .statusCode(200)
             .body("config.host", equalTo("test.local"))
             .body("config.port", equalTo(1883))
+    }
+
+    @Test
+    fun testCreateConnectorRejectsConfigSentAsJsonString() {
+        // Regression: `config` sent as a JSON *string* instead of an object skipped the recursive
+        // secretRefs walk entirely (a String hits the `else -> null` branch), so a plaintext
+        // password was accepted and persisted. A config is always an object, so reject the shape.
+        val token = TestAuthHelpers.createAdminToken()
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "String Config Connector",
+                "connectorType" to "FTP",
+                "direction" to "INPUT",
+                "config" to """{"host":"ftp.example.com","username":"svc","password":"plaintext-secret"}"""
+            ))
+        .`when`()
+            .post("/api/internal/v1/connectors")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Connector config must be a JSON object"))
+    }
+
+    @Test
+    fun testUpdateConnectorRejectsConfigSentAsJsonString() {
+        // The same bypass existed on the update path, which shares the validator.
+        val token = TestAuthHelpers.createAdminToken()
+        val id = given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "name" to "Update Shape Connector",
+                "connectorType" to "SFTP",
+                "direction" to "INPUT",
+                "config" to mapOf("host" to "sftp.example.com", "username" to "svc")
+            ))
+            .`when`()
+            .post("/api/internal/v1/connectors")
+            .then()
+            .statusCode(201)
+            .extract()
+            .body()
+            .jsonPath()
+            .getString("id")
+
+        given()
+            .header("Authorization", "Bearer $token")
+            .contentType("application/json")
+            .body(mapOf(
+                "config" to """{"host":"sftp.example.com","password":"plaintext-secret"}"""
+            ))
+        .`when`()
+            .patch("/api/internal/v1/connectors/$id")
+        .then()
+            .statusCode(400)
+            .body("error", equalTo("Connector config must be a JSON object"))
     }
 
     @Test
@@ -838,7 +894,8 @@ class ConnectorResourceTest {
                 "name" to "Bad MQTT Config",
                 "connectorType" to "MQTT",
                 "direction" to "INPUT",
-                "config" to mapOf("broker" to "mqtt://localhost:1883")
+                // Topics live on pipeline nodes; the broker is the only required field.
+                "config" to mapOf("clientId" to "no-broker")
             ))
         .`when`()
             .post("/api/internal/v1/connectors")
@@ -854,7 +911,8 @@ class ConnectorResourceTest {
         .`when`()
             .post("/api/internal/v1/connectors/$connectorId/test")
         .then()
-            .statusCode(200)
+            .statusCode(400)
+            .body("details.missing", hasItem("broker"))
     }
 
     @Test

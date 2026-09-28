@@ -33,7 +33,7 @@ spec:
     spec:
       containers:
         - name: postgres
-          image: timescale/timescaledb:2.17.2-pg16@sha256:4e459e217f00cbb09920c34d245501e63427e6767a495de57ce76823ff280f12
+          image: timescale/timescaledb:2.30.1-pg18
           ports:
             - containerPort: 5432
               name: postgres
@@ -41,13 +41,13 @@ spec:
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: db-user
+                  name: app-db-credentials
+                  key: username
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: db-password
+                  name: app-db-credentials
+                  key: password
             - name: POSTGRES_DB
               value: dataturntable
           resources:
@@ -59,7 +59,7 @@ spec:
               memory: 4Gi
           volumeMounts:
             - name: postgres-data
-              mountPath: /var/lib/postgresql/data
+              mountPath: /var/lib/postgresql
           livenessProbe:
             exec:
               command:
@@ -134,7 +134,7 @@ spec:
     spec:
       containers:
         - name: pipeline-postgres
-          image: timescale/timescaledb:2.17.2-pg16@sha256:4e459e217f00cbb09920c34d245501e63427e6767a495de57ce76823ff280f12
+          image: timescale/timescaledb:2.30.1-pg18
           ports:
             - containerPort: 5432
               name: postgres
@@ -142,18 +142,18 @@ spec:
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: pipeline-db-user
+                  name: pipeline-db-credentials
+                  key: username
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: pipeline-db-password
+                  name: pipeline-db-credentials
+                  key: password
             - name: POSTGRES_DB
               value: pipeline_data
           volumeMounts:
             - name: pipeline-postgres-data
-              mountPath: /var/lib/postgresql/data
+              mountPath: /var/lib/postgresql
       volumes:
         - name: pipeline-postgres-data
           persistentVolumeClaim:
@@ -213,7 +213,7 @@ spec:
     spec:
       containers:
         - name: monitoring-postgres
-          image: postgres:16-alpine
+          image: postgres:18.6-alpine3.24
           ports:
             - containerPort: 5432
               name: postgres
@@ -221,18 +221,18 @@ spec:
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: monitoring-db-user
+                  name: monitoring-db-credentials
+                  key: username
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dataturntable-secrets
-                  key: monitoring-db-password
+                  name: monitoring-db-credentials
+                  key: password
             - name: POSTGRES_DB
               value: monitoring
           volumeMounts:
             - name: monitoring-postgres-data
-              mountPath: /var/lib/postgresql/data
+              mountPath: /var/lib/postgresql
       volumes:
         - name: monitoring-postgres-data
           persistentVolumeClaim:

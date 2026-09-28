@@ -1,8 +1,10 @@
 # DataTurntable — Functional Specification
 
-**Version:** 1.1
-**Date:** 2026-03-16
+**Version:** 2.3
+**Date:** 2026-09-28
 **Status:** Draft
+
+This document describes how DataTurntable works: the target behaviour specified in the [requirements specification](requirements-specification.md) v2.3 (requirement IDs in brackets). Version 2.3 adds training and applying machine-learning models as a pipeline use case (§5.6, §13.6; owner request 2026-09-28). The requirements specification is the authoritative document: it holds the goals, the requirements, the decisions against alternatives, and — in its Appendix A — the only implementation status. Where the current implementation differs substantially from the behaviour described here, a short *Implementation note* says so; it never replaces Appendix A.
 
 ---
 
@@ -14,63 +16,75 @@
 4. [Processing Pipeline Engine](#4-processing-pipeline-engine)
 5. [Python Module System](#5-python-module-system)
 6. [Outbound Data (Export Layer)](#6-outbound-data-export-layer)
-7. [Connectors](#7-connectors)
-8. [Storage Layer](#8-storage-layer)
+7. [Connections and Connectors](#7-connections-and-connectors)
+8. [Storage Layer and Lakehouse](#8-storage-layer-and-lakehouse)
 9. [Alerting System](#9-alerting-system)
-10. [Multi-Tenancy & RBAC](#10-multi-tenancy--rbac)
+10. [Multi-Tenancy, Identity & Access](#10-multi-tenancy-identity--access)
 11. [REST API](#11-rest-api)
-12. [Admin UI](#12-admin-ui)
+12. [User Interface](#12-user-interface)
 13. [Data Flows & Use Cases](#13-data-flows--use-cases)
 14. [Technology Stack](#14-technology-stack)
 15. [Module Contracts](#15-module-contracts)
 16. [Security Model](#16-security-model)
 17. [Deployment Topology](#17-deployment-topology)
+18. [Audit Trail and Activity](#18-audit-trail-and-activity)
+19. [System Administration](#19-system-administration)
 
 ---
 
 ## 1. System Overview
 
-DataTurntable is a **modular data hub** for ingesting, transforming, routing, storing, and alerting on data from IoT sensors, HTTP endpoints, and any other data source. It is not an AI platform — it is a **data integration and processing platform** optimised for high-throughput time-series and event-driven workloads.
+DataTurntable is a **self-contained data platform** for ingesting, transforming, routing, storing, analysing and alerting on measurement, time-series and structured data from IoT sensors, HTTP endpoints and any other data source. It combines a data hub (pipelines) with a lakehouse (open-format history, SQL). It is not an AI platform — it is a **data integration, processing and storage platform** optimised for high-throughput time-series and event-driven workloads.
+
+Everything runs inside the installation: every component is bundled, deployed and managed by the platform, is FOSS or freeware, and is reached through one UI behind one login.
 
 ### 1.1 Core Concept
 
 ```text
-External Systems (push data in)            DataTurntable                  External Systems (receive data)
-────────────────────────────────           ─────────────────────────────  ──────────────────────────────
-REST POST → /api/v1/ingest/{id}  ────────► Import Layer                   ◄──── REST GET (Grafana pull)
-MQTT publish to topic            ────────► (REST /api/v1/, MQTT,          MQTT publish ─────────────────►
-WebSocket frame                  ────────►  WebSocket, UDP)               WebSocket push ───────────────►
-UDP datagram                     ────────►                                HTTP POST webhook ────────────►
-                                                │ Kafka
-                                           Pipeline Engine (DAG)
-                                           ┌────────────────────────────┐
-                                           │  [IMPORT]                  │
-                                           │      │                     │
-                                           │  [PROCESSING] ──┬──────────┤
-                                           │                 │          │
-                                           │  [PROCESSING] ──┤  [ALERT] │
-                                           │  (fan-in)       │          │
-                                           │             ┌───┴───┐      │
-                                           │         [EXPORT] [EXPORT]  │
-                                           │         (fan-out)          │
-                                           └────────────────────────────┘
+External Systems (push data in)            DataTurntable                         External Systems (receive / query)
+────────────────────────────────           ────────────────────────────────────  ─────────────────────────────────
+REST POST → /api/ingest/v1/...   ────────► Import Layer                          ◄──── Grafana / SQL tools (query)
+MQTT publish to topic            ────────► (REST, MQTT, WebSocket, UDP)          MQTT publish ─────────────────►
+WebSocket frame                  ────────►                                       WebSocket push ───────────────►
+UDP datagram                     ────────►                                       HTTP POST webhook ────────────►
+                                                │ Kafka (partitioned by tenant/pipeline)
+                                           Pipeline Engine (DAG, micro-batches)
+                                           ┌──────────────────────────────────┐
+                                           │  [IMPORT]                        │
+                                           │      │                           │
+                                           │  [PROCESSING] ──┬────────────────┤
+                                           │                 │                │
+                                           │  [PROCESSING] ──┤  [ALERT]       │
+                                           │                 │                │
+                                           │           [MERGE] (fan-in)       │
+                                           │             ┌───┴───┐            │
+                                           │         [EXPORT] [DB_SAVE]       │
+                                           │         (fan-out)                │
+                                           └──────────────────────────────────┘
                                                 │
-                                           Storage Layer
-                                           TimescaleDB │ PostgreSQL
+                     ┌──────────────────────────┴───────────────────────────┐
+                Hot tier                                                Lakehouse
+         TimescaleDB │ PostgreSQL                     Iceberg tables on bundled object storage
+      (recent data, low latency)                  (bronze raw history, silver/gold, rollups, SQL)
 ```
-### 1.2 Two API Paths
+
+### 1.2 API Paths
 
 | Path | Purpose | Auth |
 | ---- | ------- | ---- |
-| `/api/internal/v1/` | Management API — configure tenants, modules, pipelines, alerts; query stored data | JWT or API key |
-| `/api/v1/` | Public ingestion API — external systems push data into pipelines | API key (configurable per pipeline) |
+| `/api/internal/v1/` | Management API — tenants, users, roles, modules, pipelines, connectors, connections | Session (browser) or JWT / API key |
+| `/api/v1/` | General API — data queries, alerts, monitoring, audit | Session or JWT / API key |
+| `/api/ingest/v1/` | Ingestion API — external systems push data into pipelines | API key scoped to pipeline or connector |
+| `/api/catalog/v1/` | Iceberg REST catalog for external SQL/analytics tools | JWT / API key |
 
 ### 1.3 Primary Use Cases
 
-1. **IoT Sensor Pipeline**: MQTT measurements → PROCESSING (transform) → ALERT (threshold) + EXPORT (TimescaleDB) + EXPORT (MQTT dashboard)
-2. **Data Visualisation Feed**: MQTT measurements → PROCESSING (normalise) → EXPORT (expose Grafana-compatible pull endpoint)
-3. **Batch ETL**: HTTP file upload → PROCESSING (parse/normalise) → EXPORT (PostgreSQL) → EXPORT (report webhook)
-4. **Multi-source Merge**: HTTP feed + MQTT stream → each parsed separately → PROCESSING (combine/fan-in) → EXPORT
+1. **IoT Sensor Pipeline**: MQTT measurements → PROCESSING (transform) → ALERT (threshold) + DB_SAVE (hot tier) + lakehouse table + EXPORT (MQTT dashboard)
+2. **Data Visualisation**: measurements → PROCESSING (normalise) → lakehouse table with rollups → Grafana dashboards built by the department itself
+3. **Batch ETL**: structured file upload (CSV/Parquet/JSON) → PROCESSING (parse/normalise) → table → EXPORT (report webhook)
+4. **Multi-source Merge**: HTTP feed + MQTT stream → each parsed separately → MERGE (fan-in) → EXPORT
+5. **Historical Analysis and Replay**: SQL over months of history in the SQL workspace; reprocess bronze data with a corrected pipeline version
+6. **Train and Apply a Model**: a training pipeline fits a model from historical readings and saves it (MOD-15); an inference pipeline loads it and scores, classifies or forecasts each incoming record — entirely inside the platform's own module workers, with no separate ML-serving service (§5.6, §13.6)
 
 ---
 
@@ -79,102 +93,137 @@ UDP datagram                     ────────►                    
 ### 2.1 Component Overview
 
 ```text
-┌────────────────────────────────────────────────────────────────────────────────┐
-│                            DataTurntable Platform                               │
-│                                                                                 │
-│  ┌──────────────┐  ┌────────────────────┐  ┌─────────────┐  ┌──────────────┐  │
-│  │   Frontend    │  │   Management API   │  │   Engine    │  │    Docker    │  │
-│  │  (React/TS)  │  │  (Quarkus/Kotlin)  │  │   (Kafka)   │  │  Containers  │  │
-│  └──────┬───────┘  └────────┬───────────┘  └──────┬──────┘  └──────┬───────┘  │
-│         │                   │                      │                 │          │
-│         └───────────────────┴──────────────────────┘                │          │
-│                             │                                        │          │
-│  ┌──────────────────────────▼────────────────────────────────────────▼───────┐ │
-│  │  Ingestion Layer   REST /api/v1/ │ MQTT │ WebSocket │ UDP                  │ │
-│  └──────────────────────────────────────────────────────────────────────────┘ │
-│                                                                                 │
-│  ┌────────────┐  ┌────────────────┐  ┌──────────┐  ┌────────────────────────┐ │
-│  │   Kafka    │  │  TimescaleDB   │  │PostgreSQL│  │   Module Containers    │ │
-│  └────────────┘  └────────────────┘  └──────────┘  └────────────────────────┘ │
-└────────────────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────────────────┐
+│                                DataTurntable Installation                              │
+│                                                                                        │
+│  Reverse proxy (common login for every component)                                      │
+│  ┌──────────────┐  ┌──────────────────┐  ┌───────────────┐  ┌───────────────────────┐ │
+│  │  Frontend    │  │  Backend roles   │  │  Module       │  │  Grafana (users) +     │ │
+│  │  (React/TS)  │  │  (Quarkus/Kotlin)│  │  workers      │  │  Grafana (system)      │ │
+│  └──────────────┘  └──────────────────┘  └───────────────┘  └───────────────────────┘ │
+│                                                                                        │
+│  Backend roles: control-api │ public-api │ ingest-edge │ pipeline-executor │ query     │
+│                                                                                        │
+│  ┌────────┐ ┌──────────────┐ ┌────────────┐ ┌────────────────┐ ┌───────────────────┐  │
+│  │ Kafka  │ │ PostgreSQL / │ │ Object     │ │ MQTT broker    │ │ Prometheus, Loki, │  │
+│  │        │ │ TimescaleDB  │ │ storage    │ │                │ │ Alloy             │  │
+│  └────────┘ └──────────────┘ └────────────┘ └────────────────┘ └───────────────────┘  │
+└───────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
 ### 2.2 Layers
 
 | Layer | Component | Technology | Responsibility |
 | ----- | --------- | ---------- | -------------- |
-| Presentation | Admin UI | React 18 + TypeScript + Tailwind CSS | Visual pipeline management, code editing, monitoring |
-| Management API | Backend | Quarkus 3.x (Kotlin / Java 21) | REST management API, auth, tenant management, config |
-| Ingestion | Ingestion Layer | Quarkus (REST + MQTT + WS + UDP) | Expose protocol endpoints; route incoming data into Kafka |
-| Messaging | Internal Bus | Apache Kafka (KRaft) | Decouple pipeline nodes; at-least-once delivery; replay |
-| Execution | Module Containers | Docker (Python 3.11) | Run user Python code in isolation |
-| Storage | Databases | TimescaleDB, PostgreSQL | Persist data and metadata |
-| Connectivity | Modules | Python / Java | IMPORT, PROCESSING, ALERT, EXPORT implementations |
+| Presentation | UI | React 19 + TypeScript + Tailwind CSS | Pipeline management, code editing, catalog, SQL, audit, system area; embeds Grafana |
+| Access | Reverse proxy | nginx `auth_request` | One login for every component (IAM-09) |
+| Management API | Backend (`control-api`, `public-api`) | Quarkus 3.x (Kotlin / Java 25) | REST APIs, auth, tenants, roles, config, audit |
+| Ingestion | Backend (`ingest-edge`) | Quarkus (REST + MQTT + WS + UDP) | Protocol endpoints; route incoming data into Kafka |
+| Messaging | Internal bus | Apache Kafka (KRaft) | Decouple ingestion and processing; exactly once for identified records (§4.9); replay |
+| Execution | Backend (`pipeline-executor`) + module workers | Quarkus; Python 3.14 containers/pods | Run pipeline graphs; run user Python code in isolation |
+| Query | Backend (`query`) | Embedded DuckDB, Iceberg | SQL over hot tier and lakehouse; Iceberg REST catalog |
+| Storage | Databases, object storage | PostgreSQL, TimescaleDB, S3-compatible store | Metadata, hot tier, lakehouse |
+| Observability | Monitoring stack | Prometheus, Loki, Alloy, Grafana | System metrics and logs (no tenant payloads) |
 
 ### 2.3 Internal Data Flow
 
 ```text
 External system pushes to:
-  REST /api/v1/ingest/{pipelineId}
-  MQTT topic: dataturntable/ingest/{pipelineId}
-  WebSocket: ws://host:8080/api/v1/ws/{pipelineId}
+  REST   POST /api/ingest/v1/ingest/{pipelineId}          (API key)
+  MQTT   topic subscribed through an INPUT connector
+  WebSocket connection through an INPUT connector
           │
           ▼
-Ingestion Layer
-          │ publishes raw payload
+Ingestion layer — authenticates, enriches (_pipelineId, _tenantId, _ingestedAt, _runId)
+          │ publishes keyed by tenant/pipeline
           ▼
-Kafka: dataturntable.pipelines.{id}.input
+Kafka: dataturntable.pipelines.input  ──────────────►  Lake sink → bronze table (raw history)
           │
           ▼
-Pipeline Engine — resolves DAG graph
+Pipeline executor — resolves the DAG, processes micro-batches
           │
-          ├─► IMPORT node (if active-pull module) ──► processes, emits to downstream edge topics
-          │
-          ├─► PROCESSING node ──────────────────────► transforms data, emits to all downstream edges
-          │         (fan-out: emits to N edge topics)
-          │         (fan-in: consumes from M edge topics, merges, emits)
-          │
-          ├─► ALERT node ───────────────────────────► evaluates condition, fires alert (no data forwarding)
-          │
-          └─► EXPORT node ──────────────────────────► pushes to external system or exposes pull endpoint
+          ├─► IMPORT / DB_LOAD node ──► platform fetches via connector or hot tier, module parses
+          ├─► PROCESSING node ───────► transforms data, feeds all downstream edges (fan-out)
+          ├─► MERGE node ────────────► combines outputs of all upstream nodes (fan-in)
+          ├─► ALERT node ────────────► evaluates conditions, alerts dispatched by the platform
+          └─► EXPORT / DB_SAVE node ─► module shapes data, platform delivers via connector or writes table
 ```
+
+*Implementation note:* today the executor consumes one topic with a single blocking consumer and runs one container call per node execution. Partitioned micro-batch processing with autoscaled workers (PIP-12) is the target.
+
 ---
 
 ## 3. Inbound Data (Import Layer)
 
 ### 3.1 Overview
 
-The import layer sits at the boundary between the outside world and the DataTurntable pipeline engine. It has two operational modes:
+The import layer sits at the boundary between the outside world and the pipeline engine. It has two operational modes:
 
 **Passive (push to us):** The platform exposes protocol endpoints. External systems push data to DataTurntable. No modification to the external system is needed beyond pointing it at the endpoint.
 
-**Active (we pull):** An IMPORT Python module runs in a container and periodically fetches data from an external source.
+**Active (we pull):** The platform fetches data from an external source through an INPUT connector (REST polling, file watch, FTP/SFTP, mailbox) and hands it to the IMPORT module for parsing.
+
+**Fire-and-forget (every input):** A sender transmits a record and is done. It does not register for a response, does not poll for a result and needs no retry logic, because the senders this platform is built for — meters, PLCs, SCADA components, mail servers, FTP servers — cannot do any of that. A 2xx acknowledgement means the record is durably accepted (written to the bus, or to the local ingest spool if the bus refused it) and will be processed exactly once if it carries an identity (IMP-10, NFR-R9). It does **not** mean the pipeline has finished. This applies to the pushed protocols and to the pull inputs equally: a mailbox or FTP server only has to leave a file where it can be found.
+
+**Pass-through IMPORT:** An IMPORT node without a module forwards each record as received. Connector deliveries are unwrapped to their payload and platform metadata (`_runId`, `_ingestedAt`, …) is removed. Structured measurements (JSON from devices, gateways or other systems) therefore reach built-in rules, sinks and modules without any code. A Python IMPORT module is only needed to parse or reshape other formats. New IMPORT nodes default to pass-through in the pipeline editor.
+
+**Send-as-is EXPORT:** An EXPORT node without a module (and without "Save to metadata") delivers its input records unchanged to the node's OUTPUT connector, with the same `Idempotency-Key` (run and node) as module exports. Records that are already in the shape the receiver expects, such as enriched readings, therefore need no code on the way out.
 
 ### 3.2 Passive Inbound Endpoints
 
 | Protocol | Endpoint / Address | Notes |
 | -------- | ------------------ | ----- |
-| REST (HTTP/HTTPS) | `POST /api/v1/ingest/{pipelineId}` | Any JSON or binary body; no schema enforced |
-| MQTT | Subscribe to `dataturntable/ingest/{pipelineId}/#` on bundled broker (port 1883) | v3.1.1 and v5.0 |
-| WebSocket | `ws://host:8080/api/v1/ws/{pipelineId}` | Each frame is one message |
-| UDP | Configurable port per pipeline (e.g. 5005) | Raw datagrams |
+| REST (HTTP/HTTPS) | `POST /api/ingest/v1/ingest/{pipelineId}`; `POST /api/ingest/v1/ingest/connector/{connectorId}` | Any JSON body; batch form (array of records) for throughput |
+| MQTT | Topics configured on an INPUT connector (bundled or external broker) | v3.1.1 and v5.0 |
+| WebSocket | Server endpoint configured on an INPUT connector | Each frame is one message |
+| UDP | Configurable port per connector (V2) | Raw datagrams; no acknowledgement is possible (IMP-10 exception) |
 
-All passive endpoints are authenticated via an API key scoped to `data:write`. The key is passed as a query parameter or header; pipelines can be configured as open (no auth) for trusted internal networks.
+All passive endpoints authenticate the caller with an API key scoped to the pipeline or connector (IMP-09). Unauthenticated requests are rejected.
+
+Ingest API keys are created on the API keys page (`/api-keys`, permission `secret:manage`): each key is granted exact pipelines and INPUT connectors, is shown once, stored as a SHA-256 digest, can expire and can be revoked. Keys are cached by digest so ingestion keeps working while the metadata database is unavailable (NFR-R6); a revocation takes effect at once on the instance that handled it and within 30 s on the others.
 
 ### 3.3 Active Pull (IMPORT Module)
 
-An IMPORT Python module runs persistently in a Docker container. It connects to the external system and calls the platform's internal `emit()` function to inject data into the pipeline:
+The platform performs the external I/O through the connector (credentials never enter the container, CON-05) and passes the raw payload to the IMPORT module, which parses and validates it:
 
 ```python
 class ImportModule:
-    def connect(self, config: dict): ...
-    def fetch(self) -> dict | pd.DataFrame: ...
-    def disconnect(self): ...
+    def parse(self, input_data: dict, connector_meta: dict = None) -> dict:
+        ...
 ```
-The platform calls `fetch()` on a configurable schedule, or the module can implement its own blocking loop.
+
+Polling is configured on the connector (CON-13).
+
+#### 3.3.1 Pull input types
+
+| Type | Source | Typical configuration |
+| ---- | ------ | --------------------- |
+| FILE | A directory watched by the platform | path, filename pattern, record format, post-read action (keep/move/delete), `minAge` |
+| FTP | FTP or FTPS server | host, port, TLS mode (none/implicit/explicit), username, password, path, filename pattern, record format, post-read action, `minAge` |
+| SFTP | SFTP server | host, port, username, password **or** private key (+ passphrase), host key fingerprint, path, pattern, format, post-read action, `minAge` |
+| EMAIL | IMAP mailbox | host, port, TLS mode, username, password, folder, content selection (body/attachments), pattern, post-read action (keep/move/delete), `minAge` |
+| REST | HTTP endpoint | URL, method, headers, response mapping |
+
+#### 3.3.2 Inbox ledger
+
+Every pull input keeps a per-connector ledger of the items it has seen, so an operator can see what arrived, why an item failed, and requeue it:
+
+- `GET /api/internal/v1/connectors/{id}/inbox?limit=50` — recent items with their state (`SEEN`, `PROCESSED`, `FAILED`, …) and, for failures, the error.
+- `POST /api/internal/v1/connectors/{id}/inbox/{itemId}/retry` — requeue a single failed item.
+
+Because the ledger, not the source system, is the record of truth, a failed item can be retried without waiting for the next poll and without depending on the remote system remembering anything.
+
+#### 3.3.3 Guarding against half-written items
+
+`minAge` is the mechanism for a file or mail that is still being written by the remote system. An item whose age is below the threshold is not read yet and is picked up on a later poll. Combined with the post-read action (keep/move/delete for files, keep/move/delete for mails), a re-run can neither duplicate nor silently skip an item (CON-15, CON-16).
+
+#### 3.3.4 No unstructured storage
+
+A pulled file, mail attachment or FTP file is parsed into structured records at ingest time. The platform stores the records, not the payload: there is no blob store, no upload endpoint and no Files tab (STR-08, IMP-13). The source item remains where the remote system put it, and the ledger records that the platform has consumed it.
 
 ### 3.4 No Schema Enforcement
 
-Inbound data is forwarded as-is into the pipeline. No parsing, validation, or transformation is applied at the ingestion boundary. All format handling is the responsibility of the first PROCESSING (or the IMPORT) module in the pipeline.
+Inbound data is forwarded as-is into the pipeline and retained unmodified in the tenant's bronze table (LAK-03). No parsing, validation, or transformation is applied at the ingestion boundary. All format handling is the responsibility of the IMPORT module or the first PROCESSING module. For a pull input, the connector's own record format setting is what tells the platform how to read the item; the item's bytes themselves are never stored (STR-08).
 
 ---
 
@@ -186,88 +235,113 @@ A pipeline is a directed acyclic graph (DAG) where:
 
 - **Nodes** are module instances (each referencing a specific module version)
 - **Edges** are directed data connections between nodes
-- Each edge corresponds to a Kafka topic
-
-Node types and their roles in the graph:
 
 | Node Type | Can have upstream nodes | Can have downstream nodes | Forwards data |
 | --------- | ----------------------- | ------------------------- | ------------- |
-| IMPORT | No (entry point) | Yes | Yes |
-| PROCESSING | Yes (1 or more) | Yes (1 or more) | Yes |
+| IMPORT / DB_LOAD | No (entry point) | Yes | Yes |
+| PROCESSING | Yes (exactly 1) | Yes (1 or more) | Yes |
+| MERGE | Yes (2 or more) | Yes (1 or more) | Yes |
 | ALERT | Yes | No (terminal) | No |
-| EXPORT | Yes | No (terminal) | No |
+| EXPORT / DB_SAVE | Yes | No (terminal) | No |
 
 ### 4.2 Fan-out
 
-One node's output is routed to multiple downstream nodes simultaneously. Each downstream node receives a copy of the data on its own Kafka topic.
+One node's output is routed to multiple downstream nodes simultaneously; each receives its own copy.
 
 ```text
 [PROCESSING: Normalise]
          │
     ┌────┴────────────┐
     ▼                 ▼
-[ALERT: Threshold]  [EXPORT: TimescaleDB]
+[ALERT: Threshold]  [DB_SAVE: measurements]
 ```
-### 4.3 Fan-in (Combination)
 
-A PROCESSING module can consume from multiple upstream edge topics and combine the streams. This is implemented as a standard PROCESSING module; the platform routes all upstream outputs to the same node's input topic and the module handles merging.
+### 4.3 Fan-in (MERGE)
+
+A MERGE node receives the list of outputs of all its upstream nodes and combines them.
 
 ```text
 [IMPORT: MQTT sensor A] ──► [PROCESSING: Parse A] ──┐
-                                                      ├──► [PROCESSING: Merge] ──► [EXPORT: DB]
+                                                      ├──► [MERGE: Combine] ──► [EXPORT: REST]
 [IMPORT: HTTP feed B]   ──► [PROCESSING: Parse B] ──┘
 ```
+
 ### 4.4 Pipeline Definition (JSON)
 
-IMPORT and EXPORT nodes must include a `connectorId` referencing a tenant-level connector definition. The platform resolves the connector and injects its config into the module container at runtime.
+The graph is stored in `pipelines.graph_definition`. IMPORT and EXPORT nodes reference a connector; ALERT nodes may name a default alert channel.
 
 ```json
 {
-  "id": "pipeline-001",
-  "name": "Temperature Sensor Pipeline",
-  "tenantId": "tenant-uuid",
   "nodes": [
-    { "id": "n1", "type": "IMPORT",     "moduleVersionId": "uuid-import-v1",    "connectorId": "mqtt-broker-001" },
+    { "id": "n1", "type": "IMPORT",     "moduleVersionId": "uuid-import-v1",    "connectorId": "uuid-mqtt-in", "mqttTopic": "sensors/#" },
     { "id": "n2", "type": "PROCESSING", "moduleVersionId": "uuid-normalise-v1" },
-    { "id": "n3", "type": "ALERT",      "moduleVersionId": "uuid-threshold-v1" },
-    { "id": "n4", "type": "EXPORT",     "moduleVersionId": "uuid-timescale-v1", "connectorId": "timescale-writer-001" },
-    { "id": "n5", "type": "EXPORT",     "moduleVersionId": "uuid-mqtt-v1",      "connectorId": "mqtt-dashboard-001" }
+    { "id": "n3", "type": "ALERT",      "moduleVersionId": "uuid-threshold-v1", "alertChannel": "uuid-ops-channel" },
+    { "id": "n4", "type": "DB_SAVE",    "moduleVersionId": "uuid-save-v1" },
+    { "id": "n5", "type": "EXPORT",     "moduleVersionId": "uuid-mqtt-v1",      "connectorId": "uuid-mqtt-out", "mqttTopic": "dashboard/temp" }
   ],
   "edges": [
-    { "from": "n1", "to": "n2" },
-    { "from": "n2", "to": "n3" },
-    { "from": "n2", "to": "n4" },
-    { "from": "n2", "to": "n5" }
+    { "source": "n1", "target": "n2" },
+    { "source": "n2", "target": "n3" },
+    { "source": "n2", "target": "n4" },
+    { "source": "n2", "target": "n5" }
   ]
 }
 ```
 
-> **MVP note:** The current database schema stores `importModuleVersionId`, `processingModuleVersionIds[]`, and `exportModuleVersionIds[]` for backward compatibility. Full graph definition (`nodes` + `edges`) is stored in the `graph_definition` JSONB column and is the target model.
-
-### 4.5 Kafka Topic Naming
-
-Each directed edge has its own Kafka topic:
+### 4.5 Kafka Topics
 
 | Topic | Purpose |
 | ----- | ------- |
-| `dataturntable.pipelines.{pipelineId}.input` | Ingestion layer → first node(s) |
-| `dataturntable.pipelines.{pipelineId}.nodes.{srcId}.to.{dstId}` | Data on a specific graph edge |
-| `dataturntable.alerts.{tenantId}` | Alert events dispatched by ALERT nodes |
-| `dataturntable.system.commands` | API → engine commands (start, stop, etc.) |
-| `dataturntable.dlq.{pipelineId}` | Dead-letter queue (failed messages) |
+| `dataturntable.pipelines.input` | Ingestion → pipeline executor; keyed by pipeline (plus the optional `X-Partition-Key`, e.g. a device id) so that partitions scale processing while each key keeps its order (PIP-12) |
+| `dataturntable.pipelines.input.dlq` | Records the executors could not process after retrying infrastructure failures (PIP-13) |
+| `dataturntable.lake.commits` | Data-file metadata from lake writers to the table committer (§8.4) |
 
 ### 4.6 Error Handling
 
-- Processing errors in a module container route the message to the DLQ topic.
-- DLQ messages are retained for 7 days (configurable).
-- Operators can requeue DLQ messages from the UI.
-- Consecutive failures above a configurable threshold trigger an ALERT and pause the pipeline node.
-- A paused node does not consume new messages until manually resumed.
+- A module error fails the node; the run is marked failed with the node's stdout/stderr in the run log. Instantiation errors are reported, never swallowed (MOD-13).
+- Failed messages are routed to the DLQ topic, retained for 7 days (configurable), and can be requeued from the UI.
+- Consecutive failures above a configurable threshold raise a platform alert and pause the pipeline node until it is resumed manually.
 
 ### 4.7 Deduplication
 
-- **System duplicates** (Kafka at-least-once retries): suppressed using message-ID deduplication within a configurable window (default: 5 minutes).
-- **User data duplicates** (same measurement arriving twice): preserved unless the user explicitly adds a deduplication PROCESSING module to the pipeline.
+- **System duplicates** (redelivery after a failover, a client resending after a lost response): processed once, see §4.9.
+- **User data duplicates** (the same measurement genuinely arriving twice without an identity): preserved. Records are only treated as the same when the sender says so — an `Idempotency-Key` header or the `deduplicateBy` fields of the IMPORT node (e.g. `device`, `ts`).
+
+*Implementation note:* one dead-letter topic for all tenants; requeueing from the UI is not built yet. A module or pipeline error does not use the DLQ: the run is marked failed and keeps its input, and **Retry** in the run view replays that input.
+
+### 4.8 Scaling
+
+Ingestion pods and pipeline workers are stateless and scale automatically: ingestion by request rate, workers by Kafka consumer lag (e.g. KEDA). Workers are long-running and process micro-batches; the module contract already accepts DataFrames (MOD-08). Single-node deployments run one instance of each.
+
+### 4.9 Delivery Guarantees and Failover
+
+**Exactly once for identified records.** Strict exactly-once delivery is impossible between independent systems (an acknowledgement can always be lost after the work was done). The platform therefore combines at-least-once transport with idempotent processing: every record that carries an identity is processed, stored and alerted on exactly once, whatever fails and however often it is resent. Records without an identity are processed at least once; they can repeat only when a sender resends after a lost acknowledgement.
+
+**Record identity.** `Idempotency-Key` header (HTTP ingest), `_idempotencyKey` (WebSocket ingest), or the IMPORT node's `deduplicateBy` fields (any source, including MQTT). The run id is derived from pipeline and key, so every copy of a record maps to the same run.
+
+| Stage | Guarantee |
+| ----- | --------- |
+| HTTP / WebSocket ingest | The record is written to Kafka (`acks=all`, idempotent producer, 3 replicas, `min.insync.replicas=2` on Kubernetes HA) before the client gets `202` (WebSocket: `{"status":"accepted"}`). Ingest does not use PostgreSQL, so a database outage does not refuse data. Only when Kafka has lost its write quorum does the client get `503` + `Retry-After` (WebSocket: `"retry": true`). |
+| MQTT connectors | Persistent session (`clean_session=false`, stable client id, QoS 1). The PUBACK is sent only after the record is in Kafka; on failure the connection is dropped and the broker redelivers. On Kubernetes HA the session queues are RabbitMQ quorum queues. When the ingest replica holding the connector lease dies, another replica takes the lease and resumes the session. A redelivered message is recognised through `deduplicateBy`. |
+| Polling connectors | A poll whose records could not be queued is recorded as failed in the inbox ledger and fetched again on the next cycle, or retried immediately by an operator (`POST …/inbox/{itemId}/retry`). The connector's item ledger — not the remote system — is the record of what was consumed, so a retry cannot duplicate or skip an item. |
+| Pull inputs (FILE/FTP/SFTP/EMAIL) | The remote system only has to leave an item where it can be found; the platform owns the transfer, the `minAge` guard and the post-read action. The sender is never asked to confirm anything (IMP-10). |
+| Executors | The executor creates the run when it claims the record and records the Kafka partition and offset. Offsets are committed only after the run finished. A redelivered record of a finished run is skipped; a second copy of a run (resend) is skipped; the record of a run whose executor died is run again. Lost database connections (e.g. a PostgreSQL failover) are retried for up to 10 minutes (`dataturntable.pipeline.max-infra-retry`) while the partition waits; only then the record goes to the DLQ. |
+| Built-in alert rules | Rule state lives in PostgreSQL with row locks and remembers the run that last changed it, so a run executed again does not change the state twice (§9.2). |
+| Alerts | Transactional outbox: alerts are stored in the same transaction as the rule state or claim that raised them, keyed by run, node and record, and delivered afterwards. Failed deliveries are retried (10 s … 1 h, 12 attempts); an alert claimed by a replica that died while sending is delivered by another. Webhook and REST channels receive the alert id as `Idempotency-Key`. |
+| DB_SAVE | Appended rows carry `_dt_record_key` (run, node, row) under a unique index; a run executed again does not add rows. Upsert mode is idempotent through its key columns. |
+| REST exports | Sent with `Idempotency-Key` (run and node); transient errors are retried, a final failure fails the run (its input is kept for Retry). |
+| Runs started from the UI | Created as PENDING right away. If the instance dies before Kafka acknowledged the run, it is marked failed as "never queued" after 30 minutes (`dataturntable.pipeline.max-pending-age`); should its record still arrive, it is processed normally. |
+
+**Where exactly-once ends.** Channels and sinks outside the platform can see a repeat when the platform crashed after they accepted something but before it recorded that: an alert or REST export (they carry an `Idempotency-Key` receivers can use to drop it), e-mail and Slack messages, and MQTT, WebSocket, UDP and file exports (no key possible). The window is the time between the receiver's acknowledgement and the platform's commit — milliseconds.
+
+**Queue redundancy (NFR-R7).** Fire-and-forget is only safe if an acknowledgement means "durably accepted". Two things provide that:
+
+- **Replicated bus.** On the Kubernetes HA deployment Kafka runs with replication factor 3 and `min.insync.replicas=2`, so losing one broker node neither loses an acknowledged record nor costs the write quorum. Combined with `acks=all`, a `503` is only returned when the quorum itself is gone.
+- **Ingest spool.** When the bus refuses a record, the ingest node writes it to a local, fsync'd spool first and only then answers. The spool drains into the bus when it is available again. On Kubernetes the ingest edge is a StatefulSet with a persistent volume claim for the spool, so the records survive the pod, and the node, being restarted.
+
+**Compose is not redundant (NFR-R8).** The single-node Docker Compose reference stack runs one broker and one database. It cannot satisfy the failover or redundancy requirements, and it is documented as a development and evaluation topology that accepts losing in-flight data with the node. Only the Kubernetes deployment is offered as meeting NFR-R5 and NFR-R7.
+
+**Verified** on a local 3-broker Kafka cluster with two application instances under continuous ingest (16 parallel clients, every record with an `Idempotency-Key`): `kill -9` of a broker and of an application instance — 6,000 records acknowledged, 6,000 runs, no duplicates, none lost; PostgreSQL stopped for 15 s — 16,000 of 16,000 accepted with no client error during the outage, all processed once after the database returned. Built-in rule alerts with the receiver down: retried and delivered once each when it came back.
 
 ---
 
@@ -277,67 +351,113 @@ Each directed edge has its own Kafka topic:
 
 | Type | Role in pipeline | Forwards data | Fires alerts |
 | ---- | ---------------- | ------------- | ------------ |
-| `IMPORT` | Entry node — receives or fetches data | Yes | No |
-| `PROCESSING` | Intermediate node — transforms/filters/merges | Yes | No |
+| `IMPORT` | Entry node — parses data fetched by the platform | Yes | No |
+| `DB_LOAD` | Entry node — loads rows from a platform table | Yes | No |
+| `PROCESSING` | Intermediate node — transforms/filters/enriches | Yes | No |
+| `MERGE` | Intermediate node — combines several upstream outputs | Yes | No |
 | `ALERT` | Terminal node — evaluates conditions | No | Yes |
-| `EXPORT` | Terminal node — sends data out | No | No |
+| `EXPORT` | Terminal node — shapes data the platform delivers via a connector | No | No |
+| `DB_SAVE` | Terminal node — prepares rows the platform writes to a table | No | No |
 
 ### 5.2 Module Lifecycle
 
 ```text
-SAVED (source code stored in PostgreSQL)
+SAVED (source code and config stored as a new module version)
     │
     ▼
 VALIDATED (syntax check, import test)
     │
     ▼
-BUILT (Docker image assembled with user code + standard libs)
+REFERENCED by pipeline nodes (specific version)
     │
     ▼
-DEPLOYED (container started, registered with engine)
+EXECUTED by workers (container per worker; code and config loaded per version)
     │
     ▼
-RUNNING ⇄ PAUSED
-    │
-    ▼
-STOPPED / UPDATED (rolling update: new container drains old)
+UPDATED — a new version is picked up by the next execution; old versions stay auditable
 ```
-### 5.3 Container Sandbox
 
-Each running module instance is an isolated Docker container:
+### 5.3 Container Sandbox
 
 | Property | Value |
 | -------- | ----- |
-| Base image | `python:3.11-slim` (configurable via `application.yaml`) |
-| User | Non-root (`module-runner`) |
-| Filesystem | Read-only root; `/tmp` writable; cleared between batch invocations |
-| Network | None by default; explicit allowlist per module (requires TenantAdmin approval) |
-| CPU limit | Configurable (default: 0.5 cores) |
+| Base image | `python:3.14.x-slim` with pandas, numpy, scikit-learn pre-installed (configurable) |
+| User | Non-root (UID 1000) |
+| Filesystem | Read-only root; `/tmp` writable (tmpfs) |
+| Network | None by default; explicit grant per module (MOD-05) |
+| CPU limit | Configurable (default: 1 core) |
 | Memory limit | Configurable (default: 512 MB) |
-| Pre-installed libs | pandas, numpy, scikit-learn |
-| Optional libs | torch, xgboost, transformers (enabled per module config) |
-| System API | Injected via environment variables / gRPC sidecar |
+| Optional libs | torch, xgboost (per module requirements, installed from a platform wheel cache without network access for the module) |
+| Inputs | `INPUT_DATA`, `MODULE_CONFIG`, `CONNECTOR_META` (non-sensitive) |
+| Output | One `__RESULT__:<json>` line; all other stdout/stderr is the user's run log |
+
+*Implementation note:* modules with pip requirements currently get bridge network access to reach PyPI, and the base image is plain `python:3.14.x-slim`.
 
 ### 5.4 System API Injected into Modules
 
 ```python
-# Available as function arguments or via injected context
+def alert_fn(severity='warning', message='', payload=None, title=None,
+             channel=None, cooldown_seconds=None):
+    """Raise an alert (ALERT modules). Alerts are returned with the node result
+    and dispatched by the platform (see §9)."""
 
-def query_timeseries(metric: str, start: str, end: str,
-                     filters: dict = None) -> pd.DataFrame:
-    """Query TimescaleDB for historical data within this tenant."""
+def query_fn(query: dict) -> list[dict]:
+    """Tenant-scoped read query against platform tables (hot tier and lakehouse)."""
 
-def query_sql(sql: str, params: list = None) -> pd.DataFrame:
-    """Execute a read-only SQL query against this tenant's PostgreSQL."""
+def save_model_fn(name: str, model) -> None:
+    """Persist a fitted model as a new version under `name`, scoped to the tenant and the
+    calling module (MOD-15). `model` is pickled (or the framework's own serializer, e.g.
+    `torch.save`) by the platform; the module never touches a filesystem path."""
 
-def alert(severity: str, message: str, payload: dict = None):
-    """Dispatch an alert to all channels configured on this pipeline.
-    severity: 'info' | 'warning' | 'critical'
-    """
+def load_model_fn(name: str, version: int | None = None):
+    """Load the current (or a specific past) version of a model saved under `name` by this
+    module in this tenant. Returns None if none has been saved yet."""
 ```
+
+*Implementation note:* `query_fn` currently returns an empty result. `save_model_fn`/`load_model_fn`
+are implemented (MOD-15, MOD-17); `load_model_fn(name, version=...)` with an explicit version
+raises inside the module — only the version preloaded at the start of the execution is available
+(MOD-16).
+
 ### 5.5 Module Code Storage
 
-Module source code is stored in the `module_versions` PostgreSQL table. Each save creates a new version record. The plaintext source is editable in the Monaco-based UI code editor. File-system storage for GitOps workflows is a future option.
+Module source code, requirements and config are stored in the `module_versions` PostgreSQL table. Each save creates a new version record. The source is editable in the Monaco-based UI code editor. File-system storage for GitOps workflows is a future option.
+
+### 5.6 Model Artifacts (MOD-15 – MOD-16)
+
+The platform runs machine learning the same way it runs any other transformation — as a PROCESSING
+module — rather than through a dedicated model-serving component. What is missing from an ordinary
+PROCESSING module for this is **persistence across independent executions**: a training run and
+the many later inference runs are different container invocations, on different workers, possibly
+weeks apart, and each starts from a fresh filesystem.
+
+| Aspect | Design |
+| ------ | ------ |
+| What is stored | Whatever `save_model_fn` is given — a scikit-learn estimator, a PyTorch `state_dict`, or any other picklable/serializable Python object. The platform does not inspect or execute it. |
+| Scope and key | `(tenant_id, module_id, name)`; a module can save several named artifacts (e.g. one per device class). |
+| Versioning | Like `ModuleVersion` and `PipelineVersion`: saving under an existing name creates a new version, never overwrites. `load_model_fn` defaults to the latest; a run can pin an older version to reproduce a past inference exactly. |
+| Storage | A `model_artifacts` table (tenant-scoped, encrypted at rest like secrets) holding the serialized bytes and metadata (name, version, size, byte-count, created-by run id, framework hint). Not the object store, and not reachable through any file/blob API (DAT-10). |
+| Loading cost | Cached per module for `dataturntable.execution.model-artifact-cache-seconds` (default 60s); a save invalidates the saving instance's cache at once, so its own next execution sees it immediately, and other instances within the TTL (MOD-18, MOD-19). |
+| Why this is not STR-08 | STR-08 excludes storing a **user's unstructured payload** (a file someone uploads or sends). A model artifact is never that: it is state the platform itself creates from a module's own fit call and reads back only for that same module's own inference call. It has no independent existence a user could upload, download or browse. |
+| `save_model_fn` scope | Only takes effect when `process()` returns a `dict` (the `_savedModels` marker is merged into it and stripped by the platform before the result reaches the next node). A module returning a list, scalar or `DataFrame` gets a clear warning in its run log instead of a silently lost model. |
+
+Training and inference are ordinary pipelines, not a special node type:
+
+```python
+class ProcessingModule:                              # training pipeline
+    def process(self, data, query_fn=None, save_model_fn=None):
+        model = sklearn.ensemble.RandomForestRegressor().fit(data[["x1","x2"]], data["y"])
+        save_model_fn("load-forecast", model)
+        return {"trained_rows": len(data)}
+
+class ProcessingModule:                               # inference pipeline
+    _model = None
+    def process(self, data, query_fn=None, load_model_fn=None):
+        if self._model is None:
+            self._model = load_model_fn("load-forecast")
+        data["prediction"] = self._model.predict(data[["x1","x2"]])
+        return data
+```
 
 ---
 
@@ -345,252 +465,304 @@ Module source code is stored in the `module_versions` PostgreSQL table. Each sav
 
 ### 6.1 Overview
 
-EXPORT nodes are terminal nodes in the pipeline DAG. They can operate in two modes:
+EXPORT and DB_SAVE nodes are terminal nodes. The module shapes the data; the platform performs the delivery:
 
-**Active push:** The EXPORT module actively calls an endpoint on an external system, sends data to a message broker, writes to a database, etc.
+**Active push:** The platform delivers the shaped payload through an OUTPUT connector (REST, MQTT, WebSocket, UDP) or writes rows to a hot-tier or lakehouse table.
 
-**Passive expose:** The EXPORT module registers an endpoint on the platform that external systems can query or subscribe to (e.g. Grafana pulling metrics, another system subscribing to a WebSocket feed).
+**Passive expose:** External systems query the platform: the data API (`/api/v1/data`), the Grafana data source (INT-01) and the Iceberg REST catalog (INT-07). All are permission-checked.
 
-### 6.2 Built-in EXPORT Connectors
+### 6.2 Built-in Outputs
 
-| Connector | Mode | Description |
-| --------- | ---- | ----------- |
-| TimescaleDB Writer | Push | Writes time-series data to the platform's TimescaleDB instance |
-| PostgreSQL Writer | Push | Writes relational data to the platform's PostgreSQL instance |
-| MQTT Publisher | Push | Publishes to a topic on an external or bundled MQTT broker |
-| HTTP Webhook | Push | POSTs data to a configured URL |
-| REST Client | Push | Calls any external REST endpoint with the processed data |
-| WebSocket Push | Push | Maintains WebSocket connections and pushes data to connected clients |
-| Grafana Datasource | Expose | Exposes a Grafana SimpleJSON-compatible pull endpoint |
-| ThingsBoard Export | Push | Pushes telemetry to ThingsBoard via its MQTT API |
-| Python Custom | Push or Expose | User-written EXPORT module (any destination or exposure pattern) |
+| Output | Mode | Description |
+| ------ | ---- | ----------- |
+| Hot-tier table (DB_SAVE) | Push | Writes rows to a tenant table in TimescaleDB/PostgreSQL (append or upsert) |
+| Lakehouse table | Push | Writes to a tenant Iceberg table via the lake sink |
+| MQTT Publisher | Push | Publishes to a topic via an OUTPUT connector |
+| REST Client | Push | Calls an external REST endpoint via an OUTPUT connector |
+| WebSocket Push | Push | Pushes to connected WebSocket clients |
+| UDP | Push | Sends datagrams (V2) |
+| Data / SQL API, Grafana data source, Iceberg REST catalog | Expose | Permission-checked pull access |
+| ThingsBoard Export | Push | Pushes telemetry to ThingsBoard via its MQTT API (V2) |
 
 ### 6.3 Custom EXPORT Module (Python)
 
 ```python
 class ExportModule:
-    def connect(self, config: dict):
-        """Open connection to destination."""
-        pass
-
-    def send(self, data: dict | pd.DataFrame):
-        """Push data to the external system."""
-        pass
-
-    def disconnect(self):
-        """Clean up."""
-        pass
+    def shape(self, data: dict, connector_meta: dict = None) -> dict:
+        """Return the payload the platform delivers through the node's connector.
+        Do not make network calls here."""
+        return data
 ```
-For modules that expose an endpoint (passive mode), the `connect()` method registers the endpoint with the platform's ingress layer. The `send()` method buffers or updates the data that the endpoint will serve.
 
 ---
 
-## 7. Connectors
+## 7. Connections and Connectors
 
 ### 7.1 Overview
 
-Connectors are named, tenant-scoped entities that describe how to reach a protocol endpoint. They are defined independently of pipelines — a connector can be reused across multiple pipelines.
+External systems are reached through **connections**, owned by the system plane: system administrators create them (endpoint, credentials, broker settings), possibly on request of a tenant administrator, and grant them to tenants with a scope and an optional validity period (CON-09 – CON-11). Tenants build **connectors** on granted connections; pipeline nodes reference connectors. Connector secrets are encrypted at rest and never returned in plaintext, and never reach module containers (CON-05).
 
-IMPORT and EXPORT pipeline nodes reference a connector by `connectorId`. At runtime the platform resolves the connector and injects its `config` JSON into the module container, so the module code does not need to hard-code connection parameters.
+*Implementation note:* connectors are currently created directly by tenants with their own credentials; connections, grants and the request workflow are to be built.
 
 ### 7.2 Supported Connector Types
 
 | Type | Direction | Typical Config Fields |
 | ---- | --------- | --------------------- |
-| `MQTT` | INPUT / OUTPUT / BOTH | `broker`, `port`, `topic`, `clientId`, `username`, `password`, `qos`, `tls` |
-| `REST` | INPUT / OUTPUT / BOTH | `baseUrl`, `method`, `headers`, `authType`, `apiKey` |
-| `WEBSOCKET` | INPUT / OUTPUT / BOTH | `url`, `path`, `headers`, `tls` |
-| `UDP` | INPUT / OUTPUT / BOTH | `host`, `port`, `bindAddress` |
-| `FILE` | INPUT / OUTPUT | `path`, `format` (`csv`, `json`, `parquet`), `watchMode` |
-| `CUSTOM` | INPUT / OUTPUT / BOTH | User-defined key/value pairs |
+| `MQTT` | INPUT / OUTPUT | `broker`, `topic`, `clientId`, `brokerCredentialId`, `qos`, `tls` |
+| `REST` | INPUT / OUTPUT | `baseUrl`, `path`, `method`, `headers`, `authType`, `apiKey`, polling interval |
+| `WEBSOCKET` | INPUT / OUTPUT | `url`, `path`, `headers`, `tls` |
+| `UDP` | INPUT / OUTPUT | `host`, `port`, `bindAddress` |
+| `FILE` | INPUT | `path`, `pattern`, `format`, `afterRead` (keep/move/delete), `minAge` |
+| `FTP` | INPUT | `host`, `port`, `tls` (none/implicit/explicit), `username`, `password`, `path`, `pattern`, `format`, `afterRead`, `minAge` |
+| `SFTP` | INPUT | `host`, `port`, `username`, `password` or `privateKey` (+ `passphrase`), `hostKeyFingerprint`, `path`, `pattern`, `format`, `afterRead`, `minAge` |
+| `EMAIL` | INPUT | `host`, `port`, `tls`, `username`, `password`, `folder`, `content` (body/attachments), `pattern`, `afterRead` (keep/move/delete), `minAge` |
+| `CUSTOM` | INPUT / OUTPUT | User-defined key/value pairs |
 
-### 7.3 Connector Lifecycle
+Pull inputs are INPUT-only and expose a polling interval and an operator-visible last/next run (CON-13). Every credential field is stored as a secret reference; the backend rejects inline credentials, and leaving a secret field blank on edit keeps the stored reference (§7.5).
 
-1. Admin creates a connector via `POST /api/internal/v1/connectors?tenantId=...`
-2. The connector appears in the Connector Library for the tenant.
-3. When building a pipeline, IMPORT/EXPORT nodes reference a connector from the library by `connectorId`.
-4. At pipeline execution time, the platform resolves the connector config and injects it into the module container as the `connector` block of the module config dict.
-5. Updating a connector's config takes effect on the next pipeline execution — no pipeline restart required.
+A system used in both directions is used through two connectors on the same connection (CON-02).
 
-### 7.4 Connector Security
+### 7.5 Connector Secrets
 
-Connector configs may contain credentials (passwords, API keys). These are stored encrypted at rest and never returned in plaintext via the management API after creation (same pattern as API keys).
+Sensitive fields (`password`, `privateKey`, `passphrase`, API keys) are never stored in the connector config. The UI writes them through the secrets API, which returns an opaque reference that is stored in the config; the plaintext is never returned by a read. On edit, an empty secret field means "keep the stored secret" rather than "clear it", so a user can change a host or a path without having to re-enter a password they cannot see. This is why the UI marks a field as stored instead of pre-filling it.
+
+### 7.3 Connection and Connector Lifecycle
+
+1. A tenant administrator requests a connection to a new external system in the UI (optional).
+2. A system administrator creates the connection and grants it to the tenant (scope, validity).
+3. Tenant users create connectors on the granted connection.
+4. IMPORT/EXPORT nodes reference a connector by `connectorId`.
+5. At execution time the platform resolves the connector config (including broker credentials) platform-side and performs the I/O.
+6. Updating a connector takes effect on the next pipeline execution — no restart required.
+7. Every step is audited (§18).
+
+### 7.4 Bundled MQTT Broker
+
+Single node: Mosquitto. Kubernetes HA: RabbitMQ with the MQTT plugins. Broker credentials managed by the platform are provisioned on the bundled broker so that anonymous access is disabled (CON-12).
+
+*Implementation note:* the bundled Mosquitto currently accepts anonymous clients because credentials are not yet provisioned; the RabbitMQ cluster has anonymous access disabled.
 
 ---
 
-## 8. Storage Layer
+## 8. Storage Layer and Lakehouse
 
 ### 8.1 Storage Backends
 
-| Backend | Use Case | Default |
+| Backend | Use Case | Bundled |
 | ------- | -------- | ------- |
-| PostgreSQL | Platform metadata, pipeline config, module source, alert rules/history | Yes |
-| TimescaleDB | Time-series sensor/IoT data (hypertables, compression, continuous aggregates) | Yes |
-| MongoDB | Unstructured/document data, variable-schema payloads | Optional (V2) |
-| MinIO / S3 | Binary files, batch exports, model artefacts | Optional (V2) |
+| PostgreSQL | Platform metadata, module source, roles, alert configuration and history, audit trail, lakehouse catalog | Yes |
+| TimescaleDB | Hot tier: recent time-series data (hypertables, compression, continuous aggregates), low-latency lookups (`DB_LOAD`) | Yes |
+| S3-compatible object storage (SeaweedFS by default; external S3 optional) | Lakehouse table files, batch files, backups | Yes |
+
+**Structured data only (STR-08).** There is no blob store, no file upload endpoint and no binary retention tier. Everything the platform ingests is reduced to records — readings, locations, metadata — that live in the hot tier or a lakehouse table. A pulled file, a mail with attachments, a binary protocol frame: all are parsed at the ingest boundary and then only the parsed records are stored. This has three consequences that matter operationally: one copy of every value instead of a payload plus its parsed form, no second backup/restore path for a file tree, and no retention question for "how long do we keep the uploaded file". The source item stays where the remote system put it.
 
 ### 8.2 Data Schema (Core Tables — PostgreSQL)
 
 ```sql
 -- Tenant hierarchy (strict tree: one parent per node, root has parent_id = NULL)
-tenants(id, name, parent_id, settings JSONB, quota JSONB, created_at)
+tenants(id, name, parent_id, settings, quota, created_at, updated_at)
 
--- Roles (tenant-scoped)
-roles(id, tenant_id, name, abilities JSONB, is_default, created_at)
+-- Roles: built-in templates (tenant_id NULL, is_system) and installation-defined roles
+roles(id, tenant_id, name, description, abilities, is_default, is_system, created_at)
 
--- Login identities (platform-wide)
--- Superadmin = auth_user holding TenantAdmin membership in root tenant
-auth_users(id, email UNIQUE, password_hash, is_active, created_at)
+-- Login identities (installation-wide)
+users(id, email UNIQUE, password_hash, first_name, last_name, abilities, is_active, last_login_at, created_at)
 
--- Per-tenant memberships (max 1 per auth_user per tenant)
-tenant_memberships(id, auth_user_id, tenant_id, role_id,
-                   abilities JSONB, created_at,
-                   UNIQUE(auth_user_id, tenant_id))
+-- Role assignments (max 1 per user per tenant); target model adds scope, valid_from,
+-- valid_until, granted_by, reason (IAM-03, IAM-04)
+memberships(id, auth_user_id, tenant_id, role_id, abilities, created_at,
+            UNIQUE(auth_user_id, tenant_id))
 
--- Protocol connector definitions (tenant-scoped, named interface entities)
--- IMPORT/EXPORT nodes reference a connector by connectorId in graph_definition
-connectors(id, tenant_id, name,
-           connector_type CHECK IN ('MQTT','REST','WEBSOCKET','UDP','FILE','CUSTOM'),
-           direction CHECK IN ('INPUT','OUTPUT','BOTH'),
-           config JSONB, enabled, created_at,
-           UNIQUE(tenant_id, name))
+-- Connectors (tenant-scoped) and broker credentials
+connectors(id, tenant_id, name, connector_type, direction CHECK IN ('INPUT','OUTPUT'),
+           config (encrypted), is_active, created_at, UNIQUE(tenant_id, name))
+broker_credentials(id, tenant_id, name, username, password_encrypted, allowed_topics, is_active)
 
--- Code modules
+-- Code modules and versions
 code_modules(id, tenant_id, name,
-             module_type CHECK IN ('IMPORT','PROCESSING','ALERT','EXPORT'),
-             description, created_at, created_by)
+             module_type CHECK IN ('IMPORT','DB_LOAD','PROCESSING','MERGE','ALERT','EXPORT','DB_SAVE'), ...)
+module_versions(id, module_id, version, version_tag, code, requirements, config, created_at, created_by)
 
--- Module versions
-module_versions(id, module_id, version INT, version_tag,
-                code TEXT, requirements TEXT, created_at, created_by)
+-- Pipelines (graph_definition: nodes + edges)
+pipelines(id, tenant_id, name, description, graph_definition, kafka_consumer_group, is_active, ...)
+pipeline_runs(id, pipeline_id, status, trigger_type, started_at, completed_at, error_message, retry_of_run_id, ...)
+pipeline_run_node_logs(id, run_id, node_id, node_type, module_name, success, stdout, stderr, duration_ms, ...)
 
--- Pipelines (IMPORT/EXPORT nodes include connectorId in graph_definition)
-pipelines(id, tenant_id, name,
-          graph_definition JSONB,              -- DAG: nodes + edges; IMPORT/EXPORT nodes include connectorId
-          import_module_version_id UUID,       -- MVP compat
-          processing_module_version_ids UUID[],
-          export_module_version_ids UUID[],
-          kafka_consumer_group, is_active, created_at, created_by)
+-- Alerts
+alert_channels(id, tenant_id, name, channel_type CHECK IN ('MQTT','WEBHOOK','REST','EMAIL','SLACK'),
+               config, is_active, created_at)
+alert_history(id, tenant_id, channel_id, pipeline_id, dedup_key, severity, title, message,
+              payload, status, sent_at)
 
--- Pipeline runs
-pipeline_runs(id, pipeline_id, status, started_at, completed_at, error_message)
+-- API keys (hashed), tenant data table registry, Grafana sync state,
+-- connector runtime leases (multi-instance ownership)
+api_keys(...), data_table_registry(...), grafana_sync_states(...), connector_runtime_leases(...)
 
--- Alert channels
-alert_channels(id, tenant_id, name,
-               channel_type CHECK IN ('MQTT','WEBHOOK','REST','EMAIL','SLACK'),
-               config JSONB, created_at)
-
--- Alert rules
-alert_rules(id, tenant_id, pipeline_id, channel_id, enabled, created_at)
-
--- Alert history
-alert_history(id, tenant_id, rule_id, severity, message,
-              payload JSONB, status, sent_at)
+-- Target additions: connections, connection_grants, connection_requests, audit_events, audit_notes
 ```
-### 8.3 Time-Series Data (TimescaleDB)
 
-```sql
-CREATE TABLE readings (
-    time        TIMESTAMPTZ NOT NULL,
-    tenant_id   UUID        NOT NULL,
-    pipeline_id UUID        NOT NULL,
-    metric      TEXT        NOT NULL,
-    value       DOUBLE PRECISION,
-    tags        JSONB,
-    raw         JSONB
-);
-SELECT create_hypertable('readings', 'time');
-CREATE INDEX ON readings(tenant_id, metric, time DESC);
-```
-### 8.4 Data Query API
+The schema is created by a single baseline Flyway migration; enum CHECK constraints mirror the Kotlin enums.
+
+### 8.3 Hot Tier (TimescaleDB)
+
+Pipeline data lives in one schema per tenant (`tenant_<uuid>`), accessed through a per-tenant database role so that the database itself enforces isolation (NFR-S8). DB_SAVE creates or extends tables from the first row or an explicit column model; DB_LOAD reads with column selection, equality filters, ordering and limits. Retention and compression policies are configurable per tenant (STR-07).
+
+Each tenant has its own PostgreSQL role (`TenantDatabaseRoleService`), created lazily on first use and
+granted ownership of its `tenant_<uuid>` schema. `PipelineDataService` (DB_LOAD/DB_SAVE) and the Data
+API's query, insert, list, delete and register-table endpoints run every statement under that role
+(`SET ROLE`) for the duration of the connection, so a module config that names another tenant's schema
+— by a bug or by a malicious module — is refused by PostgreSQL's own grants, independent of what the
+application's own schema-name computation decided.
+
+*Implementation note:* this needs the connecting database user to hold `CREATEROLE`
+(`dataturntable.pipeline-data.jdbc.*` or the fallback `quarkus.datasource.*` credentials — see the
+configuration reference). Without it, provisioning fails once per tenant with a clear log line and the
+operation falls back to the connection's shared privileges: isolation then rests on the application's
+own schema check alone, the exact gap this feature exists to close. **A production installation must
+confirm the connecting user actually holds `CREATEROLE`**, or this protection is silently absent.
+
+### 8.4 Lakehouse
+
+| Aspect | Design |
+| ------ | ------ |
+| Table format | Apache Iceberg, via `iceberg-core` inside the backend (LAK-01) |
+| Catalog | Iceberg JDBC catalog in PostgreSQL, served by the backend as an Iceberg REST catalog with one namespace per tenant (LAK-02) |
+| Writes | A lake-sink consumer group writes Parquet data files per Kafka partition and publishes their metadata to `dataturntable.lake.commits`; one committer per table (elected via the connector lease mechanism) commits every 30–60 s |
+| Layers | Bronze: every ingested record unmodified (LAK-03). Silver/Gold: pipeline outputs (LAK-04) |
+| Time-series layout | `tenant, series_id, tags, ts, value(s), quality, ingest_ts`; partitioned by `day(ts)` and a `series_id` bucket; sorted by `series_id, ts` (LAK-05) |
+| Late data | Event-time partitioning; compaction re-sorts affected files |
+| Rollups | 1 min / 1 h / 1 day (min, max, avg, count, last), maintained continuously (LAK-06) |
+| Maintenance | Compaction, snapshot expiry, orphan-file cleanup scheduled by the platform (LAK-09) |
+| Time travel | Query by snapshot id or timestamp (LAK-08) |
+| Isolation | The catalog hands out only the caller's permitted namespaces and file locations (LAK-11) |
+
+### 8.5 Data Query API and SQL Workspace
 
 ```text
-GET /api/internal/v1/data/{tenantId}/query
-  ?table=readings
-  &start=2026-03-01T00:00:00Z
-  &end=2026-03-16T00:00:00Z
-  &limit=1000
+GET  /api/v1/data/{tenantId}/query?table=...&limit=...      — simple table reads (hot tier)
+POST /api/v1/sql                                             — SQL over hot tier and lakehouse (target)
+GET  /api/v1/sql/jobs/{id}                                   — asynchronous large queries (target)
 ```
+
+SQL is executed by an embedded DuckDB engine in the `query` backend role, reading Iceberg tables through the platform catalog. Interactive queries target recent data and rollups (NFR-P6); large scans run as asynchronous jobs. A distributed engine is added only if benchmarks require it (CON-C9).
+
 ---
 
 ## 9. Alerting System
 
 ### 9.1 ALERT Module as a First-Class Pipeline Node
 
-An ALERT node is a terminal node in the pipeline DAG. It receives data from upstream nodes, evaluates a condition, and dispatches an alert if the condition is met. It does **not** transform or forward data to downstream nodes.
-
-This separation keeps data processing and alert logic decoupled: a single PROCESSING output can feed both an ALERT node and an EXPORT node simultaneously (fan-out).
+An ALERT node is a terminal node in the pipeline DAG. It receives data from upstream nodes, evaluates conditions, and raises alerts. It does **not** transform or forward data to downstream nodes. A single PROCESSING output can feed both an ALERT node and an EXPORT node simultaneously (fan-out).
 
 ### 9.2 Built-in Rule Types
+
+Built-in rules are ALERT node types configured in the UI without code (ALT-02). Stateful rules keep their state in the platform (last values, windows, last-seen times); absence is evaluated by a platform scheduler, not by incoming data.
 
 | Type | Description | Config Parameters |
 | ---- | ----------- | ----------------- |
 | `threshold` | Fire when a field crosses a limit | `field`, `operator`, `value`, `severity` |
 | `rate_of_change` | Fire when value changes by more than N per interval | `field`, `delta`, `intervalSeconds`, `severity` |
 | `time_window` | Fire when an aggregated value in a window exceeds a limit | `field`, `aggregation`, `windowSeconds`, `operator`, `value` |
-| `absence` | Fire when no data arrives within a timeout | `pipelineId`, `timeoutSeconds` |
-| `custom` | Fire based on Python `AlertModule` logic | `moduleVersionId`, module-specific config |
+| `absence` | Fire when no data arrives within a timeout | `timeoutSeconds`, optional series key |
+| `custom` | Fire based on Python `AlertModule` logic | module version, module config |
+
+Rule state lives in the `alert_rule_state` table (one row per rule node and series), updated under a row lock in its own transaction; late or redelivered records do not move the state backwards. The absence check runs every 15 s on every executor replica and claims each silence with an atomic conditional update, so exactly one replica alerts. A silence is reported once; data arriving again re-arms the rule. Rules without a timestamp field use the arrival time.
 
 ### 9.3 Alert Channel Types
 
-| Channel | Required Config |
-| ------- | --------------- |
-| MQTT | `broker`, `topic`, `qos`, `payload_template` |
-| HTTP Webhook | `url`, `method`, `headers`, `body_template` |
-| REST | `url`, `method`, `headers`, `body_template` |
-| Email (SMTP) | `smtp_host`, `port`, `to`, `subject_template`, `body_template` |
-| Slack | `webhookUrl`, `channel`, `message_template` (Block Kit format) |
+| Channel | Config (as stored by the UI) |
+| ------- | ---------------------------- |
+| MQTT | `connectorId` (an MQTT OUTPUT connector; credentials stay in the connector), optional `topic` |
+| HTTP Webhook | `url`, optional `method` (POST/PUT/PATCH), optional `authToken` (Bearer) |
+| REST | `baseUrl`, optional `path`, `method`, `authToken` |
+| Email (SMTP) | `recipient` (comma-separated), optional `subjectTemplate` (`{severity}`, `{title}`); SMTP server configured once per installation |
+| Slack | `webhookUrl`, optional `channel` |
+
+Channel secrets are to be stored encrypted (ALT-12).
 
 ### 9.4 Alert Flow
 
 ```text
-Data arrives at ALERT node (from upstream PROCESSING fan-out)
+Data arrives at ALERT node (from upstream fan-out)
         │
         ▼
 Condition evaluated (built-in rule or AlertModule.evaluate())
         │
-   condition met?
-        │ YES
+   alert_fn(...) called?
+        │ YES — alert returned with the node result
         ▼
-Cooldown check: same rule fired within cooldown window?
-        │ NO
-        ▼
-Alert dispatched to configured channel(s)
+Channel resolved: channel named in alert_fn → node default channel → first active tenant channel
         │
         ▼
-Record written to alert_history table
+Cooldown check: same alert (pipeline, node, title) sent to this channel within the window?
+        │ NO  (window: cooldown_seconds of the call, else installation default 300 s; 0 disables)
+        ▼
+Record written to alert_history (PENDING) → delivered → status SENT or FAILED
         │
         ▼
-Metrics counter incremented
+Metrics counter incremented; failures visible in the UI (ALT-11)
 ```
-### 9.5 Alert Configuration Example
 
-```json
-{
-  "name": "High Temperature Alert",
-  "type": "threshold",
-  "pipelineId": "pipeline-uuid",
-  "channelId": "slack-channel-uuid",
-  "condition": {
-    "field": "value",
-    "operator": ">",
-    "value": 80.0,
-    "severity": "critical",
-    "cooldownSeconds": 300
-  }
-}
+### 9.5 Alert Example
+
+```python
+class AlertModule:
+    def __init__(self, config=None):
+        self.threshold = (config or {}).get('threshold', 80)   # module version config
+
+    def evaluate(self, data, alert_fn=None, query_fn=None):
+        if data['value'] > self.threshold:
+            alert_fn(severity='critical', title='High temperature',
+                     message=f"{data['value']} °C", payload=data, cooldown_seconds=300)
+            return True
+        return False
 ```
+
+### 9.6 Platform Health Alerts (ALT-13)
+
+An ALERT node only reports on the data that reaches it. Four conditions are about the platform
+itself, are not caused by any pipeline's data, and cannot be configured away by a tenant, so the
+platform raises them on its own initiative:
+
+| Condition | Threshold (`dataturntable.health.*`) |
+|---|---|
+| **Repeated run failures** — one active pipeline failing run after run | ≥ `failure-threshold` (3) FAILED runs within `failure-window-seconds` (900) |
+| **Growing processing lag** — triggers queueing up instead of being processed | oldest unfinished run older than `lag-threshold-seconds` (300) |
+| **Dead-letter records** — records no consumer could handle | any within `failure-window-seconds`, grouped by channel |
+| **Undelivered alerts** — an alert that exhausted its delivery attempts | any within `failure-window-seconds` |
+
+Recipients differ by condition, because the tenant's own channel is sometimes the thing that is
+broken:
+
+- Findings about a tenant's pipelines go to that tenant's **default channel** (its first active
+  channel, as in §9.4) **and** to the system administrators in `admin-emails`.
+- Findings with no tenant — dead letters, and undelivered alerts — go to the **administrators
+  only**. Telling a tenant that its alerts are not arriving, through the channel that is failing to
+  deliver them, would not help.
+
+A platform alert has no pipeline and no node, so it goes through the same `alert_history` outbox as
+every other alert: the same retry with backoff, and the same FAILED state that the undelivered-alert
+check then reports. The `delivery_key` is the problem plus a time bucket, so a condition that
+persists is reported once per `dedupe-window-seconds` (3600) rather than on every
+`check-interval` (60 s) scan. The scan runs on the control API only, like retention cleanup, so a
+multi-replica deployment reports each problem once.
+
+With no `admin-emails` configured, tenants are still notified and platform-wide findings are only
+written to `alert_history` and the log. The recorded attempt carries a `platform-admin:` dedup key
+so that a broken mail server is not itself reported as an undelivered alert, which would otherwise
+keep generating mail for as long as it stayed broken.
+
 ---
 
-## 10. Multi-Tenancy & RBAC
+## 10. Multi-Tenancy, Identity & Access
 
 ### 10.1 Tenant Hierarchy
 
 Tenants form a **strict tree**: each tenant has exactly one parent, except the single root tenant (parent = NULL). Resources belong to exactly one tenant node. Permissions granted at a parent node apply to all children.
 
 ```text
-Platform (Superadmin)
-└── Tenant: AcmeCorp
+Installation (system scope — IT department)
+└── Tenant: AcmeCorp (root)
     ├── Tenant: AcmeCorp/EuropeDiv
     │   ├── Tenant: Berlin
     │   │   ├── Workspace: FactoryFloor  ← pipelines, modules, data here
@@ -599,39 +771,46 @@ Platform (Superadmin)
     └── Tenant: AcmeCorp/AsiaDiv
         └── Tenant: Tokyo
 ```
+
 ### 10.2 Permission Model
 
-Permissions are `ability:resource` pairs:
+Permissions are product-defined names of the form `resource:action`; each corresponds to an enforcement point (IAM-01). Current vocabulary:
 
-| Ability | Resource | Description |
-| ------- | -------- | ----------- |
-| `read` | `pipeline` | View pipeline definition and status |
-| `write` | `pipeline` | Create, update, enable/disable pipelines |
-| `execute` | `pipeline` | Manually trigger a pipeline run |
-| `read` | `data` | Query stored data |
-| `write` | `module` | Create/edit Python modules |
-| `deploy` | `module` | Deploy module to engine |
-| `configure` | `alert` | Manage alert rules and channels |
-| `manage` | `tenant` | Create child tenants, manage users |
-| `*` | `*` | Superadmin — all abilities |
+| Permission | Description |
+| ---------- | ----------- |
+| `pipeline:read`, `pipeline:write`, `pipeline:execute` | View; create/update/enable/disable/delete; trigger runs |
+| `module:read`, `module:write`, `module:delete` | Python modules and versions |
+| `connector:read`, `connector:write`, `connector:delete` | Connectors |
+| `data:read`, `data:write`, `data:export` | Query, write and export stored data |
+| `alert:read`, `alert:configure` | Alert history; alert channels |
+| `user:read`, `user:write`, `user:delete` | Users |
+| `tenant:manage` | Child tenants, memberships, roles |
+| `*` | All permissions (built-in Superadmin template) |
+
+Planned additions: `system.config:read`, `system.config:write`, `system.deployment:write`, `system.monitoring:read`, `system.roles:manage`, `connection:*`, `audit:read`, `audit.note:write`, `module.network:grant`.
+
+Roles, their permissions and assignments are defined per installation (IAM-02); built-in templates are immutable, inspectable, clonable and disableable (IAM-05 – IAM-07). Assignments have a scope (system or tenant subtree) and an optional validity period; permissions are evaluated on each request (IAM-04). Nobody can grant permissions they do not hold; the last system administrator cannot be removed (IAM-08).
 
 ### 10.3 Identity Model
 
-Login identity (`auth_users`) is **separate** from per-tenant membership (`tenant_memberships`):
+- One `users` record per login identity, installation-wide (email or IdP subject).
+- Access to a tenant requires a role assignment for that tenant or an ancestor, or at system scope.
+- At most one membership per (user, tenant).
+- No `is_superadmin` column; installation administration comes from system-scope assignments (TEN-05). System scope grants no implicit tenant-data access (TEN-08).
 
-- One `auth_users` record per unique email address, platform-wide.
-- Access to a tenant requires a `tenant_memberships` record for that (auth_user, tenant) pair.
-- Each auth user may hold **at most one membership per tenant**.
-- **Superadmin** = auth user holding a `TenantAdmin` role membership in the root tenant. There is no `is_superadmin` column.
-- Root-tenant admins (superadmins) cannot simultaneously hold memberships in sub-tenants.
+*Implementation note:* installation administration is an explicit `is_platform_admin` flag on the user, separate from root-tenant administration; system-scope role assignments that replace it are not built yet.
 
 ### 10.4 Authentication
 
-**Users:** Email + password → JWT (1-hour access token). Password is SHA-256-hashed client-side before transmission; server stores BCrypt hash of the SHA-256 value.
+**Browser users:** One login for all components (IAM-09). The platform issues an HttpOnly, Secure, SameSite session cookie with CSRF protection; the reverse proxy validates it on every request (`auth_request`) and forwards the identity to embedded components (Grafana auth proxy). Components are reachable only through the proxy.
 
-**Service Accounts / API Keys:** Static key (BCrypt-hashed at rest) with explicit ability set and optional expiry. Plaintext shown only at creation.
+**Identity providers:** The platform is an OIDC client for external identity providers configured at run time (issuer, client, scopes, claim → role-assignment mapping, just-in-time provisioning) (IAM-10). Local password login can be restricted to break-glass accounts (IAM-11). Logout is propagated (RP-initiated and back-channel) and sessions can be revoked (IAM-12).
 
-**Future:** LDAP/AD and OAuth2/OIDC IdP integration.
+**Local passwords:** Sent over TLS only; the server stores a BCrypt hash; minimum 8 characters (NFR-S2).
+
+**Machine clients:** JWT Bearer tokens or API keys (hashed at rest, explicit ability set, optional expiry, plaintext shown once).
+
+*Implementation note:* the frontend currently stores a JWT in `localStorage` and sends it as a Bearer header; components other than the API are not behind the login.
 
 ---
 
@@ -641,66 +820,43 @@ Login identity (`auth_users`) is **separate** from per-tenant membership (`tenan
 
 | Path | Purpose | Auth |
 | ---- | ------- | ---- |
-| `/api/internal/v1/` | Management API | JWT or API key |
-| `/api/v1/` | Public data ingestion | API key per pipeline (or open) |
+| `/api/internal/v1/` | Management API | Session, JWT or API key |
+| `/api/v1/` | Data, alerts, monitoring, audit | Session, JWT or API key |
+| `/api/ingest/v1/` | Ingestion | API key |
+| `/api/catalog/v1/` | Iceberg REST catalog | JWT or API key |
 
-### 11.2 Management API Endpoint Overview
-
-| Method | Path | Description |
-| ------ | ---- | ----------- |
-| POST | `/auth/login` | Authenticate, receive JWT |
-| POST | `/auth/setup` | First-run: create root tenant + admin |
-| GET | `/auth/me` | Current authenticated user |
-| GET | `/tenants` | List root tenants |
-| POST | `/tenants` | Create tenant |
-| GET | `/tenants/{id}` | Get tenant details |
-| DELETE | `/tenants/{id}` | Delete tenant |
-| GET | `/tenants/{id}/children` | Get child tenants |
-| GET | `/auth-users` | List auth (login) users |
-| GET | `/auth-users/{id}` | Get auth user |
-| POST | `/auth-users` | Create auth user |
-| PATCH | `/auth-users/{id}` | Update auth user |
-| DELETE | `/auth-users/{id}` | Delete auth user |
-| GET | `/tenants/{id}/memberships` | List memberships for a tenant |
-| POST | `/tenants/{id}/memberships` | Add membership (auth user ↔ tenant) |
-| PATCH | `/tenants/{id}/memberships/{mid}` | Update membership role/abilities |
-| DELETE | `/tenants/{id}/memberships/{mid}` | Remove membership |
-| GET | `/connectors` | List connectors (`?tenantId=&direction=`) |
-| GET | `/connectors/{id}` | Get connector |
-| POST | `/connectors` | Create connector |
-| PATCH | `/connectors/{id}` | Update connector |
-| DELETE | `/connectors/{id}` | Delete connector |
-| GET | `/modules` | List modules (`?tenantId=&type=`) |
-| GET | `/modules/{id}` | Get module |
-| POST | `/modules` | Create module |
-| DELETE | `/modules/{id}` | Delete module |
-| GET | `/modules/{id}/versions` | Version history |
-| POST | `/modules/{id}/versions` | Save new version |
-| GET | `/pipelines` | List pipelines (`?tenantId=`) |
-| GET | `/pipelines/{id}` | Get pipeline |
-| POST | `/pipelines` | Create pipeline |
-| PATCH | `/pipelines/{id}` | Update pipeline |
-| DELETE | `/pipelines/{id}` | Delete pipeline |
-| POST | `/pipelines/{id}/run` | Manually trigger pipeline |
-| GET | `/pipelines/{id}/runs` | Pipeline run history |
-| GET | `/data/{tenantId}/query` | Query stored data |
-| POST | `/data/{tenantId}/insert` | Insert data directly |
-| GET | `/data/{tenantId}/tables` | List tenant data tables |
-| DELETE | `/data/{tenantId}/tables/{table}` | Drop a tenant data table |
-| GET | `/alerts/channels` | List alert channels (`?tenantId=`) |
-| POST | `/alerts/channels` | Create alert channel |
-| GET | `/alerts/rules` | List alert rules (`?tenantId=`) |
-| POST | `/alerts/rules` | Create alert rule |
-| GET | `/alerts/history` | Alert history (`?tenantId=&limit=`) |
-| GET | `/q/health` | Platform health check |
-| GET | `/q/metrics` | Prometheus metrics |
-
-### 11.3 Public Ingestion API
+### 11.2 Management and General API Endpoint Overview
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |
-| POST | `/api/v1/ingest/{pipelineId}` | Push data into a pipeline (any JSON body) |
-| WS | `/api/v1/ws/{pipelineId}` | Stream data into a pipeline over WebSocket |
+| POST | `/api/internal/v1/auth/login` | Authenticate |
+| POST | `/api/internal/v1/auth/setup` | First run: create root tenant + first administrator |
+| GET | `/api/internal/v1/auth/me` | Current user |
+| GET/POST/PATCH/DELETE | `/api/internal/v1/tenants[/{id}]` | Tenants, children, lineage defaults |
+| GET/POST/PATCH/DELETE | `/api/internal/v1/auth-users[/{id}]` | Users |
+| GET/POST/PATCH/DELETE | `/api/internal/v1/tenants/{id}/memberships[/{mid}]` | Memberships |
+| GET/POST/PATCH/DELETE | `/api/internal/v1/roles[/{id}]` | Roles and templates |
+| GET/POST/PATCH/DELETE | `/api/internal/v1/connectors[/{id}]` | Connectors, test, usage, impact, broker credentials |
+| GET/POST/DELETE | `/api/internal/v1/modules[/{id}]`, `/modules/{id}/versions` | Modules and versions |
+| GET/POST/PATCH/DELETE | `/api/internal/v1/pipelines[/{id}]` | Pipelines |
+| POST | `/api/internal/v1/pipelines/{id}/run` | Manually trigger a pipeline |
+| GET | `/api/internal/v1/pipelines/{id}/runs`, run summaries, lineage | Run history |
+| GET/POST/DELETE | `/api/v1/data/{tenantId}/query`, `/insert`, `/tables[/{table}]`, `/summary` | Stored data |
+| GET/POST/PATCH/DELETE | `/api/v1/alerts/channels[/{id}]` | Alert channels |
+| GET | `/api/v1/alerts/history` | Alert history (`?tenantId=&limit=`) |
+| GET | `/api/v1/monitoring/...` | Pipeline and platform monitoring |
+| GET | `/api/v1/audit`, `/api/v1/audit/{target}` | Audit trail (target) |
+| POST | `/api/v1/audit/{eventId}/notes`, `/api/v1/audit/notes` | Notes (target) |
+| GET | `/q/health`, `/q/metrics` | Health and Prometheus metrics |
+
+### 11.3 Ingestion API
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| POST | `/api/ingest/v1/ingest/{pipelineId}` | Push data into a pipeline (JSON object or array) |
+| POST | `/api/ingest/v1/ingest/connector/{connectorId}` | Push data into all pipelines using an INPUT connector |
+
+`202` means the record is stored durably; `503` with `Retry-After` means it is not and must be resent (§4.9). `Idempotency-Key` makes resends safe: the same key yields the same `runId` and one execution. The optional header `X-Partition-Key` spreads one pipeline's load over all executors while keeping the order per key.
 
 ### 11.4 Standard Response Envelope
 
@@ -713,6 +869,7 @@ Login identity (`auth_users`) is **separate** from per-tenant membership (`tenan
   "size": 20
 }
 ```
+
 Error responses:
 
 ```json
@@ -720,94 +877,65 @@ Error responses:
   "error": "Pipeline with ID 'abc' not found in tenant 'xyz'"
 }
 ```
+
 ### 11.5 Rate Limiting
 
-Rate limiting is **not yet implemented** (planned for V2). When implemented, the default will be 100 requests per minute per API key / JWT subject.
+Rate limiting is planned for V2 (API-09); the default will be 100 requests per minute per API key / user.
 
 ---
 
-## 12. Admin UI
+## 12. User Interface
 
 ### 12.1 Technology
 
-- **Framework:** React 18 with TypeScript
-- **Build tool:** Vite 5.x
-- **Styling:** Tailwind CSS 3.x
-- **State management:** Zustand (lightweight global state for auth and shared data)
-- **HTTP client:** Axios (with interceptors for token injection)
-- **Charts:** Lightweight chart library (uPlot or Chart.js — to be integrated)
-- **Code editor:** Monaco Editor 4.x (VS Code engine) for Python module editing
+- **Framework:** React 19 with TypeScript
+- **Routing:** React Router 8
+- **Build tool:** Vite 8
+- **Styling:** Tailwind CSS 4
+- **State management:** Zustand
+- **HTTP client:** Axios
+- **Graph editor:** React Flow (`@xyflow/react`)
+- **Code editor:** Monaco Editor
+- **Dashboards:** Grafana, embedded behind the common login (UI-16)
 
-### 12.2 UI Route Structure
+### 12.2 Areas and Routes
 
 ```text
-/login                    — Login page
+/login                    — Login (local or identity provider)
 /                         — Dashboard (pipeline status, throughput, recent alerts)
-/tenants                  — Tenant hierarchy management
-/tenants/:id/members      — Tenant membership management (add/remove auth users)
-/auth-users               — Platform auth user management
-/connectors               — Connector library (define protocol interfaces)
-/modules                  — Python module list (type-badged, with empty-state guide)
-/modules/:id              — Module editor (Monaco, boilerplate, save/version/deploy)
-/pipelines                — Pipeline list
-/pipelines/new            — Pipeline builder
-/pipelines/:id            — Pipeline detail, run history, DLQ
-/data                     — Built-in data viewer (charts + table)
-/alerts                   — Alert channel config, rule config, alert history
-/settings                 — Platform settings
+/pipelines, /pipelines/:id — Pipeline list; graph editor, runs, DLQ
+/modules, /modules/:id     — Modules; code editor with templates, config and versions
+/connectors                — Connectors, broker credentials, connection requests
+/data                      — Data explorer and charts
+/catalog                   — Data catalog (tables, schemas, snapshots, lineage)        [target]
+/sql                       — SQL workspace                                             [target]
+/dashboards                — Embedded Grafana (tenant dashboards)                      [target]
+/alerts                    — Alert channels and history
+/tenants, /users           — Tenants, members, role assignments
+/audit                     — Audit trail search                                        [target]
+/system                    — System area: health, upgrades, backups, connections,
+                             role templates, identity providers, system monitoring    [target]
+/docs                      — User and administrator documentation                      [target]
 ```
-### 12.3 Pipeline Builder (MVP)
 
-The MVP pipeline builder is a form-based ordered step list (no drag-and-drop). It represents the pipeline as:
+Every component's configuration page has an **Activity** tab with its audit trail and notes (UI-17).
 
-```text
-Import Module:
-  [ mqtt-import-v1                         ▼ ]
+### 12.3 Pipeline Builder
 
-Processing Steps (in order):
-  ┌────────────────────────────────────────────┐
-  │ 1. normalise-units v1   [Config] [Remove] │
-  │    ↓ (fan-out to all below)               │
-  │ 2. anomaly-detect v2    [Config] [Remove] │
-  │                                            │
-  │ [+ Add Processing Step]                   │
-  └────────────────────────────────────────────┘
-
-Alert Modules:
-  [ threshold-alert v1                     ▼ ] [Config] [Remove]
-  [+ Add Alert Module]
-
-Export Modules:
-  [ timescale-writer v1                    ▼ ] [Config] [Remove]
-  [ mqtt-dashboard-pub v1                  ▼ ] [Config] [Remove]
-  [+ Add Export]
-```
-Fan-out and fan-in are represented visually as multiple items in the same section. Full graph editing is a V2 feature.
-
-Each node selector dropdown shows the module name, type badge, and a one-line description to help users pick the right module without needing to open the code editor.
+The pipeline builder is a graph editor (drag-and-drop nodes, connect handles). The side panel configures the selected node: label, module and module version (filtered by compatible types), connector and MQTT topic for IMPORT/EXPORT nodes, default alert channel for ALERT nodes. Runs can be triggered from the editor; the run log shows per-node output.
 
 ### 12.4 Module Code Editor
 
-The Monaco-based editor provides:
+- Python syntax highlighting (Monaco)
+- **Boilerplate template** pre-filled for the selected module type
+- Module version config (JSON) passed to the module constructor
+- Requirements list
+- Validate, Save (creates a new version), version history
 
-- Python syntax highlighting
-- **Boilerplate template** pre-filled when a new module is created — the correct class skeleton (with docstrings and example logic) for the selected module type (IMPORT / PROCESSING / ALERT / EXPORT)
-- Validate button (dry-run syntax check via backend)
-- Save (creates new version), Deploy buttons
-- Version history list
-
-Example boilerplate injected for a new PROCESSING module:
+Example template for a new PROCESSING module:
 
 ```python
 class ProcessingModule:
-    """
-    Transform, filter, or enrich incoming data.
-
-    Return the modified data dict or DataFrame to pass it downstream.
-    Return None to drop the message.
-    Raise an exception to route the message to the dead-letter queue.
-    """
-
     def process(self, data: dict, query_fn=None):
         # Example: add a derived field
         # data["celsius"] = (data["fahrenheit"] - 32) * 5 / 9
@@ -816,25 +944,32 @@ class ProcessingModule:
 
 ### 12.5 Contextual Help & Guided Onboarding
 
-The UI is designed to be **intuitive for first-time users** without requiring external documentation. This is achieved through:
+- **Inline example values** on all form fields (e.g. `mqtt://broker:1883`, `sensors/#`)
+- **Inline help text / tooltips** on non-obvious settings
+- **Empty-state guidance** with a "Create your first X" call-to-action
+- **Boilerplate code** in the module editor (§12.4)
+- **Example connector configs** next to config forms
+- **Consistent visual language**: colour-coded module type badges everywhere modules appear
+- **Documentation inside the UI** (UI-19)
 
-- **Inline example values** on all form fields (e.g. connector config fields show placeholder values like `mqtt://broker:1883`, `sensors/#`)
-- **Inline help text / tooltips** on non-obvious settings (e.g. "Connector Direction: INPUT = this platform receives data; OUTPUT = this platform sends data; BOTH = bidirectional")
-- **Empty-state guidance**: when a list (modules, pipelines, connectors) is empty, show a short description of what the entity is, why it's useful, and a "Create your first X" call-to-action with a link to an example
-- **Boilerplate code** in the module editor (see §12.4)
-- **Example connector configs** shown as collapsible "examples" sections next to config forms (e.g. clicking "MQTT example" fills the form with a commented sample config)
-- **Consistent visual language**: module type badges (colour-coded: IMPORT=blue, PROCESSING=purple, ALERT=orange, EXPORT=green) used everywhere modules appear (lists, pipeline builder, node dropdowns)
+### 12.6 Dashboards (Grafana)
+
+Users of every level build their own dashboards in the bundled Grafana, embedded in the UI (UI-16):
+
+- One Grafana organisation per tenant separates dashboards; users with cross-tenant data roles are members of each relevant organisation.
+- Data access goes through a bundled data source plugin that queries the platform's query API with the logged-in user's identity, so dashboards obey the same fine-grained, time-bounded permissions (INT-01).
+- A second Grafana instance holds system monitoring (Prometheus, Loki), visible only to holders of `system.monitoring:read` (OPS-04).
+
+*Implementation note:* tenant data sources currently connect with one shared database user separated only by `searchPath`, and Grafana users have separate passwords.
 
 ### 12.7 Data Visualisation (Built-in)
 
-Intentionally minimal — for quick sanity checks only:
+Intentionally minimal — for quick sanity checks:
 
 - Line chart: metric vs. time, configurable range and aggregation
 - Bar chart: aggregated values per tag/dimension
 - Table view: raw data with pagination
-- CSV / JSON export button
-
-For production dashboards, use the Grafana datasource EXPORT module or the ThingsBoard EXPORT module.
+- CSV / JSON export (audited)
 
 ---
 
@@ -847,282 +982,432 @@ For production dashboards, use the Grafana datasource EXPORT module or the Thing
       topic: sensors/room-42/temperature
       payload: {"sensor":"room-42","value":85.3,"ts":1710600000}
 
-2.  Ingestion layer subscribes to topic, receives message.
+2.  The INPUT connector's subscription receives the message; the record is retained in the bronze table.
 
-3.  Message published to Kafka:
-      dataturntable.pipelines.pipeline-temp.input
+3.  Message published to Kafka (keyed by tenant/pipeline).
 
-4.  Pipeline engine resolves DAG:
+4.  Pipeline executor resolves the DAG:
       n1 (IMPORT) → n2 (PROCESSING: normalise) → n3 (ALERT: threshold)
-                                               → n4 (EXPORT: TimescaleDB)
+                                               → n4 (DB_SAVE: measurements)
                                                → n5 (EXPORT: MQTT dashboard)
 
-5.  n2 normalises: 85.3°F → 29.6°C, emits to three edge topics (fan-out).
+5.  n2 normalises: 85.3 °F → 29.6 °C and feeds three downstream nodes (fan-out).
 
-6.  n3 (ALERT): 85.3°F > 80°F threshold → alert_fn(severity='critical', ...)
-      → Dispatched to Slack channel.
-      → Written to alert_history.
+6.  n3 (ALERT): value > threshold → alert_fn(severity='critical', ...)
+      → dispatched to the node's default channel (e.g. Slack), cooldown applied
+      → written to alert_history
 
-7.  n4 (EXPORT): writes (time, tenant, metric=temperature, value=85.3, tags=...)
-      to TimescaleDB readings table.
+7.  n4 (DB_SAVE): row written to the tenant's hot-tier table; the lake sink appends it to the silver table.
 
-8.  n5 (EXPORT): publishes normalised value to MQTT topic for live dashboard.
+8.  n5 (EXPORT): shaped value published to an MQTT topic for a live dashboard.
 ```
+
 ### 13.2 Two Streams Merged (Fan-in)
 
 ```text
-1. HTTP POST /api/v1/ingest/pipeline-merge  →  {"source":"A","temp":22.1}
-2. MQTT message on sensors/B/temp          →  {"source":"B","temp":21.9}
-
+1. HTTP POST /api/ingest/v1/ingest/pipeline-merge  →  {"source":"A","temp":22.1}
+2. MQTT message on sensors/B/temp                  →  {"source":"B","temp":21.9}
 3. Both → separate IMPORT nodes → separate PROCESSING (parse) nodes.
-
-4. Both parse nodes emit to PROCESSING (merge) node (fan-in).
-
-5. Merge node combines streams into a DataFrame row.
-
-6. EXPORT writes merged result to PostgreSQL.
+4. Both parse nodes feed a MERGE node (fan-in), which combines them.
+5. DB_SAVE writes the merged result to a table.
 ```
-### 13.3 Grafana Pull Integration
+
+### 13.3 Dashboards and SQL
 
 ```text
-1.  Data is written to TimescaleDB by EXPORT node during normal pipeline operation.
-
-2.  Admin adds a second EXPORT node: "Grafana Datasource".
-      → Platform registers GET /api/v1/grafana/{pipelineId}/query endpoint.
-
-3.  Grafana is configured with this URL as a SimpleJSON data source.
-
-4.  Grafana polls the endpoint; DataTurntable queries TimescaleDB and returns data.
+1.  Pipelines write to hot-tier and lakehouse tables; rollups are maintained continuously.
+2.  A department user opens Dashboards, builds a Grafana panel on the platform data source.
+3.  Grafana queries the platform query API with the user's identity; the platform checks
+    data:read for the tenant and the table, reads rollups or recent data, returns series.
+4.  An analyst opens the SQL workspace, queries a year of history as an asynchronous job,
+    or reads a table as of last month's snapshot (time travel).
 ```
+
+### 13.4 Metadata Enrichment
+
+```text
+1.  A metadata object exists for a device (type Device, attributes: serial, model, location,
+    commissionedAt) and for a datapoint (type Datapoint, attributes: unit, min, max, precision).
+2.  A reading arrives — pushed over MQTT, or pulled from a mailbox/FTP file (IMP-10).
+3.  The pipeline's "Enrich with metadata" PROCESSING node looks up the matching objects by
+    deviceId / datapoint key and attaches them to the record (MET-03).
+4.  Downstream, an ALERT node can now compare the reading against the datapoint's max with
+    the right unit, and a DB_SAVE node can store the enriched record.
+5.  A "Save to metadata" EXPORT node can write the meter's current reading back onto the
+    metadata object itself (MET-04).
+```
+
+Because metadata objects are as-of versioned (MET-05), re-running an old pipeline run enriches it with the metadata that was effective at that time, not with today's.
+
+### 13.5 Worked Example: §14a (Example Only)
+
+§14a EnWG (BK6-22-300) is used as a **worked example** of the platform. Nothing in the product is specific to it; the same building blocks serve any metering or grid-data use case. The complete example, including pipeline definitions that an automated test executes end to end, is in `docs/examples/energy-14a/`.
+
+```text
+1.  Master data, in any order:
+      SAP (CSV via SFTP/FTP/IMAP inbox)  → meters, their metering location (MeLo) and market location (MaLo)
+      Internal register                   → location and grid area per MaLo
+      Device registry                     → which LoRaWAN device reads which meter, from when
+    Each is a pipeline IMPORT → "Save to metadata" (MET-04), using the `energy` template.
+2.  Readings: the LoRaWAN network server pushes readings (MQTT or HTTP, fire-and-forget).
+    IMPORT deduplicates by devEUI + time.
+3.  "Enrich with metadata" (MET-03) adds meter, MaLo, location and grid area, each as valid
+    at the reading's time (a meter exchange changes the meter from its date on).
+4.  Two "Send as is" EXPORTs deliver each enriched reading to the metering system and to the
+    grid calculation, each with an Idempotency-Key.
+5.  A reading from an unknown device fails its run, which keeps the input for Retry.
+```
+
+The point of the example is the shape, not the domain: many sources of different kinds, several of them unable to take part in a request/response protocol, converging on structured records that are enriched and delivered to more than one consumer.
+
+The control process of §14a is outside the data hub: grid-state estimation, the control decision and the control channel to devices. See the example's README for the requirements it would have to meet.
+
+### 13.6 Worked Example: Train and Apply a Load-Forecast Model
+
+Two independent pipelines, connected only through a named model artifact — no ML server, no
+separate deployment step for the model.
+
+```text
+Training pipeline (triggered nightly, or on demand):
+1.  DB_LOAD reads the last 90 days of a device class's readings from the hot tier.
+2.  PROCESSING fits a scikit-learn regressor on (hour-of-day, weekday, past load) → next-hour load,
+    and calls save_model_fn("hourly-load-forecast", model). A new version is created; the previous
+    version stays available.
+
+Inference pipeline (one instance per incoming reading, running continuously):
+1.  IMPORT receives a reading (MQTT or pull input).
+2.  PROCESSING calls load_model_fn("hourly-load-forecast") once per worker (cached after that),
+    predicts the next hour's load, and adds it to the record.
+3.  ALERT compares the prediction against the metered capacity and fires if it would be exceeded.
+4.  DB_SAVE stores the enriched record for the dashboard.
+```
+
+If training is re-run with more data, the next inference call to `load_model_fn` on each worker
+picks up the new version automatically (MOD-19); nothing about the inference pipeline changes.
+
 ---
 
 ## 14. Technology Stack
 
+All components are FOSS or freeware (NFR-L1); see `docs/development/licenses.md`.
+
 | Component | Technology | Version | Notes |
 | --------- | ---------- | ------- | ----- |
-| Backend API | Quarkus (Kotlin) | 3.32.2 / Kotlin 2.3 | Java 21 runtime |
-| Internal Bus | Apache Kafka (Confluent) | 7.5.0 | KRaft mode (no ZooKeeper) |
-| Pipeline Engine | Quarkus Kafka consumers | — | Graph-based, part of backend |
-| Admin UI | React + TypeScript + Vite | 18.2 / 5.3 / 5.1 | Tailwind CSS, Zustand, Axios |
-| Module Runtime | Python | 3.11 | `python:3.11-slim` Docker image |
-| Default Storage (TS) | TimescaleDB | latest-pg16 | PostgreSQL extension |
-| Default Storage (SQL) | PostgreSQL | 16.x | Metadata and config |
-| Optional Storage | MongoDB | 7.x | Document store (V2) |
-| Object Storage | MinIO | RELEASE.2024+ | S3-compatible (V2) |
-| Caching | Redis | 7.x | Session, dedup |
-| MQTT Broker | Eclipse Mosquitto | 2.x | Bundled for dev; external in prod |
-| Reverse Proxy | Nginx | alpine | TLS termination, routing |
-| Container Runtime | Docker | — | Module isolation |
-| DB Migrations | Flyway | 10.x | Run on backend startup |
-| Monitoring | Prometheus + Grafana | — | Optional sidecar stack |
-| Code Editor | Monaco Editor | 4.6+ | In-browser Python editing |
+| Backend | Quarkus (Kotlin) | 3.39 / Kotlin 2.4 | Java 25 runtime |
+| Internal bus | Apache Kafka | 4.3 | KRaft mode; Strimzi on Kubernetes HA |
+| Pipeline engine | Quarkus Kafka consumers + module workers | — | Part of backend |
+| UI | React + TypeScript + Vite + Tailwind | 19 / 6.0 / 8 / 4 | React Router 8, Zustand, Axios, React Flow, Monaco |
+| Module runtime | Python | 3.14 | `python:3.14.x-slim` based image |
+| Hot tier | TimescaleDB | 2.30 on PostgreSQL 18 | TSL community features (freeware) |
+| Metadata | PostgreSQL | 18 | CloudNativePG on Kubernetes HA |
+| Lakehouse | Apache Iceberg, DuckDB (embedded) | — | Target |
+| Object storage | SeaweedFS (default) or external S3 | — | Target |
+| MQTT broker | Eclipse Mosquitto / RabbitMQ + MQTT plugin | 2.0 / via Cluster Operator | Single node / Kubernetes HA |
+| Reverse proxy | nginx | 1.30 | TLS termination, routing, auth_request |
+| Container runtime | Docker / Kubernetes | — | Module isolation |
+| DB migrations | Flyway | via Quarkus | Single baseline migration |
+| Dashboards | Grafana | 13 | User dashboards and system monitoring |
+| Monitoring | Prometheus, Loki, Alloy | 3.14 / 3.7 / 1.19 | System metrics and logs |
+| Alert e-mail | Quarkus Mailer | via Quarkus | SMTP configured per installation |
+| Documentation | Zensical | 0.0.x | Builds the docs site from `mkdocs.yml` |
 
 ---
 
 ## 15. Module Contracts
 
+Every module class may define `__init__(self, config)`; it receives the module version's config object (MOD-12). Methods may declare fewer parameters than offered; the platform passes as many as the signature accepts.
+
 ### 15.1 IMPORT Module
 
 ```python
 class ImportModule:
-    """Receives or fetches data from an external source.
-    Entry node in the pipeline DAG.
-    """
-
-    def connect(self, config: dict):
-        """Initialise connection. Called once on container start."""
-        pass
-
-    def fetch(self) -> dict | pd.DataFrame:
-        """Fetch one record or batch. Called on schedule or in a loop."""
-        pass
-
-    def disconnect(self):
-        """Clean up connection. Called on container stop."""
-        pass
+    def parse(self, input_data: dict, connector_meta: dict = None) -> dict:
+        """input_data = raw payload fetched by the platform through the connector.
+        Parse/validate it; do not make network calls."""
+        return input_data
 ```
-### 15.2 PROCESSING Module
+
+### 15.2 DB_LOAD Module
+
+```python
+class DbLoadModule:
+    def metadata(self) -> dict:
+        """Optional: describe the query (table, columns, filters)."""
+        return {}
+
+    def load(self, query: dict, context: dict) -> list:
+        """Adjust the rows loaded by the platform. context = {metadata, connector_meta}."""
+        return []
+```
+
+### 15.3 PROCESSING Module
 
 ```python
 class ProcessingModule:
-    """Transforms, filters, or merges data.
-    Can receive from one or more upstream nodes (fan-in).
-    Emits to one or more downstream nodes (fan-out).
-    """
-
-    def __init__(self, config: dict):
-        pass
-
-    def process(self, data: dict | pd.DataFrame,
-                query_fn=None) -> dict | pd.DataFrame | None:
-        """Transform data.
-
-        Return None to drop the message (filter).
-        Raise an exception to route to DLQ.
-        """
+    def process(self, data: dict | pd.DataFrame, query_fn=None) -> dict | pd.DataFrame | None:
+        """Transform data. Return None to drop the message; raise to fail the node (DLQ)."""
         return data
 ```
-### 15.3 ALERT Module
+
+### 15.4 MERGE Module
+
+```python
+class MergeModule:
+    def merge(self, inputs: list) -> dict:
+        """inputs = outputs of all upstream nodes, in edge order."""
+        return {"combined": inputs}
+```
+
+### 15.5 ALERT Module
 
 ```python
 class AlertModule:
-    """Evaluates conditions and dispatches alerts.
-    Terminal node — does NOT modify or forward the data stream.
-    """
-
-    def __init__(self, config: dict):
-        pass
-
-    def evaluate(self, data: dict | pd.DataFrame,
-                 alert_fn=None,
-                 query_fn=None) -> bool:
-        """Evaluate alert condition.
-
-        Call alert_fn(severity, message, payload) to fire an alert.
-        Return True if alert fired, False otherwise.
-
-        Example:
-            if data['value'] > self.config['threshold']:
-                alert_fn(
-                    severity='critical',
-                    message=f"Value {data['value']} exceeds threshold",
-                    payload=data
-                )
-                return True
-            return False
-        """
+    def evaluate(self, data: dict | pd.DataFrame, alert_fn=None, query_fn=None) -> bool:
+        """Call alert_fn(severity, message, payload=None, title=None, channel=None,
+        cooldown_seconds=None) to raise alerts. Terminal node; returns True if fired."""
         return False
 ```
-### 15.4 EXPORT Module
+
+### 15.6 EXPORT Module
 
 ```python
 class ExportModule:
-    """Sends data to an external system or exposes a pull endpoint.
-    Terminal node — does not forward data downstream.
-    """
-
-    def __init__(self, config: dict):
-        pass
-
-    def connect(self, config: dict):
-        """Open connection or register endpoint."""
-        pass
-
-    def send(self, data: dict | pd.DataFrame):
-        """Push data to destination or update the exposed endpoint's buffer."""
-        pass
-
-    def disconnect(self):
-        """Clean up or deregister endpoint."""
-        pass
+    def shape(self, data: dict, connector_meta: dict = None) -> dict:
+        """Return the payload the platform delivers through the node's connector."""
+        return data
 ```
-### 15.5 Standard Module Metadata
 
-Every module must declare:
+### 15.7 DB_SAVE Module
 
 ```python
-MODULE_METADATA = {
-    "name": "normalise-units",
-    "version": "1.0.0",
-    "type": "PROCESSING",       # IMPORT | PROCESSING | ALERT | EXPORT
-    "description": "Converts physical measurement units",
-    "author": "admin@example.com",
-    "requires_network": False,
-    "requires_libs": ["pint"],  # additional pip requirements
-}
+class DbSaveModule:
+    def metadata(self) -> dict:
+        """Optional: table, mode (append/upsert), key columns, column model."""
+        return {}
+
+    def prepare(self, input_data: dict, context: dict) -> dict | list:
+        """Return the row(s) the platform writes. context = {metadata, connector_meta}."""
+        return input_data
 ```
+
+### 15.8 Module Metadata
+
+Module name, type, description, requirements and config are stored with the module and its versions in the UI; code does not need to declare them.
+
+### 15.9 Worked Examples
+
+The contracts above are minimal signatures. These are complete, realistic modules for common
+tasks, in addition to the full worked example in §13.6 and `docs/examples/energy-14a/`.
+
+**PROCESSING — parse a semicolon-separated CSV line into a typed record** (a common shape for
+German exports; feeds a "Save to metadata" or DB_SAVE node downstream):
+
+```python
+class ProcessingModule:
+    def process(self, data: dict, query_fn=None) -> dict | None:
+        line = data.get("line", "")
+        if not line or line.startswith("#"):
+            return None                       # header or blank line: drop, do not fail the run
+        cols = line.split(";")
+        return {
+            "meter_number": cols[0].strip(),
+            "reading_kwh": float(cols[1].replace(",", ".")),
+            "read_at": cols[2].strip(),
+        }
+```
+
+**ALERT — absence of data, with a per-series cooldown** (custom logic beyond the built-in
+absence rule type, e.g. when the "missing" window depends on the record itself):
+
+```python
+class AlertModule:
+    def evaluate(self, data: dict, alert_fn=None, query_fn=None) -> bool:
+        expected_interval_s = data.get("reportingIntervalSeconds", 900)
+        age_s = data.get("secondsSinceLastReading", 0)
+        if age_s > expected_interval_s * 3:
+            alert_fn(
+                severity="warning",
+                message=f"No reading from {data.get('deviceId')} for {age_s}s "
+                         f"(expected every {expected_interval_s}s)",
+                payload=data,
+                cooldown_seconds=expected_interval_s,
+            )
+            return True
+        return False
+```
+
+**EXPORT — shape a record for a legacy system expecting a fixed field order**:
+
+```python
+class ExportModule:
+    def shape(self, data: dict, connector_meta: dict = None) -> dict:
+        return {
+            "DEVICE": data["deviceId"],
+            "VALUE": round(data["value"], 2),
+            "UNIT": data.get("unit", "kWh"),
+            "TS": data["time"],
+        }
+```
+
 ---
 
 ## 16. Security Model
 
 ### 16.1 Network Security
 
-- All external traffic enters via Nginx reverse proxy (TLS termination in production).
-- Backend services communicate over an internal Docker/Kubernetes network only.
-- Kafka is not exposed externally.
-- Module containers have no network access by default; explicit network grants require TenantAdmin approval.
+- All external traffic enters via the nginx reverse proxy (TLS termination in production) and passes the common login (IAM-09).
+- Backend services and bundled components communicate over the internal Docker/Kubernetes network only; Kafka, databases, object storage and Grafana are not exposed externally.
+- Module containers have no network access by default; explicit network grants require the corresponding permission (MOD-05).
 
 ### 16.2 Authentication & Session
 
-- JWT access tokens expire after 1 hour (3600 s).
-- Passwords are SHA-256-hashed client-side before transmission and BCrypt-hashed server-side for storage.
-- API keys are stored as BCrypt hashes; plaintext is shown only once at creation.
-- Failed login attempts are rate-limited (5 attempts per 15 minutes per IP).
+- Browser sessions: HttpOnly, Secure, SameSite cookie with CSRF protection; configurable lifetime; revocable.
+- Machine clients: JWT (1 hour) or API keys (hashed, optional expiry, plaintext shown once).
+- Local passwords: TLS in transit, BCrypt at rest, minimum 8 characters (NFR-S2).
+- Failed login attempts are rate-limited (5 attempts per 15 minutes per IP) and audited.
+- Signing keys and all credentials come from the installation's secrets, never from the image or repository (NFR-S7).
+
+Signing keys are supplied per installation (`DATATURNTABLE_JWT_SIGNING_KEY_LOCATION`, `DATATURNTABLE_JWT_PUBLIC_KEY_LOCATION`); none is part of the repository or the images (NFR-S7). For development, `scripts/dev/generate-dev-keys.sh` creates a throwaway pair in the git-ignored `secrets/dev-keys/`.
 
 ### 16.3 Module Sandboxing
 
 User Python code runs with:
 
 - Non-root user inside the container
-- `--read-only` Docker filesystem flag
+- Read-only root filesystem; `/tmp` as tmpfs
 - No capability grants (`--cap-drop ALL`)
-- CPU and memory cgroup limits
-- No access to other containers' namespaces
-- `/tmp` writable; cleared between batch invocations
+- CPU and memory limits
+- No access to other containers' namespaces or the container runtime socket
+- No credentials: connector secrets stay platform-side (CON-05)
 
-### 16.4 Audit Logging
+### 16.4 Tenant Isolation
 
-All state-modifying operations are written to a structured audit trail:
+- Application checks on every API call (tenant access and permission).
+- Per-tenant database roles for pipeline data (NFR-S8).
+- Lakehouse catalog namespaces per tenant; the query layer resolves only permitted tables (LAK-11).
+- User module output goes to tenant-scoped run logs, never to the system log pipeline (NFR-M2).
 
-```json
-{
-  "timestamp": "2026-03-16T10:22:00Z",
-  "actor": "user:uuid",
-  "action": "pipeline.run",
-  "resource": "pipeline:uuid",
-  "tenantId": "tenant-uuid",
-  "ip": "10.0.0.5",
-  "result": "success"
-}
-```
+### 16.5 Audit Logging
+
+See §18.
+
 ---
 
 ## 17. Deployment Topology
 
-### 17.1 Development (Docker Compose)
+Supported targets: single node (Docker Compose) and Kubernetes (DEP-01, DEP-02). Docker Swarm stacks are not supported (DEP-08).
+
+### 17.1 Single Node (Docker Compose)
 
 ```text
-docker-compose.dev.yml
-├── postgresql    (timescale/timescaledb:latest-pg16, port 5432)
-├── kafka         (confluentinc/cp-kafka:7.5.0, KRaft, port 9092)
-├── redis         (redis:7-alpine, port 6379)
-├── mosquitto     (eclipse-mosquitto:2, ports 1883 / 9001 WS)
-├── backend       (Quarkus dev mode, port 8080)
-├── frontend      (Vite dev server, port 3000)
-└── nginx         (port 80 — /api/* → backend, / → frontend)
+docker/docker-compose.dev.yml
+├── postgresql, pipeline-postgresql   (timescale/timescaledb:2.30.1-pg18)
+├── monitoring-postgresql, dashboard-postgresql (postgres:18)
+├── kafka             (apache/kafka:4.3.1, KRaft)
+├── mosquitto         (eclipse-mosquitto:2.0.22, ports 1883 / 9001 WS)
+├── control-api, public-api, ingest-edge, pipeline-executor (backend image, one role each)
+├── frontend          (nginx serving the built UI)
+├── nginx             (reverse proxy)
+├── docs              (documentation site)
+├── grafana, dashboard-grafana
+└── prometheus, loki, alloy, exporters
 ```
-### 17.2 Production (Kubernetes / Kustomize)
+
+This stack is a **development and evaluation topology, not an HA one** (NFR-R8). It runs one broker and one database, so it cannot meet NFR-R5 or NFR-R7: if the node fails, in-flight data is lost with it. It is offered because it is cheap to run and complete, not because it is production-grade. Anything that depends on redundancy — the replicated bus, the durable ingest spool on a persistent volume, automatic failover — is a Kubernetes property.
+
+### 17.2 Kubernetes
 
 ```text
-k8s/
-├── namespace.yaml
-├── backend/
-│   ├── deployment.yaml      (2+ replicas, rolling update)
-│   └── service.yaml
-├── frontend/
-│   ├── deployment.yaml
-│   └── service.yaml
-├── kafka/
-│   └── (Strimzi operator — 3+ broker cluster)
-├── postgres/
-│   └── (CloudNativePG or managed RDS / TimescaleDB Cloud)
-├── redis/
-│   └── deployment.yaml
-└── ingress.yaml             (TLS termination)
+docker/k8s/        — application + single-instance infrastructure (kubectl apply -k docker/k8s)
+docker/k8s-ha/     — overlay: CloudNativePG clusters, Strimzi Kafka, RabbitMQ MQTT cluster;
+                     the single-node service names stay as DNS aliases (kubectl apply -k docker/k8s-ha)
 ```
-Module containers are spawned by the backend using the Docker API (development) or as Kubernetes Jobs (production).
 
-### 17.3 Port Map (Development)
+Database credentials are one basic-auth Secret per database, used by both the single-instance PostgreSQL and the CloudNativePG bootstrap. Stateless backend roles and the frontend have HorizontalPodAutoscalers. Module containers run as pods managed by the backend (target; today via the Docker CLI, which requires a Docker daemon).
+
+Target: a single Helm chart installs the platform with its bundled components and operators (DEP-03).
+
+### 17.3 Port Map (Single Node, Development)
 
 | Service | Port | Protocol |
 | ------- | ---- | -------- |
-| Frontend | 3000 | HTTP |
-| Backend API | 8080 | HTTP |
-| PostgreSQL / TimescaleDB | 5432 | TCP |
+| Reverse proxy | 80 | HTTP |
+| Frontend (direct) | 3000 | HTTP |
+| Monitoring Grafana (direct) | 3001 | HTTP |
+| Docs (direct) | 3002 | HTTP |
+| Dashboard Grafana (direct) | 3003 | HTTP |
+| PostgreSQL / TimescaleDB | 5432 – 5435 | TCP |
 | Kafka | 9092 | TCP |
-| Redis | 6379 | TCP |
 | MQTT | 1883 | TCP |
 | MQTT over WebSocket | 9001 | WS |
+| Prometheus | 9090 | HTTP |
+| Loki | 3100 | HTTP |
+
+---
+
+## 18. Audit Trail and Activity
+
+### 18.1 Coverage
+
+Every action with impact creates an audit event (AUD-01): configuration changes on every entity, runs and run control, security events (login, failed login, logout, permission denied), role and assignment changes including automatic activation/expiry (actor `system`), connection requests and grants, operations (deployments, scaling, upgrades, backups, restores, retention deletions, lake maintenance), data access at system scope (always) and tenant-scope data access/exports (configurable) (AUD-02).
+
+### 18.2 Event Model
+
+```json
+{
+  "id": "uuid",
+  "occurredAt": "2026-09-25T10:22:00Z",
+  "actor": { "id": "uuid", "name": "Jane Doe", "type": "user", "authMethod": "oidc",
+             "sessionId": "…", "ip": "10.0.0.5", "userAgent": "…" },
+  "action": "pipeline:write",
+  "target": { "type": "pipeline", "id": "uuid", "name": "Boiler", "parent": "tenant:uuid" },
+  "tenantId": "uuid",
+  "scope": "tenant",
+  "outcome": "success",
+  "changes": { "isActive": { "before": false, "after": true } },
+  "reason": "Go-live",
+  "source": "ui",
+  "correlationId": "…",
+  "hash": "…", "previousHash": "…"
+}
+```
+
+Secrets are never stored in `changes` (only the fact that they changed); measurement values are not stored, only identifiers and counts.
+
+### 18.3 Integrity
+
+- Written in the same database transaction as the change; if the audit write fails, the change fails. External operations record an intent before and an outcome after (AUD-04).
+- Append-only: the application's database role has no UPDATE/DELETE on audit tables; a trigger rejects modifications. Each event contains the hash of its predecessor; the chain can be verified from the UI (AUD-05).
+- Retention configurable with a minimum; older partitions are archived to the lakehouse and stay queryable (AUD-09).
+
+### 18.4 Notes
+
+Users with `audit.note:write` attach notes to events or add standalone notes to a component's timeline (e.g. "vendor maintenance window Friday"). Notes are immutable and audited; corrections are follow-up notes (AUD-06).
+
+### 18.5 UI
+
+- **Activity tab** on every component's configuration page, filtered to the component and its children (a pipeline includes its versions and runs) (UI-17).
+- **Audit page**: filters for time range, actor, action, target type/id, tenant, outcome, source, full text; saved filters; CSV/JSON export (audited) (AUD-07). Visibility follows `audit:read` scope (AUD-08).
+
+*Implementation note:* `AuditService` writes `audit_events` rows for configuration changes (pipelines, connectors, tenants, users, memberships, roles, secrets, API keys, alert channels), run control and logins. There is no read API, UI, hash chain or notes yet.
+
+---
+
+## 19. System Administration
+
+The system area of the UI (UI-18) is available to holders of system-scope permissions:
+
+| Function | Description | Requirement |
+| -------- | ----------- | ----------- |
+| Health and versions | State, version and scaling of every bundled component | OPS-01 |
+| Upgrades | Start and follow upgrades; migrations run automatically; built-in role template changes shown and audited | OPS-02, IAM-07 |
+| Backups | Schedules and restores to the configured backup destination | OPS-03 |
+| System monitoring | Embedded system Grafana (Prometheus, Loki); no tenant payloads | OPS-04 |
+| Tenants and quotas | Create tenants, set quotas | OPS-05 |
+| Connections | Create connections, grant them to tenants, process connection requests | CON-09 – CON-11 |
+| Role templates | Inspect, clone, create, edit custom roles, disable (impact preview, reason) | IAM-05, IAM-06 |
+| Identity providers | Configure OIDC providers, claim mappings, break-glass accounts, sessions | IAM-10 – IAM-12 |
+| Alert e-mail | SMTP server settings for EMAIL alert channels | ALT-04 |
 
 ---
 

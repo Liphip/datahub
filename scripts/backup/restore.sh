@@ -3,10 +3,10 @@
 #
 # Usage: ./restore.sh <backup-dir>
 #
-# This is destructive to the target databases/blob directory — it is meant for restoring into a
+# This is destructive to the target databases — it is meant for restoring into a
 # freshly started, empty stack (disaster recovery, or a scratch environment for a restore drill),
 # not for merging into a stack with existing data. See docs/operations/backup-restore.md for the
-# full drill procedure including the identity/pipeline/run/data/blob integrity checks to run
+# full drill procedure including the identity/pipeline/run/data integrity checks to run
 # after this script completes.
 set -euo pipefail
 
@@ -23,9 +23,6 @@ PRIMARY_USER="${PRIMARY_DB_USER:-dataturntable}"
 PIPELINE_CONTAINER="${PIPELINE_DB_CONTAINER:-dataturntable-pipeline-postgres}"
 PIPELINE_DB="${PIPELINE_DB_NAME:-pipeline_data}"
 PIPELINE_USER="${PIPELINE_DB_USER:-pipeline_data}"
-
-BLOB_CONTAINER="${BLOB_CONTAINER:-dataturntable-control-api}"
-BLOB_DIR="${BLOB_DIR:-/data/blobs}"
 
 echo "==> Verifying checksums"
 (cd "${BACKUP_DIR}" && sha256sum -c CHECKSUMS.sha256)
@@ -57,14 +54,6 @@ docker exec "${PIPELINE_CONTAINER}" psql -U "${PIPELINE_USER}" -d "${PIPELINE_DB
 echo "==> Restoring ${PIPELINE_DB} into ${PIPELINE_CONTAINER}"
 docker exec -i "${PIPELINE_CONTAINER}" pg_restore -U "${PIPELINE_USER}" -d "${PIPELINE_DB}" \
   --no-owner < "${BACKUP_DIR}/pipeline-${PIPELINE_DB}.dump"
-
-if [[ -f "${BACKUP_DIR}/blobs.tar.gz" ]]; then
-  echo "==> Restoring blob storage into ${BLOB_CONTAINER}:${BLOB_DIR}"
-  docker exec "${BLOB_CONTAINER}" rm -rf "${BLOB_DIR}"
-  docker exec -i "${BLOB_CONTAINER}" tar -C "$(dirname "${BLOB_DIR}")" -xzf - < "${BACKUP_DIR}/blobs.tar.gz"
-else
-  echo "==> No blobs.tar.gz in backup — skipping blob restore"
-fi
 
 echo "==> Restore complete. Run the integrity checks in docs/operations/backup-restore.md before"
 echo "    trusting this environment (NFR-017 requires a passing documented integrity check, not"

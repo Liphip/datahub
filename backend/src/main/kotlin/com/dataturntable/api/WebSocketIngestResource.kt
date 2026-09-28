@@ -1,11 +1,10 @@
 package com.dataturntable.api
 
 import com.dataturntable.pipeline.Pipeline
-import com.dataturntable.pipeline.PipelineRun
-import com.dataturntable.pipeline.PipelineVersionService
 import com.dataturntable.pipeline.TriggerType
-import com.dataturntable.engine.PipelineConsumer
-import com.dataturntable.service.KafkaService
+import com.dataturntable.engine.PipelineQueueUnavailableException
+import com.dataturntable.engine.PipelineDirectory
+import com.dataturntable.engine.PipelineRunQueue
 import com.dataturntable.security.IngestAuthorizationService
 import com.dataturntable.security.SensitiveDataRedactor
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -14,7 +13,6 @@ import jakarta.enterprise.context.ApplicationScoped
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
 import jakarta.persistence.PersistenceContext
-import jakarta.transaction.Transactional
 import jakarta.websocket.CloseReason
 import jakarta.websocket.Session
 import org.eclipse.microprofile.config.inject.ConfigProperty
@@ -31,23 +29,17 @@ class WebSocketIngestResource {
     private val LOG = Logger.getLogger(WebSocketIngestResource::class.java)
     
     @Inject
-    lateinit var kafkaService: KafkaService
+    lateinit var runQueue: PipelineRunQueue
 
     @Inject
-    lateinit var pipelineConsumer: PipelineConsumer
+    lateinit var directory: PipelineDirectory
 
     @Inject
     lateinit var ingestAuthorization: IngestAuthorizationService
 
     @Inject
-    lateinit var pipelineVersions: PipelineVersionService
-
-    @Inject
     lateinit var redactor: SensitiveDataRedactor
 
-    @PersistenceContext
-    lateinit var em: EntityManager
-    
     @ConfigProperty(name = "dataturntable.ingest.websocket.idle-timeout-ms", defaultValue = "300000")
     var idleTimeoutMs: Long = 300000
 
@@ -56,9 +48,7 @@ class WebSocketIngestResource {
     private val sessions = ConcurrentHashMap<String, MutableSet<Session>>()
 
     // jakarta.websocket.Session.setMaxIdleTimeout is a no-op on Quarkus's Vert.x-native JSR-356
-    // implementation (quarkus-http-websocket-core 5.4.0's UndertowSession.setMaxIdleTimeout body is
-    // an empty `return` — confirmed by decompilation, not assumed). There is no other built-in idle
-    // enforcement, so idle ingest sessions would otherwise never close on their own. This tracks
+    // implementation, so idle ingest sessions would otherwise never close on their own. This tracks
     // last-activity time per session and a scheduled reaper (below) closes anything that's gone
     // quiet past the configured timeout.
     private val lastActivity = ConcurrentHashMap<Session, Long>()
@@ -67,84 +57,52 @@ class WebSocketIngestResource {
         lastActivity[session] = System.currentTimeMillis()
     }
 
-    @Transactional
+    /** Checked once when the socket opens; uses the cached pipeline directory and API keys (no database). */
     fun authorizeSession(pipelineId: String, apiKey: String?): Boolean {
         val id = runCatching { UUID.fromString(pipelineId) }.getOrNull() ?: return false
-        val pipeline = em.find(Pipeline::class.java, id) ?: return false
-        return pipeline.isActive && ingestAuthorization.authorize(apiKey, pipeline.tenant, "pipeline", id)
+        val pipeline = directory.get(id) ?: return false
+        return pipeline.active && ingestAuthorization.authorize(apiKey, pipeline.tenantId, "pipeline", id)
     }
-    
-    @Transactional
     /**
-     * Processes the named request, event, or operation.
+     * Queues one message and answers the sender with `{"type":"ingest.accepted","status":"accepted","runId":...}`
+     * or, when the record is not stored, `{"type":"ingest.rejected","status":"error","retry":true}` so it can resend.
+     * A top-level `_idempotencyKey` (or the pipeline's `deduplicateBy` fields) makes resends
+     * of the same message map to the same run.
      */
     fun handleWebSocketMessage(session: Session, pipelineId: String, message: String) {
         touch(session)
-        val pipelineUuid = try {
-            UUID.fromString(pipelineId)
-        } catch (_: Exception) {
-            LOG.warnf("Invalid pipelineId in WebSocket message: %s", pipelineId)
-            return
+        val pipelineUuid = runCatching { UUID.fromString(pipelineId) }.getOrNull()
+            ?: return reply(session, mapOf("type" to "ingest.rejected", "status" to "error", "retry" to false, "error" to "Invalid pipelineId"))
+        val pipeline = directory.get(pipelineUuid)
+        if (pipeline == null || !pipeline.active) {
+            return reply(session, mapOf("type" to "ingest.rejected", "status" to "error", "retry" to false, "error" to "Pipeline not found or not active"))
         }
-        val pipeline = em.find(Pipeline::class.java, pipelineUuid)
-        
-        if (pipeline == null) {
-            LOG.warnf("WebSocket message for unknown pipeline: %s", pipelineId)
-            return
-        }
-        
-        if (!pipeline.isActive) {
-            LOG.debugf("Pipeline %s is not active, ignoring WebSocket message", pipelineId)
-            return
-        }
-        
-        var run: PipelineRun? = null
-        try {
-            @Suppress("UNCHECKED_CAST")
-            val payload = try {
-                objectMapper.readValue(message, Map::class.java) as? Map<String, Any>
-            } catch (e: Exception) {
-                mapOf("raw" to message)
-            }
-            
-            val enrichedPayload = (payload ?: mutableMapOf()).toMutableMap()
-            enrichedPayload["_pipelineId"] = pipelineId
-            enrichedPayload["_ingestedAt"] = java.time.Instant.now().toString()
-            enrichedPayload["_source"] = "websocket"
 
-            run = PipelineRun().apply {
-                this.pipeline = pipeline
-                this.pipelineVersion = pipelineVersions.latestFor(pipeline.id)
-                this.triggerType = TriggerType.DATA
-            }
-            run.persist()
-            em.flush()
-            enrichedPayload["_runId"] = run.id.toString()
-            
-            kafkaService.sendToPipelineSpecificInput(pipelineId, enrichedPayload)
-            if (!kafkaService.isKafkaAvailable()) {
-                pipelineConsumer.consume(objectMapper.writeValueAsString(enrichedPayload))
-            }
-            sendOutcome(session, "accepted", run.id?.toString())
-            LOG.debugf("WebSocket message queued for pipeline %s", pipelineId)
-        } catch (e: Exception) {
-            val safeMessage = redactor.text(e.message) ?: "WebSocket ingestion failed"
-            run?.markFailed(safeMessage)
-            run?.persist()
-            sendOutcome(session, "rejected", run?.id?.toString())
-            LOG.errorf("Failed to process WebSocket message: %s", safeMessage)
+        @Suppress("UNCHECKED_CAST")
+        val payload = runCatching { objectMapper.readValue(message, Map::class.java) as Map<String, Any?> }
+            .getOrElse { mapOf("raw" to message) }
+        val data = payload.toMutableMap()
+        val key = data.remove("_idempotencyKey")?.toString()?.takeIf { it.isNotBlank() }
+            ?: PipelineDirectory.recordKey(payload, pipeline.deduplicateBy)
+        data["_ingestedAt"] = java.time.Instant.now().toString()
+        data["_source"] = "websocket"
+
+        try {
+            val runId = runQueue.enqueue(pipelineUuid, TriggerType.DATA, data, idempotencyKey = key)
+            reply(session, mapOf("type" to "ingest.accepted", "status" to "accepted", "runId" to runId.toString()))
+        } catch (e: PipelineQueueUnavailableException) {
+            reply(session, mapOf("type" to "ingest.rejected", "status" to "error", "retry" to true, "error" to e.message))
         }
     }
 
-    /** Gives WebSocket producers a deterministic acknowledgement instead of an ambiguous silent drop. */
-    private fun sendOutcome(session: Session, outcome: String, runId: String?) {
+    private fun reply(session: Session, body: Map<String, Any?>) {
         try {
-            session.basicRemote.sendText(objectMapper.writeValueAsString(mapOf("type" to "ingest.$outcome", "runId" to runId)))
+            session.basicRemote.sendText(objectMapper.writeValueAsString(body))
         } catch (e: Exception) {
-            LOG.debugf("Unable to send WebSocket ingest acknowledgement: %s", redactor.text(e.message))
+            LOG.debugf("Could not answer WebSocket client: %s", e.message)
         }
     }
-    
+
     /**
      * Creates or persists the requested state.
      */

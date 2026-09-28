@@ -1,17 +1,26 @@
 package com.dataturntable.security
 
 import jakarta.enterprise.context.ApplicationScoped
+import org.eclipse.microprofile.config.inject.ConfigProperty
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
-/** Fixed-window protection for the current monolith ingest edge. */
+/**
+ * Fixed-window limit per ingestion credential. Off by default (0): fire-and-forget senders
+ * cannot retry a refused record, so a limit trades their data for overload protection and
+ * must be set deliberately (`dataturntable.ingest.rate-limit-per-minute`).
+ */
 @ApplicationScoped
 class IngestRateLimiter {
+    @ConfigProperty(name = "dataturntable.ingest.rate-limit-per-minute", defaultValue = "0")
+    var configuredLimit: Int = 0
+
     private data class Bucket(var startedAtMillis: Long, var count: Int)
     private val buckets = ConcurrentHashMap<String, Bucket>()
 
-    fun tryAcquire(rawCredential: String?, limitPerMinute: Int = 600): Boolean {
+    fun tryAcquire(rawCredential: String?, limitPerMinute: Int = configuredLimit): Boolean {
+        if (limitPerMinute <= 0) return true
         if (rawCredential.isNullOrBlank()) return false
         return tryAcquireFingerprint(fingerprint(rawCredential), limitPerMinute)
     }
@@ -20,7 +29,8 @@ class IngestRateLimiter {
      * Applies the limit using a SHA-256 credential fingerprint.  WebSocket
      * sessions retain only this non-secret value after their opening handshake.
      */
-    fun tryAcquireFingerprint(fingerprint: String?, limitPerMinute: Int = 600): Boolean {
+    fun tryAcquireFingerprint(fingerprint: String?, limitPerMinute: Int = configuredLimit): Boolean {
+        if (limitPerMinute <= 0) return true
         if (fingerprint.isNullOrBlank()) return false
         val key = fingerprint
         val now = System.currentTimeMillis()

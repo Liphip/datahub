@@ -168,10 +168,8 @@ describe('Auth Store', () => {
     })
 
     it('clears auth when API call fails', async () => {
-      // BUG: Fixture represents a network error, not an invalid token
-      // Details: checkAuth intentionally removes the token only for 401/403 responses, while Error('Unauthorized') has no response status. Mock a 401 response or change the assertion to verify the documented network-error behavior.
       vi.mocked(localStorage.getItem).mockReturnValue('invalid-token')
-      vi.mocked(api.getCurrentUser).mockRejectedValue(new Error('Unauthorized'))
+      vi.mocked(api.getCurrentUser).mockRejectedValue(Object.assign(new Error('Unauthorized'), { response: { status: 401 } }))
 
       const { checkAuth } = useAuthStore.getState()
       await checkAuth()

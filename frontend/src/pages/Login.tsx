@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 
@@ -23,7 +23,7 @@ export default function Login() {
     try {
       await login(email, password);
       navigate('/');
-    } catch (err) {
+    } catch {
       setError(t('auth.invalidCredentials'));
     } finally {
       setLoading(false);
@@ -32,7 +32,7 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-lg shadow">
+      <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-lg shadow-sm">
         <div>
           <h2 className="text-center text-3xl font-extrabold text-gray-900">
             {t('auth.signIn')} {t('common.appName')}
@@ -41,12 +41,12 @@ export default function Login() {
         
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-sm">
               {error}
             </div>
           )}
           
-          <div className="rounded-md shadow-sm -space-y-px">
+          <div className="rounded-md shadow-xs -space-y-px">
             <div>
               <label htmlFor="email" className="sr-only">
                 {t('auth.emailAddress')}

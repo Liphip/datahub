@@ -7,7 +7,7 @@ import java.time.Instant
 import java.util.UUID
 
 @Entity
-@Table(name = "connectors")
+@Table(name = "connectors", uniqueConstraints = [jakarta.persistence.UniqueConstraint(columnNames = ["tenant_id", "name"])])
 /**
  * Defines the class `Connector`, the contract implemented by this source unit.
  */
@@ -117,7 +117,7 @@ class Connector : PanacheBase() {
      * Defines the enum class `ConnectorType`, the contract implemented by this source unit.
      */
     enum class ConnectorType {
-        MQTT, REST, WEBSOCKET, UDP, FILE, CUSTOM
+        MQTT, REST, WEBSOCKET, UDP, FILE, FTP, SFTP, EMAIL, CUSTOM
     }
     
     /**

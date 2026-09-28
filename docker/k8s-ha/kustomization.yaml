@@ -1,11 +1,170 @@
+# High-availability overlay: the application manifests from ../k8s with the
+# single-node PostgreSQL, Kafka and Mosquitto replaced by operator-managed clusters.
+# Install the operators first (see README.md).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+namespace: dataturntable
+
 resources:
   - ../k8s
+  - postgres.yaml
+  - kafka.yaml
+  - mqtt.yaml
 
 patches:
-  - path: patch-control-api.yaml
-  - path: patch-public-api.yaml
-  - path: patch-ingest-edge.yaml
-  - path: patch-pipeline-executor.yaml
+  # Remove the single-node infrastructure workloads.
+  - target:
+      kind: Deployment
+      name: dataturntable-postgres
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Deployment
+      metadata:
+        name: dataturntable-postgres
+  - target:
+      kind: PersistentVolumeClaim
+      name: dataturntable-postgres
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: dataturntable-postgres
+  - target:
+      kind: Deployment
+      name: pipeline-postgresql
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Deployment
+      metadata:
+        name: pipeline-postgresql
+  - target:
+      kind: PersistentVolumeClaim
+      name: dataturntable-pipeline-postgres
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: dataturntable-pipeline-postgres
+  - target:
+      kind: Deployment
+      name: monitoring-postgresql
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Deployment
+      metadata:
+        name: monitoring-postgresql
+  - target:
+      kind: PersistentVolumeClaim
+      name: dataturntable-monitoring-postgres
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: dataturntable-monitoring-postgres
+  - target:
+      kind: Deployment
+      name: dashboard-postgresql
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Deployment
+      metadata:
+        name: dashboard-postgresql
+  - target:
+      kind: PersistentVolumeClaim
+      name: dataturntable-dashboard-postgres
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: dataturntable-dashboard-postgres
+  - target:
+      kind: Deployment
+      name: kafka
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Deployment
+      metadata:
+        name: kafka
+  - target:
+      kind: Deployment
+      name: mosquitto
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Deployment
+      metadata:
+        name: mosquitto
+  - target:
+      kind: ConfigMap
+      name: mosquitto-config
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: mosquitto-config
+  # Keep the service names the applications use, as DNS aliases of the operator services.
+  - target:
+      kind: Service
+      name: postgresql
+    patch: |-
+      - op: replace
+        path: /spec
+        value:
+          type: ExternalName
+          externalName: app-db-rw.dataturntable.svc.cluster.local
+  - target:
+      kind: Service
+      name: pipeline-postgresql
+    patch: |-
+      - op: replace
+        path: /spec
+        value:
+          type: ExternalName
+          externalName: pipeline-db-rw.dataturntable.svc.cluster.local
+  - target:
+      kind: Service
+      name: monitoring-postgresql
+    patch: |-
+      - op: replace
+        path: /spec
+        value:
+          type: ExternalName
+          externalName: monitoring-db-rw.dataturntable.svc.cluster.local
+  - target:
+      kind: Service
+      name: dashboard-postgresql
+    patch: |-
+      - op: replace
+        path: /spec
+        value:
+          type: ExternalName
+          externalName: dashboard-db-rw.dataturntable.svc.cluster.local
+  - target:
+      kind: Service
+      name: kafka
+    patch: |-
+      - op: replace
+        path: /spec
+        value:
+          type: ExternalName
+          externalName: kafka-kafka-bootstrap.dataturntable.svc.cluster.local
+  - target:
+      kind: Service
+      name: mosquitto
+    patch: |-
+      - op: replace
+        path: /spec
+        value:
+          type: ExternalName
+          externalName: mqtt.dataturntable.svc.cluster.local

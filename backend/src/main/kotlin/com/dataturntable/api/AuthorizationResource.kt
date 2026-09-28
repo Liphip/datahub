@@ -54,7 +54,7 @@ class AuthorizationResource {
             ?: return Response.status(400).entity(mapOf("error" to "ability is required")).build()
 
         if (!requester.isSuperAdmin() &&
-            (!SecurityUtils.canAccessTenant(requester, targetTenantId.toString()) || !requester.hasAbility("manage:tenant"))
+            (!SecurityUtils.canAccessTenant(requester, targetTenantId.toString()) || !requester.hasAbility("tenant:manage"))
         ) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }

@@ -13,20 +13,20 @@
     <description>High-performance data hub for IoT/sensor data processing</description>
     
     <properties>
-    <testcontainers.version>1.18.3</testcontainers.version>
-    <compiler-plugin.version>3.13.0</compiler-plugin.version>
-        <maven.compiler.release>21</maven.compiler.release>
+        <compiler-plugin.version>3.16.0</compiler-plugin.version>
+        <maven.compiler.release>25</maven.compiler.release>
+        <testcontainers.version>2.0.5</testcontainers.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <quarkus.platform.version>3.32.2</quarkus.platform.version>
-        <kotlin.version>2.3.0</kotlin.version>
-        <surefire-plugin.version>3.5.2</surefire-plugin.version>
+        <quarkus.platform.version>3.39.5</quarkus.platform.version>
+        <kotlin.version>2.4.10</kotlin.version>
+        <surefire-plugin.version>3.6.0</surefire-plugin.version>
     </properties>
     
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>io.quarkus</groupId>
-                <artifactId>quarkus-universe-bom</artifactId>
+                <groupId>io.quarkus.platform</groupId>
+                <artifactId>quarkus-bom</artifactId>
                 <version>${quarkus.platform.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
@@ -100,18 +100,40 @@
             <artifactId>quarkus-websockets</artifactId>
         </dependency>
         
-        <!-- Redis -->
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-redis-client</artifactId>
-        </dependency>
-        
         <!-- Config -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-config-yaml</artifactId>
         </dependency>
         
+        <!-- Periodic jobs (absence alert rules) -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-scheduler</artifactId>
+        </dependency>
+        
+        <!-- Alert e-mail delivery (SMTP) -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-mailer</artifactId>
+        </dependency>
+        
+        <!-- Pull inputs: FTP/FTPS, SFTP and IMAP inboxes (Apache-2.0, Apache-2.0, EPL-2.0/BSD-3) -->
+        <dependency>
+            <groupId>commons-net</groupId>
+            <artifactId>commons-net</artifactId>
+            <version>3.13.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.sshd</groupId>
+            <artifactId>sshd-sftp</artifactId>
+            <version>2.19.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.angus</groupId>
+            <artifactId>angus-mail</artifactId>
+        </dependency>
+
         <!-- Health -->
         <dependency>
             <groupId>io.quarkus</groupId>
@@ -146,21 +168,8 @@
 
         <!-- Password Hashing -->
         <dependency>
-            <groupId>org.mindrot</groupId>
-            <artifactId>jbcrypt</artifactId>
-            <version>0.4</version>
-        </dependency>
-        <dependency>
-            <groupId>de.mkammerer</groupId>
-            <artifactId>argon2-jvm</artifactId>
-            <version>2.12</version>
-        </dependency>
-        
-        <!-- Docker Java API -->
-        <dependency>
-            <groupId>com.spotify</groupId>
-            <artifactId>docker-client</artifactId>
-            <version>8.16.0</version>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-elytron-security-common</artifactId>
         </dependency>
         
         <!-- Kotlin -->
@@ -176,6 +185,11 @@
         </dependency>
         
         <!-- Testing -->
+        <dependency>
+            <groupId>io.smallrye.reactive</groupId>
+            <artifactId>smallrye-reactive-messaging-in-memory</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-junit5</artifactId>
@@ -201,10 +215,23 @@
             <artifactId>quarkus-test-h2</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Embedded servers for inbox tests -->
+        <dependency>
+            <groupId>com.icegreen</groupId>
+            <artifactId>greenmail</artifactId>
+            <version>2.1.14</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.ftpserver</groupId>
+            <artifactId>ftpserver-core</artifactId>
+            <version>1.2.1</version>
+            <scope>test</scope>
+        </dependency>
         <!-- Testcontainers Kafka for broker-backed integration tests -->
         <dependency>
             <groupId>org.testcontainers</groupId>
-            <artifactId>kafka</artifactId>
+            <artifactId>testcontainers-kafka</artifactId>
             <version>${testcontainers.version}</version>
             <scope>test</scope>
         </dependency>
@@ -239,9 +266,6 @@
                 <version>${compiler-plugin.version}</version>
                 <configuration>
                     <parameters>true</parameters>
-                    <compilerArgs>
-                        <arg>-Xjvm-default=all</arg>
-                    </compilerArgs>
                 </configuration>
             </plugin>
             <plugin>
@@ -258,8 +282,9 @@
                 <artifactId>kotlin-maven-plugin</artifactId>
                 <version>${kotlin.version}</version>
                 <configuration>
+                    <jvmTarget>${maven.compiler.release}</jvmTarget>
                     <args>
-                        <arg>-Xjvm-default=all</arg>
+                        <arg>-jvm-default=no-compatibility</arg>
                     </args>
                     <sourceDirs>
                         <sourceDir>${project.basedir}/src/main/kotlin</sourceDir>

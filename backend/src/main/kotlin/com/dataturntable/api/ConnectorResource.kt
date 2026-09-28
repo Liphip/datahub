@@ -1,5 +1,9 @@
 package com.dataturntable.api
 
+import com.dataturntable.connectors.inbox.INBOX_TYPES
+import com.dataturntable.connectors.DestinationPolicy
+import com.dataturntable.connectors.inbox.InboxPoller
+import com.dataturntable.connectors.AfterCommit
 import com.dataturntable.connectors.Connector
 import com.dataturntable.audit.AuditService
 import com.dataturntable.connectors.ConnectorRevision
@@ -10,7 +14,6 @@ import com.dataturntable.connectors.ConnectorStatusService
 import com.dataturntable.connectors.ConnectorLeaseService
 import com.dataturntable.connectors.ConnectorRuntimeLease
 import com.dataturntable.connectors.mqtt.MqttConnectionManager
-import com.dataturntable.connectors.mqtt.MqttIngestService
 import com.dataturntable.connectors.polling.ConnectorPollingService
 import com.dataturntable.connectors.websocket.WebSocketConnectionManager
 import com.dataturntable.pipeline.Pipeline
@@ -62,10 +65,19 @@ class ConnectorResource {
     lateinit var mqttDefaultTopic: String
 
     @Inject
-    lateinit var mqttIngestService: MqttIngestService
+    lateinit var mqttConnectionManager: MqttConnectionManager
 
     @Inject
-    lateinit var mqttConnectionManager: MqttConnectionManager
+    lateinit var inboxPoller: InboxPoller
+
+    @Inject
+    lateinit var destinationPolicy: com.dataturntable.connectors.DestinationPolicy
+
+    @Inject
+    lateinit var connectorRuntime: com.dataturntable.connectors.ConnectorRuntimeService
+
+    @Inject
+    lateinit var afterCommit: AfterCommit
 
     @Inject
     lateinit var webSocketConnectionManager: WebSocketConnectionManager
@@ -163,7 +175,14 @@ class ConnectorResource {
      * revalidated if their config is edited again.
      */
     private fun validateConnectorConfig(value: Any?): String? {
-        val sensitiveNames = setOf("password", "token", "authtoken", "apikey", "authorization", "secret", "clientsecret")
+        // The root must be a JSON object. A scalar root - notably a JSON *string* holding the
+        // config - reaches the `else -> null` branch of the walk below and skips it entirely, which
+        // silently bypassed this check and let a plaintext password be persisted. Scalars nested
+        // *inside* a config ("port": 22) stay legal; only the root shape is constrained.
+        if (value != null && value !is Map<*, *>) {
+            return "Connector config must be a JSON object"
+        }
+        val sensitiveNames = setOf("password", "token", "authtoken", "apikey", "authorization", "secret", "clientsecret", "privatekey", "passphrase")
         fun validate(node: Any?, insideSecretRefs: Boolean = false): String? = when (node) {
             is Map<*, *> -> node.entries.firstNotNullOfOrNull { (rawKey, child) ->
                 val key = rawKey?.toString()?.replace(Regex("[^A-Za-z0-9]"), "")?.lowercase().orEmpty()
@@ -238,7 +257,7 @@ class ConnectorResource {
     private fun canReadConnector(currentUser: User?, tenantId: String): Boolean {
         if (currentUser == null) return false
         if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) return false
-        return SecurityUtils.hasAbility(currentUser, "read:connector")
+        return SecurityUtils.hasAbility(currentUser, "connector:read")
     }
 
     /**
@@ -247,7 +266,7 @@ class ConnectorResource {
     private fun canWriteConnector(currentUser: User?, tenantId: String): Boolean {
         if (currentUser == null) return false
         if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) return false
-        return SecurityUtils.hasAbility(currentUser, "write:connector")
+        return SecurityUtils.hasAbility(currentUser, "connector:write")
     }
 
     /**
@@ -282,7 +301,7 @@ class ConnectorResource {
     private fun canManageBrokerCredentials(currentUser: User?, tenantId: String): Boolean {
         if (currentUser == null) return false
         if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) return false
-        return currentUser.isSuperAdmin() || SecurityUtils.hasAbility(currentUser, "manage:tenant")
+        return currentUser.isSuperAdmin() || SecurityUtils.hasAbility(currentUser, "tenant:manage")
     }
 
     /**
@@ -291,7 +310,7 @@ class ConnectorResource {
     private fun canReadBrokerCredentials(currentUser: User?, tenantId: String): Boolean {
         if (currentUser == null) return false
         if (!SecurityUtils.canAccessTenant(currentUser, tenantId)) return false
-        return SecurityUtils.hasAbility(currentUser, "read:connector")
+        return SecurityUtils.hasAbility(currentUser, "connector:read")
     }
 
     /**
@@ -358,32 +377,31 @@ class ConnectorResource {
         return normalized.filterKeys { it.isNotBlank() }
     }
 
-    /** Reject SSRF destinations before a REST or WebSocket connector is persisted. */
+    /** Reject SSRF destinations before a REST, WebSocket or inbox connector is persisted (see [DestinationPolicy]). */
     private fun validateExternalDestination(type: ConnectorType, config: Any): Response? {
-        if (type !in setOf(ConnectorType.REST, ConnectorType.WEBSOCKET) || config !is Map<*, *>) return null
-        val rawUrl = listOf("url", "endpoint", "baseUrl", "websocketUrl")
-            .firstNotNullOfOrNull { key -> config[key]?.toString()?.trim()?.takeIf { it.isNotBlank() } }
-            ?: return null
-        val uri = try { URI(rawUrl) } catch (_: Exception) {
-            return Response.status(400).entity(mapOf("error" to "Connector destination must be a valid URL")).build()
+        if (config !is Map<*, *>) return null
+        val host = when (type) {
+            ConnectorType.REST, ConnectorType.WEBSOCKET -> {
+                val rawUrl = listOf("url", "endpoint", "baseUrl", "websocketUrl")
+                    .firstNotNullOfOrNull { key -> config[key]?.toString()?.trim()?.takeIf { it.isNotBlank() } }
+                    ?: return null
+                val uri = try { URI(rawUrl) } catch (_: Exception) {
+                    return Response.status(400).entity(mapOf("error" to "Connector destination must be a valid URL")).build()
+                }
+                if (uri.scheme !in setOf("http", "https", "ws", "wss") || uri.host.isNullOrBlank() || uri.userInfo != null) {
+                    return Response.status(400).entity(mapOf("error" to "Connector destination must be an absolute HTTP or WebSocket URL without credentials")).build()
+                }
+                uri.host
+            }
+            ConnectorType.FTP, ConnectorType.SFTP, ConnectorType.EMAIL -> config["host"]?.toString()?.takeIf { it.isNotBlank() } ?: return null
+            else -> return null
         }
-        if (uri.scheme !in setOf("http", "https", "ws", "wss") || uri.host.isNullOrBlank() || uri.userInfo != null) {
-            return Response.status(400).entity(mapOf("error" to "Connector destination must be an absolute HTTP or WebSocket URL without credentials")).build()
+        return try {
+            destinationPolicy.check(host)
+            null
+        } catch (e: DestinationPolicy.ProhibitedDestinationException) {
+            Response.status(400).entity(mapOf("error" to e.message)).build()
         }
-        val addresses = try { InetAddress.getAllByName(uri.host) } catch (_: Exception) {
-            return Response.status(400).entity(mapOf("error" to "Connector destination host could not be resolved")).build()
-        }
-        if (addresses.any(::isProhibitedDestination)) {
-            return Response.status(400).entity(mapOf("error" to "Connector destination must not target loopback, private, link-local, or metadata networks")).build()
-        }
-        return null
-    }
-
-    private fun isProhibitedDestination(address: InetAddress): Boolean {
-        val host = address.hostAddress.substringBefore('%')
-        return address.isAnyLocalAddress || address.isLoopbackAddress || address.isLinkLocalAddress ||
-            address.isSiteLocalAddress || address.isMulticastAddress || host == "169.254.169.254" ||
-            host.equals("fd00:ec2::254", ignoreCase = true)
     }
 
     /**
@@ -548,7 +566,7 @@ class ConnectorResource {
      */
     fun mqttDefaults(): Response {
         val currentUser = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        if (!SecurityUtils.hasAbility(currentUser, "read:connector")) {
+        if (!SecurityUtils.hasAbility(currentUser, "connector:read")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
 
@@ -816,7 +834,7 @@ class ConnectorResource {
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tid)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "read:connector")) {
+        if (!SecurityUtils.hasAbility(currentUser, "connector:read")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
         
@@ -921,7 +939,7 @@ class ConnectorResource {
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "write:connector")) {
+        if (!SecurityUtils.hasAbility(currentUser, "connector:write")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
 
@@ -961,13 +979,15 @@ class ConnectorResource {
             mapOf("outcome" to "succeeded", "connectorType" to parsedConnectorType.name, "direction" to parsedDirection.name)
         )
 
-        // Refresh connection managers after transaction commits
+        // Refresh connection managers once the transaction has committed
         val createdId = connector.id
         if (createdId != null) {
-            when (parsedConnectorType) {
-                ConnectorType.MQTT -> if (parsedDirection == Direction.INPUT) mqttIngestService.refreshConnector(createdId)
-                ConnectorType.WEBSOCKET -> if (parsedDirection == Direction.INPUT) webSocketConnectionManager.refreshConnector(createdId)
-                else -> if (pollingAllowed && requestedPolling) connectorPollingService.onConnectorChanged(createdId)
+            afterCommit.run {
+                when (parsedConnectorType) {
+                    ConnectorType.MQTT -> if (parsedDirection == Direction.INPUT) mqttConnectionManager.refreshConnector(createdId)
+                    ConnectorType.WEBSOCKET -> if (parsedDirection == Direction.INPUT) webSocketConnectionManager.refreshConnector(createdId)
+                    else -> if (pollingAllowed && requestedPolling) connectorPollingService.onConnectorChanged(createdId)
+                }
             }
         }
 
@@ -997,7 +1017,7 @@ class ConnectorResource {
             if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString())) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
-            if (!SecurityUtils.hasAbility(currentUser, "read:connector")) {
+            if (!SecurityUtils.hasAbility(currentUser, "connector:read")) {
                 return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
             }
             Response.ok(connectorToMap(connector)).build()
@@ -1272,10 +1292,12 @@ class ConnectorResource {
 
         val cId = connector.id
         if (cId != null) {
-            when (connector.connectorType) {
-                ConnectorType.MQTT -> if (connector.direction == Direction.INPUT) mqttIngestService.refreshConnector(cId)
-                ConnectorType.WEBSOCKET -> if (connector.direction == Direction.INPUT) webSocketConnectionManager.refreshConnector(cId)
-                else -> connectorPollingService.onConnectorChanged(cId)
+            afterCommit.run {
+                when (connector.connectorType) {
+                    ConnectorType.MQTT -> if (connector.direction == Direction.INPUT) mqttConnectionManager.refreshConnector(cId)
+                    ConnectorType.WEBSOCKET -> if (connector.direction == Direction.INPUT) webSocketConnectionManager.refreshConnector(cId)
+                    else -> connectorPollingService.onConnectorChanged(cId)
+                }
             }
         }
 
@@ -1336,10 +1358,12 @@ class ConnectorResource {
 
         val cId = connector.id
         if (cId != null) {
-            when (connector.connectorType) {
-                ConnectorType.MQTT -> if (connector.direction == Direction.INPUT) mqttIngestService.disconnectConnector(cId)
-                ConnectorType.WEBSOCKET -> if (connector.direction == Direction.INPUT) webSocketConnectionManager.disconnectConnector(cId)
-                else -> connectorPollingService.cancelConnector(cId)
+            afterCommit.run {
+                when (connector.connectorType) {
+                    ConnectorType.MQTT -> if (connector.direction == Direction.INPUT) mqttConnectionManager.disconnectConnector(cId)
+                    ConnectorType.WEBSOCKET -> if (connector.direction == Direction.INPUT) webSocketConnectionManager.disconnectConnector(cId)
+                    else -> connectorPollingService.cancelConnector(cId)
+                }
             }
         }
 
@@ -1378,6 +1402,9 @@ class ConnectorResource {
             ConnectorType.WEBSOCKET -> listOf("url")
             ConnectorType.UDP -> listOf("host", "port")
             ConnectorType.FILE -> listOf("path")
+            ConnectorType.FTP -> listOf("host", "path")
+            ConnectorType.SFTP -> listOf("host", "username", "path")
+            ConnectorType.EMAIL -> listOf("host", "username")
             ConnectorType.CUSTOM -> emptyList()
             null -> emptyList()
         }
@@ -1391,6 +1418,27 @@ class ConnectorResource {
             return Response.status(400).entity(
                 mapOf("error" to "Connector config missing required fields", "missing" to missing)
             ).build()
+        }
+
+        // Inboxes: log in and list what is waiting, without changing anything.
+        if (connector.connectorType in INBOX_TYPES && connector.direction == Direction.INPUT) {
+            val (ok, message) = try {
+                inboxPoller.open(connector, connectorRuntime.resolveRuntimeConfig(connector)).use { source ->
+                    val items = source.list()
+                    true to "Connected — ${items.size} item${if (items.size == 1) "" else "s"} waiting" +
+                        (items.firstOrNull()?.let { ", oldest: ${it.name}" } ?: "")
+                }
+            } catch (e: Exception) {
+                false to (e.message ?: e.javaClass.simpleName)
+            }
+            return Response.ok(mapOf(
+                "ok"            to ok,
+                "message"       to message,
+                "connectorId"   to connector.id,
+                "connectorType" to connector.connectorType?.name,
+                "direction"     to connector.direction?.name,
+                "isActive"      to connector.isActive,
+            )).build()
         }
 
         // For MQTT connectors, perform a real broker connectivity check
@@ -1414,6 +1462,39 @@ class ConnectorResource {
             "direction"     to connector.direction?.name,
             "isActive"      to connector.isActive,
         )).build()
+    }
+
+    // ── Inbox ledger ──────────────────────────────────────────────────────────
+
+    /** Items an inbox connector has read, newest first. */
+    @GET
+    @Path("/{id}/inbox")
+    fun inboxItems(@PathParam("id") id: String, @QueryParam("limit") @DefaultValue("50") limit: Int): Response {
+        val connector = parseUuid(id)?.let { em.find(Connector::class.java, it) }
+            ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
+        if (!canReadConnector(getCurrentUser(), connector.tenant?.id.toString())) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        return Response.ok(inboxPoller.recent(connector.id!!, limit.coerceIn(1, 500)).map {
+            mapOf("id" to it.id, "name" to it.name, "size" to it.size, "status" to it.status, "chunks" to it.chunks,
+                "records" to it.records, "error" to it.error, "firstSeenAt" to it.firstSeenAt, "queuedAt" to it.queuedAt,
+                "acknowledgedAt" to it.acknowledgedAt)
+        }).build()
+    }
+
+    /** Reads a FAILED item again on the next poll, e.g. after the parse settings were fixed. */
+    @POST
+    @Path("/{id}/inbox/{itemId}/retry")
+    @Consumes(MediaType.WILDCARD)
+    fun retryInboxItem(@PathParam("id") id: String, @PathParam("itemId") itemId: String): Response {
+        val connector = parseUuid(id)?.let { em.find(Connector::class.java, it) }
+            ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
+        if (!canWriteConnector(getCurrentUser(), connector.tenant?.id.toString())) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        val item = parseUuid(itemId) ?: return Response.status(400).entity(mapOf("error" to "Invalid item id")).build()
+        return if (inboxPoller.retry(connector.id!!, item)) Response.noContent().build()
+        else Response.status(409).entity(mapOf("error" to "Only failed items can be retried")).build()
     }
 
     // ── Status endpoints ──────────────────────────────────────────────────────
@@ -1455,7 +1536,7 @@ class ConnectorResource {
         val connector = em.find(Connector::class.java, connectorId)
             ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
         val currentUser = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        if (!SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString()) || !SecurityUtils.hasAbility(currentUser, "read:connector")) {
+        if (!SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString()) || !SecurityUtils.hasAbility(currentUser, "connector:read")) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
         val lease = em.find(ConnectorRuntimeLease::class.java, connectorId)
@@ -1489,7 +1570,7 @@ class ConnectorResource {
         val connector = em.find(Connector::class.java, connectorId)
             ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
         val currentUser = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        if (!SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString()) || !SecurityUtils.hasAbility(currentUser, "read:connector")) {
+        if (!SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString()) || !SecurityUtils.hasAbility(currentUser, "connector:read")) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
         val revisions = em.createQuery(
@@ -1516,7 +1597,7 @@ class ConnectorResource {
         val connector = em.find(Connector::class.java, connectorId)
             ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
         val currentUser = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        if (!SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString()) || !SecurityUtils.hasAbility(currentUser, "write:connector")) {
+        if (!SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString()) || !SecurityUtils.hasAbility(currentUser, "connector:write")) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
         val stored = em.createQuery(
@@ -1538,7 +1619,7 @@ class ConnectorResource {
         recordRevision(connector, currentUser.id)
         val updatedId = connector.id!!
         when (connector.connectorType) {
-            ConnectorType.MQTT -> mqttIngestService.refreshConnector(updatedId)
+            ConnectorType.MQTT -> mqttConnectionManager.refreshConnector(updatedId)
             ConnectorType.WEBSOCKET -> webSocketConnectionManager.refreshConnector(updatedId)
             else -> connectorPollingService.onConnectorChanged(updatedId)
         }
@@ -1591,7 +1672,7 @@ class ConnectorResource {
             if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString())) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
-            if (!SecurityUtils.hasAbility(currentUser, "write:connector")) {
+            if (!SecurityUtils.hasAbility(currentUser, "connector:write")) {
                 return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
             }
             request["name"]?.let { connector.name = it as String }
@@ -1665,10 +1746,12 @@ class ConnectorResource {
             // Refresh connection managers
             val updatedId = connector.id
             if (updatedId != null) {
-                when (connector.connectorType) {
-                    ConnectorType.MQTT -> mqttIngestService.refreshConnector(updatedId)
-                    ConnectorType.WEBSOCKET -> webSocketConnectionManager.refreshConnector(updatedId)
-                    else -> connectorPollingService.onConnectorChanged(updatedId)
+                afterCommit.run {
+                    when (connector.connectorType) {
+                        ConnectorType.MQTT -> mqttConnectionManager.refreshConnector(updatedId)
+                        ConnectorType.WEBSOCKET -> webSocketConnectionManager.refreshConnector(updatedId)
+                        else -> connectorPollingService.onConnectorChanged(updatedId)
+                    }
                 }
             }
 
@@ -1727,7 +1810,7 @@ class ConnectorResource {
             if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString())) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
-            if (!SecurityUtils.hasAbility(currentUser, "delete:connector")) {
+            if (!SecurityUtils.hasAbility(currentUser, "connector:delete")) {
                 return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
             }
             val connectorTenantId = connector.tenant?.id
@@ -1757,10 +1840,12 @@ class ConnectorResource {
 
             // Clean up connection managers
             if (deletedId != null) {
-                when (deletedType) {
-                    ConnectorType.MQTT -> if (deletedDir == Direction.INPUT) mqttIngestService.disconnectConnector(deletedId)
-                    ConnectorType.WEBSOCKET -> if (deletedDir == Direction.INPUT) webSocketConnectionManager.disconnectConnector(deletedId)
-                    else -> connectorPollingService.cancelConnector(deletedId)
+                afterCommit.run {
+                    when (deletedType) {
+                        ConnectorType.MQTT -> if (deletedDir == Direction.INPUT) mqttConnectionManager.disconnectConnector(deletedId)
+                        ConnectorType.WEBSOCKET -> if (deletedDir == Direction.INPUT) webSocketConnectionManager.disconnectConnector(deletedId)
+                        else -> connectorPollingService.cancelConnector(deletedId)
+                    }
                 }
             }
 

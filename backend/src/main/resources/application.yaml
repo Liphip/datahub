@@ -11,9 +11,21 @@ quarkus:
     host: 0.0.0.0
     limits:
       max-body-size: 1M
+  # Finish in-flight requests on SIGTERM (Kubernetes terminationGracePeriodSeconds is longer).
+  shutdown:
+    timeout: 20s
   
   datasource:
     db-kind: postgresql
+    # The JDBC URL must live here rather than in a single profile: the deployed profiles are
+    # "prod,<role>" and "<role>", none of which include "dev", so a URL defined only under %dev
+    # left every container and every Kubernetes pod without one and the backend refused to start
+    # ("Failed to load config value ... quarkus.datasource.jdbc.url"). %prod below still overrides
+    # username/password to mandatory values, and %test still switches the whole datasource to H2.
+    jdbc:
+      url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dataturntable}
+    username: ${DB_USER:dataturntable}
+    password: ${DB_PASSWORD:dataturntable}
   
   hibernate-orm:
     database:
@@ -23,7 +35,15 @@ quarkus:
   
   flyway:
     migrate-at-start: true
-    baseline-on-migrate: true
+  
+  # SMTP server used for EMAIL alert channels (set by the system administrators).
+  # Username/password: QUARKUS_MAILER_USERNAME / QUARKUS_MAILER_PASSWORD. Dev and test profiles use a mock mailer.
+  mailer:
+    from: ${SMTP_FROM:dataturntable@localhost}
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:25}
+    start-tls: ${SMTP_START_TLS:OPTIONAL}
+
   micrometer:
     export:
       prometheus:
@@ -51,41 +71,57 @@ kafka:
 mp:
   messaging:
     outgoing:
+      # Durable hand-off of pipeline runs: PipelineRunQueue waits for this acknowledgement.
       pipeline-commands:
         connector: smallrye-kafka
         topic: dataturntable.pipelines.input
         bootstrap:
           servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+        key:
+          serializer: org.apache.kafka.common.serialization.StringSerializer
         value:
           serializer: org.apache.kafka.common.serialization.StringSerializer
-      pipeline-output:
-        connector: smallrye-kafka
-        topic: dataturntable.pipelines.output
-        bootstrap:
-          servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-        value:
-          serializer: org.apache.kafka.common.serialization.StringSerializer
+        acks: all
+        enable:
+          idempotence: true
+        request:
+          timeout:
+            ms: 10000
+        # Below dataturntable.kafka.send-timeout, so the producer gives up before the caller does.
+        delivery:
+          timeout:
+            ms: 25000
     incoming:
       pipeline-input:
         connector: smallrye-kafka
         topic: dataturntable.pipelines.input
         bootstrap:
           servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+        group:
+          id: dataturntable-pipeline-executor
+          # KIP-848 consumer protocol: a failed executor's partitions move without stopping the others.
+          protocol: consumer
+        key:
+          deserializer: org.apache.kafka.common.serialization.StringDeserializer
         value:
           deserializer: org.apache.kafka.common.serialization.StringDeserializer
-        # Malformed envelopes and target-mismatch events are raised by the
-        # consumer, so the connector acknowledges them only after publishing a
-        # broker-inspectable copy to this dedicated poison-event topic.
+        auto:
+          offset:
+            reset: earliest
+        # Independent consumers per executor pod (each ordered); offsets are committed after processing.
+        concurrency: ${PIPELINE_CONSUMER_CONCURRENCY:4}
+        commit-strategy: throttled
+        # Longer than max-infra-retry plus the longest module run, so a slow run is not reported unhealthy.
+        throttled:
+          unprocessed-record-max-age:
+            ms: 1800000
         failure-strategy: dead-letter-queue
         dead-letter-queue:
-          topic: dataturntable.pipelines.dead-letter
+          topic: dataturntable.pipelines.input.dlq
           key:
             serializer: org.apache.kafka.common.serialization.StringSerializer
           value:
             serializer: org.apache.kafka.common.serialization.StringSerializer
-        auto:
-          offset:
-            reset: earliest
   jwt:
     verify:
       publickey:
@@ -111,22 +147,24 @@ jwt:
   duration: 3600
 
 dataturntable:
-  outbox:
-    enabled: ${DATATURNTABLE_OUTBOX_ENABLED:true}
-  data:
-    blob:
-      max-upload-bytes: ${BLOB_MAX_UPLOAD_BYTES:1048576}
-      max-tenant-bytes: ${BLOB_MAX_TENANT_BYTES:1073741824}
-      failed-retention-days: ${BLOB_FAILED_RETENTION_DAYS:30}
-  redis:
-    hosts: ${REDIS_HOSTS:redis://localhost:6379}
-  ingest:
-    websocket:
-      idle-timeout-ms: ${DATATURNTABLE_INGEST_WEBSOCKET_IDLE_TIMEOUT_MS:300000}
-      # How often the idle-session reaper scans for idle connections (see
-      # WebSocketIngestResource.reapIdleSessions) — enforcement granularity is roughly this
-      # interval, so keep it well under idle-timeout-ms.
-      idle-reap-interval: ${DATATURNTABLE_INGEST_WEBSOCKET_IDLE_REAP_INTERVAL:10s}
+  alerts:
+    enabled: true
+    default-cooldown-seconds: ${DATATURNTABLE_ALERT_COOLDOWN_SECONDS:300}
+  # Platform health (ALT-13): alerts about the platform's own condition, for conditions no
+  # ALERT node can see — repeated run failures, processing lag, dead-letter records, and alerts
+  # that could not be delivered. Runs on the control API. Recipients are the affected tenant's
+  # default channel and the administrators below; leave admin-emails empty to notify tenants only.
+  health:
+    enabled: ${DATATURNTABLE_HEALTH_ALERTS_ENABLED:true}
+    check-interval: ${DATATURNTABLE_HEALTH_CHECK_INTERVAL:60s}
+    failure-threshold: ${DATATURNTABLE_HEALTH_FAILURE_THRESHOLD:3}
+    failure-window-seconds: ${DATATURNTABLE_HEALTH_FAILURE_WINDOW_SECONDS:900}
+    lag-threshold-seconds: ${DATATURNTABLE_HEALTH_LAG_THRESHOLD_SECONDS:300}
+    dedupe-window-seconds: ${DATATURNTABLE_HEALTH_DEDUPE_WINDOW_SECONDS:3600}
+    admin-emails: ${DATATURNTABLE_HEALTH_ADMIN_EMAILS:}
+  # There is no `data` section: unstructured payloads are not stored. Readings, metadata
+  # and locations only — a file, mail or FTP item is parsed into records and then lives in a
+  # table, so there is no blob directory to configure, cap or clean up.
   retention:
     # -1 (default) means indefinite retention — nothing is deleted until a deployment opts in.
     check-interval: ${DATATURNTABLE_RETENTION_CHECK_INTERVAL:24h}
@@ -139,8 +177,16 @@ dataturntable:
     instance-id: ${DATATURNTABLE_RUNTIME_INSTANCE_ID:}
   connectors:
     lease:
-      ttl-seconds: ${DATATURNTABLE_CONNECTOR_LEASE_TTL_SECONDS:45}
-      reconcile-interval-seconds: ${DATATURNTABLE_CONNECTOR_LEASE_RECONCILE_INTERVAL_SECONDS:20}
+      ttl-seconds: ${DATATURNTABLE_CONNECTOR_LEASE_TTL_SECONDS:30}
+      reconcile-interval-seconds: ${DATATURNTABLE_CONNECTOR_LEASE_RECONCILE_INTERVAL_SECONDS:10}
+    file:
+      # FILE connectors read and write only below this directory (a volume in Compose,
+      # a ReadWriteMany volume on Kubernetes when several pods poll).
+      base-dir: ${DATATURNTABLE_FILE_BASE_DIR:/data/files}
+    # Internal networks connectors may reach (CIDR list, e.g. "10.20.0.0/16,192.168.5.0/24").
+    # Empty: loopback, private and link-local addresses are refused (tenant admins configure
+    # connectors); cloud metadata endpoints are always refused.
+    allowed-networks: ${DATATURNTABLE_CONNECTORS_ALLOWED_NETWORKS:}
   grafana:
     dashboard:
       enabled: ${DATATURNTABLE_GRAFANA_DASHBOARD_ENABLED:false}
@@ -166,6 +212,16 @@ dataturntable:
       url: ${DATATURNTABLE_PIPELINE_DATA_JDBC_URL:}
       username: ${DATATURNTABLE_PIPELINE_DATA_JDBC_USERNAME:}
       password: ${DATATURNTABLE_PIPELINE_DATA_JDBC_PASSWORD:}
+  ingest:
+    # Durable fallback for records Kafka cannot take (fire-and-forget senders). On Kubernetes
+    # a persistent volume of the ingest pod.
+    spool-dir: ${DATATURNTABLE_INGEST_SPOOL_DIR:${java.io.tmpdir}/dataturntable-spool}
+    websocket:
+      idle-timeout-ms: ${DATATURNTABLE_INGEST_WEBSOCKET_IDLE_TIMEOUT_MS:300000}
+      # How often the idle-session reaper scans for idle connections (see
+      # WebSocketIngestResource.reapIdleSessions) — enforcement granularity is roughly this
+      # interval, so keep it well under idle-timeout-ms.
+      idle-reap-interval: ${DATATURNTABLE_INGEST_WEBSOCKET_IDLE_REAP_INTERVAL:10s}
   kafka:
     topics:
       prefix: dataturntable
@@ -174,7 +230,7 @@ dataturntable:
       dead-letter: dead-letter
   docker:
     module:
-      base-image: python:3.11-slim
+      base-image: python:3.14.7-slim-trixie
       network: dataturntable
     resources:
       cpu-limit: "1.0"
@@ -191,18 +247,6 @@ dataturntable:
     default-size: 20
     max-size: 100
 
-"%dev":
-  quarkus:
-    datasource:
-      jdbc:
-        url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dataturntable}
-      username: ${DB_USER:dataturntable}
-      password: ${DB_PASSWORD:dataturntable}
-    redis:
-      hosts: ${REDIS_HOSTS:redis://localhost:6379}
-    flyway:
-      migrate-at-start: true
-
 "%test":
   dataturntable:
     runtime:
@@ -214,8 +258,14 @@ dataturntable:
         url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
     flyway:
       migrate-at-start: false
+    kafka:
+      devservices:
+        enabled: false
   mp:
     messaging:
+      outgoing:
+        pipeline-commands:
+          connector: smallrye-in-memory
       incoming:
         pipeline-input:
           enabled: false
@@ -259,11 +309,8 @@ dataturntable:
   quarkus:
     datasource:
       jdbc:
-        url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dataturntable}
         max-size: 20
         min-size: 5
       # Production credentials are mandatory and must come from the deployment secret store.
       username: ${DB_USER}
       password: ${DB_PASSWORD}
-    redis:
-      hosts: ${REDIS_HOSTS:redis://localhost:6379}

@@ -23,12 +23,25 @@ enum class Ability(val value: String) {
     ALERT_READ("alert:read"),
     ALERT_CONFIGURE("alert:configure"),
     
+    // Metadata (devices, meters, locations, ... and their relations)
+    METADATA_READ("metadata:read"),
+    METADATA_WRITE("metadata:write"),
+
+    // Connectors
+    CONNECTOR_READ("connector:read"),
+    CONNECTOR_WRITE("connector:write"),
+    CONNECTOR_DELETE("connector:delete"),
+
+    // Secrets (credentials referenced by connectors and alert channels)
+    SECRET_MANAGE("secret:manage"),
+
+    // Users
+    USER_READ("user:read"),
+    USER_WRITE("user:write"),
+    USER_DELETE("user:delete"),
+
     // Tenant
-    TENANT_USERS("tenant:users"),
-    TENANT_MANAGE("tenant:manage"),
-    
-    // User management
-    USER_MANAGE("user:manage");
+    TENANT_MANAGE("tenant:manage");
     
     companion object {
         /**

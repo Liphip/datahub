@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Backs up the DataTurntable development/reference stack: the identity/pipeline/run-metadata
-# database, the pipeline data database, and the blob storage directory.
+# database and the pipeline data database. There is no blob directory to archive — unstructured
+# payloads are parsed into records and stored in the pipeline data database.
 #
 # This targets the docker-compose.dev.yml topology (container names dataturntable-postgres,
 # dataturntable-pipeline-postgres, dataturntable-control-api). It is NOT wired into any
@@ -21,9 +22,6 @@ PIPELINE_CONTAINER="${PIPELINE_DB_CONTAINER:-dataturntable-pipeline-postgres}"
 PIPELINE_DB="${PIPELINE_DB_NAME:-pipeline_data}"
 PIPELINE_USER="${PIPELINE_DB_USER:-pipeline_data}"
 
-BLOB_CONTAINER="${BLOB_CONTAINER:-dataturntable-control-api}"
-BLOB_DIR="${BLOB_DIR:-/data/blobs}"
-
 mkdir -p "${DEST}"
 
 echo "==> Backing up ${PRIMARY_DB} (identity/pipeline/run metadata) from ${PRIMARY_CONTAINER}"
@@ -34,14 +32,9 @@ echo "==> Backing up ${PIPELINE_DB} (pipeline data / time-series) from ${PIPELIN
 docker exec "${PIPELINE_CONTAINER}" pg_dump -U "${PIPELINE_USER}" -d "${PIPELINE_DB}" --format=custom \
   > "${DEST}/pipeline-${PIPELINE_DB}.dump"
 
-echo "==> Backing up blob storage (${BLOB_DIR}) from ${BLOB_CONTAINER}"
-if docker exec "${BLOB_CONTAINER}" test -d "${BLOB_DIR}"; then
-  docker exec "${BLOB_CONTAINER}" tar -C "$(dirname "${BLOB_DIR}")" -czf - "$(basename "${BLOB_DIR}")" \
-    > "${DEST}/blobs.tar.gz"
-else
-  echo "    WARNING: ${BLOB_DIR} does not exist inside ${BLOB_CONTAINER} — no blobs written yet, or the" >&2
-  echo "    directory is not the one actually configured. Skipping blob archive." >&2
-fi
+echo "==> Both databases dumped; no file storage to archive (records only)."
+echo "    NOTE: this does not back up the MQTT broker's own durable queue (mosquitto-data);"
+echo "    see docs/operations/backup-restore.md's Known gaps."
 
 (cd "${DEST}" && sha256sum -- * > CHECKSUMS.sha256)
 

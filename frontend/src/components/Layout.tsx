@@ -1,4 +1,4 @@
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
@@ -21,6 +21,8 @@ interface NavItem {
   href: string;
   exact?: boolean;
   adminOnly?: boolean;
+  /** Shown only to users with this ability. */
+  ability?: string;
   icon: React.ReactNode;
 }
 
@@ -74,6 +76,27 @@ const navItems: NavItem[] = [
         <ellipse cx="12" cy="5" rx="9" ry="3" />
         <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
         <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+      </svg>
+    ),
+  },
+  {
+    key: 'nav.metadata',
+    href: '/metadata',
+    icon: (
+      <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z" />
+        <circle cx="7" cy="7" r="1.5" />
+      </svg>
+    ),
+  },
+  {
+    key: 'nav.apiKeys',
+    href: '/api-keys',
+    ability: 'secret:manage',
+    icon: (
+      <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="7.5" cy="15.5" r="4.5" />
+        <path d="M10.7 12.3L21 2M16 7l3 3M18 5l2 2" />
       </svg>
     ),
   },
@@ -167,7 +190,7 @@ function SidebarInner({
       {/* Logo */}
       <div className="px-4 py-4 border-b border-slate-200 dark:border-slate-800">
         <Link to="/" className="flex items-center gap-2.5 group" onClick={onNavClick}>
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shrink-0 shadow-sm shadow-primary-900/20 group-hover:from-primary-400 group-hover:to-primary-600 transition-all">
+          <div className="w-8 h-8 rounded-lg bg-linear-to-br from-primary-500 to-primary-700 flex items-center justify-center shrink-0 shadow-xs shadow-primary-900/20 group-hover:from-primary-400 group-hover:to-primary-600 transition-all">
             <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
               <circle cx="12" cy="12" r="3" />
               <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
@@ -202,7 +225,7 @@ function SidebarInner({
               value={selectedTenantId || ''}
               onChange={(e) => onTenantSwitch(e.target.value)}
               disabled={switchingTenant}
-              className="w-full text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 rounded-lg px-2.5 py-1.5 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:opacity-50"
+              className="w-full text-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 rounded-lg px-2.5 py-1.5 text-slate-700 dark:text-slate-200 focus:outline-hidden focus:ring-2 focus:ring-primary-500 disabled:opacity-50"
             >
               {tenantContexts.map((ctx) => (
                 <option key={ctx.tenantId} value={ctx.tenantId}>
@@ -226,7 +249,7 @@ function SidebarInner({
               onClick={onNavClick}
               className={`group relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${
                 active
-                  ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 shadow-sm'
+                  ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 shadow-xs'
                   : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100'
               }`}
             >
@@ -267,7 +290,7 @@ function SidebarInner({
           <select
             value={language}
             onChange={(e) => onLangChange(e.target.value)}
-            className="ml-auto text-xs rounded border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 text-slate-500 dark:text-slate-400 bg-transparent focus:outline-none"
+            className="ml-auto text-xs rounded-sm border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 text-slate-500 dark:text-slate-400 bg-transparent focus:outline-hidden"
             title={tKeys('language.select')}
           >
             {languages.map((lang) => (
@@ -291,7 +314,7 @@ function SidebarInner({
           </div>
           <button
             onClick={onLogout}
-            className="shrink-0 text-slate-400 hover:text-red-500 dark:hover:text-red-400 transition-colors p-1 rounded"
+            className="shrink-0 text-slate-400 hover:text-red-500 dark:hover:text-red-400 transition-colors p-1 rounded-sm"
             title={tKeys('auth.logout')}
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -321,9 +344,10 @@ export default function Layout({ children }: LayoutProps) {
   });
 
   const canManageTenants = Boolean(
-    user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('manage:tenant')
+    user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('tenant:manage')
   );
-  const visibleNav = navItems.filter((item) => !item.adminOnly || canManageTenants);
+  const hasAbility = (ability: string) => Boolean(user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes(ability));
+  const visibleNav = navItems.filter((item) => (!item.adminOnly || canManageTenants) && (!item.ability || hasAbility(item.ability)));
 
   /**
    * Implements `useEffect` for this source unit.
@@ -398,7 +422,7 @@ export default function Layout({ children }: LayoutProps) {
       {/* ── Mobile overlay ──────────────────────────────────────────────────── */}
       {sidebarOpen && (
         <div
-          className="lg:hidden fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
+          className="lg:hidden fixed inset-0 z-40 bg-black/40 backdrop-blur-xs"
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -426,7 +450,7 @@ export default function Layout({ children }: LayoutProps) {
             </svg>
           </button>
           <Link to="/" className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded bg-primary-600 flex items-center justify-center">
+            <div className="w-6 h-6 rounded-sm bg-primary-600 flex items-center justify-center">
               <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
                 <circle cx="12" cy="12" r="3" />
                 <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83" />
@@ -439,7 +463,7 @@ export default function Layout({ children }: LayoutProps) {
               value={selectedTenantId || ''}
               onChange={(e) => handleTenantSwitch(e.target.value)}
               disabled={switchingTenant}
-              className="ml-auto text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded px-2 py-1 max-w-[140px] truncate"
+              className="ml-auto text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-sm px-2 py-1 max-w-[140px] truncate"
             >
               {tenantContexts.map((ctx) => (
                 <option key={ctx.tenantId} value={ctx.tenantId}>{ctx.tenantName}</option>

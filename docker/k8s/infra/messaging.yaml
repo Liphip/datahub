@@ -1,58 +1,6 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: redis
-  labels:
-    app: dataturntable
-    component: redis
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: dataturntable
-      component: redis
-  template:
-    metadata:
-      labels:
-        app: dataturntable
-        component: redis
-      annotations:
-        prometheus.io/scrape: "false"
-    spec:
-      containers:
-        - name: redis
-          image: redis:7-alpine
-          ports:
-            - containerPort: 6379
-              name: redis
-          resources:
-            requests:
-              cpu: 50m
-              memory: 128Mi
-            limits:
-              cpu: 500m
-              memory: 512Mi
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: redis
-  labels:
-    app: dataturntable
-spec:
-  type: ClusterIP
-  ports:
-    - port: 6379
-      targetPort: 6379
-      protocol: TCP
-      name: redis
-  selector:
-    app: dataturntable
-    component: redis
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
   name: kafka
   labels:
     app: dataturntable
@@ -71,7 +19,7 @@ spec:
     spec:
       containers:
         - name: kafka
-          image: confluentinc/cp-kafka:7.5.0
+          image: apache/kafka:4.3.1
           env:
             - name: KAFKA_NODE_ID
               value: "1"
@@ -97,6 +45,8 @@ spec:
               value: "0"
             - name: CLUSTER_ID
               value: "MkU3OEVBNTcwNTJENDM2Qk"
+            - name: KAFKA_LOG_DIRS
+              value: "/var/lib/kafka/data"
           ports:
             - containerPort: 9092
               name: kafka
@@ -125,6 +75,26 @@ spec:
     app: dataturntable
     component: kafka
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mosquitto-config
+data:
+  mosquitto.conf: |
+    # Bundled MQTT broker (single-node deployments).
+    # Mosquitto 2.x only accepts local connections unless listeners are configured.
+    persistence true
+    persistence_location /mosquitto/data/
+    log_dest stdout
+
+    listener 1883
+    listener 9001
+    protocol websockets
+
+    # TODO: Provision broker users from the platform's broker credentials
+    # Details: Broker credentials are stored by the platform but not yet pushed to the broker (e.g. via the Mosquitto dynamic-security plugin), so clients are accepted without authentication. Keep the broker ports inside the host/cluster network until provisioning is implemented.
+    allow_anonymous true
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -144,9 +114,17 @@ spec:
         app: dataturntable
         component: mosquitto
     spec:
+      volumes:
+        - name: config
+          configMap:
+            name: mosquitto-config
       containers:
         - name: mosquitto
-          image: eclipse-mosquitto:2
+          image: eclipse-mosquitto:2.0.22
+          volumeMounts:
+            - name: config
+              mountPath: /mosquitto/config/mosquitto.conf
+              subPath: mosquitto.conf
           ports:
             - containerPort: 1883
               name: mqtt

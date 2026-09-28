@@ -61,10 +61,10 @@ class RetentionCleanupServiceTest {
             ).setParameter("id", recentRunId).setParameter("startedAt", recentTimestamp).executeUpdate()
 
             em.createNativeQuery(
-                "INSERT INTO alert_history (id, severity, title, sent_at, status) VALUES (:id, 'WARNING', 'Old alert', :sentAt, 'SENT')"
+                "INSERT INTO alert_history (id, severity, title, sent_at, created_at, status, attempts) VALUES (:id, 'WARNING', 'Old alert', :sentAt, :sentAt, 'SENT', 1)"
             ).setParameter("id", oldAlertId).setParameter("sentAt", oldTimestamp).executeUpdate()
             em.createNativeQuery(
-                "INSERT INTO alert_history (id, severity, title, sent_at, status) VALUES (:id, 'WARNING', 'Recent alert', :sentAt, 'SENT')"
+                "INSERT INTO alert_history (id, severity, title, sent_at, created_at, status, attempts) VALUES (:id, 'WARNING', 'Recent alert', :sentAt, :sentAt, 'SENT', 1)"
             ).setParameter("id", recentAlertId).setParameter("sentAt", recentTimestamp).executeUpdate()
 
             em.createNativeQuery(
@@ -124,4 +124,64 @@ class RetentionCleanupServiceTest {
 
     private fun countById(table: String, id: UUID): Int =
         (em.createNativeQuery("SELECT COUNT(*) FROM $table WHERE id = :id").setParameter("id", id).singleResult as Number).toInt()
+
+    @Test
+    fun `OPS-07 cleanup folds deleted pipeline_runs into hourly aggregates before deleting them`() {
+        val tenantId = UUID.randomUUID()
+        val pipelineId = UUID.randomUUID()
+        // Two SUCCESS runs and one FAILED run in the same hour, all past the 30-day cutoff.
+        val hour = Instant.now().minusSeconds(60L * 86_400).truncatedTo(java.time.temporal.ChronoUnit.HOURS)
+
+        QuarkusTransaction.requiringNew().run {
+            em.createNativeQuery("INSERT INTO tenants (id, name) VALUES (:id, 'Retention Stats Tenant')")
+                .setParameter("id", tenantId).executeUpdate()
+            em.createNativeQuery("INSERT INTO pipelines (id, tenant_id, name) VALUES (:id, :tenantId, 'Retention Stats Pipeline')")
+                .setParameter("id", pipelineId).setParameter("tenantId", tenantId).executeUpdate()
+
+            listOf(hour.plusSeconds(60), hour.plusSeconds(120)).forEach { startedAt ->
+                em.createNativeQuery("INSERT INTO pipeline_runs (id, pipeline_id, status, started_at) VALUES (:id, :pid, 'SUCCESS', :startedAt)")
+                    .setParameter("id", UUID.randomUUID()).setParameter("pid", pipelineId).setParameter("startedAt", startedAt).executeUpdate()
+            }
+            em.createNativeQuery("INSERT INTO pipeline_runs (id, pipeline_id, status, started_at) VALUES (:id, :pid, 'FAILED', :startedAt)")
+                .setParameter("id", UUID.randomUUID()).setParameter("pid", pipelineId).setParameter("startedAt", hour.plusSeconds(180)).executeUpdate()
+        }
+
+        retentionCleanupService.cleanupPipelineRuns()
+
+        QuarkusTransaction.requiringNew().run {
+            assertEquals(
+                2,
+                (em.createNativeQuery("SELECT run_count FROM pipeline_run_hourly_stats WHERE pipeline_id = :pid AND status = 'SUCCESS'")
+                    .setParameter("pid", pipelineId).singleResult as Number).toInt()
+            )
+            assertEquals(
+                1,
+                (em.createNativeQuery("SELECT run_count FROM pipeline_run_hourly_stats WHERE pipeline_id = :pid AND status = 'FAILED'")
+                    .setParameter("pid", pipelineId).singleResult as Number).toInt()
+            )
+        }
+
+        // A second batch of old SUCCESS runs in the same hour, cleaned up in a later run: the
+        // existing aggregate row is incremented, not replaced or duplicated.
+        QuarkusTransaction.requiringNew().run {
+            em.createNativeQuery("INSERT INTO pipeline_runs (id, pipeline_id, status, started_at) VALUES (:id, :pid, 'SUCCESS', :startedAt)")
+                .setParameter("id", UUID.randomUUID()).setParameter("pid", pipelineId).setParameter("startedAt", hour.plusSeconds(240)).executeUpdate()
+        }
+        retentionCleanupService.cleanupPipelineRuns()
+
+        QuarkusTransaction.requiringNew().run {
+            // Still exactly one row for (pipeline, hour, SUCCESS): the second cleanup run updated
+            // it in place rather than inserting a duplicate.
+            assertEquals(
+                1,
+                (em.createNativeQuery("SELECT COUNT(*) FROM pipeline_run_hourly_stats WHERE pipeline_id = :pid AND status = 'SUCCESS'")
+                    .setParameter("pid", pipelineId).singleResult as Number).toInt()
+            )
+            assertEquals(
+                3,
+                (em.createNativeQuery("SELECT run_count FROM pipeline_run_hourly_stats WHERE pipeline_id = :pid AND status = 'SUCCESS'")
+                    .setParameter("pid", pipelineId).singleResult as Number).toInt()
+            )
+        }
+    }
 }

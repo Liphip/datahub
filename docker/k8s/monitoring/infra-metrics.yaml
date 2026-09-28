@@ -59,7 +59,7 @@ spec:
       serviceAccountName: kube-state-metrics
       containers:
         - name: kube-state-metrics
-          image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.14.0
+          image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0
           ports:
             - containerPort: 8080
               name: http
@@ -109,7 +109,7 @@ spec:
       hostPID: true
       containers:
         - name: node-exporter
-          image: prom/node-exporter:v1.8.2
+          image: prom/node-exporter:v1.12.1
           args:
             - --path.rootfs=/host
           ports:
@@ -144,51 +144,6 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: redis-exporter
-  labels:
-    app: dataturntable
-    component: monitoring
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: dataturntable
-      component: redis-exporter
-  template:
-    metadata:
-      labels:
-        app: dataturntable
-        component: redis-exporter
-    spec:
-      containers:
-        - name: redis-exporter
-          image: oliver006/redis_exporter:v1.62.0
-          env:
-            - name: REDIS_ADDR
-              value: redis://redis:6379
-          ports:
-            - containerPort: 9121
-              name: metrics
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: redis-exporter
-  labels:
-    app: dataturntable
-    component: monitoring
-spec:
-  selector:
-    app: dataturntable
-    component: redis-exporter
-  ports:
-    - name: metrics
-      port: 9121
-      targetPort: 9121
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
   name: kafka-exporter
   labels:
     app: dataturntable
@@ -207,7 +162,7 @@ spec:
     spec:
       containers:
         - name: kafka-exporter
-          image: danielqsj/kafka-exporter:v1.8.0
+          image: danielqsj/kafka-exporter:v1.10.0
           args:
             - --kafka.server=kafka:9092
             - --web.listen-address=:9308
@@ -252,10 +207,20 @@ spec:
     spec:
       containers:
         - name: postgres-exporter
-          image: quay.io/prometheuscommunity/postgres-exporter:v0.16.0
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
           env:
-            - name: DATA_SOURCE_NAME
-              value: postgresql://dataturntable:changeme@postgresql:5432/dataturntable?sslmode=disable
+            - name: DATA_SOURCE_URI
+              value: postgresql:5432/dataturntable?sslmode=disable
+            - name: DATA_SOURCE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: app-db-credentials
+                  key: username
+            - name: DATA_SOURCE_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: app-db-credentials
+                  key: password
           ports:
             - containerPort: 9187
               name: metrics

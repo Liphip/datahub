@@ -29,7 +29,7 @@ enum class ModuleType {
 }
 
 @Entity
-@Table(name = "code_modules")
+@Table(name = "code_modules", uniqueConstraints = [UniqueConstraint(columnNames = ["tenant_id", "name", "module_type"])])
 /**
  * Defines the class `CodeModule`, the contract implemented by this source unit.
  */

@@ -1,5 +1,8 @@
 package com.dataturntable.api
 
+import com.dataturntable.connectors.AfterCommit
+import com.dataturntable.alert.AlertChannel
+import com.dataturntable.alert.AlertRuleConfig
 import com.dataturntable.pipeline.Pipeline
 import com.dataturntable.pipeline.PipelineVersion
 import com.dataturntable.pipeline.PipelineVersionService
@@ -8,9 +11,12 @@ import com.dataturntable.pipeline.PipelineRunNodeLog
 import com.dataturntable.pipeline.PipelineRunStatus
 import com.dataturntable.pipeline.TriggerType
 import com.dataturntable.connectors.Connector
-import com.dataturntable.connectors.mqtt.MqttIngestService
+import com.dataturntable.connectors.mqtt.MqttConnectionManager
 import com.dataturntable.connectors.websocket.WebSocketConnectionManager
-import com.dataturntable.engine.PipelineConsumer
+import com.dataturntable.engine.PipelineQueueUnavailableException
+import com.dataturntable.metadata.EnrichConfig
+import com.dataturntable.metadata.SaveMetadataConfig
+import com.dataturntable.engine.PipelineRunQueue
 import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
 import com.dataturntable.auth.User
@@ -80,10 +86,13 @@ class PipelineResource {
     }
 
     @Inject
-    lateinit var pipelineConsumer: PipelineConsumer
+    lateinit var runQueue: PipelineRunQueue
 
     @Inject
-    lateinit var mqttIngestService: MqttIngestService
+    lateinit var mqttConnectionManager: MqttConnectionManager
+
+    @Inject
+    lateinit var afterCommit: AfterCommit
 
     @Inject
     lateinit var webSocketConnectionManager: WebSocketConnectionManager
@@ -143,6 +152,16 @@ class PipelineResource {
     /**
      * Validates or normalizes input before the caller continues.
      */
+    /** A node's default alert channel must be an active channel of the pipeline's tenant. */
+    private fun validateAlertChannel(tenantId: UUID, nodeId: String, channelRef: String?): String? {
+        if (channelRef.isNullOrBlank()) return null
+        val channelId = runCatching { UUID.fromString(channelRef) }.getOrNull()
+            ?: return "Node $nodeId has invalid alertChannel: $channelRef"
+        val channel = em.find(AlertChannel::class.java, channelId)
+        if (channel == null || channel.tenant?.id != tenantId) return "Node $nodeId references an alert channel outside the tenant"
+        return null
+    }
+
     private fun validateGraphDefinition(tenantId: UUID, graphDefinition: Any?): String? {
         if (graphDefinition !is Map<*, *>) return null
 
@@ -171,6 +190,70 @@ class PipelineResource {
                 return "Node $nodeId has unsupported type: $nodeType"
             }
             nodeTypes[nodeId] = nodeType
+
+            val alertRule = nodeMap["alertRule"] as? Map<*, *>
+            if (alertRule != null) {
+                if (nodeType != "ALERT") return "Node $nodeId: only ALERT nodes can use a built-in alert rule"
+                try {
+                    AlertRuleConfig.parse(alertRule)
+                } catch (e: IllegalArgumentException) {
+                    return "Node $nodeId: ${e.message}"
+                }
+                validateAlertChannel(tenantId, nodeId, nodeMap["alertChannel"]?.toString())?.let { return it }
+                continue
+            }
+            if (nodeType == "ALERT") {
+                validateAlertChannel(tenantId, nodeId, nodeMap["alertChannel"]?.toString())?.let { return it }
+            }
+
+            (nodeMap["deduplicateBy"])?.let { dedup ->
+                if (nodeType != "IMPORT") return "Node $nodeId: only IMPORT nodes can set deduplicateBy"
+                val fields = dedup as? List<*> ?: return "Node $nodeId: deduplicateBy must be a list of field names"
+                if (fields.any { it !is String || it.isBlank() }) return "Node $nodeId: deduplicateBy must be a list of field names"
+            }
+
+            // Built-in metadata nodes: enrichment (PROCESSING) and saving metadata (EXPORT).
+            (nodeMap["enrich"] as? Map<*, *>)?.let { enrich ->
+                if (nodeType != "PROCESSING" || nodeMap["moduleVersionId"] != null) return "Node $nodeId: only PROCESSING nodes without a module can enrich"
+                try { EnrichConfig.parse(enrich) } catch (e: IllegalArgumentException) { return "Node $nodeId: ${e.message}" }
+                continue
+            }
+            (nodeMap["saveMetadata"] as? Map<*, *>)?.let { save ->
+                if (nodeType != "EXPORT" || nodeMap["moduleVersionId"] != null) return "Node $nodeId: only EXPORT nodes without a module can save metadata"
+                val config = try { SaveMetadataConfig.parse(save) } catch (e: IllegalArgumentException) { return "Node $nodeId: ${e.message}" }
+                val types = (listOf(config.typeKey) + config.relations.mapNotNull { it.typeKey }).distinct()
+                val known = em.createQuery("SELECT t.typeKey FROM MetadataType t WHERE t.tenantId = :t", String::class.java)
+                    .setParameter("t", tenantId).resultList.toSet()
+                types.firstOrNull { it !in known }?.let { return "Node $nodeId: unknown metadata type '$it'" }
+                continue
+            }
+
+            // EXPORT without a module sends the records as they are to its output connector.
+            if (nodeType == "EXPORT" && nodeMap["moduleVersionId"] == null) {
+                val connectorId = nodeMap["connectorId"] as? String
+                    ?: return "Node $nodeId (EXPORT) needs a module, 'Save to metadata' or an output connector"
+                val connector = runCatching { UUID.fromString(connectorId) }.getOrNull()
+                    ?.let { em.find(Connector::class.java, it) }
+                    ?: return "Node $nodeId references missing connector: $connectorId"
+                if (connector.tenant?.id != tenantId) return "Node $nodeId references connector from another tenant"
+                if (connector.direction?.name != "OUTPUT") {
+                    return "Node $nodeId (EXPORT) requires OUTPUT connector direction (found ${connector.direction?.name})"
+                }
+                continue
+            }
+
+            // IMPORT without a module is the built-in pass-through: records flow on as received.
+            if (nodeType == "IMPORT" && nodeMap["moduleVersionId"] == null) {
+                val connectorId = nodeMap["connectorId"] as? String ?: continue   // HTTP/WebSocket push by pipeline id
+                val connector = runCatching { UUID.fromString(connectorId) }.getOrNull()
+                    ?.let { em.find(Connector::class.java, it) }
+                    ?: return "Node $nodeId references missing connector: $connectorId"
+                if (connector.tenant?.id != tenantId) return "Node $nodeId references connector from another tenant"
+                if (connector.direction?.name != "INPUT") {
+                    return "Node $nodeId (IMPORT) requires INPUT connector direction (found ${connector.direction?.name})"
+                }
+                continue
+            }
 
             val declaredModuleId = nodeMap["moduleId"] as? String
             val moduleVersionId = nodeMap["moduleVersionId"] as? String
@@ -247,9 +330,8 @@ class PipelineResource {
 
         for (edge in edges) {
             val edgeMap = edge as? Map<*, *> ?: continue
-            // React Flow serialises edges with "source"/"target"; also accept legacy "from"/"to"
-            val fromId = (edgeMap["source"] ?: edgeMap["from"])?.toString() ?: continue
-            val toId   = (edgeMap["target"] ?: edgeMap["to"])?.toString() ?: continue
+            val fromId = edgeMap["source"]?.toString() ?: continue
+            val toId   = edgeMap["target"]?.toString() ?: continue
             if (fromId !in nodeIds || toId !in nodeIds) {
                 return "Edge $fromId -> $toId references unknown node"
             }
@@ -312,9 +394,6 @@ class PipelineResource {
             "tenantId" to p.tenant?.id,
             "name" to p.name,
             "description" to p.description,
-            "importModuleVersionId" to p.importModuleVersionId,
-            "processingModuleVersionIds" to p.processingModuleVersionIds.toList(),
-            "exportModuleVersionIds" to p.exportModuleVersionIds.toList(),
             "kafkaConsumerGroup" to p.kafkaConsumerGroup,
             "isActive" to p.isActive,
             "graphDefinition" to parseGraphDefinition(p.graphDefinition),
@@ -560,6 +639,51 @@ class PipelineResource {
                 "avgDurationMs" to avgDurationMs,
                 "trendBuckets" to buckets
             )
+        ).build()
+    }
+
+    /**
+     * OPS-07: aggregated run counts per pipeline/hour/status for runs old enough that
+     * [com.dataturntable.service.RetentionCleanupService] has already folded their detail rows
+     * away — the per-run detail `/runs` gives out is gone past the retention window, but the
+     * throughput/failure-rate trend survives here.
+     */
+    @GET
+    @Path("/runs/hourly-stats")
+    fun getRunHourlyStats(
+        @QueryParam("tenantId") tenantId: String,
+        @QueryParam("pipelineId") pipelineId: String,
+        @QueryParam("sinceHours") sinceHours: Int?
+    ): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val tenantUuid = try {
+            parseUuid(tenantId, "tenantId")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        requireTenantAccess(currentUser, tenantId, "pipeline:read")?.let { return it }
+        val pipelineUuid = try {
+            parseUuid(pipelineId, "pipelineId")
+        } catch (e: WebApplicationException) {
+            return e.response
+        }
+        val pipeline = em.find(Pipeline::class.java, pipelineUuid)
+        if (pipeline == null || pipeline.tenant?.id != tenantUuid) {
+            return Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
+        }
+
+        val hours = (sinceHours ?: (30 * 24)).coerceIn(1, 365 * 24)
+        val since = java.time.Instant.now().minus(java.time.Duration.ofHours(hours.toLong()))
+        val stats = com.dataturntable.pipeline.PipelineRunHourlyStat.findByPipeline(pipelineUuid, since)
+
+        return Response.ok(
+            stats.map { stat ->
+                mapOf(
+                    "hourBucket" to stat.hourBucket,
+                    "status" to stat.status,
+                    "runCount" to stat.runCount,
+                )
+            }
         ).build()
     }
 
@@ -936,8 +1060,10 @@ class PipelineResource {
         )
 
         // Refresh routing tables so MQTT/WS subscriptions stay in sync if pipeline is active
-        mqttIngestService.refreshAll()
-        webSocketConnectionManager.refreshAll()
+        afterCommit.run {
+            mqttConnectionManager.refreshAll()
+            webSocketConnectionManager.refreshAll()
+        }
 
         return Response.status(201).entity(pipelineToMap(pipeline)).build()
     }
@@ -959,7 +1085,8 @@ class PipelineResource {
             val tenantId = pipeline.tenant?.id?.toString()
                 ?: return Response.status(400).entity(mapOf("error" to "Pipeline tenant not found")).build()
             requireTenantAccess(currentUser, tenantId, "pipeline:read")?.let { return it }
-            Response.ok(pipelineToMap(pipeline)).build()
+            // The editor loads and polls the latest run through this endpoint.
+            Response.ok(pipelineToMap(pipeline) + latestRunSummary(pipelineId)).build()
         } else {
             Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
         }
@@ -993,8 +1120,10 @@ class PipelineResource {
                 mapOf("outcome" to "succeeded")
             )
             // Rebuild routing tables to remove this pipeline's subscriptions
-            mqttIngestService.refreshAll()
-            webSocketConnectionManager.refreshAll()
+            afterCommit.run {
+                mqttConnectionManager.refreshAll()
+                webSocketConnectionManager.refreshAll()
+            }
             Response.noContent().build()
         } else {
             Response.status(404).entity(mapOf("error" to "Pipeline not found")).build()
@@ -1022,23 +1151,6 @@ class PipelineResource {
             request["name"]?.let { pipeline.name = it as String }
             request["description"]?.let { pipeline.description = it as String }
             request["isActive"]?.let { pipeline.isActive = it as Boolean }
-            try {
-                request["importModuleVersionId"]?.let { pipeline.importModuleVersionId = parseUuid(it as String, "importModuleVersionId") }
-                request["processingModuleVersionIds"]?.let {
-                    (it as List<*>).let { ids ->
-                        pipeline.processingModuleVersionIds = ids.map { id -> parseUuid(id as String, "processingModuleVersionIds") }.toTypedArray()
-                    }
-                }
-                request["exportModuleVersionIds"]?.let {
-                    (it as List<*>).let { ids ->
-                        pipeline.exportModuleVersionIds = ids.map { id -> parseUuid(id as String, "exportModuleVersionIds") }.toTypedArray()
-                    }
-                }
-            } catch (e: WebApplicationException) {
-                return e.response
-            } catch (e: ClassCastException) {
-                return Response.status(400).entity(mapOf("error" to "Invalid module version id field type")).build()
-            }
 
             request["graphDefinition"]?.let {
                 val tenantId = pipeline.tenant?.id
@@ -1063,8 +1175,10 @@ class PipelineResource {
             )
 
             // Refresh connection managers so topic subscriptions stay in sync with graph changes
-            mqttIngestService.refreshAll()
-            webSocketConnectionManager.refreshAll()
+            afterCommit.run {
+                mqttConnectionManager.refreshAll()
+                webSocketConnectionManager.refreshAll()
+            }
 
             Response.ok(pipelineToMap(pipeline)).build()
         } else {
@@ -1126,38 +1240,26 @@ class PipelineResource {
     private fun enqueuePipelineRun(
         pipeline: Pipeline,
         triggerType: TriggerType,
-        extraData: Map<String, Any?> = emptyMap(),
+        data: Map<String, Any?> = emptyMap(),
         retryOfRunId: UUID? = null
     ): PipelineRun {
-        val run = PipelineRun().apply {
-            this.pipeline = pipeline
-            this.pipelineVersion = pipelineVersions.latestFor(pipeline.id)
-            this.triggerType = triggerType
-            this.retryOfRunId = retryOfRunId
+        val runId = try {
+            runQueue.enqueue(pipeline.id!!, triggerType, mapOf("_triggerType" to triggerType.name) + data, retryOfRunId, persistRun = true)
+        } catch (e: PipelineQueueUnavailableException) {
+            throw WebApplicationException(
+                Response.status(503).header("Retry-After", 5).entity(mapOf("error" to e.message)).build()
+            )
         }
-        run.persist()
-        em.flush()
+        return em.find(PipelineRun::class.java, runId)
+    }
 
-        val triggerData = mutableMapOf<String, Any?>(
-            "_pipelineId" to pipeline.id.toString(),
-            "_triggerType" to run.triggerType.name
-        )
-        triggerData.putAll(extraData)
-        val triggerMessage = mapOf(
-            "runId" to run.id.toString(),
-            "pipelineId" to pipeline.id.toString(),
-            "triggerType" to run.triggerType.name,
-            "data" to triggerData
-        )
-
-        try {
-            pipelineConsumer.consume(objectMapper.writeValueAsString(triggerMessage))
-        } catch (e: Exception) {
-            run.markFailed(e.message ?: "Failed to execute pipeline trigger")
-            run.persist()
-        }
-
-        return run
+    /** Input of the run being retried: the stored trigger data of a failed run, if any. */
+    private fun retryInput(sourceRun: PipelineRun): Map<String, Any?> {
+        @Suppress("UNCHECKED_CAST")
+        val stored = sourceRun.inputPayload
+            ?.let { runCatching { objectMapper.readValue(it, Map::class.java) as Map<String, Any?> }.getOrNull() }
+            .orEmpty()
+        return stored.filterKeys { it != "_runId" && it != "_pipelineId" } + ("_retryOfRunId" to sourceRun.id.toString())
     }
 
     @POST
@@ -1244,7 +1346,7 @@ class PipelineResource {
         val retriedRun = enqueuePipelineRun(
             pipeline,
             sourceRun.triggerType,
-            mapOf("_retryOfRunId" to sourceRun.id.toString()),
+            retryInput(sourceRun),
             sourceRun.id
         )
         audit.record(

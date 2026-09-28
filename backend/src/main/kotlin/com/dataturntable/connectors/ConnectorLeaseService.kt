@@ -30,7 +30,7 @@ class ConnectorLeaseService {
     @ConfigProperty(name = "dataturntable.runtime.instance-id")
     lateinit var configuredInstanceId: Optional<String>
 
-    @ConfigProperty(name = "dataturntable.connectors.lease.ttl-seconds", defaultValue = "45")
+    @ConfigProperty(name = "dataturntable.connectors.lease.ttl-seconds", defaultValue = "30")
     var leaseTtlSeconds: Long = 45
 
     @ConfigProperty(name = "quarkus.datasource.db-kind", defaultValue = "postgresql")

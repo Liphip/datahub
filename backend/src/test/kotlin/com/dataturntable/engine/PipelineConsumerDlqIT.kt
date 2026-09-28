@@ -38,7 +38,7 @@ class PipelineConsumerDlqTestProfile : QuarkusTestProfile {
 
 @QuarkusTest
 @TestProfile(PipelineConsumerDlqTestProfile::class)
-@QuarkusTestResource(KafkaTestResource::class)
+@QuarkusTestResource(KafkaTestResource::class, restrictToAnnotatedClass = true)
 class PipelineConsumerDlqIT {
     @PersistenceContext
     lateinit var em: EntityManager

@@ -67,8 +67,7 @@ class AuthResource {
     fun register(@Valid request: SetupRequest): Response {
         return try {
             val setupResponse = authService.setup(request)
-            val loginCredential = request.password ?: request.passwordHash ?: setupResponse.password
-            val auth = authService.login(LoginRequest(request.email, password = loginCredential, tenantId = setupResponse.user.tenantId))
+            val auth = authService.login(LoginRequest(request.email, setupResponse.password, setupResponse.user.tenantId))
                 ?: return Response.status(401).entity(mapOf("error" to "Unable to authenticate registered user")).build()
 
             audit.record(

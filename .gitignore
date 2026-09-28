@@ -1,7 +1,6 @@
 backend/target/
 frontend/node_modules/
 frontend/dist/
-package-lock.json
 .claude/
 reset_docker.sh
 reset_docker.ps1
@@ -11,6 +10,24 @@ scripts/
 scripts/*
 !scripts/add-inline-source-documentation.ps1
 !scripts/generate-source-function-reference.ps1
+docs-site/site/
+
+# Emitted by `tsc -b` for the config files; Vite would load them instead of the .ts sources
+frontend/*.config.js
+!frontend/eslint.config.js
+frontend/*.config.d.ts
+frontend/tsconfig.tsbuildinfo
 !scripts/backup/
 !scripts/backup/backup.sh
 !scripts/backup/restore.sh
+!scripts/dev/
+!scripts/dev/generate-dev-keys.sh
+
+# Throwaway development JWT keypair written by scripts/dev/generate-dev-keys.sh. These are
+# generated locally and must never be committed - a repository-bundled signing key is a security
+# defect, not a convenience. Anchored to the repository root so it does not also swallow any
+# nested `secrets/` directory (e.g. docker/secrets/).
+/secrets/
+
+# Copied from docs/ at image build time (docker/docs.Dockerfile); never commit a copy
+/docs-site/docs/reference/

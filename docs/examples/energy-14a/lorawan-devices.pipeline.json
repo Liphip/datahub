@@ -1,0 +1,20 @@
+{
+  "name": "LoRaWAN device registry",
+  "description": "Which LoRaWAN device reads which meter (from the network server or the installation app).",
+  "graphDefinition": {
+    "nodes": [
+      { "id": "in", "type": "IMPORT", "label": "Device registry" },
+      {
+        "id": "devices", "type": "EXPORT", "label": "Devices",
+        "saveMetadata": {
+          "type": "lorawan_device",
+          "match": { "scheme": "lorawan.devEUI", "field": "devEUI" },
+          "attributes": { "model": "model" },
+          "relations": [{ "relation": "meter", "type": "meter", "scheme": "meter_number", "field": "meterNumber", "create": true }],
+          "validFromField": "installedAt"
+        }
+      }
+    ],
+    "edges": [{ "source": "in", "target": "devices" }]
+  }
+}

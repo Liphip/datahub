@@ -9,7 +9,7 @@ import java.time.Instant
 import java.util.UUID
 
 @Entity
-@Table(name = "roles")
+@Table(name = "roles", uniqueConstraints = [UniqueConstraint(columnNames = ["tenant_id", "name"])])
 /**
  * Defines the class `Role`, the contract implemented by this source unit.
  */

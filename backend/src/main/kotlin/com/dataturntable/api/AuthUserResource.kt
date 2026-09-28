@@ -13,8 +13,7 @@ import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
 import org.eclipse.microprofile.jwt.JsonWebToken
-import org.mindrot.jbcrypt.BCrypt
-import de.mkammerer.argon2.Argon2Factory
+import io.quarkus.elytron.security.common.BcryptUtil
 import java.util.UUID
 
 @Path("/api/internal/v1/auth-users")
@@ -25,6 +24,10 @@ import java.util.UUID
  * Defines the class `AuthUserResource`, the contract implemented by this source unit.
  */
 class AuthUserResource {
+    companion object {
+        const val MIN_PASSWORD_LENGTH = 8
+    }
+
     @Inject
     lateinit var jwt: JsonWebToken
 
@@ -71,19 +74,17 @@ class AuthUserResource {
     }
 
     /**
-     * Implements `extractPasswordHash` for this source unit.
+     * Implements `extractPassword` for this source unit.
      */
-    private fun extractPasswordHash(request: Map<String, Any>): String? {
-        return (request["passwordHash"] as? String)?.takeIf { it.isNotBlank() }
-            ?: (request["password"] as? String)?.takeIf { it.isNotBlank() }
+    private fun extractPassword(request: Map<String, Any>): String? {
+        return (request["password"] as? String)?.takeIf { it.isNotBlank() }
     }
 
     /**
      * Evaluates the named capability or state predicate.
      */
-    private fun hashForStorage(passwordHash: String): String {
-        return Argon2Factory.create(Argon2Factory.Argon2Types.ARGON2id)
-            .hash(3, 65536, 1, passwordHash.toCharArray())
+    private fun hashForStorage(password: String): String {
+        return BcryptUtil.bcryptHash(password)
     }
 
     /**
@@ -114,7 +115,7 @@ class AuthUserResource {
         if (currentUser == null || !SecurityUtils.canAccessTenant(currentUser, resolvedTenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "read:user")) {
+        if (!SecurityUtils.hasAbility(currentUser, "user:read")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
 
@@ -148,14 +149,17 @@ class AuthUserResource {
         if (currentUser == null || tenantId == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "write:user")) {
+        if (!SecurityUtils.hasAbility(currentUser, "user:write")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
 
         val email = request["email"] as? String
             ?: return Response.status(400).entity(mapOf("error" to "Email is required")).build()
-        val passwordHash = extractPasswordHash(request)
-            ?: return Response.status(400).entity(mapOf("error" to "Password hash is required")).build()
+        val password = extractPassword(request)
+            ?: return Response.status(400).entity(mapOf("error" to "Password is required")).build()
+        if (password.length < MIN_PASSWORD_LENGTH) {
+            return Response.status(400).entity(mapOf("error" to "Password must have at least $MIN_PASSWORD_LENGTH characters")).build()
+        }
 
         val existingUser = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User::class.java)
             .setParameter("email", email)
@@ -167,7 +171,7 @@ class AuthUserResource {
 
         val user = User().apply {
             this.email = email
-            this.passwordHash = hashForStorage(passwordHash)
+            this.passwordHash = hashForStorage(password)
             this.firstName = request["firstName"] as? String
             this.lastName = request["lastName"] as? String
             this.isActive = true
@@ -213,7 +217,7 @@ class AuthUserResource {
         if (currentUser == null || tenantId == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "read:user")) {
+        if (!SecurityUtils.hasAbility(currentUser, "user:read")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
         if (!userHasMembershipInTenant(user, tenantUuid)) {
@@ -257,7 +261,7 @@ class AuthUserResource {
         if (currentUser == null || tenantId == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "write:user")) {
+        if (!SecurityUtils.hasAbility(currentUser, "user:write")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
         if (!userHasMembershipInTenant(user, tenantUuid)) {
@@ -266,7 +270,10 @@ class AuthUserResource {
 
         var authorizationChanged = false
         request["email"]?.let { user.email = it as String }
-        extractPasswordHash(request)?.let {
+        extractPassword(request)?.let {
+            if (it.length < MIN_PASSWORD_LENGTH) {
+                return Response.status(400).entity(mapOf("error" to "Password must have at least $MIN_PASSWORD_LENGTH characters")).build()
+            }
             user.passwordHash = hashForStorage(it)
             authorizationChanged = true
         }
@@ -281,7 +288,7 @@ class AuthUserResource {
         user.persist()
         grafanaSyncService.queueUserSync(user)
         val action = when {
-            extractPasswordHash(request) != null -> "identity.user.password.changed"
+            extractPassword(request) != null -> "identity.user.password.changed"
             request["isActive"] == false -> "identity.user.deactivated"
             request["isActive"] == true -> "identity.user.activated"
             else -> "identity.user.updated"
@@ -324,7 +331,7 @@ class AuthUserResource {
         if (currentUser == null || tenantId == null || !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
-        if (!SecurityUtils.hasAbility(currentUser, "delete:user")) {
+        if (!SecurityUtils.hasAbility(currentUser, "user:delete")) {
             return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
         }
         if (!userHasMembershipInTenant(user, tenantUuid)) {

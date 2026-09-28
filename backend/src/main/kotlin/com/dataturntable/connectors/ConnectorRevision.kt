@@ -6,12 +6,13 @@ import jakarta.persistence.GeneratedValue
 import jakarta.persistence.GenerationType
 import jakarta.persistence.Id
 import jakarta.persistence.Table
+import jakarta.persistence.UniqueConstraint
 import java.time.Instant
 import java.util.UUID
 
 /** Immutable encrypted configuration snapshot for a connector change. */
 @Entity
-@Table(name = "connector_revisions")
+@Table(name = "connector_revisions", uniqueConstraints = [UniqueConstraint(columnNames = ["connector_id", "revision"])])
 class ConnectorRevision {
     @Id @GeneratedValue(strategy = GenerationType.UUID) var id: UUID? = null
     @Column(name = "connector_id", nullable = false) var connectorId: UUID? = null

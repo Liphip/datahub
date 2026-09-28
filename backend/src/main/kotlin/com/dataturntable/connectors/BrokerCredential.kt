@@ -6,7 +6,13 @@ import java.time.Instant
 import java.util.UUID
 
 @Entity
-@Table(name = "broker_credentials")
+@Table(
+    name = "broker_credentials",
+    uniqueConstraints = [
+        UniqueConstraint(columnNames = ["tenant_id", "name"]),
+        UniqueConstraint(columnNames = ["tenant_id", "username"])
+    ]
+)
 /**
  * Defines the class `BrokerCredential`, the contract implemented by this source unit.
  */

@@ -1,5 +1,8 @@
-import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertRule, AlertHistory, DataSummaryResponse, DataBlob, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential, AuthorizationExplanation } from '../types';
+import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
+import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertHistory, DataSummaryResponse, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorInboxItem, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential, MetadataType, MetadataTemplate, SecretReference, AuthorizationExplanation, ApiKey, MetadataObjectSummary, MetadataObjectDetail, SaveMetadataMapping } from '../types';
+
+/** Error shape returned by backend endpoints (`{ error, missing }` JSON bodies). */
+export type ApiError = AxiosError<{ error?: string; message?: string; code?: string; details?: { missing?: string[] } & Record<string, unknown> }>;
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/internal/v1';
 const PUBLIC_API_BASE_URL = import.meta.env.VITE_PUBLIC_API_URL || '/api/v1';
@@ -677,64 +680,6 @@ class ApiService {
   /**
    * Retrieves or enumerates the requested state.
    */
-  async getAlertRules(tenantId: string, page = 0, limit = 50): Promise<{ items: AlertRule[]; page: number; limit: number; hasMore: boolean }> {
-    const response = await this.publicClient.get<{ items: AlertRule[]; page: number; limit: number; hasMore: boolean }>(`/alerts/rules`, {
-      params: { tenantId, page, limit },
-    });
-    return response.data;
-  }
-
-  /**
-   * Creates or persists the requested state.
-   */
-  async createAlertRule(
-    tenantId: string,
-    name: string,
-    condition: Record<string, unknown> | string,
-    channelId?: string,
-    pipelineId?: string,
-    channelIds?: string[]
-  ): Promise<AlertRule> {
-    const response = await this.publicClient.post<AlertRule>(`/alerts/rules?tenantId=${tenantId}`, {
-      tenantId,
-      name,
-      condition,
-      channelId,
-      pipelineId,
-      channelIds,
-    });
-    return response.data;
-  }
-
-  /**
-   * Removes, stops, or releases the requested state.
-   */
-  async deleteAlertRule(id: string): Promise<void> {
-    await this.publicClient.delete(`/alerts/rules/${id}`);
-  }
-
-  /**
-   * Updates the requested state.
-   */
-  async updateAlertRule(id: string, data: Partial<AlertRule>): Promise<AlertRule> {
-    const response = await this.publicClient.patch<AlertRule>(`/alerts/rules/${id}`, data);
-    return response.data;
-  }
-
-  /** Safely evaluates an alert rule; the backend never dispatches from this endpoint. */
-  async testAlertRule(id: string, payload: Record<string, unknown>): Promise<{
-    ruleId: string;
-    matched: boolean;
-    wouldDispatch: false;
-    actions: Array<{ channelId: string; channelType: string; channelName: string }>;
-  }> {
-    const response = await this.publicClient.post(`/alerts/rules/${id}/test`, { payload });
-    return response.data;
-  }
-
-  /**
-   * Retrieves or enumerates the requested state.
-   */
   async getAlertHistory(tenantId: string, limit = 20, page = 0): Promise<{ items: AlertHistory[]; page: number; limit: number; hasMore: boolean }> {
     const params = new URLSearchParams({ tenantId });
     params.append('limit', limit.toString());
@@ -1026,6 +971,21 @@ class ApiService {
     return response.data;
   }
 
+  /**
+   * Items an inbox connector has read, newest first.
+   */
+  async getConnectorInboxItems(id: string, limit = 50): Promise<ConnectorInboxItem[]> {
+    const response = await this.client.get<ConnectorInboxItem[]>(`/connectors/${id}/inbox?limit=${limit}`);
+    return response.data;
+  }
+
+  /**
+   * Reads a FAILED inbox item again on the next poll.
+   */
+  async retryConnectorInboxItem(id: string, itemId: string): Promise<void> {
+    await this.client.post(`/connectors/${id}/inbox/${itemId}/retry`, {});
+  }
+
   // Roles
   /**
    * Retrieves or enumerates the requested state.
@@ -1071,46 +1031,70 @@ class ApiService {
     await this.client.delete(`/roles/${id}`);
   }
 
-  // Data blobs
-  /**
-   * Retrieves or enumerates the requested state.
-   */
-  async getDataBlobs(tenantId: string, page = 0, limit = 50): Promise<{ blobs: DataBlob[]; page: number; limit: number; hasMore: boolean }> {
-    const response = await this.publicClient.get<{ blobs: DataBlob[]; page: number; limit: number; hasMore: boolean }>(`/data/${tenantId}/blobs`, {
-      params: { page, limit },
-    });
-    return response.data;
+  // ── Ingest API keys ─────────────────────────────────────────────────────────
+
+  async getApiKeys(tenantId: string): Promise<ApiKey[]> {
+    return (await this.client.get<ApiKey[]>('/api-keys', { params: { tenantId } })).data;
   }
 
-  /**
-   * Implements `uploadDataBlob` for this source unit.
-   */
-  async uploadDataBlob(tenantId: string, file: File): Promise<{ id: string; name: string; sizeBytes: number }> {
-    const formData = new FormData();
-    formData.append('name', file.name);
-    formData.append('file', file);
-    formData.append('contentType', file.type || 'application/octet-stream');
-    const response = await this.publicClient.post<{ id: string; name: string; sizeBytes: number }>(`/data/${tenantId}/blobs`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    return response.data;
+  async createApiKey(tenantId: string, body: { name: string; pipelineIds: string[]; connectorIds: string[]; expiresAt?: string }): Promise<ApiKey> {
+    return (await this.client.post<ApiKey>('/api-keys', body, { params: { tenantId } })).data;
   }
 
-  /**
-   * Retrieves or enumerates the requested state.
-   */
-  async downloadDataBlob(tenantId: string, blobId: string): Promise<Blob> {
-    const response = await this.publicClient.get(`/data/${tenantId}/blobs/${encodeURIComponent(blobId)}/download`, {
-      responseType: 'blob',
-    });
-    return response.data as Blob;
+  async revokeApiKey(id: string): Promise<void> {
+    await this.client.delete(`/api-keys/${id}`);
   }
 
-  /**
-   * Removes, stops, or releases the requested state.
-   */
-  async deleteDataBlob(tenantId: string, blobId: string): Promise<void> {
-    await this.publicClient.delete(`/data/${tenantId}/blobs/${encodeURIComponent(blobId)}`);
+  // ── Secrets (write-only values; the API returns references) ─────────────────
+
+  async createSecret(tenantId: string, name: string, value: string): Promise<SecretReference> {
+    return (await this.client.post<SecretReference>('/secrets', { name, value }, { params: { tenantId } })).data;
+  }
+
+  async rotateSecret(tenantId: string, id: string, value: string): Promise<SecretReference> {
+    return (await this.client.post<SecretReference>(`/secrets/${id}/rotate`, { value }, { params: { tenantId } })).data;
+  }
+
+  // ── Metadata ──────────────────────────────────────────────────────────────
+
+  async getMetadataTypes(tenantId: string): Promise<MetadataType[]> {
+    return (await this.client.get<MetadataType[]>('/metadata/types', { params: { tenantId } })).data;
+  }
+
+  async createMetadataType(tenantId: string, type: Partial<MetadataType>): Promise<MetadataType> {
+    return (await this.client.post<MetadataType>('/metadata/types', type, { params: { tenantId } })).data;
+  }
+
+  async deleteMetadataType(id: string): Promise<void> {
+    await this.client.delete(`/metadata/types/${id}`);
+  }
+
+  async getMetadataTemplates(): Promise<MetadataTemplate[]> {
+    return (await this.client.get<MetadataTemplate[]>('/metadata/templates')).data;
+  }
+
+  async installMetadataTemplate(tenantId: string, key: string): Promise<{ installed: string[]; skipped: number }> {
+    return (await this.client.post(`/metadata/templates/${key}/install`, null, { params: { tenantId } })).data;
+  }
+
+  async getMetadataObjects(tenantId: string, params: { type?: string; q?: string; limit?: number; offset?: number }): Promise<{ total: number; items: MetadataObjectSummary[] }> {
+    return (await this.client.get('/metadata/objects', { params: { tenantId, ...params } })).data;
+  }
+
+  async getMetadataObject(id: string, at?: string): Promise<MetadataObjectDetail> {
+    return (await this.client.get<MetadataObjectDetail>(`/metadata/objects/${id}`, { params: at ? { at } : {} })).data;
+  }
+
+  async upsertMetadataObject(tenantId: string, body: Record<string, unknown>): Promise<{ id: string; created: boolean; changed: boolean }> {
+    return (await this.client.post('/metadata/objects/upsert', body, { params: { tenantId } })).data;
+  }
+
+  async importMetadata(tenantId: string, mapping: SaveMetadataMapping, records: Record<string, unknown>[]): Promise<{ created: number; changed: number; unchanged: number }> {
+    return (await this.client.post('/metadata/objects/import', { mapping, records }, { params: { tenantId }, timeout: 300000 })).data;
+  }
+
+  async deleteMetadataObject(id: string): Promise<void> {
+    await this.client.delete(`/metadata/objects/${id}`);
   }
 }
 

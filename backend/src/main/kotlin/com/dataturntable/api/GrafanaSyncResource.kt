@@ -56,7 +56,7 @@ class GrafanaSyncResource {
      */
     private fun requireGrafanaAdmin(): Response? {
         val user = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        if (!user.isSuperAdmin() && !user.hasAbility("manage:tenant")) {
+        if (!user.isSuperAdmin() && !user.hasAbility("tenant:manage")) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
         return null

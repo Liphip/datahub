@@ -2,6 +2,7 @@ package com.dataturntable.engine
 
 import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
+import com.dataturntable.module.ModelArtifactService
 import com.dataturntable.execution.ExecutionLimits
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
@@ -81,8 +82,11 @@ class DockerService {
 
     @Inject
     lateinit var warmPool: WarmContainerPool
+
+    @Inject
+    lateinit var modelArtifactService: ModelArtifactService
     
-    @ConfigProperty(name = "dataturntable.docker.module.base-image", defaultValue = "python:3.11-slim")
+    @ConfigProperty(name = "dataturntable.docker.module.base-image", defaultValue = "python:3.14.7-slim-trixie")
     lateinit var baseImage: String
     
     @ConfigProperty(name = "dataturntable.docker.network", defaultValue = "dataturntable")
@@ -123,7 +127,7 @@ class DockerService {
         val code         = moduleVersion.code ?: throw IllegalStateException("Module code is empty")
         val requirements = moduleVersion.requirements ?: ""
         val scriptB64    = buildModuleScript(code, moduleType)
-        val envMap       = buildEnvMap(inputData, moduleType, connectorMeta)
+        val envMap       = buildEnvMap(inputData, moduleType, connectorMeta, moduleVersion.config, moduleVersion)
 
         // ── Try warm pool first ────────────────────────────────────────────────
         val warm = if (limits == null) warmPool.acquire(requirements) else null
@@ -132,7 +136,7 @@ class DockerService {
             return try {
                 val output = runJobInWarmContainer(warm, scriptB64, envMap)
                 warmPool.release(warm, true)
-                val parsedResult = parseResultPayload(output.stdout)
+                val parsedResult = finishResult(parseResultPayload(output.stdout), moduleType, moduleVersion, runId)
                 ModuleExecutionOutput(parsedResult, output.stdout, output.stderr, output.exitCode, output.durationMs)
             } catch (e: ModuleExecutionException) {
                 warmPool.release(warm, false)
@@ -151,11 +155,9 @@ class DockerService {
         return try {
             val output = runContainer(
                 containerName = containerName,
-                code = code,
+                scriptB64 = scriptB64,
                 requirements = requirements,
-                inputData = inputData,
-                moduleType = moduleType,
-                connectorMeta = connectorMeta,
+                envMap = envMap,
                 limits = limits ?: configuredLimits(),
             )
             cleanupContainer(containerName)
@@ -168,7 +170,7 @@ class DockerService {
                 }
             }
 
-            val parsedResult = parseResultPayload(output.stdout)
+            val parsedResult = finishResult(parseResultPayload(output.stdout), moduleType, moduleVersion, runId)
             ModuleExecutionOutput(parsedResult, output.stdout, output.stderr, output.exitCode, output.durationMs)
         } catch (e: ModuleExecutionException) {
             LOG.errorf("Module execution failed: %s", e.message)
@@ -235,13 +237,52 @@ class DockerService {
         inputData: Any?,
         moduleType: ModuleType,
         connectorMeta: Map<String, Any?>?,
+        moduleConfig: String?,
+        moduleVersion: ModuleVersion? = null,
     ): Map<String, String> {
         val map = mutableMapOf("MODULE_TYPE" to moduleType.name)
+        // For MERGE nodes, inputData is a List (serialised as a JSON array); otherwise a Map or primitive.
         inputData?.let { map["INPUT_DATA"] = objectMapper.writeValueAsString(it) }
+        // Non-sensitive connector metadata only; credentials are never passed to the container.
         connectorMeta?.takeIf { it.isNotEmpty() }?.let {
             map["CONNECTOR_META"] = objectMapper.writeValueAsString(it)
         }
+        // Module version config (JSON), passed to the module class constructor.
+        moduleConfig?.takeIf { it.isNotBlank() }?.let { map["MODULE_CONFIG"] = it }
+        // MOD-15/18: the current version of every named model this module has saved, preloaded
+        // once before the container starts (there is no live channel back to a running module).
+        if (moduleType == ModuleType.PROCESSING) {
+            moduleVersion?.module?.id?.let { moduleId ->
+                val artifacts = modelArtifactService.preloadLatestForModule(moduleId)
+                if (artifacts.isNotEmpty()) map["MODEL_ARTIFACTS"] = objectMapper.writeValueAsString(artifacts)
+            }
+        }
         return map
+    }
+
+    /**
+     * MOD-15: persists any model a PROCESSING module saved this execution (returned under the
+     * reserved `_savedModels` key by `save_model_fn`, mirroring how ALERT modules return
+     * `_DT_ALERTS` for the platform to dispatch afterward) and strips that key so it never
+     * reaches the next pipeline node as ordinary output data.
+     */
+    private fun finishResult(parsedResult: Any?, moduleType: ModuleType, moduleVersion: ModuleVersion, runId: String): Any? {
+        if (moduleType != ModuleType.PROCESSING || parsedResult !is Map<*, *>) return parsedResult
+        val saved = parsedResult["_savedModels"] as? Map<*, *>
+        val moduleId = moduleVersion.module?.id
+        val tenantId = moduleVersion.module?.tenant?.id
+        if (!saved.isNullOrEmpty() && moduleId != null && tenantId != null) {
+            saved.forEach { (name, data) ->
+                val n = name?.toString() ?: return@forEach
+                val b64 = data?.toString() ?: return@forEach
+                try {
+                    modelArtifactService.save(tenantId, moduleId, n, b64, runId)
+                } catch (e: Exception) {
+                    LOG.errorf("Failed to save model artifact '%s' for module %s: %s", n, moduleId, e.message)
+                }
+            }
+        }
+        return if (parsedResult.containsKey("_savedModels")) parsedResult.filterKeys { it != "_savedModels" } else parsedResult
     }
 
     /**
@@ -253,24 +294,14 @@ class DockerService {
         val trimmed = stdout.trim()
         if (trimmed.isBlank()) return null
 
-        // Prefer the sentinel line emitted by the platform script
+        // The platform script emits exactly one sentinel line; no sentinel means no result.
         val sentinelLine = trimmed.lines()
             .lastOrNull { it.trim().startsWith("__RESULT__:") }
-        if (sentinelLine != null) {
-            val json = sentinelLine.trim().removePrefix("__RESULT__:")
-            return try {
-                objectMapper.readValue(json, Any::class.java)
-            } catch (_: Exception) { json }
-        }
-
-        // Fallback: try last non-blank line as JSON (legacy / error paths)
-        val lines = trimmed.lines().map { it.trim() }.filter { it.isNotBlank() }
-        val candidate = lines.lastOrNull() ?: return trimmed
+            ?: return null
+        val json = sentinelLine.trim().removePrefix("__RESULT__:")
         return try {
-            objectMapper.readValue(candidate, Any::class.java)
-        } catch (_: Exception) {
-            try { objectMapper.readValue(trimmed, Any::class.java) } catch (_: Exception) { trimmed }
-        }
+            objectMapper.readValue(json, Any::class.java)
+        } catch (_: Exception) { json }
     }
     
     /**
@@ -278,15 +309,11 @@ class DockerService {
      */
     private fun runContainer(
         containerName: String,
-        code: String,
+        scriptB64: String,
         requirements: String,
-        inputData: Any?,
-        moduleType: ModuleType,
-        connectorMeta: Map<String, Any?>?,
-        limits: ExecutionLimits
+        envMap: Map<String, String>,
+        limits: ExecutionLimits,
     ): RawContainerResult {
-        val scriptContent = buildModuleScript(code, moduleType)
-
         val dockerArgs = mutableListOf(
             "docker", "run",
             "--rm",
@@ -300,25 +327,10 @@ class DockerService {
         dockerArgs.addAll(sandboxArguments(limits))
 
         dockerArgs.addAll(listOf(
-            "-e", envArg("MODULE_CODE", scriptContent),
+            "-e", envArg("MODULE_CODE", scriptB64),
             "-e", envArg("MODULE_REQUIREMENTS", requirements),
-            "-e", envArg("MODULE_TYPE", moduleType.name)
         ))
-
-        // For MERGE nodes, inputData is a List — serialise it as a JSON array.
-        // For all other nodes it is a Map or primitive — serialise as-is.
-        inputData?.let {
-            val serialised = objectMapper.writeValueAsString(it)
-            dockerArgs.add("-e")
-            dockerArgs.add(envArg("INPUT_DATA", serialised))
-        }
-
-        // Non-sensitive connector metadata (connector type, name, topic, path, etc.)
-        // Credentials are NEVER passed to the container.
-        connectorMeta?.takeIf { it.isNotEmpty() }?.let {
-            dockerArgs.add("-e")
-            dockerArgs.add(envArg("CONNECTOR_META", objectMapper.writeValueAsString(it)))
-        }
+        envMap.forEach { (key, value) -> dockerArgs.addAll(listOf("-e", envArg(key, value))) }
         
         // Bootstrap: optionally install requirements, then exec the module script.
         // Packages are installed to /tmp/packages (the only writable space under --read-only).
@@ -452,7 +464,7 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
     /**
      * Implements `buildModuleScript` for this source unit.
      */
-    private fun buildModuleScript(code: String, moduleType: ModuleType): String {
+    internal fun buildModuleScript(code: String, moduleType: ModuleType): String {
         // Shared runtime helpers injected into every module container.
         // KEY DESIGN PRINCIPLE:
         //   IMPORT modules receive already-fetched data (INPUT_DATA env var) from the platform.
@@ -461,18 +473,60 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
         val helperCode = """
             |import json, os, inspect
             |
-            |def alert_fn(severity='info', message='', payload=None):
-            |    # Fire an alert. The platform intercepts __alert__ lines in stdout.
-            |    print(json.dumps({'__alert__': {'severity': severity, 'message': message, 'payload': payload}}))
+            |_DT_ALERTS = []
+            |
+            |def alert_fn(severity='warning', message='', payload=None, title=None, channel=None, cooldown_seconds=None):
+            |    # Fire an alert. Collected alerts are returned with the ALERT node result and
+            |    # dispatched by the platform. channel = alert channel id or name (default: node/tenant default).
+            |    _DT_ALERTS.append({'severity': severity, 'message': message, 'payload': payload,
+            |                       'title': title, 'channel': channel, 'cooldownSeconds': cooldown_seconds})
             |
             |def query_fn(query):
             |    # Query platform stored data. Returns empty dict in current runtime.
             |    return {}
             |
+            |import base64, pickle
+            |_DT_SAVED_MODELS = {}
+            |
+            |def _model_artifacts():
+            |    try:
+            |        return json.loads(os.environ.get('MODEL_ARTIFACTS', '{}'))
+            |    except Exception:
+            |        return {}
+            |
+            |def save_model_fn(name, model):
+            |    # Persists a fitted model under `name` (MOD-15). The platform stores whatever
+            |    # pickle.dumps produces without inspecting or executing it, as a new version;
+            |    # a later execution's load_model_fn(name) sees it (MOD-18/19). Only takes effect
+            |    # if this module's process() returns a dict — see the functional spec, §5.6.
+            |    _DT_SAVED_MODELS[name] = base64.b64encode(pickle.dumps(model)).decode('ascii')
+            |
+            |def load_model_fn(name, version=None):
+            |    # Returns the model this module last saved under `name` (unpickled), or None if
+            |    # none was ever saved. `version` pins a specific past version if the platform
+            |    # preloaded it; pinning a version this execution did NOT start with is not
+            |    # supported (no live channel back to the platform mid-execution — MOD-16).
+            |    if version is not None:
+            |        raise NotImplementedError(
+            |            'load_model_fn(name, version=...) is not supported inside a running '
+            |            'module; only the latest version is preloaded per execution (MOD-16).')
+            |    encoded = _model_artifacts().get(name)
+            |    if encoded is None:
+            |        return None
+            |    return pickle.loads(base64.b64decode(encoded))
+            |
             |def _connector_meta():
             |    # Non-sensitive connector metadata (type, name, topic, etc.) for informational use only.
             |    try:
             |        return json.loads(os.environ.get('CONNECTOR_META', '{}'))
+            |    except Exception:
+            |        return {}
+            |
+            |def _module_config():
+            |    # Module version config (JSON object) set in the module editor.
+            |    try:
+            |        cfg = json.loads(os.environ.get('MODULE_CONFIG', '{}'))
+            |        return cfg if isinstance(cfg, dict) else {}
             |    except Exception:
             |        return {}
             |
@@ -507,16 +561,19 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
             |    cls = globals().get(class_name)
             |    if inspect.isclass(cls):
             |        try:
-            |            inst = cls(_connector_meta()) if _has_config_init(cls) else cls()
-            |            m = getattr(inst, method_name, None)
-            |            if callable(m):
-            |                return m
-            |        except Exception:
-            |            pass
+            |            inst = cls(_module_config()) if _has_config_init(cls) else cls()
+            |        except Exception as e:
+            |            raise RuntimeError(f"Cannot instantiate {class_name}: {e}") from e
+            |        m = getattr(inst, method_name, None)
+            |        if callable(m):
+            |            return m
             |    fn = globals().get(method_name)
             |    return fn if callable(fn) else None
             |
             |def _has_config_init(cls):
+            |    # True only if the class defines its own __init__ accepting a config argument.
+            |    if cls.__init__ is object.__init__:
+            |        return False
             |    try:
             |        sig = inspect.signature(cls.__init__)
             |        params = [p for p in sig.parameters.values()
@@ -550,7 +607,15 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
                 |input_data = _load_input()
                 |$code
                 |fn = _resolve('ProcessingModule', 'process')
-                |result = _call(fn, input_data, query_fn) if fn else input_data
+                |result = _call(fn, input_data, query_fn, save_model_fn, load_model_fn) if fn else input_data
+                |if _DT_SAVED_MODELS:
+                |    if isinstance(result, dict):
+                |        result = dict(result)
+                |        result['_savedModels'] = _DT_SAVED_MODELS
+                |    else:
+                |        print(f"save_model_fn was called but process() returned a "
+                |              f"{type(result).__name__}, not a dict — the model was NOT saved. "
+                |              f"Return a dict to save a model (functional spec, §5.6).", file=_dt_sys.stderr)
                 |_dt_sys.stdout.flush()
                 |print('__RESULT__:' + json.dumps(result))
             """.trimMargin()
@@ -570,14 +635,14 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
             ModuleType.ALERT -> """
                 |$helperCode
                 |# input_data = upstream node output. Call alert_fn() to fire an alert.
-                |# Return True if fired, False otherwise. This is a TERMINAL node.
+                |# This is a TERMINAL node; alerts collected via alert_fn are returned to the platform.
                 |import sys as _dt_sys
                 |input_data = _load_input()
                 |$code
                 |fn = _resolve('AlertModule', 'evaluate')
                 |result = _call(fn, input_data, alert_fn, query_fn) if fn else False
                 |_dt_sys.stdout.flush()
-                |print('__RESULT__:' + json.dumps({"alert_fired": bool(result)}))
+                |print('__RESULT__:' + json.dumps({"alert_fired": bool(result) or bool(_DT_ALERTS), "alerts": _DT_ALERTS}, default=str))
             """.trimMargin()
 
             ModuleType.EXPORT -> """

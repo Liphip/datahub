@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router';
 import { useAuthStore } from '../stores/auth';
-import api from '../services/api';
-import type { Pipeline, CodeModule, Connector, ModuleVersion, PipelineRun } from '../types';
+import api, { type ApiError } from '../services/api';
+import type { AlertChannel, Pipeline, CodeModule, Connector, EnrichConfig, MetadataType, ModuleVersion, PipelineRun, SaveMetadataMapping } from '../types';
+import { EnrichForm, SaveMetadataForm } from '../components/MetadataNodeForms';
+import { DEFAULT_ENRICH, DEFAULT_SAVE_METADATA, validateMetadataNode } from '../lib/metadataNodes';
+import AlertRuleForm from '../components/AlertRuleForm';
+import { DEFAULT_RULES, RULE_TYPES, validateAlertRule, type AlertRuleConfig } from '../lib/alertRules';
 import {
   ReactFlow,
   Background,
@@ -53,7 +57,22 @@ interface PipelineNodeData extends Record<string, unknown> {
   connectorId?: string;
   /** MQTT topic scoped to this pipeline node (connector only defines the broker) */
   mqttTopic?: string;
+  /** ALERT nodes: default alert channel id when an alert names none */
+  alertChannel?: string;
+  /** ALERT nodes: built-in rule evaluated by the platform instead of a Python module */
+  alertRule?: AlertRuleConfig;
+  /** IMPORT nodes: forward records as received instead of running a Python module */
+  passThrough?: boolean;
+  /** IMPORT nodes: fields that identify a record, so resent data is processed once */
+  deduplicateBy?: string[];
+  /** PROCESSING nodes: built-in metadata enrichment instead of a Python module */
+  enrich?: EnrichConfig;
+  /** EXPORT nodes: records create or update metadata objects instead of going to a connector */
+  saveMetadata?: SaveMetadataMapping;
 }
+
+/** Nodes that run a Python module (as opposed to a built-in step or pass-through). */
+const usesModule = (d: PipelineNodeData) => !d.alertRule && !d.passThrough && !d.enrich && !d.saveMetadata;
 
 /**
  * Defines the type `ModuleVersionOption`, the contract implemented by this source unit.
@@ -105,7 +124,7 @@ function DagNode({ data, selected }: NodeProps<DagNodeType>) {
 
   return (
     <div
-      className={`rounded-lg border-2 ${colors} ${selected ? 'ring-2 ring-offset-1 ring-primary-500' : ''} min-w-[160px] shadow-sm`}
+      className={`rounded-lg border-2 ${colors} ${selected ? 'ring-2 ring-offset-1 ring-primary-500' : ''} min-w-[160px] shadow-xs`}
     >
       {/* Incoming handle (all except IMPORT) */}
       {!isSource && (
@@ -137,6 +156,14 @@ function DagNode({ data, selected }: NodeProps<DagNodeType>) {
         {d.connectorId && (
           <div className="text-[10px] text-gray-400 mt-0.5 truncate max-w-[140px]">⚡ connector</div>
         )}
+        {d.passThrough && (
+          <div className="text-[10px] text-gray-500 mt-0.5 truncate max-w-[140px]">↦ pass-through</div>
+        )}
+        {d.alertRule && (
+          <div className="text-[10px] text-gray-500 mt-0.5 truncate max-w-[140px]">
+            📏 {RULE_TYPES.find((t) => t.value === d.alertRule?.type)?.label ?? d.alertRule.type}
+          </div>
+        )}
       </div>
 
       {/* Outgoing handle (all except ALERT/EXPORT) */}
@@ -166,15 +193,44 @@ function makeNodeId() {
 /**
  * Implements `graphToFlow` for this source unit.
  */
+/**
+ * Positions for graphs saved without them (e.g. created through the API): one column per
+ * depth from the sources, nodes of a column stacked, so fan-out and fan-in stay visible.
+ */
+function layeredLayout(graph: NonNullable<Pipeline['graphDefinition']>): Map<string, { x: number; y: number }> {
+  const ids = (graph.nodes ?? []).map((n, idx) => String(n.id ?? `n-${idx}`));
+  const incoming = new Map(ids.map((id) => [id, [] as string[]]));
+  for (const e of graph.edges ?? []) incoming.get(String(e.target))?.push(String(e.source));
+  const depth = new Map<string, number>();
+  const depthOf = (id: string, seen: Set<string>): number => {
+    if (depth.has(id)) return depth.get(id)!;
+    if (seen.has(id)) return 0; // cycle guard; the backend rejects cyclic graphs
+    seen.add(id);
+    const d = Math.max(-1, ...(incoming.get(id) ?? []).map((src) => depthOf(src, seen))) + 1;
+    depth.set(id, d);
+    return d;
+  };
+  const rows = new Map<number, number>();
+  const positions = new Map<string, { x: number; y: number }>();
+  for (const id of ids) {
+    const d = depthOf(id, new Set());
+    const row = rows.get(d) ?? 0;
+    rows.set(d, row + 1);
+    positions.set(id, { x: 80 + d * 260, y: 80 + row * 140 });
+  }
+  return positions;
+}
+
 function graphToFlow(
   graph: Pipeline['graphDefinition'],
 ): { nodes: DagNodeType[]; edges: Edge[] } {
   if (!graph) return { nodes: [], edges: [] };
 
+  const layout = layeredLayout(graph);
   const nodes: DagNodeType[] = (graph.nodes ?? []).map((raw, idx) => ({
     id: String(raw.id ?? `n-${idx}`),
     type: 'dagNode',
-    position: (raw.position as { x: number; y: number }) ?? { x: 150 + idx * 200, y: 150 },
+    position: (raw.position as { x: number; y: number }) ?? layout.get(String(raw.id ?? `n-${idx}`)) ?? { x: 150 + idx * 200, y: 150 },
     data: {
       nodeType: raw.type as NodeType,
       label: String(raw.label ?? raw.type ?? 'Node'),
@@ -182,6 +238,13 @@ function graphToFlow(
       moduleVersionId: raw.moduleVersionId as string | undefined,
       connectorId: raw.connectorId as string | undefined,
       mqttTopic: raw.mqttTopic as string | undefined,
+      alertChannel: raw.alertChannel as string | undefined,
+      alertRule: raw.alertRule as AlertRuleConfig | undefined,
+      // Without a module: IMPORT forwards records as received; EXPORT sends them as they are.
+      passThrough: (raw.type === 'IMPORT' || (raw.type === 'EXPORT' && !raw.saveMetadata)) && !raw.moduleVersionId,
+      deduplicateBy: Array.isArray(raw.deduplicateBy) ? (raw.deduplicateBy as string[]) : undefined,
+      enrich: raw.enrich as EnrichConfig | undefined,
+      saveMetadata: raw.saveMetadata as SaveMetadataMapping | undefined,
     } satisfies PipelineNodeData,
   }));
 
@@ -210,10 +273,15 @@ function flowToGraph(
         id: n.id,
         type: d.nodeType,
         label: d.label,
-        moduleId: d.moduleId,
-        moduleVersionId: d.moduleVersionId,
-        connectorId: d.connectorId,
+        moduleId: usesModule(d) ? d.moduleId : undefined,
+        moduleVersionId: usesModule(d) ? d.moduleVersionId : undefined,
         mqttTopic: d.mqttTopic,
+        alertChannel: d.alertChannel,
+        alertRule: d.alertRule,
+        deduplicateBy: d.nodeType === 'IMPORT' && d.deduplicateBy?.length ? d.deduplicateBy : undefined,
+        enrich: d.nodeType === 'PROCESSING' ? d.enrich : undefined,
+        saveMetadata: d.nodeType === 'EXPORT' ? d.saveMetadata : undefined,
+        connectorId: d.saveMetadata ? undefined : d.connectorId,
         position: n.position,
       };
     }),
@@ -234,7 +302,7 @@ export default function PipelineEditor() {
   const navigate = useNavigate();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
   // Ref to current pipeline ID so polling closures always see the latest value
-  const pipelineIdRef = useRef<string | undefined>();
+  const pipelineIdRef = useRef<string | undefined>(undefined);
   const canWritePipelines = Boolean(
     user?.superadmin || user?.abilities?.includes('*') || user?.abilities?.includes('pipeline:write')
   );
@@ -251,6 +319,8 @@ export default function PipelineEditor() {
   const [moduleVersionOptions, setModuleVersionOptions] = useState<ModuleVersionOption[]>([]);
   const [moduleOptions, setModuleOptions] = useState<ModuleOption[]>([]);
   const [connectors, setConnectors] = useState<Connector[]>([]);
+  const [alertChannels, setAlertChannels] = useState<AlertChannel[]>([]);
+  const [metadataTypes, setMetadataTypes] = useState<MetadataType[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
@@ -291,10 +361,12 @@ export default function PipelineEditor() {
     const fetchData = async () => {
       if (!id || !tenantId) { setLoading(false); return; }
       try {
-        const [pipelineData, modulesData, connectorsData] = await Promise.all([
+        const [pipelineData, modulesData, connectorsData, alertChannelsData, metadataTypesData] = await Promise.all([
           id === 'new' ? Promise.resolve(null) : api.getPipeline(id),
           api.getModules(tenantId),
           api.getConnectors(tenantId),
+          api.getAlertChannels(tenantId, 0, 200).then((page) => page.items).catch(() => [] as AlertChannel[]),
+          api.getMetadataTypes(tenantId).catch(() => [] as MetadataType[]),
         ]);
 
         const versionsByModule = await Promise.all(
@@ -311,6 +383,8 @@ export default function PipelineEditor() {
         })));
         setModuleVersionOptions(versionsByModule.flat());
         setConnectors(connectorsData);
+        setAlertChannels(alertChannelsData);
+        setMetadataTypes(metadataTypesData);
 
         if (pipelineData) {
           setPipeline(pipelineData);
@@ -378,6 +452,8 @@ export default function PipelineEditor() {
         label: nodeType,
         moduleVersionId: undefined,
         connectorId: undefined,
+        // Structured measurements need no parsing code; a module can still be chosen instead.
+        passThrough: nodeType === 'IMPORT' ? true : undefined,
       } satisfies PipelineNodeData,
     };
     setNodes((nds: DagNodeType[]) => [...nds, newNode as DagNodeType]);
@@ -422,6 +498,23 @@ export default function PipelineEditor() {
    */
   const handleSave = async () => {
     if (!tenantId || !name || !canWritePipelines) return;
+    const invalidMetadataNode = nodes.find((n) => validateMetadataNode(n.data.enrich, n.data.saveMetadata));
+    if (invalidMetadataNode) {
+      showToast(`${invalidMetadataNode.data.label}: ${validateMetadataNode(invalidMetadataNode.data.enrich, invalidMetadataNode.data.saveMetadata)}`, 'error');
+      return;
+    }
+    const invalidRuleNode = nodes.find((n) => n.data.alertRule && validateAlertRule(n.data.alertRule));
+    if (invalidRuleNode) {
+      showToast(`${invalidRuleNode.data.label}: ${validateAlertRule(invalidRuleNode.data.alertRule!)}`, 'error');
+      setSelectedNodeId(invalidRuleNode.id);
+      return;
+    }
+    const nodeWithoutModule = nodes.find((n) => usesModule(n.data) && !n.data.moduleVersionId);
+    if (nodeWithoutModule) {
+      showToast(`${nodeWithoutModule.data.label}: select a module version`, 'error');
+      setSelectedNodeId(nodeWithoutModule.id);
+      return;
+    }
     setSaving(true);
     try {
       const graphDefinition = flowToGraph(nodes, edges);
@@ -435,7 +528,8 @@ export default function PipelineEditor() {
         navigate(`/pipelines/${created.id}`);
         showToast('Pipeline created', 'success');
       }
-    } catch (err: any) {
+    } catch (caught) {
+      const err = caught as ApiError;
       console.error('Save failed:', err);
       showToast(err?.response?.data?.error ?? 'Failed to save pipeline', 'error');
     } finally {
@@ -458,7 +552,8 @@ export default function PipelineEditor() {
       showToast('Pipeline triggered', 'success');
       // poll run status
       pollRunStatus(run.id);
-    } catch (err: any) {
+    } catch (caught) {
+      const err = caught as ApiError;
       showToast(err?.response?.data?.error ?? 'Failed to trigger pipeline', 'error');
     } finally {
       setTriggering(false);
@@ -555,14 +650,14 @@ export default function PipelineEditor() {
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="border rounded px-2 py-1 text-sm font-semibold w-52"
+            className="border rounded-sm px-2 py-1 text-sm font-semibold w-52"
             placeholder="Pipeline name"
             disabled={!canWritePipelines}
           />
           <input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            className="border rounded px-2 py-1 text-sm text-gray-500 w-72"
+            className="border rounded-sm px-2 py-1 text-sm text-gray-500 w-72"
             placeholder="Description (optional)"
             disabled={!canWritePipelines}
           />
@@ -572,7 +667,7 @@ export default function PipelineEditor() {
               checked={isActive}
               onChange={(e) => setIsActive(e.target.checked)}
               disabled={!canWritePipelines}
-              className="rounded"
+              className="rounded-sm"
             />
             <span>Active</span>
           </label>
@@ -606,7 +701,7 @@ export default function PipelineEditor() {
             <button
               key={nt}
               onClick={() => addNode(nt)}
-              className={`px-2 py-1 rounded border font-medium ${NODE_COLORS[nt]} hover:opacity-80`}
+              className={`px-2 py-1 rounded-sm border font-medium ${NODE_COLORS[nt]} hover:opacity-80`}
             >
               {NODE_ICON[nt]} {nt}
             </button>
@@ -614,7 +709,7 @@ export default function PipelineEditor() {
           {selectedNodeId && (
             <button
               onClick={deleteSelectedNode}
-              className="ml-auto px-2 py-1 rounded border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 font-medium"
+              className="ml-auto px-2 py-1 rounded-sm border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 font-medium"
             >
               Delete selected
             </button>
@@ -661,6 +756,8 @@ export default function PipelineEditor() {
               moduleVersionOptions={moduleVersionOptions}
               inputConnectors={inputConnectors}
               outputConnectors={outputConnectors}
+              alertChannels={alertChannels}
+              metadataTypes={metadataTypes}
               canWrite={canWritePipelines}
               onChange={updateSelectedNodeData}
             />
@@ -685,6 +782,8 @@ function NodeConfigPanel({
   moduleVersionOptions,
   inputConnectors,
   outputConnectors,
+  alertChannels,
+  metadataTypes,
   canWrite,
   onChange,
 }: {
@@ -694,6 +793,8 @@ function NodeConfigPanel({
   moduleVersionOptions: ModuleVersionOption[];
   inputConnectors: Connector[];
   outputConnectors: Connector[];
+  alertChannels: AlertChannel[];
+  metadataTypes: MetadataType[];
   canWrite: boolean;
   onChange: (patch: Partial<PipelineNodeData>) => void;
 }) {
@@ -710,7 +811,7 @@ function NodeConfigPanel({
   return (
     <div className="p-4 space-y-4">
       <div>
-        <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded ${NODE_COLORS[data.nodeType]}`}>
+        <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-sm ${NODE_COLORS[data.nodeType]}`}>
           {NODE_ICON[data.nodeType]} {data.nodeType}
         </span>
         <p className="text-[10px] text-gray-400 mt-1">Node ID: {nodeId}</p>
@@ -719,69 +820,201 @@ function NodeConfigPanel({
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">Label</label>
         <input
-          className="border rounded px-2 py-1 text-sm w-full"
+          className="border rounded-sm px-2 py-1 text-sm w-full"
           value={data.label}
           onChange={(e) => onChange({ label: e.target.value })}
           disabled={!canWrite}
         />
       </div>
 
-      <div>
-        <label className="block text-xs font-medium text-gray-600 mb-1">
-          Module <span className="text-gray-400">({compatibleTypes.join('/')})</span>
-        </label>
-        {filteredModules.length === 0 ? (
-          <p className="text-xs text-amber-600">No compatible modules available.</p>
-        ) : (
-          <select
-            className="border rounded px-2 py-1 text-sm w-full"
-            value={data.moduleId ?? ''}
-            onChange={(e) => {
-              const nextModuleId = e.target.value || undefined;
-              const defaultVersionId = moduleOptions.find((module) => module.id === nextModuleId)?.defaultVersionId;
-              onChange({ moduleId: nextModuleId, moduleVersionId: defaultVersionId });
-            }}
-            disabled={!canWrite}
-          >
-            <option value="">— select module —</option>
-            {filteredModules.map((module) => (
-              <option key={module.id} value={module.id}>
-                {module.name} ({module.moduleType})
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
+      {data.nodeType === 'ALERT' && (
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Evaluation</label>
+          <div className="grid grid-cols-2 gap-1 text-xs" role="radiogroup">
+            {[
+              { rule: true, label: 'Built-in rule' },
+              { rule: false, label: 'Python module' },
+            ].map((option) => {
+              const active = Boolean(data.alertRule) === option.rule;
+              return (
+                <button
+                  key={option.label}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  disabled={!canWrite}
+                  onClick={() => onChange(option.rule
+                    ? { alertRule: data.alertRule ?? DEFAULT_RULES.threshold }
+                    : { alertRule: undefined })}
+                  className={`px-2 py-1 rounded-sm border ${active ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
-      <div>
-        <label className="block text-xs font-medium text-gray-600 mb-1">
-          Module version
-        </label>
-        {filteredVersions.length === 0 ? (
-          <p className="text-xs text-amber-600">No versions available for the selected module.</p>
-        ) : (
-          <select
-            className="border rounded px-2 py-1 text-sm w-full"
-            value={data.moduleVersionId ?? ''}
-            onChange={(e) => onChange({ moduleVersionId: e.target.value || undefined })}
-            disabled={!canWrite || !data.moduleId}
-          >
-            <option value="">— select module version —</option>
-            {filteredVersions.map((version) => (
-              <option key={version.id} value={version.id}>
-                v{version.version}{version.versionTag ? ` (${version.versionTag})` : ''}
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
+      {(data.nodeType === 'PROCESSING' || data.nodeType === 'EXPORT') && (
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Step</label>
+          <div className={`grid gap-1 text-xs ${data.nodeType === 'EXPORT' ? 'grid-cols-3' : 'grid-cols-2'}`} role="radiogroup">
+            {(data.nodeType === 'PROCESSING'
+              ? [
+                  { key: 'module', label: 'Python module', patch: { enrich: undefined } },
+                  { key: 'builtin', label: 'Enrich with metadata', patch: { enrich: data.enrich ?? DEFAULT_ENRICH } },
+                ]
+              : [
+                  { key: 'module', label: 'Python module', patch: { saveMetadata: undefined, passThrough: false } },
+                  { key: 'asis', label: 'Send as is', patch: { saveMetadata: undefined, passThrough: true } },
+                  { key: 'builtin', label: 'Save to metadata', patch: { saveMetadata: data.saveMetadata ?? DEFAULT_SAVE_METADATA, passThrough: false } },
+                ]
+            ).map((option) => {
+              const current = data.enrich || data.saveMetadata ? 'builtin' : data.passThrough ? 'asis' : 'module';
+              const active = current === option.key;
+              return (
+                <button
+                  key={option.key}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  disabled={!canWrite}
+                  onClick={() => onChange(option.patch)}
+                  className={`px-2 py-1 rounded-sm border ${active ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+          {data.nodeType === 'EXPORT' && data.passThrough && (
+            <p className="text-[10px] text-gray-400 mt-1">
+              Records are delivered unchanged to the output connector, e.g. the enriched readings to a metering system.
+            </p>
+          )}
+        </div>
+      )}
+
+      {data.enrich && (
+        <EnrichForm config={data.enrich} types={metadataTypes} disabled={!canWrite} onChange={(enrich) => onChange({ enrich })} />
+      )}
+      {data.saveMetadata && (
+        <SaveMetadataForm config={data.saveMetadata} types={metadataTypes} disabled={!canWrite} onChange={(saveMetadata) => onChange({ saveMetadata })} />
+      )}
+
+      {data.nodeType === 'IMPORT' && (
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Processing</label>
+          <div className="grid grid-cols-2 gap-1 text-xs" role="radiogroup">
+            {[
+              { passThrough: true, label: 'Pass through' },
+              { passThrough: false, label: 'Python module' },
+            ].map((option) => {
+              const active = Boolean(data.passThrough) === option.passThrough;
+              return (
+                <button
+                  key={option.label}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  disabled={!canWrite}
+                  onClick={() => onChange({ passThrough: option.passThrough })}
+                  className={`px-2 py-1 rounded-sm border ${active ? 'bg-primary-600 text-white border-primary-600' : 'bg-white text-gray-700 hover:bg-gray-50'}`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+          {data.passThrough && (
+            <p className="text-[10px] text-gray-400 mt-1">
+              Records are forwarded as received (JSON fields as sent by the device). Choose a Python module to parse
+              or reshape other formats.
+            </p>
+          )}
+          <label className="block mt-3">
+            <span className="block text-xs font-medium text-gray-600 mb-1">Deduplicate by (optional)</span>
+            <input
+              className="border rounded-sm px-2 py-1 text-sm w-full"
+              placeholder="device, ts"
+              disabled={!canWrite}
+              value={(data.deduplicateBy ?? []).join(', ')}
+              onChange={(e) => {
+                const fields = e.target.value.split(',').map((f) => f.trim()).filter(Boolean);
+                onChange({ deduplicateBy: fields.length ? fields : undefined });
+              }}
+            />
+          </label>
+          <p className="text-[10px] text-gray-400 mt-1">
+            Fields that identify a measurement. A record with the same values is processed only once, so data a
+            device or gateway resends is not counted twice. HTTP clients can send an Idempotency-Key header instead.
+          </p>
+        </div>
+      )}
+
+      {data.nodeType === 'ALERT' && data.alertRule ? (
+        <AlertRuleForm rule={data.alertRule} disabled={!canWrite} onChange={(alertRule) => onChange({ alertRule })} />
+      ) : data.passThrough || data.enrich || data.saveMetadata ? null : (
+        <>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Module <span className="text-gray-400">({compatibleTypes.join('/')})</span>
+          </label>
+          {filteredModules.length === 0 ? (
+            <p className="text-xs text-amber-600">No compatible modules available.</p>
+          ) : (
+            <select
+              className="border rounded-sm px-2 py-1 text-sm w-full"
+              value={data.moduleId ?? ''}
+              onChange={(e) => {
+                const nextModuleId = e.target.value || undefined;
+                const defaultVersionId = moduleOptions.find((module) => module.id === nextModuleId)?.defaultVersionId;
+                onChange({ moduleId: nextModuleId, moduleVersionId: defaultVersionId });
+              }}
+              disabled={!canWrite}
+            >
+              <option value="">— select module —</option>
+              {filteredModules.map((module) => (
+                <option key={module.id} value={module.id}>
+                  {module.name} ({module.moduleType})
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Module version
+          </label>
+          {filteredVersions.length === 0 ? (
+            <p className="text-xs text-amber-600">No versions available for the selected module.</p>
+          ) : (
+            <select
+              className="border rounded-sm px-2 py-1 text-sm w-full"
+              value={data.moduleVersionId ?? ''}
+              onChange={(e) => onChange({ moduleVersionId: e.target.value || undefined })}
+              disabled={!canWrite || !data.moduleId}
+            >
+              <option value="">— select module version —</option>
+              {filteredVersions.map((version) => (
+                <option key={version.id} value={version.id}>
+                  v{version.version}{version.versionTag ? ` (${version.versionTag})` : ''}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+        </>
+      )}
 
       {data.nodeType === 'IMPORT' && (
         <div className="space-y-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Input connector</label>
             <select
-              className="border rounded px-2 py-1 text-sm w-full"
+              className="border rounded-sm px-2 py-1 text-sm w-full"
               value={data.connectorId ?? ''}
               onChange={(e) => onChange({ connectorId: e.target.value || undefined })}
               disabled={!canWrite}
@@ -801,7 +1034,7 @@ function NodeConfigPanel({
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">MQTT Topic</label>
               <input
-                className="border rounded px-2 py-1 text-sm w-full"
+                className="border rounded-sm px-2 py-1 text-sm w-full"
                 value={data.mqttTopic ?? ''}
                 onChange={(e) => onChange({ mqttTopic: e.target.value || undefined })}
                 placeholder="sensors/+/telemetry"
@@ -815,12 +1048,12 @@ function NodeConfigPanel({
         </div>
       )}
 
-      {data.nodeType === 'EXPORT' && (
+      {data.nodeType === 'EXPORT' && !data.saveMetadata && (
         <div className="space-y-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Output connector</label>
             <select
-              className="border rounded px-2 py-1 text-sm w-full"
+              className="border rounded-sm px-2 py-1 text-sm w-full"
               value={data.connectorId ?? ''}
               onChange={(e) => onChange({ connectorId: e.target.value || undefined })}
               disabled={!canWrite}
@@ -833,14 +1066,16 @@ function NodeConfigPanel({
               ))}
             </select>
             <p className="text-[10px] text-gray-400 mt-1">
-              The platform will deliver your shape() result to this connector.
+              {data.passThrough
+                ? 'The platform delivers the incoming records unchanged to this connector.'
+                : 'The platform will deliver your shape() result to this connector.'}
             </p>
           </div>
           {outputConnectors.find((c) => c.id === data.connectorId)?.connectorType === 'MQTT' && (
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">MQTT Topic</label>
               <input
-                className="border rounded px-2 py-1 text-sm w-full"
+                className="border rounded-sm px-2 py-1 text-sm w-full"
                 value={data.mqttTopic ?? ''}
                 onChange={(e) => onChange({ mqttTopic: e.target.value || undefined })}
                 placeholder="output/results"
@@ -867,9 +1102,25 @@ function NodeConfigPanel({
       )}
 
       {data.nodeType === 'ALERT' && (
-        <p className="text-[10px] text-gray-400">
-          ALERT is terminal — it evaluates a condition and fires alerts via the platform. No connector needed.
-        </p>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-1">Default alert channel</label>
+          <select
+            className="border rounded-sm px-2 py-1 text-sm w-full"
+            value={data.alertChannel ?? ''}
+            onChange={(e) => onChange({ alertChannel: e.target.value || undefined })}
+            disabled={!canWrite}
+          >
+            <option value="">— first active tenant channel —</option>
+            {alertChannels.filter((c) => c.isActive).map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} ({c.channelType})
+              </option>
+            ))}
+          </select>
+          <p className="text-[10px] text-gray-400 mt-1">
+            ALERT is terminal. Alerts raised with alert_fn() go to this channel unless the call names another one.
+          </p>
+        </div>
       )}
     </div>
   );
@@ -945,7 +1196,7 @@ function RunLogPanel({
                 {new Date(latestRun.startedAt).toLocaleString()} · {latestRun.triggerType}
               </p>
               {latestRun.errorMessage && (
-                <p className="text-xs text-red-600 mt-1 break-words">{latestRun.errorMessage}</p>
+                <p className="text-xs text-red-600 mt-1 wrap-break-word">{latestRun.errorMessage}</p>
               )}
             </div>
             {pipelineId && (

@@ -1,11 +1,7 @@
 package com.dataturntable.api
 
 import com.dataturntable.auth.User
-import com.dataturntable.alert.AlertChannel
-import com.dataturntable.alert.AlertHistory
-import com.dataturntable.alert.AlertRule
 import com.dataturntable.tenant.Membership
-import com.dataturntable.tenant.Role
 import com.dataturntable.tenant.Tenant
 import io.quarkus.test.junit.QuarkusTest
 import io.restassured.http.ContentType
@@ -20,8 +16,6 @@ import org.junit.jupiter.api.Test
 import io.restassured.RestAssured.given
 import org.hamcrest.CoreMatchers.*
 
-import java.security.MessageDigest
-import java.util.Base64
 
 @QuarkusTest
 class AuthResourceTest {
@@ -32,19 +26,9 @@ class AuthResourceTest {
     @BeforeEach
     @Transactional
     fun cleanup() {
-        em.createNativeQuery("SET REFERENTIAL_INTEGRITY FALSE").executeUpdate()
-        try {
-            em.createQuery("DELETE FROM AlertHistory").executeUpdate()
-            em.createQuery("DELETE FROM AlertRule").executeUpdate()
-            em.createQuery("DELETE FROM AlertChannel").executeUpdate()
-            em.createQuery("DELETE FROM ApiKey").executeUpdate()
-            em.createQuery("DELETE FROM Membership").executeUpdate()
-            em.createQuery("DELETE FROM User").executeUpdate()
-            em.createQuery("DELETE FROM Role").executeUpdate()
-            em.createQuery("DELETE FROM Tenant").executeUpdate()
-        } finally {
-            em.createNativeQuery("SET REFERENTIAL_INTEGRITY TRUE").executeUpdate()
-        }
+        // Setup needs an empty user table. Tenants stay: other test classes' data references them.
+        em.createQuery("DELETE FROM Membership").executeUpdate()
+        em.createQuery("DELETE FROM User").executeUpdate()
     }
 
     @AfterEach
@@ -114,7 +98,7 @@ class AuthResourceTest {
             {
                 "tenantName": "Tenant-${'$'}{java.util.UUID.randomUUID()}",
                 "email": "register@example.com",
-                "passwordHash": "${hashPassword("Password123!")}"
+                "password": "${"Password123!"}"
             }
         """.trimIndent()
 
@@ -129,36 +113,6 @@ class AuthResourceTest {
             .body("user.email", equalTo("register@example.com"))
     }
 
-    @Test
-    fun testLoginAcceptsHexEncodedSha256Hash() {
-        val setupBody = """
-            {
-                "email": "adminhex@example.com"
-            }
-        """.trimIndent()
-
-        val setupResponse = given()
-            .contentType(ContentType.JSON)
-            .body(setupBody)
-        .`when`()
-            .post("/api/internal/v1/auth/setup")
-        .then()
-            .statusCode(201)
-            .extract()
-            .body()
-            .jsonPath()
-
-        val password = setupResponse.getString("password")
-
-        given()
-            .contentType(ContentType.JSON)
-            .body(mapOf("email" to "adminhex@example.com", "password" to password))
-        .`when`()
-            .post("/api/internal/v1/auth/login")
-        .then()
-            .statusCode(200)
-            .body("token", notNullValue())
-    }
     
     @Test
     fun testLoginEndpoint() {
@@ -180,7 +134,7 @@ class AuthResourceTest {
             .jsonPath()
         
         val password = setupResponse.getString("password")
-
+        
         val loginBody = """
             {
                 "email": "admin2@example.com",
@@ -231,7 +185,7 @@ class AuthResourceTest {
         val loginBody = """
             {
                 "email": "admin2@example.com",
-                "passwordHash": "invalidhash"
+                "password": "invalidhash"
             }
         """.trimIndent()
         
@@ -265,7 +219,7 @@ class AuthResourceTest {
             .jsonPath()
         
         val password = setupResponse.getString("password")
-
+        
         val loginBody = """
             {
                 "email": "admin3@example.com",
@@ -375,9 +329,4 @@ class AuthResourceTest {
             .statusCode(401)
     }
     
-    private fun hashPassword(password: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val hash = digest.digest(password.toByteArray())
-        return Base64.getEncoder().encodeToString(hash)
-    }
 }
