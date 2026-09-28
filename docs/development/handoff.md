@@ -447,6 +447,10 @@ Conflicts that were resolved in the process (the code was checked each time):
 
 ### Carried over from the retired trackers (2026-09-28)
 
+- **PostgreSQL 18 is unverified:** the images ship PostgreSQL 18 (`timescale/timescaledb:2.30.1-pg18`),
+  but every migration and live test in these sessions ran against a local PostgreSQL 16 server.
+  CI's `postgresql-migrations` job also uses `postgres:16-alpine`. Switch that job to the shipped
+  major version and run `PostgresMigrationBehaviorTest` against 18.
 - **Dependabot:** GitHub reports 6 vulnerabilities on the default branch (2 critical, 1 high,
   3 moderate). Check which apply to this branch after the merge into `dev`.
 - **Kubernetes-only verification is still missing:** hostile-module tests for the Kubernetes

@@ -786,7 +786,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | UI-11 | ~ | Moved to MVP (implemented). | Done |
 | UI-12 – UI-14 | = | | Done |
 | UI-15 – UI-19 | + | Single UI, Grafana for users, activity tabs, system area, in-app docs. | Open |
-| UI-20 | + | UI texts exist in English and German. | Done (checked by a test) |
+| UI-20 | + | UI texts exist in English and German. | Partial (locale files complete and checked by a test; some pipeline-editor labels such as the step choices are hard-coded in English) |
 | UI-21 | + | Accessibility. | Open |
 | API-01, API-02 | ~ | API-02 names the data API path. | Done |
 | API-03 | ~ | Browser session via cookie for reverse-proxy authentication. | Open (JWT in localStorage) |

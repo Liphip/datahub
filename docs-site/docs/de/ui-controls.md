@@ -11,7 +11,9 @@ Diese Referenz erklaert, was die wichtigsten Menues und Schaltflaechen tun.
 | Pipelines | Pipelines bauen/starten, Runs analysieren | Maintainer, Operatoren |
 | Konnektoren | Externe Integrationen/Broker-User verwalten | Operatoren, Admins |
 | Daten | Tabellenabfrage, Trends, Exporte | Analysten, Operatoren |
-| Alarme | Kanaele/Regeln und Historie verwalten | Operatoren, Admins |
+| Metadaten | Typen und Objekte (Geraete, Zaehler, Standorte …), Stichtagshistorie, CSV-Import, Vorlagen | Maintainer, Analysten |
+| API-Schluessel | Ingest-Schluessel fuer sendende Systeme anlegen und widerrufen | Admins mit *secret:manage* |
+| Alarme | Kanaele verwalten und Zustellhistorie pruefen (Regeln sind ALERT-Knoten in Pipelines) | Operatoren, Admins |
 | Benutzer | Benutzer einladen und Rollen pflegen | Tenant-Admins |
 | Mandanten | Mandantenstruktur und Defaults verwalten | Tenant-/Plattform-Admins |
 

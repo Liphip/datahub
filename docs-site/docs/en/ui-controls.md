@@ -11,7 +11,9 @@ This reference explains what each main menu and button does.
 | Pipelines | Build/run pipelines and inspect runs | maintainers, operators |
 | Connectors | Manage external integrations and broker users | operators, admins |
 | Data | Query tables, analyze trends, export data | analysts, operators |
-| Alerts | Configure channels/rules and inspect history | operators, admins |
+| Metadata | Types and objects (devices, meters, locations …), as-of history, CSV import, templates | maintainers, analysts |
+| API keys | Create and revoke ingest keys for sending systems | admins with *secret:manage* |
+| Alerts | Configure channels and inspect delivery history (rules are ALERT nodes in pipelines) | operators, admins |
 | Users | Invite users and manage memberships | tenant admins |
 | Tenants | Create/manage tenant hierarchy and defaults | tenant/platform admins |
 
