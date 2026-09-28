@@ -1126,6 +1126,47 @@ actually surface, not to guess at problems that may not exist. `NFR-M6`'s tracea
 ("CI... not yet observed green on GitHub Actions itself") is exactly what this PR's own CI run
 will finally settle either way.
 
+## Session 2026-09-28 (continued): CI red on PR #2 — trivy-action supply-chain compromise
+
+First CI run on PR #2 came back with one job red: "Build container images, scan for
+vulnerabilities, generate SBOMs" failed at the action-resolution step, before any of this PR's
+own code ran: `Unable to resolve action aquasecurity/trivy-action@0.29.0, unable to find version
+0.29.0`.
+
+**Ruled out first, per the standing rule:** `git diff origin/dev..HEAD -- .github/workflows/ci.yml`
+showed this pin unchanged from `dev` — not something any of the 46 commits on this branch touched.
+So this genuinely isn't "this PR's" failure in the sense of something the diff broke.
+
+**But a fix exists, so it was ported in rather than left as someone else's problem.** Searched why
+a previously-working pin stopped resolving and found this is not an ordinary "the tag moved"
+flake: `aquasecurity/trivy-action@0.29.0` was one of **76 of 77 version tags** (covering releases
+0.0.1–0.34.2) force-pushed by an attacker with compromised maintainer credentials to a
+credential-stealing `entrypoint.sh` in a March 2026 supply-chain compromise
+(GHSA-69fq-xp46-6x23) — the tag not resolving at all is presumably GitHub or the maintainers
+pulling the compromised tags rather than leaving them live. The advisory's own remediation: pin to
+`v0.35.0` or later (released after the compromise, protected by GitHub's immutable-releases
+feature so it can't be tag-hijacked the same way) or, better, a full commit SHA rather than any
+mutable tag.
+
+**Fixed:** both `trivy-action` steps in `ci.yml` (backend and frontend image scans) now pin
+`@v0.36.0` (the latest release at the time), with a comment explaining why, referencing the
+advisory. **Did not** pin to a commit SHA as the advisory itself recommends as the stronger fix:
+this session's GitHub access is scoped to `liphip/datahub` only, so there was no reliable,
+independently-verifiable way to confirm a SHA for a third-party repository through the tools
+available (a WebFetch-summarized hex string is not something to trust for a security-sensitive
+pin without a second, authoritative source to check it against). Pinning to the named release tag
+is a real improvement over the compromised range and is independently checkable by anyone with
+normal GitHub access; upgrading to a SHA pin is a reasonable follow-up for whoever has broader
+access, not a blocker.
+
+**Worth the owner's attention independent of this PR:** this finding applies to `dev`'s current
+`ci.yml` too, not just this PR's copy of it — `dev` has the same vulnerable pin today, unrelated
+to whether this PR merges. Flagging this explicitly rather than assuming the PR fix silently
+covers it.
+
+**Not yet done:** this fix was pushed but its own CI run had not completed as of this writing —
+the next session/wake should check PR #2's status rather than assume green.
+
 ## Sources used
 
 - BK6-22-300 Anlage 1: https://www.bundesnetzagentur.de/DE/Beschlusskammern/1_GZ/BK6-GZ/2022/BK6-22-300/Beschluss/BK6-22-300_Beschluss_Anlage1.pdf?__blob=publicationFile&v=1
