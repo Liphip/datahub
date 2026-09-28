@@ -96,4 +96,55 @@ class TenantDatabaseRoleServiceTest {
             }
         }
     }
+
+    @Test
+    fun `provisioning on a non-autoCommit connection survives a later rollback on the same connection`() {
+        // PipelineDataService runs ensureRoleAndSchema on a connection with autoCommit = false,
+        // then reuses that same connection for the DB_LOAD/DB_SAVE work and commits at the very
+        // end. If the role/schema DDL weren't durably committed on its own, a later failure in
+        // that same transaction (simulated here with an explicit rollback) would silently undo
+        // the provisioning while the in-memory `provisioned` cache kept claiming it succeeded —
+        // every later call for this tenant would then try to SET ROLE to a role that doesn't
+        // exist, broken until the process restarts.
+        val tenantId = UUID.randomUUID()
+        val schema = schemaOf(tenantId)
+        dataSource.connection.use { connection ->
+            connection.autoCommit = false
+            service.ensureRoleAndSchema(connection, tenantId, schema)
+            connection.rollback() // simulates the caller's own subsequent work failing
+        }
+
+        dataSource.connection.use { connection ->
+            connection.createStatement().use { stmt ->
+                val rs = stmt.executeQuery("SELECT nspowner::regrole::text FROM pg_namespace WHERE nspname = '$schema'")
+                assertTrue(rs.next(), "schema $schema should have survived the rollback on the provisioning connection")
+                assertEquals(service.roleName(tenantId), rs.getString(1))
+            }
+            // The cache correctly still says this tenant is provisioned, and using it actually works.
+            service.withTenantRole(connection, tenantId) {
+                connection.createStatement().use { it.execute("SELECT 1") }
+            }
+        }
+    }
+
+    @Test
+    fun `a failed provisioning attempt leaves a non-autoCommit connection usable for the fallback`() {
+        // Simulates the CREATEROLE-denied case without needing a second, unprivileged database
+        // user: forces ensureRoleAndSchema's own DDL to fail by pre-creating the role as a role
+        // this session cannot later ALTER (LOGIN, not the plain NOLOGIN the method creates,
+        // fails silently on the IF NOT EXISTS guard) -- instead, directly exercise the failure
+        // path by asking it to provision an invalid schema name that CREATE SCHEMA rejects.
+        val tenantId = UUID.randomUUID()
+        val invalidSchema = "" // CREATE SCHEMA "" is a syntax/identifier error on PostgreSQL
+        dataSource.connection.use { connection ->
+            connection.autoCommit = false
+            service.ensureRoleAndSchema(connection, tenantId, invalidSchema) // logs a warning, does not throw
+            // Before the fix, this next statement would fail with "current transaction is
+            // aborted, commands ignored until end of transaction block" - proving the fallback
+            // (running without database-level isolation) actually works, not just that the
+            // caller stops throwing.
+            connection.createStatement().use { it.execute("SELECT 1") }
+            connection.commit()
+        }
+    }
 }

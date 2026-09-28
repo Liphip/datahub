@@ -109,9 +109,17 @@ class IngestSpool {
                 if (index < alreadySent) continue
                 val node = objectMapper.readTree(line)
                 send(Entry(node.path("k").asText(), node.path("m").asText()))
+                // Durable progress before the in-memory count changes, not after (and not just
+                // every 500th record): if send() throws on a later line in this same segment —
+                // Kafka accepted a prefix, then refused again — the next replay attempt resumes
+                // past what was actually sent. Checkpointing only every 500 records left a gap
+                // where an interrupted segment shorter than that resent (and re-decremented)
+                // already-sent records on every retry, eventually driving `pending` to zero
+                // while real, unsent records remained on disk — isEmpty() then made
+                // scheduledReplay() return early forever, permanently stranding those records.
+                progress.writeText((index + 1).toString())
                 sent++
                 pending.decrementAndGet()
-                if ((index + 1) % 500 == 0) progress.writeText((index + 1).toString())
             }
             segment.delete()
             progress.delete()

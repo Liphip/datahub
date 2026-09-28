@@ -7,12 +7,18 @@ This document lets another assistant or developer continue the work without the 
 > (the owner explicitly asked for it to be opened once the branch made sense to move over — see the
 > session entry below). This session is subscribed to its activity and will keep pushing fixes for CI
 > failures and review feedback; check the PR itself for current status rather than assuming this
-> document's snapshot is still current. The full backend suite on H2 is green: **370 tests,
-> 0 failures, 0 errors, 20 skipped** (all 20 are legitimately Postgres/Docker/Python-gated — the
+> document's snapshot is still current — as of this write-up, CI had one known red job (missing
+> `DC_NVD_API_KEY` secret, not code-fixable, see below) and a Codex bot review with six findings, all
+> six verified real and fixed, all pushed. The full backend suite on H2 is green: **374 tests,
+> 0 failures, 0 errors, 22 skipped** (all skips are legitimately Postgres/Docker/Python-gated — the
 > previous 9 "unexplained" H2 skips are gone, see the relevant session entry below). To reproduce
 > the Docker/Python-gated portion on a host you need a Windows JDK 25 **and** a real `python3` on
 > `PATH` — the "Tests" section at the top has admin-free download recipes for both. Session entries
-> below are in chronological order; the newest is **"OPS-07 — hourly run-history aggregates"**:
+> below are in chronological order; the newest is **"PR #2 — CI red fixed and a bot's six review
+> findings triaged"** (a stray `PostgresTestProfile` bug plus six real, verified Codex findings —
+> two P1s that could break every DB_LOAD/DB_SAVE operation without CREATEROLE, a P1 pipeline-version
+> regression on machine-ingest records, a P1 that could silently drop spooled fire-and-forget records
+> forever, and two P2 permission gaps). Before that, **"OPS-07 — hourly run-history aggregates"**:
 > `RetentionCleanupService` now folds `pipeline_runs` rows into `pipeline_run_hourly_stats` before
 > deleting them past the retention window, closing OPS-07 from Partial to Done (backend/API only —
 > no UI page for it yet, flagged there). Before that, **"the 9 unexplained skips were dead code, not
@@ -1177,6 +1183,110 @@ in this PR's diff. Posted one comment on the PR (per the standing rule) explaini
 the trivy one now fixed, this one not fixable from a push — and what the owner needs to do: register
 a free key at https://nvd.nist.gov/developers/request-an-api-key and add it as `DC_NVD_API_KEY`.
 This also means `dev`'s own CI is presumably red on this same job right now, independent of this PR.
+
+## Session 2026-09-28 (continued): PR #2 — CI red fixed and a bot's six review findings triaged
+
+Two more CI failures and a Codex review arrived in the same wake, all on PR #2.
+
+**CI: "Backend tests and cross-tenant regressions" failing.** Root cause:
+`PostgresTestProfile.available()` (added in an earlier session on this branch, part of the
+"CI runs the real PostgreSQL migration test on PostgreSQL 18" work) treated a present Docker
+socket alone as enough to auto-enable `PostgresMigrationBehaviorTest`'s `@EnabledIf`. GitHub
+Actions' `ubuntu-latest` runners have Docker running by default, so this was true unconditionally
+there — even in this job, which never opted into the `postgres-it` profile.
+`application-postgres-it.yaml` (which sets `db-kind: postgresql`) is only loaded when that profile
+is actually active at Quarkus's test-augmentation time, which requires the CLI flag this class's
+own doc comment documents; without it, the test tried to boot with a postgres-shaped profile
+override but the default `%test` H2 URL, and failed before its body ran
+(`Driver does not support the provided URL: jdbc:h2:mem:...`). This never showed up locally in
+this session's own verification runs, which always passed the CLI flag explicitly, and this
+sandbox has no Docker socket at all. Fixed `available()` to check for the actual opt-in signal
+(`DATATURNTABLE_IT_DB_URL` or `-Dquarkus.test.profile=postgres-it`) instead of Docker's mere
+presence. Verified both directions: full H2 suite unaffected (370/0/0/20 before this session's
+other fixes below), and the CLI-flag/env-var path still passes against a fresh PostgreSQL 16.
+
+**Codex (`chatgpt-codex-connector[bot]`) left six review comments, four P1 and two P2 — none
+labeled nit/suggestion/style/minor/low/trivial/info, so none were treated as automatically
+optional.** All six were verified against the actual code before any fix, not taken on faith; all
+six turned out to be real:
+
+1. **P1 — `TenantDatabaseRoleService.ensureRoleAndSchema` didn't roll back a failed provisioning
+   attempt.** `PipelineDataService.execute()` sets `connection.autoCommit = false` before calling
+   this method. A failed `CREATE ROLE` (the CREATEROLE-missing case the class's own fallback
+   exists for) leaves that transaction aborted in PostgreSQL; the caught exception didn't restore
+   it, so the very fallback this method exists to enable — continuing on the connection's own
+   privileges — immediately failed too with `current transaction is aborted`, taking down every
+   DB_LOAD/DB_SAVE operation, not just database-level isolation. Fixed: roll back (only on a
+   non-autoCommit connection; rollback on an autoCommit one throws instead) before returning from
+   the catch block.
+2. **P1 — the same method cached `provisioned += tenantId` before its own transaction committed.**
+   Since `provisioned` is a long-lived, in-memory, cross-request cache but the DDL was left part of
+   the caller's own uncommitted transaction, a later failure anywhere in that same transaction (the
+   DB_LOAD/DB_SAVE work this call is provisioning for) rolled the role/schema changes back while the
+   cache kept claiming they existed — every later call for that tenant then skipped provisioning and
+   tried `SET ROLE` for a role that was never actually created, broken until the process restarted.
+   Fixed: commit the provisioning DDL on its own (again, only on non-autoCommit connections) before
+   caching. Both fixes verified with two new regression tests in `TenantDatabaseRoleServiceTest`
+   against a real PostgreSQL database, each confirmed to fail without its fix (the first with
+   `current transaction is aborted`, the second because the schema didn't survive a deliberate
+   rollback) and pass with it.
+3. **P1 — machine-ingest records lost their pinned pipeline version.** `PipelineRunQueue.enqueue`
+   (`persistRun = false`, the default/machine-ingest path) never touches the database — deliberate,
+   it's what lets ingest keep accepting records during a database outage (NFR-R6) — so it can't
+   stamp `_pipelineVersionId` into the Kafka message the way the `persistRun = true` path's
+   `createRun` does. `PipelineLogWriter.claimRun`'s fallback then picked whichever version was
+   *latest at claim time*, not the version active when the record was queued — if a pipeline was
+   edited in between, PIP-16 ("editing a pipeline never changes the record of past runs") was
+   violated for exactly the queue-wait window. Codex's own suggested fix (stamp the version at
+   enqueue time) would have reintroduced a database dependency into the deliberately DB-free ingest
+   path, so instead: reconstruct the correct version from the record's own `queuedAt` (already
+   carried in the message) against each version's `createdAt`, entirely at claim time — no change to
+   the enqueue path at all. New regression test in `PipelineRunQueueTest`: edits a pipeline (new
+   `PipelineVersion`, later `createdAt`) after a record queues but before it's claimed, asserts the
+   run still references the earlier version; confirmed failing without the fix (picked the new
+   version) and passing with it.
+4. **P1 — `IngestSpool.replay` under-checkpointed relative to how often it changed `pending`.** The
+   durable `.done` progress marker was only written every 500 records, but `pending` (an in-memory
+   counter `isEmpty()`/`scheduledReplay()` rely on) was decremented per record. A segment shorter
+   than 500 that failed partway through (Kafka accepted a prefix, then refused again) would, on
+   every retry, resend and re-decrement the records that already succeeded — for a genuinely
+   fire-and-forget sender this is silent, permanent data loss: draining `pending` to zero from
+   over-counting makes `isEmpty()` true while real records remain on disk, and `scheduledReplay()`
+   never calls `replay()` again once that's true. Fixed: checkpoint every record, not every 500th.
+   New regression test in `IngestSpoolTest` reproduced the exact mechanism without the fix —
+   `pending` went to **-2** (visible in the shutdown log) and a "second attempt" resent all three
+   records instead of only the one that never sent — and passes with it.
+5. **P2 — `TenantService`'s default Tenant Admin role couldn't manage ingest API keys.**
+   `ApiKeyResource` gates every operation on bare `secret:manage` with no alternate ability (unlike
+   `SecretResource`, which also accepts `connector:write`/`alert:configure`). Tenant Admin didn't
+   have it, so a delegated tenant administrator couldn't create the credential the authenticated
+   ingest endpoints require without a platform superadmin granting it by hand first — blocking the
+   ordinary tenant-level ingest setup flow. Fixed: added `secret:manage` to the role's ability list;
+   `TenantServiceTest` gained an assertion for it.
+6. **P2 — four call sites still checked pre-migration ability strings the default roles no longer
+   grant.** `git diff origin/dev` on `TenantService.kt` showed `dev`'s own default roles carried both
+   the old style (`read:connector`, `write:connector`, `manage:tenant`) and the new
+   (`connector:read`, `connector:write`, `tenant:manage`) as redundant aliases; this branch's roles
+   dropped the old style entirely at some earlier point, but `ConnectorResource.kt`'s lease/revision
+   endpoints (3 call sites) and `AuthorizationResource.kt`'s `/authorization/explain` (1 call site)
+   still checked the old strings verbatim — `hasAbility` does exact matching, no alias mapping — so
+   a brand-new tenant's Tenant Admin got 403 on those specific endpoints (existing tenants with
+   roles created before the drop were unaffected, since their stored ability strings didn't change).
+   The rest of `ConnectorResource.kt` itself, plus `RoleResource.kt`/`TenantResource.kt`/
+   `MembershipResource.kt`, already used only the new style throughout, confirming which side was
+   the leftover: fixed the 4 call sites to match, rather than re-adding legacy aliases to the role
+   template.
+
+**Verified as a whole:** full H2 suite **374 tests, 0 failures, 0 errors, 22 skipped** (370 + 4 new
+regression tests, all Postgres-gated ones among them correctly skipped on H2). The 7 Postgres-gated
+tests touched by this batch (`PostgresMigrationBehaviorTest` + all 6 `TenantDatabaseRoleServiceTest`
+tests) all pass against a fresh PostgreSQL 16 database.
+
+**Not done:** did not scan the rest of the codebase for further stray old-style ability strings
+beyond the 3 Codex actually flagged in `TenantService.kt`'s diff against `dev` — the grep after
+fixing those 3 came back empty, so there's reasonable confidence none remain, but this wasn't an
+exhaustive audit of every ability check in the codebase, only of the specific strings this
+finding named.
 
 ## Sources used
 

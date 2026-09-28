@@ -42,6 +42,7 @@ class TenantServiceTest {
         assertTrue("pipeline:read" in viewer && "pipeline:write" !in viewer, "Viewer must be read-only")
         assertTrue("pipeline:write" in editor && "connector:delete" !in editor, "Editor writes but doesn't administer the tenant")
         assertTrue("tenant:manage" in admin && "connector:delete" in admin, "Tenant Admin holds the full set, including tenant:manage")
+        assertTrue("secret:manage" in admin, "Tenant Admin can manage the ingest API keys ApiKeyResource gates on secret:manage")
 
         assertTrue(roles.getValue("Viewer").isDefault, "Viewer is the role assigned when none is specified")
     }

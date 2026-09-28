@@ -75,6 +75,11 @@ class PipelineRunQueueTest {
         QuarkusTransaction.requiringNew().run {
             em.createQuery("DELETE FROM PipelineRunNodeLog l WHERE l.run.pipeline.id = :p").setParameter("p", pipelineId).executeUpdate()
             em.createQuery("DELETE FROM PipelineRun r WHERE r.pipeline.id = :p").setParameter("p", pipelineId).executeUpdate()
+            // H2's schema-from-entities generation doesn't carry Postgres's migration-level
+            // ON DELETE CASCADE on pipeline_versions.pipeline_id (that's a DB-level FK behavior,
+            // not something the bare @JoinColumn mapping implies), so H2 tests must delete these
+            // explicitly before the pipeline itself, unlike a real Postgres deployment.
+            em.createQuery("DELETE FROM PipelineVersion v WHERE v.pipeline.id = :p").setParameter("p", pipelineId).executeUpdate()
             em.createQuery("DELETE FROM Pipeline p WHERE p.id = :p").setParameter("p", pipelineId).executeUpdate()
             em.createQuery("DELETE FROM Tenant t WHERE t.id = :t").setParameter("t", tenantId).executeUpdate()
         }
@@ -247,6 +252,39 @@ class PipelineRunQueueTest {
                 em.createQuery("DELETE FROM AlertRuleState").executeUpdate()
             }
         }
+    }
+
+    @Test
+    fun machineIngestRunsTheVersionActiveWhenTheRecordWasQueued() {
+        // Machine ingest (persistRun = false) never touches the database at enqueue time —
+        // that's what lets it keep accepting records during a database outage (NFR-R6) — so it
+        // can't stamp the pipeline version into the Kafka message. The run must still execute
+        // the graph that was live when the record queued (PIP-16), not whatever is newest by
+        // the time an executor actually claims it: reconstructed from the record's own queuedAt
+        // against each version's createdAt, not "the latest version right now".
+        val earlierVersionId = QuarkusTransaction.requiringNew().call {
+            com.dataturntable.pipeline.PipelineVersion().apply {
+                pipeline = em.find(Pipeline::class.java, pipelineId)
+                version = 1
+                createdAt = java.time.Instant.now().minusSeconds(60)
+            }.also { it.persist() }.id!!
+        }
+
+        val runId = queue.enqueue(pipelineId, TriggerType.DATA, mapOf("v" to 1))
+        val record = records().single()
+
+        // The pipeline is edited — a new version exists — after the record was already queued
+        // but before an executor claims it.
+        QuarkusTransaction.requiringNew().run {
+            com.dataturntable.pipeline.PipelineVersion().apply {
+                pipeline = em.find(Pipeline::class.java, pipelineId)
+                version = 2
+                createdAt = java.time.Instant.now().plusSeconds(60)
+            }.persist()
+        }
+
+        assertTrue(consumer.consume(record, source(1)).success)
+        assertEquals(earlierVersionId, run(runId)!!.pipelineVersion?.id)
     }
 
     @Test

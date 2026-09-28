@@ -1536,7 +1536,7 @@ class ConnectorResource {
         val connector = em.find(Connector::class.java, connectorId)
             ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
         val currentUser = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        if (!SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString()) || !SecurityUtils.hasAbility(currentUser, "read:connector")) {
+        if (!SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString()) || !SecurityUtils.hasAbility(currentUser, "connector:read")) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
         val lease = em.find(ConnectorRuntimeLease::class.java, connectorId)
@@ -1570,7 +1570,7 @@ class ConnectorResource {
         val connector = em.find(Connector::class.java, connectorId)
             ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
         val currentUser = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        if (!SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString()) || !SecurityUtils.hasAbility(currentUser, "read:connector")) {
+        if (!SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString()) || !SecurityUtils.hasAbility(currentUser, "connector:read")) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
         val revisions = em.createQuery(
@@ -1597,7 +1597,7 @@ class ConnectorResource {
         val connector = em.find(Connector::class.java, connectorId)
             ?: return Response.status(404).entity(mapOf("error" to "Connector not found")).build()
         val currentUser = getCurrentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
-        if (!SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString()) || !SecurityUtils.hasAbility(currentUser, "write:connector")) {
+        if (!SecurityUtils.canAccessTenant(currentUser, connector.tenant?.id.toString()) || !SecurityUtils.hasAbility(currentUser, "connector:write")) {
             return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
         }
         val stored = em.createQuery(

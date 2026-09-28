@@ -58,6 +58,32 @@ class IngestSpoolTest {
     }
 
     @Test
+    fun aRecordCountFailingMidSegmentDoesNotResendOrRecountRecordsThatAlreadySucceeded() {
+        // Kafka accepts a prefix of the segment, then refuses again — the size() counter must
+        // reflect only the records actually still unsent, and a later retry must resume past
+        // what already succeeded rather than resending (and re-decrementing) it. Before the
+        // fix, progress was only checkpointed every 500 records, so a shorter segment like this
+        // one resent (and re-decremented) record 0 on every retry, silently driving size() below
+        // the true remaining count — enough retries make isEmpty() true while unsent records
+        // remain, permanently stranding them (scheduledReplay() never calls replay() again).
+        repeat(3) { spool.append(IngestSpool.Entry("k", "m$it")) }
+        val sentFirstAttempt = mutableListOf<String>()
+        assertThrows(RuntimeException::class.java) {
+            spool.replay { entry ->
+                if (entry.message == "m2") throw RuntimeException("Kafka refused again")
+                sentFirstAttempt += entry.message
+            }
+        }
+        assertEquals(listOf("m0", "m1"), sentFirstAttempt)
+        assertEquals(1, spool.size(), "only the one record that never sent should remain counted")
+
+        val sentSecondAttempt = mutableListOf<String>()
+        assertEquals(1, spool.replay { sentSecondAttempt += it.message })
+        assertEquals(listOf("m2"), sentSecondAttempt, "the second attempt must not resend m0/m1")
+        assertTrue(spool.isEmpty())
+    }
+
+    @Test
     fun scheduledReplayForwardsToKafkaWithTheOriginalKey() {
         spool.append(IngestSpool.Entry("pipeline:dev-1", """{"runId":"r"}"""))
         spool.scheduledReplay()

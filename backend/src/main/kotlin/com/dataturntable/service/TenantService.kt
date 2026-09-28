@@ -49,7 +49,7 @@ class TenantService {
             this.tenant = tenant
             name = "Tenant Admin"
             description = "Tenant administrator role"
-            abilities = "[\"module:read\", \"module:write\", \"module:delete\", \"pipeline:read\", \"pipeline:write\", \"pipeline:execute\", \"data:read\", \"data:write\", \"data:export\", \"alert:read\", \"alert:configure\", \"tenant:manage\", \"metadata:read\", \"metadata:write\", \"user:read\", \"user:write\", \"user:delete\", \"connector:read\", \"connector:write\", \"connector:delete\"]"
+            abilities = "[\"module:read\", \"module:write\", \"module:delete\", \"pipeline:read\", \"pipeline:write\", \"pipeline:execute\", \"data:read\", \"data:write\", \"data:export\", \"alert:read\", \"alert:configure\", \"tenant:manage\", \"metadata:read\", \"metadata:write\", \"user:read\", \"user:write\", \"user:delete\", \"connector:read\", \"connector:write\", \"connector:delete\", \"secret:manage\"]"
         }
         adminRole.persist()
         authorizationGrantService.replaceRoleAbilities(adminRole, authorizationGrantService.legacyTokens(adminRole.abilities))

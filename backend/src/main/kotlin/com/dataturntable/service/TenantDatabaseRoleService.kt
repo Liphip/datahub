@@ -54,8 +54,28 @@ class TenantDatabaseRoleService {
                 stmt.execute("GRANT ALL ON ALL SEQUENCES IN SCHEMA \"$schema\" TO \"$role\"")
                 stmt.execute("ALTER DEFAULT PRIVILEGES FOR ROLE \"$role\" IN SCHEMA \"$schema\" GRANT ALL ON TABLES TO \"$role\"")
             }
+            // Commit the provisioning DDL on its own, independent of whatever the caller does
+            // with this connection afterward: `provisioned` is an in-memory, cross-request cache,
+            // so if this method returned with the DDL still part of the caller's own uncommitted
+            // transaction, a later failure in that same transaction (e.g. the DB_LOAD/DB_SAVE
+            // operation this call is provisioning for) would roll the role/schema changes back
+            // while the cache kept claiming they exist — every later call for this tenant would
+            // then skip provisioning and SET ROLE to a role that was never actually created,
+            // broken until the process restarts. Autoreset connections (autoCommit=true) commit
+            // each statement as it runs, so there's nothing to commit here for them.
+            if (runCatching { !connection.autoCommit }.getOrDefault(false)) {
+                connection.commit()
+            }
             provisioned += tenantId
         } catch (e: Exception) {
+            // A failed statement (e.g. CREATE ROLE without CREATEROLE) leaves a non-autoCommit
+            // connection's transaction aborted: every later statement on it — including the
+            // fallback this method exists to enable — would fail with "current transaction is
+            // aborted" until rolled back. Callers that use autoCommit connections (rollback then
+            // throws "Cannot rollback when autoCommit is enabled") are unaffected either way.
+            if (runCatching { !connection.autoCommit }.getOrDefault(false)) {
+                runCatching { connection.rollback() }
+            }
             if (warnedOnce.add(tenantId)) {
                 log.warnf(
                     "Could not provision a dedicated database role for tenant %s (%s). Falling back " +

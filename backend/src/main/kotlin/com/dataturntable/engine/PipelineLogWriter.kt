@@ -60,10 +60,25 @@ class PipelineLogWriter {
     ): Boolean {
         if (pipelineId != null) {
             // The run executes the graph of this immutable version, even if the pipeline was
-            // edited while the record waited in the queue.
+            // edited while the record waited in the queue. Machine ingest (PipelineRunQueue,
+            // persistRun = false) deliberately never touches the database at enqueue time —
+            // that's what lets it keep accepting records during a database outage (NFR-R6) —
+            // so it can't stamp pipelineVersionId into the Kafka message itself, unlike a
+            // synchronous HTTP-triggered run (persistRun = true, pinned immediately in
+            // PipelineRunQueue.createRun). For that path, reconstruct "the version active when
+            // the record was queued" from queuedAt (already carried in the message) instead of
+            // picking whatever version happens to be latest right now: if the pipeline was
+            // edited after the record queued but before this run claims it, the record must
+            // still run the version that was live at enqueue time, not the new one.
             val versionId = pipelineVersionId ?: em.createQuery(
-                "SELECT v.id FROM PipelineVersion v WHERE v.pipeline.id = :p ORDER BY v.version DESC", UUID::class.java
-            ).setParameter("p", pipelineId).setMaxResults(1).resultList.firstOrNull()
+                if (queuedAt != null) {
+                    "SELECT v.id FROM PipelineVersion v WHERE v.pipeline.id = :p AND v.createdAt <= :queuedAt ORDER BY v.version DESC"
+                } else {
+                    "SELECT v.id FROM PipelineVersion v WHERE v.pipeline.id = :p ORDER BY v.version DESC"
+                },
+                UUID::class.java
+            ).setParameter("p", pipelineId).also { if (queuedAt != null) it.setParameter("queuedAt", queuedAt) }
+                .setMaxResults(1).resultList.firstOrNull()
             em.createNativeQuery(
                 "INSERT INTO pipeline_runs (id, pipeline_id, status, trigger_type, started_at, queued_at, retry_of_run_id, pipeline_version_id) " +
                     "VALUES (?1, ?2, 'PENDING', ?3, ?4, ?5, ?6, ?7) ON CONFLICT DO NOTHING"
