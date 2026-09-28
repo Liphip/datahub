@@ -4,10 +4,13 @@ This document lets another assistant or developer continue the work without the 
 
 > **Read this first.** Everything is committed and pushed to `claude/datahub-lakehouse-review-6tiaf5`
 > and the working tree is clean. **The only thing left before landing is asking the owner to open the
-> PR into `dev`** — nothing technical is blocked. All 11 Docker-gated tests now pass against a real
-> Docker daemon. Session entries below are in chronological order; the newest is **"the Docker-gated
-> tests finally run for real"**, then "model artifacts implemented (MOD-15 – MOD-19)". Items in
-> "Open work" that are ~~struck through~~ are done — do not redo them.
+> PR into `dev`** — nothing technical is blocked. The full backend suite is green with the
+> previously dead tests actually running: **335 tests, 0 failures, 0 errors, 10 skipped**, including
+> all 12 Docker-gated tests and all 4 `ModuleScriptTest` tests. To reproduce that on a host you need
+> a Windows JDK 25 **and** a real `python3` on `PATH` — the "Tests" section at the top has
+> admin-free download recipes for both. Session entries below are in chronological order; the newest
+> is **"the whole suite finally runs for real — three test defects found"**. Items in "Open work"
+> that are ~~struck through~~ are done — do not redo them.
 
 ## Repository and branches
 
@@ -43,6 +46,8 @@ This document lets another assistant or developer continue the work without the 
     This machine has none by default (host `JAVA_HOME` is JDK 17, PATH Java is 21); fetch one with
     `curl.exe -sS -L -o jdk25.zip 'https://api.adoptium.net/v3/binary/latest/25/ga/windows/x64/jdk/hotspot/normal/eclipse?project=jdk'`
     then `tar -xf jdk25.zip -C jdk25` (bsdtar reads the zip). Host `mvn` 3.9.14 from Chocolatey is fine.
+  - **`ModuleScriptTest` additionally needs a real host `python3`** (see below). Without one it
+    skips, which is correct.
   - Real-PostgreSQL migration and schema check: `DATATURNTABLE_IT_DB_URL=jdbc:postgresql://localhost:5432/<db> DATATURNTABLE_IT_DB_PASSWORD=... mvn test -Dtest=PostgresMigrationBehaviorTest`.
   - Frontend: `cd frontend && npx tsc --noEmit -p . && npx eslint src && npx vitest run`.
 
@@ -456,6 +461,69 @@ and the host had only JDK 17/21, so every run used the Maven container, which ha
   follow-up rather than a blocked one.
 - **Still open before landing:** ask the owner before opening the PR into `dev` (unchanged).
 
+## Session 2026-09-28 (continued): the whole suite finally runs for real — three test defects found
+
+Went past "run the Docker-gated tests" and asked what else had never actually executed. Three
+defects, all in tests, none in the product. **Full suite on the host: 335 tests, 0 failures,
+0 errors, 10 skipped** — versus the "335 tests, 0 failures, 22 skipped" recorded earlier, where 12
+of those skips were the Docker-gated tests and 4 more were a class that had *never run anywhere*.
+(Those older skip counts are unreliable; this run is the trustworthy one.)
+
+**1. `ModuleScriptTest` had never run anywhere — and failed on Windows for a silly reason.**
+- The `maven:3.9.16-eclipse-temurin-25` image has **no `python` and no `python3` at all** (checked
+  directly), so this class was skipped in every container-based run. It only ever runs where the
+  platform has a real interpreter, i.e. GitHub's `ubuntu-latest`.
+- On Windows the Microsoft Store app-execution alias provides a `python3.exe` stub that prints
+  `Python wurde nicht gefunden; …` **and still exits 0**. The old `pythonAvailable()` checked only
+  the exit code, so it concluded Python existed, the four tests ran against the stub and failed.
+  Fixed to require a real `Python \d+\.\d+` banner. Note the trap: a `startsWith("Python")` check is
+  **not** sufficient, because the stub's own message begins with that word — I wrote that version
+  first and it still failed. A version regex is required.
+- Second defect in the same class: it passed the generated script as `python3 -c <script>`. On
+  Windows the JVM has to rebuild a command line, and the script's double quotes are mangled in
+  transit, so an f-string arrived as `fModule` and Python reported a bogus
+  `SyntaxError: '(' was never closed`. It now writes the script to a temp file and runs that. This is
+  not papering over a product bug: `DockerService` never uses `-c` in production (the Docker path
+  passes the script base64-encoded in `__DT_BOOT__` and `exec`s it in the container), and the
+  Docker-gated tests exercise the same generated script successfully.
+- Verified both directions: **4/4 pass** against a real Python 3.13.7, and they skip cleanly when no
+  real interpreter is present.
+
+**2. `PipelineRunQueueTest` was a latent flake that would redden CI.**
+`passThroughImportFeedsBuiltInRuleWithoutAnyModule` asserted the webhook deliveries immediately,
+but alerts go out through the transactional outbox on a *scheduled* dispatcher, so the requests can
+land after `consume()` returns. It failed once in the full suite with an empty `received` list while
+passing in isolation (verified twice). It now waits with a bounded 15 s poll, the same idiom
+`WebSocketIdleTimeoutE2ETest`/`WebSocketIngestE2ETest` already use. Not caused by change 1 — the
+class shares no state with it; the timing simply shifted.
+
+**3. PostgreSQL 18.6 is now verified for real, not just configured.**
+Started a throwaway `postgres:18.6-alpine3.24` (the exact CI tag) and ran the exact CI command from
+`.github/workflows/ci.yml` — `mvn --batch-mode test -Dtest=PostgresMigrationBehaviorTest
+-Dquarkus.test.profile=postgres-it` with the `DATATURNTABLE_IT_DB_*` env vars: **Flyway applied
+`V1__baseline` and Hibernate `validate` matched, 1 test, 0 failures.** This closes the carried-over
+"PostgreSQL 18 is unverified" item. Port 55432 was used because the unrelated `twitch_log_db` holds
+5432; the port is irrelevant to what is being verified.
+
+**Making this environment reproducible (all admin-free, all in `%TEMP%\opencode`):**
+- Windows JDK 25: `curl.exe -sS -L -o jdk25.zip 'https://api.adoptium.net/v3/binary/latest/25/ga/windows/x64/jdk/hotspot/normal/eclipse?project=jdk'` then `tar -xf jdk25.zip -C jdk25`. (bsdtar reads the zip; `Expand-Archive` also works.) Chocolatey **cannot** install anything here — no admin, `lib-bad` access denied — and the python.org MSI-style installer hangs, so don't retry either.
+- Python 3.13.7: the **embeddable zip** needs no admin and no install —
+  `https://www.python.org/ftp/python/3.13.7/python-3.13.7-embed-amd64.zip`, unzipped, then
+  **copy `python.exe` to `python3.exe`** (the embeddable package ships no `python3.exe`, and the
+  tests invoke `python3`). Its stdlib works for these tests.
+- Then a host run needs both on `PATH` plus the real `docker` CLI, and everything un-skips except
+  the 10 listed below.
+
+**The 10 remaining skips, and why they are legitimate:**
+- `PostgresMigrationBehaviorTest` (1) — needs a real PostgreSQL; run it as above, it passes.
+- `ModuleServiceTest` (4) and `TenantServiceTest` (5) — gated for another reason; not investigated,
+  they are not Docker-gated and were skipped in the earlier runs too.
+
+**Still open before landing:** ask the owner before opening the PR into `dev`. Nothing technical is
+blocked. The only genuinely unverifiable items left need a Kubernetes cluster (k8s render-only
+wiring, hostile-module tests for the Kubernetes execution backend, the backup/restore drill, the
+exactly-once failover test).
+
 ## Documentation map (consolidated 2026-09-28)
 
 
@@ -631,12 +699,13 @@ Conflicts that were resolved in the process (the code was checked each time):
 
 ### Carried over from the retired trackers (2026-09-28)
 
-- **PostgreSQL 18 in CI — done, one confirmation outstanding:** the images ship PostgreSQL 18
-  (`timescale/timescaledb:2.30.1-pg18`), but the migration mechanism was only ever exercised against
-  a local PostgreSQL 16. CI's `postgresql-migrations` job now runs `PostgresMigrationBehaviorTest` for
-  real against `postgres:18.6-alpine3.24` (the `psql` table-existence and STR-08 checks are kept as a
-  cheap second opinion). The Maven invocation and env vars are proven against PG16; **the exact 18.6
-  image has not been run yet — confirm the first real GitHub CI run pulls and passes against 18.**
+- **PostgreSQL 18 — verified, done.** The images ship PostgreSQL 18
+  (`timescale/timescaledb:2.30.1-pg18`) and earlier sessions only ever exercised the migration
+  mechanism against a local PostgreSQL 16. Both gaps are now closed: CI's `postgresql-migrations` job
+  runs `PostgresMigrationBehaviorTest` for real against `postgres:18.6-alpine3.24` (the `psql`
+  table-existence and STR-08 checks are kept as a cheap second opinion), **and the exact 18.6 image
+  was run locally with the exact CI invocation — Flyway applied `V1__baseline` and Hibernate
+  `validate` matched.** See the newest session entry.
 - **Dependabot:** GitHub reports 6 vulnerabilities on the default branch (2 critical, 1 high,
   3 moderate). Check which apply to this branch after the merge into `dev`.
 - **Kubernetes-only verification is still missing:** hostile-module tests for the Kubernetes
