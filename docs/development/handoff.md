@@ -2,6 +2,13 @@
 
 This document lets another assistant or developer continue the work without the chat history.
 
+> **Read this first.** Everything is committed and pushed to `claude/datahub-lakehouse-review-6tiaf5`
+> and the working tree is clean. **The only thing left before landing is asking the owner to open the
+> PR into `dev`** — nothing technical is blocked. All 11 Docker-gated tests now pass against a real
+> Docker daemon. Session entries below are in chronological order; the newest is **"the Docker-gated
+> tests finally run for real"**, then "model artifacts implemented (MOD-15 – MOD-19)". Items in
+> "Open work" that are ~~struck through~~ are done — do not redo them.
+
 ## Repository and branches
 
 - Repository: `liphip/datahub` ("DataTurntable").
@@ -22,6 +29,20 @@ This document lets another assistant or developer continue the work without the 
 - Tests:
   - Backend: `cd backend && mvn test -Dquarkus.http.test-port=0`. Docker-only tests are skipped without a Docker daemon.
   - **The project targets Java 25 (`backend/pom.xml`: `maven.compiler.release=25`), so a host Maven run is not representative** — this machine's `JAVA_HOME` is JDK 17 and PATH Java is 21. Use the Maven image instead: `docker run --rm -v "${PWD}\backend:/app" -v "${env:USERPROFILE}\.m2:/root/.m2" -w /app maven:3.9.16-eclipse-temurin-25 mvn --batch-mode test '-Dquarkus.http.test-port=0'`.
+  - **The Docker-gated tests cannot be run from the Maven container** (see below); they need a host
+    JVM with a real `docker` CLI. Un-gated as of 2026-09-28:
+    ```powershell
+    $env:JAVA_HOME = '<a Windows JDK 25>'
+    $env:Path = "$env:JAVA_HOME\bin;$env:Path"
+    cd backend; mvn --batch-mode test '-Dtest=ModelArtifactRoundTripTest,DockerServiceHostileModuleTest' '-Dquarkus.http.test-port=0'
+    ```
+  - **Why the container route does not work for those tests:** `DockerService` shells out to the
+    `docker` CLI (`ProcessBuilder`) and bind-mounts **host paths** into each module container. A JVM
+    inside a Linux container would hand Linux paths (`/app/...`) to the Windows daemon, so the mounts
+    would be wrong — and the container would have no `docker` CLI anyway. Use a host JDK 25.
+    This machine has none by default (host `JAVA_HOME` is JDK 17, PATH Java is 21); fetch one with
+    `curl.exe -sS -L -o jdk25.zip 'https://api.adoptium.net/v3/binary/latest/25/ga/windows/x64/jdk/hotspot/normal/eclipse?project=jdk'`
+    then `tar -xf jdk25.zip -C jdk25` (bsdtar reads the zip). Host `mvn` 3.9.14 from Chocolatey is fine.
   - Real-PostgreSQL migration and schema check: `DATATURNTABLE_IT_DB_URL=jdbc:postgresql://localhost:5432/<db> DATATURNTABLE_IT_DB_PASSWORD=... mvn test -Dtest=PostgresMigrationBehaviorTest`.
   - Frontend: `cd frontend && npx tsc --noEmit -p . && npx eslint src && npx vitest run`.
 
@@ -297,8 +318,9 @@ on GitHub actually pulls and passes against postgres:18.**
 No dedicated ML-serving component: a PROCESSING module fits a model and persists it; another
 (or the same, in a later pipeline) loads and applies it. This needed one real design decision,
 since nothing like it existed:
-- New requirements MOD-15 – MOD-19, DAT-10 in the SRS (v2.3), status **Open** — this is design
-  only, nothing was implemented.
+- New requirements MOD-15 – MOD-19, DAT-10 in the SRS (v2.3), status **Open** — design only at the
+  time this entry was written. **Implemented in the next section; MOD-15/17/18/19 and DAT-10 are now
+  Done in Appendix A** (MOD-16 Partial). Read that section, not this one, for the current state.
 - New `docs/specification/functional-specification.md` §5.6 "Model Artifacts" and §13.6 worked
   example (load-forecast: nightly training pipeline, continuous inference pipeline, hot-swappable
   model version).
@@ -312,7 +334,8 @@ since nothing like it existed:
   unstructured-storage decision.
 - README feature list updated.
 
-**To implement next** (in dependency order): `model_artifacts` migration + entity + a
+**To implement next** (in dependency order) — *this was the original plan, kept for the record; it
+was carried out in the next section:* `model_artifacts` migration + entity + a
 `ModelArtifactService` (save/list-versions/load, tenant-scoped, encrypted like `SecretService`) →
 wire `save_model_fn`/`load_model_fn` into the module execution harness in `DockerService.kt`
 (same pattern as `alert_fn`/`query_fn`: a Python shim that calls back into the JVM host, likely via
@@ -393,12 +416,48 @@ half-done or uncommitted. Remaining before landing:
   in `WarmContainerPool` keyed by module id, invalidated on a version bump.
 
 **Not done, deliberately out of scope for now:** no UI page to browse/list model artifacts (the
-Python API is enough for MVP per the earlier design note); no example under `docs/examples/`
-comparable to §14a (would need Docker to verify end-to-end here, unlike the SQL-only §14a test).
+  Python API is enough for MVP per the earlier design note); no example under `docs/examples/`
+  comparable to §14a (would need Docker to verify end-to-end here, unlike the SQL-only §14a test).
+
+## Session 2026-09-28 (continued): the Docker-gated tests finally run for real
+
+**Remaining item 1 of the previous handoff is closed.** That entry said the 5 Docker-gated tests
+"could not be run for real … this sandbox has none". This machine *does* have Docker 27.4.0 — the
+earlier sessions simply never tried from a host with a daemon, because the project targets Java 25
+and the host had only JDK 17/21, so every run used the Maven container, which has no daemon.
+
+**Unblocking it needed two things:**
+1. A Windows JDK 25 (Temurin 25.0.4.1) — see the "Tests" section at the top for the download.
+2. Running the tests on the **host**, not in the Maven container. This is the non-obvious part:
+   `DockerService` invokes the `docker` CLI via `ProcessBuilder` and bind-mounts host paths into the
+   module container. From inside a Linux Maven container the JVM would pass Linux paths to the
+   Windows daemon (and there is no `docker` CLI in the image), so these tests are structurally
+   impossible in the container — they were never "just skipped for lack of a daemon".
+   Host `mvn` 3.9.14 with `JAVA_HOME` pointed at JDK 25 is the working combination.
+
+**Result — `mvn test -Dtest=ModelArtifactRoundTripTest,DockerServiceHostileModuleTest
+-Dquarkus.http.test-port=0` on the host:**
+- `DockerServiceHostileModuleTest`: **7 tests, 0 failures, 0 errors, 0 skipped.**
+- `ModelArtifactRoundTripTest`: **4 tests, 0 failures, 0 errors, 0 skipped.**
+- `BUILD SUCCESS` in 1:43. So train → save → independent execution → load → apply, the retrain
+  hot-swap (MOD-19), the unknown-name `None`, and the loud `ModuleExecutionException` on version
+  pinning are all verified against a real daemon, not just designed.
+- The `ERROR … Container exited with code 1` lines in the log are **expected**: they are the
+  hostile-module tests and the version-pinning test deliberately failing. Do not read them as a
+  problem when scanning the output.
+- `python:3.14.7-slim-trixie` (the module base image) was pulled first, so the first run is not a
+  silent 10-minute image download.
+
+**What this changes:**
+- The `ModelArtifactRoundTripTest` caveat in the previous two entries is resolved: the feature is
+  verified, not merely implemented. MOD-15/17/19 and DAT-10 stay Done on that basis.
+- The reason a `docs/examples/` model-artifact example was skipped ("would need Docker to verify
+  end-to-end here") no longer holds — Docker is available, so that example is now a realistic
+  follow-up rather than a blocked one.
+- **Still open before landing:** ask the owner before opening the PR into `dev` (unchanged).
 
 ## Documentation map (consolidated 2026-09-28)
 
-## Documentation map (consolidated 2026-09-28)
 
 The owner asked for one consistent story in fewer files. **The SRS is the main document and wins
 every conflict**; FR-029 (microservices) was dropped. Where each fact lives:
@@ -482,8 +541,9 @@ Conflicts that were resolved in the process (the code was checked each time):
    - The live smoke test has been run against a real Compose stack (PostgreSQL + Kafka + both API
      roles): health, Flyway migration, setup/login/`/me`, SFTP connector create, inbox, blob routes
      404, and no `data_blobs` table. Three real defects were found and fixed by doing this
-     (items 3 and 4 below) — none of them were visible from the unit tests. A browser-level
-     Vite/Playwright pass is still outstanding (item 7).
+     (items 3 and 4 below) — none of them were visible from the unit tests. The browser-level
+     Vite/Playwright pass is **also done** (see "Session 2026-09-28", "Fixes found by the browser
+     pass") — it found four further real defects.
    - Open a PR into `dev`, following its PR template if one exists. **Ask the owner before opening
      the PR.**
    - Mention in the PR:
@@ -546,17 +606,21 @@ Conflicts that were resolved in the process (the code was checked each time):
    Verified live over HTTP: connector create and PATCH, and alert channel create, all reject a
    string config with 400 "must be a JSON object" while a valid `secretRefs` object still returns
    201/200.
-5. **Update `docs/production-ready-spec.json`.** It is a static record of the original review and
-   still describes blob services, a `BlobMetadata` entity, an S3/MinIO migration phase and blob
-   acceptance criteria, so it now contradicts the rescoped product decision. Left alone because it
-   is a large, largely historical artifact.
-6. **#19 §14a example walkthrough** — the flow is now documented (functional spec §13.5, using the
-   `energy` template). Still open: building the example pipelines and verifying the walkthrough end
-   to end. (Verified this session that the template frames §14a as an example, not as product
-   behavior; the pipelines themselves were not built.)
-7. **Vite/Playwright UI smoke** — still not run. The frontend is verified by typecheck, 38 vitest
-   tests, ESLint and a 370-module production build, and the API was exercised over HTTP against a
-   real stack, but no browser-level check has been performed.
+5. ~~**Update `docs/production-ready-spec.json`.**~~ **No action — retired.** This entry is stale: the
+   documentation consolidation above already retired that file (content merged into the SRS, Appendix
+   C). Do not reopen it, and do not spend time rewriting a deliberately historical artifact.
+6. ~~**#19 §14a example walkthrough.**~~ **Done.** `docs/examples/energy-14a/` plus
+   `Energy14aExampleTest` build the four pipelines (SAP meters, internal locations, LoRaWAN devices,
+   LoRaWAN readings), enrich readings with the metadata valid at the reading's time (meter, market
+   location, location, grid area, including the 1 June meter exchange), deliver to two REST systems,
+   prove an `Idempotency-Key` resend does not double-deliver, and prove a reading from an unknown
+   device fails its run. Functional spec §13.5 describes the example as built; it was also driven
+   live through the ingest API with an API key.
+7. ~~**Vite/Playwright UI smoke.**~~ **Done.** Run against a live stack (Vite + Playwright). It found
+   four real defects, all fixed: Tailwind 4 dropped `bg-opacity-*` so modal overlays were opaque;
+   modals could not scroll, making the SFTP form unreachable; the Vite proxy key `/api` swallowed
+   `/api-keys`; and a duplicate connector name returned 500 (now `TransientFailureMapper` maps
+   SQLState 23505/23503 → 409 and 23502/23514 → 400).
 8. **Known gaps**
    - MQTT QoS 0 and UDP cannot be acknowledged.
    - Warm containers keep network access after `pip install`.
@@ -567,10 +631,12 @@ Conflicts that were resolved in the process (the code was checked each time):
 
 ### Carried over from the retired trackers (2026-09-28)
 
-- **PostgreSQL 18 is unverified:** the images ship PostgreSQL 18 (`timescale/timescaledb:2.30.1-pg18`),
-  but every migration and live test in these sessions ran against a local PostgreSQL 16 server.
-  CI's `postgresql-migrations` job also uses `postgres:16-alpine`. Switch that job to the shipped
-  major version and run `PostgresMigrationBehaviorTest` against 18.
+- **PostgreSQL 18 in CI — done, one confirmation outstanding:** the images ship PostgreSQL 18
+  (`timescale/timescaledb:2.30.1-pg18`), but the migration mechanism was only ever exercised against
+  a local PostgreSQL 16. CI's `postgresql-migrations` job now runs `PostgresMigrationBehaviorTest` for
+  real against `postgres:18.6-alpine3.24` (the `psql` table-existence and STR-08 checks are kept as a
+  cheap second opinion). The Maven invocation and env vars are proven against PG16; **the exact 18.6
+  image has not been run yet — confirm the first real GitHub CI run pulls and passes against 18.**
 - **Dependabot:** GitHub reports 6 vulnerabilities on the default branch (2 critical, 1 high,
   3 moderate). Check which apply to this branch after the merge into `dev`.
 - **Kubernetes-only verification is still missing:** hostile-module tests for the Kubernetes
