@@ -24,7 +24,8 @@ every requirement is in the [requirements specification, Appendix A](docs/specif
   validity periods; pipelines enrich records with the metadata valid at the record's time.
 - **Machine learning without an ML server:** a training pipeline fits a model (scikit-learn,
   PyTorch, pandas — all pre-installed) and saves it; an inference pipeline loads it and scores,
-  classifies or forecasts each record — planned, not yet built (see the functional spec, §5.6).
+  classifies or forecasts each record. Versioned; retraining hot-swaps inference automatically
+  (see the functional spec, §5.6).
 - **Outputs:** REST, MQTT, WebSocket and UDP connectors; alert channels MQTT, webhook, REST,
   e-mail, Slack.
 - **Multi-tenancy and security:** hierarchical tenants, fine-grained permissions, encrypted

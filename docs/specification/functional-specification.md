@@ -415,7 +415,9 @@ def load_model_fn(name: str, version: int | None = None):
 ```
 
 *Implementation note:* `query_fn` currently returns an empty result. `save_model_fn`/`load_model_fn`
-are specified (MOD-15 – MOD-19) but not implemented yet.
+are implemented (MOD-15, MOD-17); `load_model_fn(name, version=...)` with an explicit version
+raises inside the module — only the version preloaded at the start of the execution is available
+(MOD-16).
 
 ### 5.5 Module Code Storage
 
@@ -435,8 +437,9 @@ weeks apart, and each starts from a fresh filesystem.
 | Scope and key | `(tenant_id, module_id, name)`; a module can save several named artifacts (e.g. one per device class). |
 | Versioning | Like `ModuleVersion` and `PipelineVersion`: saving under an existing name creates a new version, never overwrites. `load_model_fn` defaults to the latest; a run can pin an older version to reproduce a past inference exactly. |
 | Storage | A `model_artifacts` table (tenant-scoped, encrypted at rest like secrets) holding the serialized bytes and metadata (name, version, size, byte-count, created-by run id, framework hint). Not the object store, and not reachable through any file/blob API (DAT-10). |
-| Loading cost | Loaded once per worker process and cached, not once per record (MOD-18); the worker polls for a newer version so a fresh training run reaches inference without a pipeline restart (MOD-19). |
+| Loading cost | *Design target:* loaded once per worker process and cached, not once per record. *Current implementation:* re-fetched from the database before every execution — correct and hot-swaps automatically (MOD-19, verified), but not yet cached per warm-container process (MOD-18 performance follow-up). |
 | Why this is not STR-08 | STR-08 excludes storing a **user's unstructured payload** (a file someone uploads or sends). A model artifact is never that: it is state the platform itself creates from a module's own fit call and reads back only for that same module's own inference call. It has no independent existence a user could upload, download or browse. |
+| `save_model_fn` scope | Only takes effect when `process()` returns a `dict` (the `_savedModels` marker is merged into it and stripped by the platform before the result reaches the next node). A module returning a list, scalar or `DataFrame` gets a clear warning in its run log instead of a silently lost model. |
 
 Training and inference are ordinary pipelines, not a special node type:
 

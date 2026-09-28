@@ -956,6 +956,26 @@ CREATE TABLE secret_versions (
 CREATE INDEX idx_secrets_tenant ON secrets (tenant_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_secret_versions_latest ON secret_versions (secret_id, version DESC);
 
+-- ── Model artifacts: fitted models a PROCESSING module saves and later loads (MOD-15/16) ──
+-- The value is opaque bytes to the platform (base64, then encrypted like a secret); it is
+-- never executed or parsed here. Not the unstructured-payload storage STR-08 excludes: this is
+-- platform-internal state one module's own execution writes and reads back (see DAT-10).
+
+CREATE TABLE model_artifacts (
+    id uuid PRIMARY KEY,
+    tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    module_id uuid NOT NULL REFERENCES code_modules(id) ON DELETE CASCADE,
+    name varchar(128) NOT NULL,
+    version integer NOT NULL,
+    data_encrypted text NOT NULL,
+    size_bytes bigint NOT NULL,
+    created_by_run_id varchar(64),
+    created_at timestamptz DEFAULT now() NOT NULL,
+    CONSTRAINT uq_model_artifacts_module_name_version UNIQUE (module_id, name, version)
+);
+CREATE INDEX idx_model_artifacts_latest ON model_artifacts (module_id, name, version DESC);
+CREATE INDEX idx_model_artifacts_tenant ON model_artifacts (tenant_id);
+
 -- ── Audit trail ──
 
 CREATE TABLE audit_events (

@@ -322,6 +322,62 @@ train-then-infer across two independent module executions, version pinning, hot-
 save. No UI page is strictly required for MVP (the Python API is enough); a simple read-only list
 under the module's detail view is a reasonable first UI step.
 
+## Session 2026-09-28 (continued): model artifacts implemented (MOD-15 – MOD-19)
+
+Followed up the design from the previous entry with a real implementation, since remaining
+session budget allowed it (owner: implement when budget allows, more examples only when it
+doesn't).
+
+**What was built:**
+- `model_artifacts` table (`V1__baseline.sql`, one row per version — same pattern as
+  `connector_revisions`), `ModelArtifact` entity, `ModelArtifactService` (save/loadLatest/
+  loadVersion/preloadLatestForModule/listArtifacts). Values are base64 then encrypted with
+  `EncryptionUtils` exactly like a secret version.
+- `DockerService.kt`: `save_model_fn`/`load_model_fn` added to the Python harness (alongside
+  `alert_fn`/`query_fn`). Design constraint that shaped the implementation: module execution is
+  one-shot (a script prints one `__RESULT__:<json>` line and exits) with **no live channel** back
+  to the host while it runs, so:
+  - `load_model_fn(name)` reads from a dict of every named artifact's **latest** version,
+    preloaded into the `MODEL_ARTIFACTS` env var before the container starts.
+  - `load_model_fn(name, version=<int>)` (an explicit historical version) raises
+    `NotImplementedError` inside the module — pinning an old version this way is not supported;
+    documented honestly rather than silently returning the wrong thing. A test asserts it fails
+    loudly (`ModuleExecutionException`).
+  - `save_model_fn(name, model)` pickles+base64s the model into `_DT_SAVED_MODELS`; if
+    `process()` returns a `dict`, the platform merges in a `_savedModels` key, reads it back after
+    the container exits, persists each entry via `ModelArtifactService.save`, and strips the key
+    before the result reaches the next pipeline node. If `process()` doesn't return a `dict`, the
+    module gets a clear stderr warning instead of a silently lost model.
+- `ModelArtifactRoundTripTest` (Docker-gated like `DockerServiceHostileModuleTest`, skipped here —
+  no daemon in this sandbox): train in one execution, infer in a completely independent second
+  execution and get the right answer; retrain (new version) and confirm the next inference picks
+  it up automatically (MOD-19 hot-swap); loading a name never saved returns `None`, not an error;
+  pinning an explicit version fails loudly.
+
+**Verified:**
+- Full backend suite: 331 tests, 0 failures, 22 skipped (Docker-only, including the 4 new ones).
+- `ModelArtifact` matches the migration exactly under Hibernate `validate` mode against real
+  PostgreSQL (`PostgresMigrationBehaviorTest`).
+- The 4 new Docker-gated tests could not be run for real in this sandbox (no daemon here, same
+  limitation as the existing `DockerServiceHostileModuleTest`) — **run them for real before
+  relying on this feature**, the way `DockerServiceHostileModuleTest` already is elsewhere.
+
+**Honestly scoped, not overclaimed (Appendix A updated accordingly):**
+- MOD-15, MOD-17, MOD-19, DAT-10: Done.
+- MOD-16: Partial — a save records its own version; a run does **not** log which version it
+  *read*, only which it created. Would need a `_loadedModels`-style marker (same trick as
+  `_savedModels`) surfaced into the run's node log.
+- MOD-18: Partial — functionally correct (including hot-swap), but the artifact is re-fetched
+  from the database on **every** execution rather than cached once per warm-container process.
+  A real but modest cost (one indexed lookup per named artifact per record); the fix is caching
+  in `WarmContainerPool` keyed by module id, invalidated on a version bump.
+
+**Not done, deliberately out of scope for now:** no UI page to browse/list model artifacts (the
+Python API is enough for MVP per the earlier design note); no example under `docs/examples/`
+comparable to §14a (would need Docker to verify end-to-end here, unlike the SQL-only §14a test).
+
+## Documentation map (consolidated 2026-09-28)
+
 ## Documentation map (consolidated 2026-09-28)
 
 The owner asked for one consistent story in fewer files. **The SRS is the main document and wins

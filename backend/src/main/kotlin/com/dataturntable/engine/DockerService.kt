@@ -2,6 +2,7 @@ package com.dataturntable.engine
 
 import com.dataturntable.module.ModuleType
 import com.dataturntable.module.ModuleVersion
+import com.dataturntable.module.ModelArtifactService
 import com.dataturntable.execution.ExecutionLimits
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.enterprise.context.ApplicationScoped
@@ -81,6 +82,9 @@ class DockerService {
 
     @Inject
     lateinit var warmPool: WarmContainerPool
+
+    @Inject
+    lateinit var modelArtifactService: ModelArtifactService
     
     @ConfigProperty(name = "dataturntable.docker.module.base-image", defaultValue = "python:3.14.7-slim-trixie")
     lateinit var baseImage: String
@@ -123,7 +127,7 @@ class DockerService {
         val code         = moduleVersion.code ?: throw IllegalStateException("Module code is empty")
         val requirements = moduleVersion.requirements ?: ""
         val scriptB64    = buildModuleScript(code, moduleType)
-        val envMap       = buildEnvMap(inputData, moduleType, connectorMeta, moduleVersion.config)
+        val envMap       = buildEnvMap(inputData, moduleType, connectorMeta, moduleVersion.config, moduleVersion)
 
         // ── Try warm pool first ────────────────────────────────────────────────
         val warm = if (limits == null) warmPool.acquire(requirements) else null
@@ -132,7 +136,7 @@ class DockerService {
             return try {
                 val output = runJobInWarmContainer(warm, scriptB64, envMap)
                 warmPool.release(warm, true)
-                val parsedResult = parseResultPayload(output.stdout)
+                val parsedResult = finishResult(parseResultPayload(output.stdout), moduleType, moduleVersion, runId)
                 ModuleExecutionOutput(parsedResult, output.stdout, output.stderr, output.exitCode, output.durationMs)
             } catch (e: ModuleExecutionException) {
                 warmPool.release(warm, false)
@@ -166,7 +170,7 @@ class DockerService {
                 }
             }
 
-            val parsedResult = parseResultPayload(output.stdout)
+            val parsedResult = finishResult(parseResultPayload(output.stdout), moduleType, moduleVersion, runId)
             ModuleExecutionOutput(parsedResult, output.stdout, output.stderr, output.exitCode, output.durationMs)
         } catch (e: ModuleExecutionException) {
             LOG.errorf("Module execution failed: %s", e.message)
@@ -234,6 +238,7 @@ class DockerService {
         moduleType: ModuleType,
         connectorMeta: Map<String, Any?>?,
         moduleConfig: String?,
+        moduleVersion: ModuleVersion? = null,
     ): Map<String, String> {
         val map = mutableMapOf("MODULE_TYPE" to moduleType.name)
         // For MERGE nodes, inputData is a List (serialised as a JSON array); otherwise a Map or primitive.
@@ -244,7 +249,40 @@ class DockerService {
         }
         // Module version config (JSON), passed to the module class constructor.
         moduleConfig?.takeIf { it.isNotBlank() }?.let { map["MODULE_CONFIG"] = it }
+        // MOD-15/18: the current version of every named model this module has saved, preloaded
+        // once before the container starts (there is no live channel back to a running module).
+        if (moduleType == ModuleType.PROCESSING) {
+            moduleVersion?.module?.id?.let { moduleId ->
+                val artifacts = modelArtifactService.preloadLatestForModule(moduleId)
+                if (artifacts.isNotEmpty()) map["MODEL_ARTIFACTS"] = objectMapper.writeValueAsString(artifacts)
+            }
+        }
         return map
+    }
+
+    /**
+     * MOD-15: persists any model a PROCESSING module saved this execution (returned under the
+     * reserved `_savedModels` key by `save_model_fn`, mirroring how ALERT modules return
+     * `_DT_ALERTS` for the platform to dispatch afterward) and strips that key so it never
+     * reaches the next pipeline node as ordinary output data.
+     */
+    private fun finishResult(parsedResult: Any?, moduleType: ModuleType, moduleVersion: ModuleVersion, runId: String): Any? {
+        if (moduleType != ModuleType.PROCESSING || parsedResult !is Map<*, *>) return parsedResult
+        val saved = parsedResult["_savedModels"] as? Map<*, *>
+        val moduleId = moduleVersion.module?.id
+        val tenantId = moduleVersion.module?.tenant?.id
+        if (!saved.isNullOrEmpty() && moduleId != null && tenantId != null) {
+            saved.forEach { (name, data) ->
+                val n = name?.toString() ?: return@forEach
+                val b64 = data?.toString() ?: return@forEach
+                try {
+                    modelArtifactService.save(tenantId, moduleId, n, b64, runId)
+                } catch (e: Exception) {
+                    LOG.errorf("Failed to save model artifact '%s' for module %s: %s", n, moduleId, e.message)
+                }
+            }
+        }
+        return if (parsedResult.containsKey("_savedModels")) parsedResult.filterKeys { it != "_savedModels" } else parsedResult
     }
 
     /**
@@ -447,6 +485,36 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
             |    # Query platform stored data. Returns empty dict in current runtime.
             |    return {}
             |
+            |import base64, pickle
+            |_DT_SAVED_MODELS = {}
+            |
+            |def _model_artifacts():
+            |    try:
+            |        return json.loads(os.environ.get('MODEL_ARTIFACTS', '{}'))
+            |    except Exception:
+            |        return {}
+            |
+            |def save_model_fn(name, model):
+            |    # Persists a fitted model under `name` (MOD-15). The platform stores whatever
+            |    # pickle.dumps produces without inspecting or executing it, as a new version;
+            |    # a later execution's load_model_fn(name) sees it (MOD-18/19). Only takes effect
+            |    # if this module's process() returns a dict — see the functional spec, §5.6.
+            |    _DT_SAVED_MODELS[name] = base64.b64encode(pickle.dumps(model)).decode('ascii')
+            |
+            |def load_model_fn(name, version=None):
+            |    # Returns the model this module last saved under `name` (unpickled), or None if
+            |    # none was ever saved. `version` pins a specific past version if the platform
+            |    # preloaded it; pinning a version this execution did NOT start with is not
+            |    # supported (no live channel back to the platform mid-execution — MOD-16).
+            |    if version is not None:
+            |        raise NotImplementedError(
+            |            'load_model_fn(name, version=...) is not supported inside a running '
+            |            'module; only the latest version is preloaded per execution (MOD-16).')
+            |    encoded = _model_artifacts().get(name)
+            |    if encoded is None:
+            |        return None
+            |    return pickle.loads(base64.b64decode(encoded))
+            |
             |def _connector_meta():
             |    # Non-sensitive connector metadata (type, name, topic, etc.) for informational use only.
             |    try:
@@ -539,7 +607,15 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
                 |input_data = _load_input()
                 |$code
                 |fn = _resolve('ProcessingModule', 'process')
-                |result = _call(fn, input_data, query_fn) if fn else input_data
+                |result = _call(fn, input_data, query_fn, save_model_fn, load_model_fn) if fn else input_data
+                |if _DT_SAVED_MODELS:
+                |    if isinstance(result, dict):
+                |        result = dict(result)
+                |        result['_savedModels'] = _DT_SAVED_MODELS
+                |    else:
+                |        print(f"save_model_fn was called but process() returned a "
+                |              f"{type(result).__name__}, not a dict — the model was NOT saved. "
+                |              f"Return a dict to save a model (functional spec, §5.6).", file=_dt_sys.stderr)
                 |_dt_sys.stdout.flush()
                 |print('__RESULT__:' + json.dumps(result))
             """.trimMargin()
