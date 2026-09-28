@@ -1167,6 +1167,17 @@ covers it.
 **Not yet done:** this fix was pushed but its own CI run had not completed as of this writing —
 the next session/wake should check PR #2's status rather than assume green.
 
+**Update (same session, next wake):** a second, distinct check was also red: "Scan Maven and npm
+dependencies for known vulnerabilities" (`org.owasp:dependency-check-maven`), failing with
+`NvdApiException: Invalid API Key, length of 0`. Investigated and this one has **no code fix at
+all**: the job needs the NVD CVE database, `ci.yml`'s own comment (lines 238–241, unchanged from
+`dev`) already documents that it requires a `DC_NVD_API_KEY` repository secret that isn't set.
+Confirmed this fails identically on a docs-only commit with zero code changes, ruling out anything
+in this PR's diff. Posted one comment on the PR (per the standing rule) explaining both failures —
+the trivy one now fixed, this one not fixable from a push — and what the owner needs to do: register
+a free key at https://nvd.nist.gov/developers/request-an-api-key and add it as `DC_NVD_API_KEY`.
+This also means `dev`'s own CI is presumably red on this same job right now, independent of this PR.
+
 ## Sources used
 
 - BK6-22-300 Anlage 1: https://www.bundesnetzagentur.de/DE/Beschlusskammern/1_GZ/BK6-GZ/2022/BK6-22-300/Beschluss/BK6-22-300_Beschluss_Anlage1.pdf?__blob=publicationFile&v=1
