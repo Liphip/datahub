@@ -734,7 +734,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | PIP-09, PIP-10 | ~ | Exactly once for identified records (decision of 2026-09-27). | Done |
 | PIP-11 | = | | Done |
 | PIP-12 | + | Needed for NFR-P1. | Partial (keyed partitions, parallel consumers; no micro-batches, CPU-based autoscaling) |
-| PIP-13 | + | DLQ was described in the functional spec only. | Partial (DLQ topic and records, retry API `/api/internal/v1/events/dlq/{id}/retry`; no inspection UI) |
+| PIP-13 | + | DLQ was described in the functional spec only. | Partial (DLQ topic and a read-only listing API, `GET /api/internal/v1/events/dlq`; **no retry endpoint exists yet** — a naive one would be unsafe, since the stored payload is redacted before persistence, see the functional spec §4.9 implementation note — and no inspection UI) |
 | PIP-14 | + | Exactly-once delivery. | Done (verified with broker, executor and database failures) |
 | PIP-15 | + | Per-record runs cannot reach NFR-P1 (review 2026-09-27). | Open |
 | PIP-16 | + | Former FR-009. | Done (`PipelineVersion`; runs pinned to the version) |
@@ -860,7 +860,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | NFR-M2 | ~ | Module output kept out of system logs. | Partial |
 | NFR-M3 | ~ | `docker compose` (v2 CLI). | Done |
 | NFR-M4, NFR-M5 | = | | Done |
-| NFR-M6 | + | No CI existed. | Partial (`.github/workflows/ci.yml`: backend, frontend, OpenAPI lint, manifest rendering, PostgreSQL migrations, image scan; not yet observed green on GitHub) |
+| NFR-M6 | + | No CI existed. | Partial (`.github/workflows/ci.yml`: backend, frontend, OpenAPI lint, manifest rendering, PostgreSQL migrations, image scan; **observed green on GitHub** on both `pull_request` and direct `push` to `dev`, repeatedly, this session — every job passes except OWASP dependency-check, red only because the `DC_NVD_API_KEY` repository secret is missing, an installation gap not a code defect) |
 | NFR-M7 | + | Former FR-015/FR-025/NFR-020. | Partial (event envelope and correlation ids; OpenTelemetry present, disabled by default) |
 | NFR-M8 | + | Former NFR-018. | Partial (third-party images pinned; own-image digests, SBOM and scans wired in CI but not run) |
 | NFR-M9 | + | Former NFR-019. | Done (this appendix) |
