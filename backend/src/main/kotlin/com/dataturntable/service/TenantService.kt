@@ -51,7 +51,7 @@ class TenantService {
             this.tenant = tenant
             name = "Tenant Admin"
             description = "Tenant administrator role"
-            abilities = "[\"module:read\", \"module:write\", \"module:delete\", \"pipeline:read\", \"pipeline:write\", \"pipeline:execute\", \"data:read\", \"data:write\", \"data:export\", \"alert:read\", \"alert:configure\", \"tenant:manage\", \"metadata:read\", \"metadata:write\", \"user:read\", \"user:write\", \"user:delete\", \"connector:read\", \"connector:write\", \"connector:delete\", \"secret:manage\", \"audit:read\"]"
+            abilities = "[\"module:read\", \"module:write\", \"module:delete\", \"pipeline:read\", \"pipeline:write\", \"pipeline:execute\", \"data:read\", \"data:write\", \"data:export\", \"alert:read\", \"alert:configure\", \"tenant:manage\", \"metadata:read\", \"metadata:write\", \"user:read\", \"user:write\", \"user:delete\", \"connector:read\", \"connector:write\", \"connector:delete\", \"secret:manage\", \"audit:read\", \"audit.note:write\"]"
             isSystem = true
         }
         adminRole.persist()

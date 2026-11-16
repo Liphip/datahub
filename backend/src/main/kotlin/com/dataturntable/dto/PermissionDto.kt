@@ -44,7 +44,8 @@ enum class Ability(val value: String) {
     TENANT_MANAGE("tenant:manage"),
 
     // Audit trail (read, search, export)
-    AUDIT_READ("audit:read");
+    AUDIT_READ("audit:read"),
+    AUDIT_NOTE_WRITE("audit.note:write");
     
     companion object {
         /**

@@ -123,4 +123,63 @@ class AuditResourceTest {
         api().get("/api/internal/v1/audit?tenantId=$tenantId&action=audit.exported")
             .then().statusCode(200).body("total", equalTo(2)).body("items[0].metadata.records", equalTo(1))
     }
+
+    @Test
+    fun `the chain verifies and a record changed behind the application's back is found`() {
+        val tenantId = tenant()
+        auditedAction(tenantId, "chain-a")
+        auditedAction(tenantId, "chain-b")
+        api().get("/api/internal/v1/audit/verify").then().statusCode(200).body("intact", equalTo(true)).body("problem", equalTo(null))
+
+        // Tamper directly in the database, the way someone with table access would.
+        var tamperedSeq = 0L
+        QuarkusTransaction.requiringNew().run {
+            val row = em.createQuery(
+                "SELECT a FROM AuditEvent a WHERE a.tenantId = :t AND a.action = 'audittest.created' ORDER BY a.seq",
+                com.dataturntable.audit.AuditEvent::class.java,
+            ).setParameter("t", UUID.fromString(tenantId)).resultList.first()
+            tamperedSeq = row.seq!!
+            em.createNativeQuery("UPDATE audit_events SET action = 'audittest.forged' WHERE id = :id").setParameter("id", row.id).executeUpdate()
+        }
+        api().get("/api/internal/v1/audit/verify").then().statusCode(200)
+            .body("intact", equalTo(false)).body("brokenAtSeq", equalTo(tamperedSeq.toInt()))
+            .body("problem", containsString("does not match its hash"))
+
+        // Put it back so the shared test database's chain is intact for other tests.
+        QuarkusTransaction.requiringNew().run {
+            em.createNativeQuery("UPDATE audit_events SET action = 'audittest.created' WHERE seq = :s").setParameter("s", tamperedSeq).executeUpdate()
+        }
+        api().get("/api/internal/v1/audit/verify").then().statusCode(200).body("intact", equalTo(true))
+
+        api(memberToken(tenantId, "[\"audit:read\"]")).get("/api/internal/v1/audit/verify").then().statusCode(403)
+    }
+
+    @Test
+    fun `notes can be added to a record and to a component, are immutable and need their own permission`() {
+        val tenantId = tenant()
+        auditedAction(tenantId, "noted")
+        val eventId = api().get("/api/internal/v1/audit?tenantId=$tenantId&action=audittest.created")
+            .then().statusCode(200).extract().jsonPath().getString("items[0].id")
+        val reader = memberToken(tenantId, "[\"audit:read\"]")
+        val writer = memberToken(tenantId, "[\"audit:read\", \"audit.note:write\"]")
+        val outsider = memberToken(tenant(), "[\"audit:read\", \"audit.note:write\"]")
+
+        api(reader).body(mapOf("note" to "x")).post("/api/internal/v1/audit/$eventId/notes").then().statusCode(403)
+        api(outsider).body(mapOf("note" to "x")).post("/api/internal/v1/audit/$eventId/notes").then().statusCode(403)
+        api(writer).body(mapOf("note" to "  ")).post("/api/internal/v1/audit/$eventId/notes").then().statusCode(400)
+        api(writer).body(mapOf("note" to "Approved in change 4711")).post("/api/internal/v1/audit/$eventId/notes")
+            .then().statusCode(201).body("note", equalTo("Approved in change 4711"))
+
+        api(reader).get("/api/internal/v1/audit/$eventId/notes").then().statusCode(200)
+            .body("size()", equalTo(1)).body("[0].note", equalTo("Approved in change 4711"))
+        api(outsider).get("/api/internal/v1/audit/$eventId/notes").then().statusCode(403)
+        // The note shows on the component's timeline too, next to a standalone one.
+        api(writer).body(mapOf("tenantId" to tenantId, "resourceType" to "thing", "resourceId" to "thing-1", "note" to "Replaced on site"))
+            .post("/api/internal/v1/audit/notes").then().statusCode(201)
+        api(reader).get("/api/internal/v1/audit/notes?tenantId=$tenantId&resourceType=thing&resourceId=thing-1")
+            .then().statusCode(200).body("note", equalTo(listOf("Approved in change 4711", "Replaced on site")))
+        // Adding a note is itself audited; there is no way to change or remove one.
+        api().get("/api/internal/v1/audit?tenantId=$tenantId&action=audit.note.added").then().statusCode(200).body("total", equalTo(2))
+        api(writer).delete("/api/internal/v1/audit/$eventId/notes").then().statusCode(405)
+    }
 }

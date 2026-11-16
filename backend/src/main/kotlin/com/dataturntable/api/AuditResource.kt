@@ -1,13 +1,18 @@
 package com.dataturntable.api
 
 import com.dataturntable.audit.AuditEvent
+import com.dataturntable.audit.AuditNote
 import com.dataturntable.audit.AuditService
 import com.dataturntable.auth.User
 import com.dataturntable.security.SecurityUtils
 import io.quarkus.security.Authenticated
 import jakarta.inject.Inject
 import jakarta.persistence.EntityManager
+import jakarta.transaction.Transactional
+import jakarta.ws.rs.Consumes
 import jakarta.ws.rs.GET
+import jakarta.ws.rs.POST
+import jakarta.ws.rs.PathParam
 import jakarta.ws.rs.Path
 import jakarta.ws.rs.Produces
 import jakarta.ws.rs.QueryParam
@@ -102,7 +107,7 @@ class AuditResource {
     private fun dto(event: AuditEvent): Map<String, Any?> = mapOf(
         "id" to event.id, "occurredAt" to event.occurredAt, "actorId" to event.actorId, "tenantId" to event.tenantId,
         "action" to event.action, "resourceType" to event.resourceType, "resourceId" to event.resourceId,
-        "outcome" to event.outcome, "requestId" to event.requestId,
+        "outcome" to event.outcome, "requestId" to event.requestId, "seq" to event.seq, "hash" to event.hash,
         "metadata" to event.metadata?.let { runCatching { mapper.readValue(it, Any::class.java) }.getOrDefault(it) },
     )
 
@@ -163,6 +168,103 @@ class AuditResource {
         }
     }
 
+    /**
+     * AUD-05: recomputes the hash chain over the whole trail. Installation-wide by nature (one
+     * chain for all tenants), so it needs a platform administrator.
+     */
+    @GET
+    @Path("/verify")
+    fun verify(): Response {
+        val user = currentUser() ?: return error(401, "Unauthorized")
+        if (!user.isSuperAdmin()) return error(403, "Platform administrator access required")
+        return Response.ok(audit.verifyChain()).build()
+    }
+
+    private fun noteDto(note: AuditNote) = mapOf(
+        "id" to note.id, "eventId" to note.eventId, "tenantId" to note.tenantId, "resourceType" to note.resourceType,
+        "resourceId" to note.resourceId, "authorId" to note.authorId, "note" to note.note, "createdAt" to note.createdAt,
+    )
+
+    /** Reading needs `audit:read`, writing `audit.note:write`, both in the tenant the note belongs to. */
+    private fun noteAccess(user: User, tenantId: UUID?, ability: String): Response? {
+        if (tenantId == null) return if (user.isSuperAdmin()) null else error(403, "Platform administrator access required")
+        if (!SecurityUtils.canAccessTenant(user, tenantId.toString())) return error(403, "Forbidden")
+        if (!SecurityUtils.hasAbility(user, ability)) return error(403, "Insufficient permissions")
+        return null
+    }
+
+    private fun noteText(body: Map<String, Any?>?): String? =
+        (body?.get("note") as? String)?.trim()?.takeIf { it.isNotEmpty() && it.length <= NOTE_MAX }
+
+    /** AUD-06: notes attached to one audit record, oldest first. */
+    @GET
+    @Path("/{eventId}/notes")
+    fun eventNotes(@PathParam("eventId") eventId: String): Response {
+        val user = currentUser() ?: return error(401, "Unauthorized")
+        val event = runCatching { UUID.fromString(eventId) }.getOrNull()?.let { em.find(AuditEvent::class.java, it) }
+            ?: return error(404, "Audit record not found")
+        noteAccess(user, event.tenantId, "audit:read")?.let { return it }
+        return Response.ok(em.createQuery("SELECT n FROM AuditNote n WHERE n.eventId = :e ORDER BY n.createdAt", AuditNote::class.java)
+            .setParameter("e", event.id).resultList.map(::noteDto)).build()
+    }
+
+    /**
+     * AUD-06: attaches a note to an audit record. Notes are immutable — there is no update or
+     * delete; a correction is another note. Adding one is itself audited.
+     */
+    @POST
+    @Path("/{eventId}/notes")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Transactional
+    fun addEventNote(@PathParam("eventId") eventId: String, body: Map<String, Any?>?): Response {
+        val user = currentUser() ?: return error(401, "Unauthorized")
+        val event = runCatching { UUID.fromString(eventId) }.getOrNull()?.let { em.find(AuditEvent::class.java, it) }
+            ?: return error(404, "Audit record not found")
+        noteAccess(user, event.tenantId, "audit.note:write")?.let { return it }
+        val text = noteText(body) ?: return error(400, "note is required (at most $NOTE_MAX characters)")
+        val note = AuditNote().apply {
+            this.eventId = event.id; tenantId = event.tenantId; resourceType = event.resourceType
+            resourceId = event.resourceId; authorId = user.id; this.note = text
+        }
+        em.persist(note)
+        audit.record(user.id, event.tenantId, "audit.note.added", "audit_event", event.id.toString(), mapOf("noteId" to note.id.toString()))
+        return Response.status(201).entity(noteDto(note)).build()
+    }
+
+    /** AUD-06: a component's timeline notes — those written standalone and those on its audit records. */
+    @GET
+    @Path("/notes")
+    fun componentNotes(
+        @QueryParam("tenantId") tenantId: String?, @QueryParam("resourceType") resourceType: String?,
+        @QueryParam("resourceId") resourceId: String?,
+    ): Response {
+        val user = currentUser() ?: return error(401, "Unauthorized")
+        val tid = runCatching { UUID.fromString(tenantId) }.getOrNull() ?: return error(400, "Valid tenantId is required")
+        if (resourceType.isNullOrBlank() || resourceId.isNullOrBlank()) return error(400, "resourceType and resourceId are required")
+        noteAccess(user, tid, "audit:read")?.let { return it }
+        return Response.ok(em.createQuery(
+            "SELECT n FROM AuditNote n WHERE n.tenantId = :t AND n.resourceType = :rt AND n.resourceId = :rid ORDER BY n.createdAt", AuditNote::class.java)
+            .setParameter("t", tid).setParameter("rt", resourceType).setParameter("rid", resourceId).resultList.map(::noteDto)).build()
+    }
+
+    @POST
+    @Path("/notes")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Transactional
+    fun addComponentNote(body: Map<String, Any?>?): Response {
+        val user = currentUser() ?: return error(401, "Unauthorized")
+        val tid = runCatching { UUID.fromString(body?.get("tenantId") as? String) }.getOrNull() ?: return error(400, "Valid tenantId is required")
+        val type = (body?.get("resourceType") as? String)?.trim()?.takeIf { it.isNotEmpty() && it.length <= 128 }
+        val id = (body?.get("resourceId") as? String)?.trim()?.takeIf { it.isNotEmpty() && it.length <= 255 }
+        if (type == null || id == null) return error(400, "resourceType and resourceId are required")
+        noteAccess(user, tid, "audit.note:write")?.let { return it }
+        val text = noteText(body) ?: return error(400, "note is required (at most $NOTE_MAX characters)")
+        val note = AuditNote().apply { tenantId = tid; resourceType = type; resourceId = id; authorId = user.id; this.note = text }
+        em.persist(note)
+        audit.record(user.id, tid, "audit.note.added", type, id, mapOf("noteId" to note.id.toString()))
+        return Response.status(201).entity(noteDto(note)).build()
+    }
+
     /** RFC 4180 quoting; a leading formula character is defused so a spreadsheet does not run it. */
     private fun csv(value: String?): String {
         if (value == null) return ""
@@ -172,5 +274,6 @@ class AuditResource {
 
     companion object {
         const val EXPORT_MAX = 10_000
+        const val NOTE_MAX = 4_000
     }
 }
