@@ -1,8 +1,9 @@
-# Handoff: DataTurntable review and merge (state 2026-09-28)
+# Handoff: DataTurntable review and merge (state 2026-11-16)
 
 This document lets another assistant or developer continue the work without the chat history.
 
-> **Read this first.** **PR #2 (`claude/datahub-lakehouse-review-6tiaf5` → `dev`) merged.**
+> **Read this first.** The newest entry is **"Session 2026-11-16"** near the end; it says how to
+> run the tests locally and what was built last. **PR #2 (`claude/datahub-lakehouse-review-6tiaf5` → `dev`) merged.**
 > https://github.com/Liphip/datahub/pull/2 — that branch's job is done and it should not receive
 > further commits (a later commit landed on it by mistake after the merge; ignore that branch
 > entirely going forward). **Work is now happening directly on `dev`** per explicit owner
@@ -1594,15 +1595,77 @@ category), one confirming a cleanup that deletes nothing writes none. Both follo
 file's established patterns exactly (`QuarkusTransaction.requiringNew().run {}` around every DB
 read/write, JPQL entity loads rather than native-query column reads for text/CLOB-typed columns —
 `AuditServiceTest` already established that pattern for reading `AuditEvent.metadata` safely across
-H2/Postgres). **Verified via `mvn compile` and `mvn test-compile` only** (both exit 0) — this
-sandbox cannot execute Quarkus tests at all (JDK 21 vs. the required 25, see the earlier note in
-this document); CI is the first real test run these get. Not yet pushed as of this write-up — see
-whether the next commit's CI run is green before trusting this is correct.
+H2/Postgres). Verified at the time by `mvn compile`/`test-compile` only; since confirmed green by
+CI and by a local run (see the 2026-11-16 entry).
 
 **Deployment/backup audit events (the rest of AUD-01's gap) remain open** — `scripts/backup/backup.sh`
 and `scripts/backup/restore.sh` are standalone shell scripts outside the JVM/`AuditService`
 entirely; wiring them into the audit trail would need a different mechanism (e.g. the script POSTing
 to an internal endpoint) and wasn't started this session.
+
+## Session 2026-11-16: local tests work again; batch ingest, audit read side, DLQ view, next-run, ingest limits
+
+**Start here if you take over.** The newest state of `dev` is this entry.
+
+**Local verification is possible again.** The sandbox ships JDK 21 only, but a Temurin 25 JDK can be
+downloaded (`https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jdk/hotspot/normal/eclipse`,
+unpacked to `/opt/jdk25`; containers are ephemeral, so repeat it). With `JAVA_HOME` pointing there
+`mvn test` runs the whole backend suite: **388 tests, 0 failures, 22 skipped** (Docker/PostgreSQL
+gated). The frontend: `npm ci`, `npx tsc --noEmit`, `npm test` (41 tests), `npm run lint` (0 errors).
+For a browser pass without Docker: start the packaged PostgreSQL 16 (`pg_ctlcluster 16 main start`),
+create `dataturntable` and `pipeline_data`, generate keys with `scripts/dev/generate-dev-keys.sh`,
+run `java -Dquarkus.profile=dev -jar target/quarkus-app/quarkus-run.jar` with the JWT key and
+pipeline-data variables set, and `npx vite`. Kafka is absent in that setup: the UI and management
+API work, ingest answers from the spool, nothing is executed.
+
+**The retention audit event of the previous entry is confirmed**: CI run `36454004368` on `a731453`
+was green in every job except the known `DC_NVD_API_KEY` one.
+
+**Correction to an alarm raised in chat, not in this file:** `WarmContainerPool.spawn` opens the
+bridge network whenever requirements are present and never read `allow-network`. That looked like a
+bypass of the hostile-by-default rule, but `spawn(requirements)` has one caller, and it runs only
+after a successful ephemeral run — which cannot install requirements without a network under the
+default. So no networked warm container exists in the default configuration. The pool now checks
+`allow-network` itself (`needsNetwork`, covered by `DockerSandboxPolicyTest`) instead of depending
+on that ordering. MOD-05 proper (network for the install only, never for the run) is still open and
+needs the packages installed by a separate networked step into a volume the isolated container
+mounts, in both `DockerService.runContainer` and `WarmContainerPool.spawn`.
+
+**Built this session** (each with tests, all on `dev`):
+
+| Requirement | What | Where |
+|---|---|---|
+| IMP-01 | Batch ingest `POST /api/ingest/v1/ingest/{pipelineId}/batch`: one run per record, all-or-resend, per-record identity `deduplicateBy` or `<Idempotency-Key>:<index>` | `IngestResource`, `IngestBatchTest` |
+| IMP-14 | WebSocket session limit configurable (`…websocket.max-sessions-per-pipeline`); refusals counted in `dataturntable_ingest_rejected_total{reason}` | `WebSocketIngestResource`, `IngestRejections` |
+| AUD-07, AUD-08 | Audit search/filter/paging and CSV/JSON export (audited); new ability `audit:read`; Tenant Admin template carries it | `AuditResource`, `AuditResourceTest` |
+| AUD-07, PIP-13 (UI) | `/audit` page: filters, details, export; platform administrators get the installation-wide scope and a read-only dead-letter tab | `pages/Audit.tsx`, `Audit.test.tsx` |
+| CON-13 | "Next poll/read" in the connector status, from the scheduler's own delay | `ConnectorPollingService.getPollingInfo` |
+| NFR-S3 | Warm pool obeys `allow-network` (see above) | `WarmContainerPool.needsNetwork` |
+
+The Audit page was exercised in a real browser against the local stack described above: login,
+list, details, CSV download, dead-letter tab. Not exercised there: the installation-wide scope
+switch (covered by the page test only) and a non-admin `audit:read` user (covered by
+`AuditResourceTest` on the API side).
+
+**Known limits of what was built — do not read "Done" into these:**
+- Existing tenants' Tenant Admin roles do not gain `audit:read` retroactively; only newly created
+  tenants get it. Superadmins are unaffected. There is no migration for this.
+- The audit export is capped at 10,000 records and loads them in memory.
+- The audit text search is a `LIKE` over action, target and metadata — fine for thousands of
+  records, not indexed for millions.
+- A batch shares the 1 MB request limit, so "1000 records" is only reachable with small records.
+- Last-run/next-run state lives in the memory of the instance that owns the connector lease.
+- The HTTP-layer `413` for an oversized body is not in the rejection counter (IMP-14 stays Partial).
+
+**What "finish the implementation" still means.** Appendix A of the requirements specification is
+the list. The large open blocks are unchanged and none of them fits one session or this sandbox:
+the lakehouse (LAK-01–12, STR-03/04/05, EXP-05/06), identity (IAM-03–13, API-08 OIDC, TEN-08),
+the rest of audit (AUD-02–06: snapshots, same-transaction writes, hash chain, notes; AUD-09),
+operations from the UI and Helm (OPS-01–06, NFR-S1), throughput (PIP-15 micro-batches, MOD-03
+Kubernetes workers, TEN-10 quotas, NFR-P1/P2 benchmark), and everything marked "not on a cluster".
+Smaller items that can be built and tested here next: IAM-05 (immutable built-in roles, clone,
+disable), MOD-16 (record which model version a run read), UI-20 (hard-coded editor labels),
+AUD-06 notes, TEN-10 per-tenant ingest quota on top of `IngestRateLimiter`.
 
 ## Sources used
 

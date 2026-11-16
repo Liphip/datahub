@@ -74,6 +74,12 @@ Idempotency-Key: 70B3D57ED0000001|2026-07-01T12:00:00Z
   need to wait for, poll or retry anything (fire-and-forget).
 - With an `Idempotency-Key` (or `deduplicateBy` fields on the IMPORT node) the record is processed
   exactly once, also when the sender repeats it.
+- `POST /api/ingest/v1/ingest/{pipelineId}/batch` takes a JSON array of records and queues one run
+  per record (at most `dataturntable.ingest.batch-max-records`, default 1000, and 1 MB per request).
+  `202` means every record is stored; `503` means at least one is not — send the whole batch again.
+  A record's identity is its `deduplicateBy` key, or `<Idempotency-Key>:<position>` when the header
+  is sent, so records the first attempt already queued are not processed twice. Records without
+  either can repeat on a resend.
 - `POST /api/ingest/v1/ingest/connector/{connectorId}` feeds every active pipeline that uses the
   INPUT connector.
 - WebSocket: `ws(s)://host/api/ingest/v1/ws/{pipelineId}?apiKey=dt_…`, one JSON record per frame;
@@ -135,3 +141,21 @@ Paginated lists return
 ```
 
 with `?page=` and `?limit=` query parameters. The metadata object list returns `{ "total", "items" }`.
+
+## Audit trail (AUD-07, AUD-08)
+
+```http
+GET /api/internal/v1/audit?tenantId={id}&from=2026-07-01T00:00:00Z&action=connector.*&q=sftp&limit=50&offset=0
+Authorization: Bearer …
+```
+
+Filters: `from`/`to` (ISO-8601 instants), `actorId`, `action` (exact, or a prefix ending in `*`),
+`resourceType`, `resourceId`, `outcome`, `q` (text in action, target and metadata). The answer is
+`{ total, limit, offset, items }`, newest first. `GET /api/internal/v1/audit/export?format=csv|json`
+returns the same selection as a download (at most 10,000 records) and is recorded as
+`audit.exported`.
+
+With `tenantId` the caller needs `audit:read` and access to that tenant. Without it the whole
+installation is searched, including records that belong to no tenant (failed logins, retention
+runs); that needs a platform administrator. The built-in Tenant Admin role of tenants created from
+now on carries `audit:read`; add it to the role of existing tenants in the role editor.

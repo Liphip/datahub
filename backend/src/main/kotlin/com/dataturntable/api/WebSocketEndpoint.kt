@@ -74,6 +74,7 @@ class WebSocketEndpoint {
         }
         val fingerprint = session.userProperties["ingestCredentialFingerprint"] as? String
         if (message.length > 64 * 1024 || !withinRateLimit(session) || !ingestRateLimiter.tryAcquireFingerprint(fingerprint)) {
+            IngestRejections.count("websocket_message_limit")
             session.close(CloseReason(CloseReason.CloseCodes.VIOLATED_POLICY, "Message limit exceeded"))
             return
         }

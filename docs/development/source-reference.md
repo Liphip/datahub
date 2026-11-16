@@ -79,7 +79,9 @@ reference; add a new route there in the same change as its handler.
 | `api/TransientFailureMapper.kt` | Maps lost database connections to `503` + `Retry-After` and constraint violations (SQLState 23xxx) to `409`/`400`. |
 | `api/ApiKeyResource.kt` | Creates (shown once), lists and revokes ingest API keys (`secret:manage`). |
 | `api/AuthorizationResource.kt` | `GET /authorization/explain`: why a user has or lacks a permission (IAM-15). |
-| `api/EventDlqResource.kt` | Lists and retries dead-lettered pipeline messages (PIP-13). |
+| `api/EventDlqResource.kt` | Lists dead-lettered pipeline messages, platform administrators only; no requeue (PIP-13). |
+| `api/AuditResource.kt` | Audit trail search, filter and CSV/JSON export under `audit:read` (AUD-07, AUD-08). |
+| `api/IngestRejections.kt` | Counter for records and connections the ingest endpoints refuse (IMP-14). |
 | `api/ExecutionResource.kt` | Submits, reads and cancels module executions through the execution service. |
 | `api/MetadataResource.kt` | Metadata types, objects, upsert, CSV import, resolve and template installation (`metadata:read`/`metadata:write`). |
 | `api/SecretResource.kt` | Creates and rotates secrets; exposes references only, values are write-only. |
@@ -207,6 +209,7 @@ reference; add a new route there in the same change as its handler.
 | `pages/Tenants.tsx` | Tenant hierarchy, tenant settings, roles, and governance UI. |
 | `vite-env.d.ts` | Vite environment type declarations. |
 | `pages/ApiKeys.tsx` | Ingest API keys: create (key shown once), grants, last use, revoke. |
+| `pages/Audit.tsx` | Audit trail: filters, paging, details, CSV/JSON export; dead-letter view for platform administrators. |
 | `pages/Metadata.tsx` | Metadata types, objects, as-of view, CSV import, templates. |
 | `components/AlertRuleForm.tsx`, `lib/alertRules.ts` | Built-in alert rule configuration of ALERT nodes. |
 | `components/MetadataNodeForms.tsx`, `lib/metadataNodes.ts` | Enrich / Save-to-metadata node forms and their validation. |

@@ -717,14 +717,14 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 
 | ID | Change | Reason for change | Status |
 | -- | ------ | ----------------- | ------ |
-| IMP-01 | ~ | Path follows the implemented API layout (`/api/ingest/v1/`); batch form added for throughput (NFR-P1). | Partial (no batch form) |
+| IMP-01 | ~ | Path follows the implemented API layout (`/api/ingest/v1/`); batch form added for throughput (NFR-P1). | Done (single record and batch form `…/ingest/{pipelineId}/batch`, one run per record, all-or-resend; the 1 MB body limit applies to a batch as well) |
 | IMP-02 | = | | Done |
 | IMP-03 | = | | Done |
 | IMP-04 | = | | Open (UDP output exists, no listener) |
 | IMP-05 | ~ | The platform fetches via connectors and the module parses (security: no credentials in containers, CON-05). | Done |
 | IMP-06 – IMP-08 | = | | Done |
 | IMP-09 | + | Ingestion was unauthenticated (security review). | Done (API keys per pipeline/connector, SHA-256 stored, shown once, expiry, revocation, UI page `/api-keys`) |
-| IMP-14 | + | Ingest protections (former FR-007). | Partial (1 MB body limit `413`, per-key rate limit `429` — off by default, WebSocket idle reaper; no connection-count limit) |
+| IMP-14 | + | Ingest protections (former FR-007). | Partial (1 MB body limit `413`, per-key rate limit `429` — off by default, WebSocket idle reaper, message size/rate limit and a configurable per-pipeline session limit; refusals are counted in `dataturntable_ingest_rejected_total{reason}`, except the body-size `413`, which the HTTP layer rejects before the application sees it) |
 | IMP-10 – IMP-13 | + | Fire-and-forget for every input, platform-owned pull inputs, per-connector item ledger, and no unstructured storage (decision of 2026-09-27). | Partial (FILE/FTP/SFTP/EMAIL poller, ledger and retry API done; UI forms done; EMail/FTP/SFTP sources usable) |
 | PIP-01, PIP-02 | = | | Done |
 | PIP-03 | ~ | Fan-in is implemented by the dedicated MERGE node type. | Done |
@@ -734,7 +734,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | PIP-09, PIP-10 | ~ | Exactly once for identified records (decision of 2026-09-27). | Done |
 | PIP-11 | = | | Done |
 | PIP-12 | + | Needed for NFR-P1. | Partial (keyed partitions, parallel consumers; no micro-batches, CPU-based autoscaling) |
-| PIP-13 | + | DLQ was described in the functional spec only. | Partial (DLQ topic and a read-only listing API, `GET /api/internal/v1/events/dlq`; **no retry endpoint exists yet** — a naive one would be unsafe, since the stored payload is redacted before persistence, see the functional spec §4.9 implementation note — and no inspection UI) |
+| PIP-13 | + | DLQ was described in the functional spec only. | Partial (DLQ topic, read-only listing API `GET /api/internal/v1/events/dlq` and a platform-administrator inspection view in the UI; **no requeue** — the stored payload is redacted before persistence, so replaying it would resubmit masked data; requeue needs the raw payload kept under access control first) |
 | PIP-14 | + | Exactly-once delivery. | Done (verified with broker, executor and database failures) |
 | PIP-15 | + | Per-record runs cannot reach NFR-P1 (review 2026-09-27). | Open |
 | PIP-16 | + | Former FR-009. | Done (`PipelineVersion`; runs pinned to the version) |
@@ -776,7 +776,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | CON-05 | ~ | Credentials are no longer injected into containers. | Done |
 | CON-06 – CON-08 | = | | Done |
 | CON-09 – CON-12 | + | Persona model: IT provisions connections, departments use them. | Open |
-| CON-13 – CON-16 | + | Polling controls, per-type configuration forms, `minAge` guard and post-read action for pull inputs (decision of 2026-09-27). | Partial (sources, ledger, retry and UI forms done; no last-run/next-run display) |
+| CON-13 – CON-16 | + | Polling controls, per-type configuration forms, `minAge` guard and post-read action for pull inputs (decision of 2026-09-27). | Done for single-node (sources, ledger, retry, UI forms, last-run and next-run in the connector status; the last-run state is held in memory by the instance that owns the connector lease and starts empty after a failover) |
 | CON-17 | + | Former FR-017. | Done (`ConnectorRevision`) |
 | CON-18 | + | Former FR-019. | Done (inline credentials rejected; UI stores them as secrets) |
 | STR-01 | = | | Partial (the TimescaleDB image is shipped, but pipeline tables are plain PostgreSQL tables: no hypertables, compression or continuous aggregates) |
@@ -822,8 +822,11 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | IAM-03, IAM-04, IAM-06 – IAM-13 | + | Scopes, time-bounded assignments, OIDC, auth proxy, sessions. | Open |
 | IAM-14 | + | Former FR-004. | Done (authorization version in the token; changes invalidate sessions) |
 | IAM-15 | + | Former FR-002/FR-027. | Partial (explanation API `AuthorizationResource`; used in the Users page) |
-| AUD-01 | + | Paper-trail requirement (extends NFR-S5). | Partial (create/update/delete of pipelines, connectors, tenants, users, memberships, roles, secrets, API keys, alert channels; run trigger/cancel/retry; login success/failure; no deployment/backup/retention events) |
-| AUD-02 – AUD-10 | + | | Open (`audit_events` table without read API, UI, hash chain or notes) |
+| AUD-01 | + | Paper-trail requirement (extends NFR-S5). | Partial (create/update/delete of pipelines, connectors, tenants, users, memberships, roles, secrets, API keys, alert channels; run trigger/cancel/retry; login success/failure; retention deletions; no deployment/backup events) |
+| AUD-02 – AUD-06 | + | | Open (records are written by `AuditService`; no system-scope data-access auditing, no actor/target snapshots, not in the same transaction everywhere, no hash chain, no notes) |
+| AUD-07 | + | | Partial (`GET /api/internal/v1/audit`: time range, actor, action, target, tenant, outcome, full text, paging; CSV/JSON export that is itself audited; UI page `/audit`; no saved filters, no filter by source) |
+| AUD-08 | + | | Done (`audit:read` within a tenant; the installation-wide view needs a platform administrator) |
+| AUD-09, AUD-10 | + | | Open (installation-wide retention days exist, see OPS-07/STR-07; no minimum, no archive to the lakehouse, no forwarding) |
 | OPS-01 – OPS-06 | + | System administrator persona. | Open |
 | OPS-07 | + | Run history grows by one row per record (review 2026-09-27). | Done (`RetentionCleanupService` deletes by age and folds each deleted run into `pipeline_run_hourly_stats` — counts per pipeline/hour/status — first; `GET /api/internal/v1/pipelines/runs/hourly-stats`) |
 | MET-01 – MET-10 | + | New requirements group: a metadata component per device, datapoint, endpoint and location that enriches pipelines (decision of 2026-09-27). | Done (types, templates, as-of versioning, enrich/export node types, `/metadata` UI) |

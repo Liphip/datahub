@@ -793,7 +793,7 @@ Permissions are product-defined names of the form `resource:action`; each corres
 | `tenant:manage` | Child tenants, memberships, roles |
 | `*` | All permissions (built-in Superadmin template) |
 
-Planned additions: `system.config:read`, `system.config:write`, `system.deployment:write`, `system.monitoring:read`, `system.roles:manage`, `connection:*`, `audit:read`, `audit.note:write`, `module.network:grant`.
+Planned additions: `system.config:read`, `system.config:write`, `system.deployment:write`, `system.monitoring:read`, `system.roles:manage`, `connection:*`, `audit.note:write`, `module.network:grant`.
 
 Roles, their permissions and assignments are defined per installation (IAM-02); built-in templates are immutable, inspectable, clonable and disableable (IAM-05 – IAM-07). Assignments have a scope (system or tenant subtree) and an optional validity period; permissions are evaluated on each request (IAM-04). Nobody can grant permissions they do not hold; the last system administrator cannot be removed (IAM-08).
 
@@ -851,7 +851,8 @@ Roles, their permissions and assignments are defined per installation (IAM-02); 
 | GET/POST/PATCH/DELETE | `/api/v1/alerts/channels[/{id}]` | Alert channels |
 | GET | `/api/v1/alerts/history` | Alert history (`?tenantId=&limit=`) |
 | GET | `/api/v1/monitoring/...` | Pipeline and platform monitoring |
-| GET | `/api/v1/audit`, `/api/v1/audit/{target}` | Audit trail (target) |
+| GET | `/api/internal/v1/audit`, `/api/internal/v1/audit/export?format=csv\|json` | Audit trail: search, filter, page; export (itself audited). Needs `audit:read` in the tenant, or a platform administrator without `tenantId` |
+| GET | `/api/v1/audit/{target}` | Audit trail of one component (target) |
 | POST | `/api/v1/audit/{eventId}/notes`, `/api/v1/audit/notes` | Notes (target) |
 | GET | `/q/health`, `/q/metrics` | Health and Prometheus metrics |
 
@@ -859,7 +860,8 @@ Roles, their permissions and assignments are defined per installation (IAM-02); 
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |
-| POST | `/api/ingest/v1/ingest/{pipelineId}` | Push data into a pipeline (JSON object or array) |
+| POST | `/api/ingest/v1/ingest/{pipelineId}` | Push one record (JSON object) into a pipeline |
+| POST | `/api/ingest/v1/ingest/{pipelineId}/batch` | Push a JSON array of records; one run per record, `202` only if all are stored, otherwise `503` and the batch is resent (identified records do not run twice) |
 | POST | `/api/ingest/v1/ingest/connector/{connectorId}` | Push data into all pipelines using an INPUT connector |
 
 `202` means the record is stored durably; `503` with `Retry-After` means it is not and must be resent (§4.9). `Idempotency-Key` makes resends safe: the same key yields the same `runId` and one execution. The optional header `X-Partition-Key` spreads one pipeline's load over all executors while keeping the order per key.
@@ -918,7 +920,7 @@ Rate limiting is planned for V2 (API-09); the default will be 100 requests per m
 /dashboards                — Embedded Grafana (tenant dashboards)                      [target]
 /alerts                    — Alert channels and history
 /tenants, /users           — Tenants, members, role assignments
-/audit                     — Audit trail search                                        [target]
+/audit                     — Audit trail search, export; dead letters (platform admin)
 /system                    — System area: health, upgrades, backups, connections,
                              role templates, identity providers, system monitoring    [target]
 /docs                      — User and administrator documentation                      [target]
