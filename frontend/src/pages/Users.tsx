@@ -380,6 +380,34 @@ export default function Users() {
   /**
    * Processes the named request, event, or operation.
    */
+  const roleError = (err: unknown, fallback: string) =>
+    (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? fallback;
+
+  /** IAM-05: a built-in role cannot be edited; cloning gives an editable copy. */
+  const handleCloneRole = async (role: Role) => {
+    if (!tenantId) return;
+    const name = window.prompt(t('users.roleCloneName'), t('users.roleCloneDefault', { name: role.name }));
+    if (!name?.trim()) return;
+    try {
+      await api.cloneRole(role.id, name.trim());
+      await loadData(tenantId);
+      showToast(t('users.roleCloned'), 'success');
+    } catch (err) {
+      showToast(roleError(err, t('common.saveFailed')), 'error');
+    }
+  };
+
+  const handleToggleRole = async (role: Role) => {
+    if (!tenantId) return;
+    if (!role.isDisabled && !window.confirm(t('users.roleDisableConfirm', { name: role.name }))) return;
+    try {
+      await api.updateRole(role.id, { isDisabled: !role.isDisabled });
+      await loadData(tenantId);
+    } catch (err) {
+      showToast(roleError(err, t('common.saveFailed')), 'error');
+    }
+  };
+
   const handleDeleteRole = async (roleId: string) => {
     if (!canManageTenant) {
       showToast(t('users.permissionUpdateMemberships'), 'error');
@@ -709,7 +737,10 @@ export default function Users() {
                           <span className="px-2 py-0.5 text-xs rounded-sm bg-blue-100 text-blue-800">Default</span>
                         )}
                         {role.isSystem && (
-                          <span className="px-2 py-0.5 text-xs rounded-sm bg-gray-200 text-gray-700">System</span>
+                          <span className="px-2 py-0.5 text-xs rounded-sm bg-gray-200 text-gray-700">{t('users.roleBuiltIn')}</span>
+                        )}
+                        {role.isDisabled && (
+                          <span className="px-2 py-0.5 text-xs rounded-sm bg-amber-100 text-amber-800">{t('users.roleDisabled')}</span>
                         )}
                       </div>
                       {role.description && (
@@ -726,11 +757,17 @@ export default function Users() {
                     </div>
                     {canManageTenant && (
                       <div className="flex items-center gap-2 ml-4 shrink-0">
+                        <button onClick={() => handleCloneRole(role)} className="text-sm text-blue-600 hover:text-blue-800">
+                          {t('users.roleClone')}
+                        </button>
+                        <button onClick={() => handleToggleRole(role)} className="text-sm text-amber-700 hover:text-amber-900">
+                          {role.isDisabled ? t('common.enable') : t('common.disable')}
+                        </button>
                         <button
                           onClick={() => openEditRole(role)}
                           disabled={role.isSystem}
                           className="text-sm text-blue-600 hover:text-blue-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                          title={role.isSystem ? 'System roles cannot be edited' : undefined}
+                          title={role.isSystem ? t('users.roleBuiltInHint') : undefined}
                         >
                           {t('common.edit')}
                         </button>
@@ -756,7 +793,7 @@ export default function Users() {
                             onClick={() => setConfirmDeleteRoleId(role.id)}
                             disabled={role.isSystem}
                             className="text-sm text-red-600 hover:text-red-800 disabled:opacity-40 disabled:cursor-not-allowed"
-                            title={role.isSystem ? 'System roles cannot be deleted' : undefined}
+                            title={role.isSystem ? t('users.roleBuiltInHint') : undefined}
                           >
                             {t('common.delete')}
                           </button>

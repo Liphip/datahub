@@ -840,7 +840,15 @@
     "failedUpdateRole": "Failed to update role",
     "failedRemoveMembership": "Failed to remove membership",
     "failedUpdateStatus": "Failed to update user status",
-    "noRolesFoundFirst": "No roles found — create a role first."
+    "noRolesFoundFirst": "No roles found — create a role first.",
+    "roleBuiltIn": "Built-in",
+    "roleDisabled": "Disabled",
+    "roleBuiltInHint": "Built-in roles cannot be changed. Clone the role to adapt it.",
+    "roleClone": "Clone",
+    "roleCloneName": "Name of the new role",
+    "roleCloneDefault": "{{name}} (copy)",
+    "roleCloned": "Role cloned",
+    "roleDisableConfirm": "Disable the role \"{{name}}\"? Members who hold it lose its permissions until it is enabled again."
   },
   "tenants": {
     "title": "Tenants",

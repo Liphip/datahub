@@ -540,6 +540,8 @@ export interface Role {
   abilities: string[];
   isDefault: boolean;
   isSystem: boolean;
+  /** A disabled role grants nothing and cannot be assigned (IAM-05). */
+  isDisabled?: boolean;
   createdAt: string;
 }
 

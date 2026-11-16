@@ -840,7 +840,15 @@
     "failedUpdateRole": "Rolle konnte nicht aktualisiert werden",
     "failedRemoveMembership": "Mitgliedschaft konnte nicht entfernt werden",
     "failedUpdateStatus": "Benutzerstatus konnte nicht aktualisiert werden",
-    "noRolesFoundFirst": "Keine Rollen gefunden — erstellen Sie zuerst eine Rolle."
+    "noRolesFoundFirst": "Keine Rollen gefunden — erstellen Sie zuerst eine Rolle.",
+    "roleBuiltIn": "Vorgegeben",
+    "roleDisabled": "Deaktiviert",
+    "roleBuiltInHint": "Vorgegebene Rollen können nicht geändert werden. Klonen Sie die Rolle, um sie anzupassen.",
+    "roleClone": "Klonen",
+    "roleCloneName": "Name der neuen Rolle",
+    "roleCloneDefault": "{{name}} (Kopie)",
+    "roleCloned": "Rolle geklont",
+    "roleDisableConfirm": "Rolle „{{name}}“ deaktivieren? Mitglieder mit dieser Rolle verlieren deren Berechtigungen, bis sie wieder aktiviert wird."
   },
   "tenants": {
     "title": "Mandanten",

@@ -1027,6 +1027,11 @@ class ApiService {
   /**
    * Removes, stops, or releases the requested state.
    */
+  /** Copies a role (typically a built-in template) into a new editable role (IAM-05). */
+  async cloneRole(id: string, name?: string): Promise<Role> {
+    return (await this.client.post<Role>(`/roles/${id}/clone`, name ? { name } : {})).data;
+  }
+
   async deleteRole(id: string): Promise<void> {
     await this.client.delete(`/roles/${id}`);
   }
