@@ -24,6 +24,33 @@
     
     <dependencyManagement>
         <dependencies>
+            <!-- Security pins. They sit before the Quarkus BOM so they win over the versions it
+                 manages: the 3.39.5 platform still ships these with known HIGH CVEs
+                 (jackson CVE-2026-89407/89425/91776/91777, guava CVE-2026-102554,
+                 lz4-java CVE-2026-106451, snappy-java CVE-2026-108106/93451). Remove each pin
+                 once the platform version in use manages a fixed version itself. -->
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>2.22.3</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+                <version>33.7.2-jre</version>
+            </dependency>
+            <dependency>
+                <groupId>at.yawk.lz4</groupId>
+                <artifactId>lz4-java</artifactId>
+                <version>1.11.4</version>
+            </dependency>
+            <dependency>
+                <groupId>org.xerial.snappy</groupId>
+                <artifactId>snappy-java</artifactId>
+                <version>1.1.10.9</version>
+            </dependency>
             <dependency>
                 <groupId>io.quarkus.platform</groupId>
                 <artifactId>quarkus-bom</artifactId>

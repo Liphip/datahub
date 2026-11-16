@@ -39,7 +39,18 @@ class PipelineDirectory {
 
     fun get(pipelineId: UUID): Entry? {
         if (!loaded) refresh()
-        return entries[pipelineId] ?: loadOne(pipelineId)
+        val cached = entries[pipelineId] ?: return loadOne(pipelineId)
+        if (cached.active) return cached
+        // A cached "inactive" can be up to one refresh interval old, and acting on it refuses a
+        // record a fire-and-forget sender will not send again. So an inactive answer is confirmed
+        // against the database before it is given; the accept path still never touches it
+        // (NFR-R6), and if the database is down the cached view stands.
+        return try {
+            loadOne(pipelineId)
+        } catch (e: Exception) {
+            log.debugf("Could not confirm inactive pipeline %s, keeping the cached view: %s", pipelineId, e.message)
+            cached
+        }
     }
 
     /** Active pipelines with an IMPORT node reading from [connectorId]. */

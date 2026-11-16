@@ -23,6 +23,32 @@ class IngestBatchTest {
             .post("/api/internal/v1/tenants").then().statusCode(201).extract().jsonPath().getString("id")
     }
 
+    @jakarta.inject.Inject
+    lateinit var directory: com.dataturntable.engine.PipelineDirectory
+
+    /**
+     * Regression for a CI failure: the periodic directory refresh cached a pipeline as inactive
+     * moments before it was activated, and ingest refused records for up to one refresh interval.
+     * A fire-and-forget sender does not resend a refused record.
+     */
+    @Test
+    fun `a pipeline accepts records immediately after activation even when the directory cached it as inactive`() {
+        val tenantId = tenant()
+        api().post("/api/internal/v1/metadata/templates/iot/install?tenantId=$tenantId").then().statusCode(200)
+        val id = api().body(mapOf("name" to "Late ${UUID.randomUUID()}", "graphDefinition" to mapOf(
+            "nodes" to listOf(mapOf("id" to "in", "type" to "IMPORT"), mapOf("id" to "save", "type" to "EXPORT",
+                "saveMetadata" to mapOf("type" to "device", "match" to mapOf("scheme" to "device_id", "field" to "devEUI")))),
+            "edges" to listOf(mapOf("source" to "in", "target" to "save")))))
+            .post("/api/internal/v1/pipelines?tenantId=$tenantId").then().statusCode(201).extract().jsonPath().getString("id")
+        val apiKey = key(tenantId, id)
+
+        directory.refresh() // what the scheduler does: the pipeline is now cached as inactive
+        batch(id, apiKey, listOf(mapOf("v" to 1))).then().statusCode(400)
+
+        api().body(mapOf("isActive" to true)).patch("/api/internal/v1/pipelines/$id").then().statusCode(200)
+        batch(id, apiKey, listOf(mapOf("v" to 1))).then().statusCode(202)
+    }
+
     private fun pipeline(tenantId: String): String {
         api().post("/api/internal/v1/metadata/templates/iot/install?tenantId=$tenantId").then().statusCode(200)
         val id = api().body(mapOf("name" to "Batch ${UUID.randomUUID()}", "graphDefinition" to mapOf(
