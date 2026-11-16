@@ -34,3 +34,16 @@ class ModelArtifact {
     @Column(name = "created_by_run_id") var createdByRunId: String? = null
     @Column(name = "created_at", nullable = false) var createdAt: Instant = Instant.now()
 }
+
+/** MOD-16: one row per (run, artifact version) the run's module actually loaded. */
+@Entity
+@Table(name = "model_artifact_reads", uniqueConstraints = [UniqueConstraint(columnNames = ["run_id", "module_id", "name", "version"])])
+class ModelArtifactRead {
+    @Id @GeneratedValue(strategy = GenerationType.UUID) var id: UUID? = null
+    @Column(name = "tenant_id", nullable = false) var tenantId: UUID? = null
+    @Column(name = "module_id", nullable = false) var moduleId: UUID? = null
+    @Column(nullable = false, length = 128) var name: String = ""
+    @Column(nullable = false) var version: Int = 0
+    @Column(name = "run_id", nullable = false, length = 64) var runId: String = ""
+    @Column(name = "read_at", nullable = false) var readAt: Instant = Instant.now()
+}

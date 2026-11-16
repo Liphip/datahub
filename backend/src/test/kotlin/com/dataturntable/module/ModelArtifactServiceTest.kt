@@ -71,4 +71,39 @@ class ModelArtifactServiceTest {
         assertEquals("MQ==", preloaded["a"])
         assertEquals("Mg==", preloaded["b"])
     }
+
+    @Inject lateinit var dockerService: com.dataturntable.engine.DockerService
+
+    /** MOD-16: the preload names the version of the data it hands out, and a run's reads are recorded once. */
+    @Test
+    fun `a run records the artifact version it used, once, and only what the module reported`() {
+        val moduleId = newModule()
+        val module = em.find(CodeModule::class.java, moduleId)
+        val tenantId = module.tenant!!.id!!
+        QuarkusTransaction.requiringNew().call { service.save(tenantId, moduleId, "forecast", "AQ==") }
+        QuarkusTransaction.requiringNew().call { service.save(tenantId, moduleId, "forecast", "Ag==") }
+        QuarkusTransaction.requiringNew().call { service.save(tenantId, moduleId, "spare", "Aw==") }
+
+        val preloaded = service.preload(moduleId)
+        assertEquals(mapOf("forecast" to 2, "spare" to 1), preloaded.versions)
+        assertEquals("Ag==", preloaded.artifacts["forecast"], "the data handed out is the version that is named")
+
+        val version = ModuleVersion().apply { this.module = module }
+        val runId = UUID.randomUUID().toString()
+        val stdout = "some module output\n__MODELS_READ__:{\"forecast\": 2}\n__RESULT__:{\"ok\": true}\n"
+        dockerService.recordModelReads(stdout, version, runId)
+        // The same run executed again (failover, redelivery) must not add a second row.
+        dockerService.recordModelReads(stdout, version, runId)
+
+        val reads = service.readsForRun(runId)
+        assertEquals(1, reads.size)
+        assertEquals("forecast", reads[0].name)
+        assertEquals(2, reads[0].version)
+
+        // Output without the marker, or with a broken one, records nothing and does not throw.
+        val quiet = UUID.randomUUID().toString()
+        dockerService.recordModelReads("__RESULT__:{}", version, quiet)
+        dockerService.recordModelReads("__MODELS_READ__:not json", version, quiet)
+        assertTrue(service.readsForRun(quiet).isEmpty())
+    }
 }

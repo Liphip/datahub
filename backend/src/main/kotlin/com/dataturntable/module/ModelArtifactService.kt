@@ -37,7 +37,7 @@ class ModelArtifactService {
      * on this instance invalidates its module's entry at once; other instances (and a save made
      * elsewhere) are picked up within [cacheSeconds] — the same instant-local/eventual-remote
      * pattern already used for ingest API keys ([com.dataturntable.security.IngestAuthorizationService]). */
-    private data class CacheEntry(val loadedAt: Instant, val artifacts: Map<String, String>)
+    private data class CacheEntry(val loadedAt: Instant, val artifacts: Map<String, String>, val versions: Map<String, Int>)
     private val cache = ConcurrentHashMap<UUID, CacheEntry>()
 
     /** Saves [base64Data] as the next version of [name] under [moduleId]; never overwrites. */
@@ -77,20 +77,50 @@ class ModelArtifactService {
      * preload into the container before it runs (MOD-18/19). Small in practice: a module manages
      * a handful of named artifacts (e.g. one per device class), not an open-ended set.
      */
-    fun preloadLatestForModule(moduleId: UUID): Map<String, String> {
+    fun preloadLatestForModule(moduleId: UUID): Map<String, String> = preload(moduleId).artifacts
+
+    /** What is handed to one execution: each name's data and the version that data is (MOD-16). */
+    data class Preloaded(val artifacts: Map<String, String>, val versions: Map<String, Int>)
+
+    /** Data and version numbers come from the same cache entry, so they always belong together. */
+    fun preload(moduleId: UUID): Preloaded {
         val ttl = cacheSeconds.toLongOrNull() ?: 60L
         cache[moduleId]?.let { entry ->
-            if (entry.loadedAt.isAfter(Instant.now().minusSeconds(ttl))) return entry.artifacts
+            if (entry.loadedAt.isAfter(Instant.now().minusSeconds(ttl))) return Preloaded(entry.artifacts, entry.versions)
         }
-        val fresh = em.createQuery(
+        val latest = em.createQuery(
             "SELECT a FROM ModelArtifact a WHERE a.moduleId = :m ORDER BY a.name, a.version DESC",
             ModelArtifact::class.java
-        ).setParameter("m", moduleId).resultList
-            .distinctBy { it.name }
-            .associate { it.name to EncryptionUtils.decrypt(it.dataEncrypted) }
-        cache[moduleId] = CacheEntry(Instant.now(), fresh)
-        return fresh
+        ).setParameter("m", moduleId).resultList.distinctBy { it.name }
+        val entry = CacheEntry(
+            Instant.now(),
+            latest.associate { it.name to EncryptionUtils.decrypt(it.dataEncrypted) },
+            latest.associate { it.name to it.version },
+        )
+        cache[moduleId] = entry
+        return Preloaded(entry.artifacts, entry.versions)
     }
+
+    /**
+     * MOD-16: records that [runId] used [version] of [name]. Idempotent, so a run that is
+     * executed again after a failover does not add a second row.
+     */
+    @Transactional
+    fun recordRead(tenantId: UUID, moduleId: UUID, name: String, version: Int, runId: String) {
+        val known = (em.createQuery(
+            "SELECT COUNT(r) FROM ModelArtifactRead r WHERE r.runId = :run AND r.moduleId = :m AND r.name = :n AND r.version = :v"
+        ).setParameter("run", runId).setParameter("m", moduleId).setParameter("n", name).setParameter("v", version)
+            .singleResult as Number).toLong() > 0
+        if (known) return
+        em.persist(ModelArtifactRead().apply {
+            this.tenantId = tenantId; this.moduleId = moduleId; this.name = name; this.version = version; this.runId = runId
+        })
+    }
+
+    /** The artifact versions [runId] used, by name. */
+    fun readsForRun(runId: String): List<ModelArtifactRead> =
+        em.createQuery("SELECT r FROM ModelArtifactRead r WHERE r.runId = :run ORDER BY r.name, r.version", ModelArtifactRead::class.java)
+            .setParameter("run", runId).resultList
 
     /** Every saved name under [moduleId] with its latest version, size and creation time (for a future UI). */
     fun listArtifacts(moduleId: UUID): List<ModelArtifact> =

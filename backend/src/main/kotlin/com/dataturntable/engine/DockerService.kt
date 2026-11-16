@@ -72,6 +72,10 @@ private data class RawContainerResult(
  */
 class DockerService {
 
+    private companion object {
+        const val MODELS_READ_PREFIX = "__MODELS_READ__:"
+    }
+
     private val LOG = Logger.getLogger(DockerService::class.java)
     private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
 
@@ -136,7 +140,7 @@ class DockerService {
             return try {
                 val output = runJobInWarmContainer(warm, scriptB64, envMap)
                 warmPool.release(warm, true)
-                val parsedResult = finishResult(parseResultPayload(output.stdout), moduleType, moduleVersion, runId)
+                val parsedResult = finishResult(parseResultPayload(output.stdout), moduleType, moduleVersion, runId, output.stdout)
                 ModuleExecutionOutput(parsedResult, output.stdout, output.stderr, output.exitCode, output.durationMs)
             } catch (e: ModuleExecutionException) {
                 warmPool.release(warm, false)
@@ -170,7 +174,7 @@ class DockerService {
                 }
             }
 
-            val parsedResult = finishResult(parseResultPayload(output.stdout), moduleType, moduleVersion, runId)
+            val parsedResult = finishResult(parseResultPayload(output.stdout), moduleType, moduleVersion, runId, output.stdout)
             ModuleExecutionOutput(parsedResult, output.stdout, output.stderr, output.exitCode, output.durationMs)
         } catch (e: ModuleExecutionException) {
             LOG.errorf("Module execution failed: %s", e.message)
@@ -253,8 +257,13 @@ class DockerService {
         // once before the container starts (there is no live channel back to a running module).
         if (moduleType == ModuleType.PROCESSING) {
             moduleVersion?.module?.id?.let { moduleId ->
-                val artifacts = modelArtifactService.preloadLatestForModule(moduleId)
-                if (artifacts.isNotEmpty()) map["MODEL_ARTIFACTS"] = objectMapper.writeValueAsString(artifacts)
+                val preloaded = modelArtifactService.preload(moduleId)
+                if (preloaded.artifacts.isNotEmpty()) {
+                    map["MODEL_ARTIFACTS"] = objectMapper.writeValueAsString(preloaded.artifacts)
+                    // MOD-16: the version travels with the data, so what a run reports as used
+                    // is exactly what it was given, whatever is saved in the meantime.
+                    map["MODEL_ARTIFACT_VERSIONS"] = objectMapper.writeValueAsString(preloaded.versions)
+                }
             }
         }
         return map
@@ -266,7 +275,8 @@ class DockerService {
      * `_DT_ALERTS` for the platform to dispatch afterward) and strips that key so it never
      * reaches the next pipeline node as ordinary output data.
      */
-    private fun finishResult(parsedResult: Any?, moduleType: ModuleType, moduleVersion: ModuleVersion, runId: String): Any? {
+    private fun finishResult(parsedResult: Any?, moduleType: ModuleType, moduleVersion: ModuleVersion, runId: String, stdout: String = ""): Any? {
+        if (moduleType == ModuleType.PROCESSING) recordModelReads(stdout, moduleVersion, runId)
         if (moduleType != ModuleType.PROCESSING || parsedResult !is Map<*, *>) return parsedResult
         val saved = parsedResult["_savedModels"] as? Map<*, *>
         val moduleId = moduleVersion.module?.id
@@ -283,6 +293,27 @@ class DockerService {
             }
         }
         return if (parsedResult.containsKey("_savedModels")) parsedResult.filterKeys { it != "_savedModels" } else parsedResult
+    }
+
+    /**
+     * MOD-16: the harness reports the models `load_model_fn` actually returned as
+     * `__MODELS_READ__:{"name": version}` on its own line, independent of what `process()`
+     * returns. Each is recorded against the run. A failure here never fails the run.
+     */
+    internal fun recordModelReads(stdout: String, moduleVersion: ModuleVersion, runId: String) {
+        val line = stdout.lineSequence().lastOrNull { it.startsWith(MODELS_READ_PREFIX) } ?: return
+        val moduleId = moduleVersion.module?.id ?: return
+        val tenantId = moduleVersion.module?.tenant?.id ?: return
+        try {
+            val reads = objectMapper.readValue(line.removePrefix(MODELS_READ_PREFIX).trim(), Map::class.java)
+            reads.forEach { (name, version) ->
+                val n = name?.toString() ?: return@forEach
+                val v = (version as? Number)?.toInt() ?: return@forEach
+                modelArtifactService.recordRead(tenantId, moduleId, n, v, runId)
+            }
+        } catch (e: Exception) {
+            LOG.warnf("Could not record model artifact reads for run %s: %s", runId, e.message)
+        }
     }
 
     /**
@@ -487,6 +518,7 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
             |
             |import base64, pickle
             |_DT_SAVED_MODELS = {}
+            |_DT_LOADED_MODELS = {}
             |
             |def _model_artifacts():
             |    try:
@@ -513,7 +545,15 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
             |    encoded = _model_artifacts().get(name)
             |    if encoded is None:
             |        return None
-            |    return pickle.loads(base64.b64decode(encoded))
+            |    model = pickle.loads(base64.b64decode(encoded))
+            |    # MOD-16: remember which version this run used; reported to the platform at the end.
+            |    try:
+            |        _version = json.loads(os.environ.get('MODEL_ARTIFACT_VERSIONS', '{}')).get(name)
+            |    except Exception:
+            |        _version = None
+            |    if _version is not None:
+            |        _DT_LOADED_MODELS[name] = _version
+            |    return model
             |
             |def _connector_meta():
             |    # Non-sensitive connector metadata (type, name, topic, etc.) for informational use only.
@@ -617,6 +657,8 @@ exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
                 |              f"{type(result).__name__}, not a dict — the model was NOT saved. "
                 |              f"Return a dict to save a model (functional spec, §5.6).", file=_dt_sys.stderr)
                 |_dt_sys.stdout.flush()
+                |if _DT_LOADED_MODELS:
+                |    print('__MODELS_READ__:' + json.dumps(_DT_LOADED_MODELS))
                 |print('__RESULT__:' + json.dumps(result))
             """.trimMargin()
 

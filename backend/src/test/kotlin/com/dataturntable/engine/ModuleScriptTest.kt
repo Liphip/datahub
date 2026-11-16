@@ -37,7 +37,7 @@ class ModuleScriptTest {
 
     private data class Run(val exitCode: Int, val output: String)
 
-    private fun exec(code: String, type: ModuleType, input: Any, moduleConfig: String? = null): Run {
+    private fun exec(code: String, type: ModuleType, input: Any, moduleConfig: String? = null, env: Map<String, String> = emptyMap()): Run {
         val script = String(Base64.getDecoder().decode(DockerService().buildModuleScript(code, type)))
         // Hand the script to python as a file, not as `python3 -c <script>`. On Windows the JVM has
         // to rebuild a command line, and the double quotes inside the generated script are mangled
@@ -52,6 +52,7 @@ class ModuleScriptTest {
                 .also { pb ->
                     pb.environment()["INPUT_DATA"] = objectMapper.writeValueAsString(input)
                     moduleConfig?.let { pb.environment()["MODULE_CONFIG"] = it }
+                    pb.environment().putAll(env)
                 }
                 .redirectErrorStream(true)
                 .start()
@@ -135,5 +136,37 @@ class ModuleScriptTest {
         val result = exec(code, ModuleType.PROCESSING, mapOf("value" to 1))
         assertTrue(result.exitCode != 0, "expected non-zero exit, got output:\n${result.output}")
         assertTrue(result.output.contains("Cannot instantiate ProcessingModule"), result.output)
+    }
+
+    /** MOD-16: only models `load_model_fn` actually returned are reported, with the version that was handed in. */
+    @Test
+    fun processingModuleReportsTheModelVersionsItLoaded() {
+        assumeTrue(pythonAvailable())
+        // base64(pickle.dumps(41)) and base64(pickle.dumps("unused")), produced by the same python.
+        fun pickled(expr: String): String {
+            val p = ProcessBuilder("python3", "-c", "import base64,pickle;print(base64.b64encode(pickle.dumps($expr)).decode())").start()
+            return p.inputStream.bufferedReader().readText().trim()
+        }
+        val env = mapOf(
+            "MODEL_ARTIFACTS" to objectMapper.writeValueAsString(mapOf("offset" to pickled("41"), "spare" to pickled("'unused'"))),
+            "MODEL_ARTIFACT_VERSIONS" to objectMapper.writeValueAsString(mapOf("offset" to 7, "spare" to 3)),
+        )
+        val code = """
+            class ProcessingModule:
+                def process(self, data, query_fn=None, save_model_fn=None, load_model_fn=None):
+                    missing = load_model_fn("never-saved")
+                    return {"value": data["value"] + load_model_fn("offset"), "missing": missing}
+        """.trimIndent()
+
+        val out = exec(code, ModuleType.PROCESSING, mapOf("value" to 1), env = env).output
+        val result = objectMapper.readValue(out.lines().last { it.startsWith("__RESULT__:") }.removePrefix("__RESULT__:"), Map::class.java)
+        assertEquals(42, result["value"])
+        assertEquals(null, result["missing"])
+        val reads = objectMapper.readValue(out.lines().single { it.startsWith("__MODELS_READ__:") }.removePrefix("__MODELS_READ__:"), Map::class.java)
+        assertEquals(mapOf("offset" to 7), reads, "the preloaded but unused model and the unknown name are not reported")
+
+        // A module that loads nothing reports nothing at all.
+        val plain = exec("class ProcessingModule:\n    def process(self, data):\n        return data", ModuleType.PROCESSING, mapOf("value" to 1), env = env).output
+        assertTrue(plain.lines().none { it.startsWith("__MODELS_READ__:") })
     }
 }

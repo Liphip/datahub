@@ -90,8 +90,12 @@ class PipelineDirectory {
             ?.let { runCatching { objectMapper.readValue(it, Map::class.java)["nodes"] as? List<*> }.getOrNull() }
             .orEmpty().filterIsInstance<Map<*, *>>()
             .filter { it["type"]?.toString()?.uppercase() == "IMPORT" }
-        val tenantQuota = p.tenant?.quota?.takeIf { it.isNotBlank() }
-            ?.let { runCatching { objectMapper.readValue(it, Map::class.java)["ingestRecordsPerMinute"] as? Number }.getOrNull() }
+        // One unreadable tenant (a dangling reference, broken quota JSON) must cost that pipeline
+        // its quota, never the whole refresh: every ingest request depends on this view.
+        val tenantQuota = runCatching {
+            p.tenant?.quota?.takeIf { it.isNotBlank() }
+                ?.let { objectMapper.readValue(it, Map::class.java)["ingestRecordsPerMinute"] as? Number }
+        }.getOrNull()
         return Entry(
             tenantIngestPerMinute = tenantQuota?.toInt(),
             id = p.id!!,
