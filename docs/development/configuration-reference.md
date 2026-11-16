@@ -47,6 +47,7 @@ defaults are convenient, not production secrets. Update this page in the same ch
 | `dataturntable.ingest.spool-drain-timeout` | `25s` | Time budget per drain attempt |
 | `dataturntable.ingest.batch-max-records` | `1000` | Most records one batch ingest request may carry (`413` beyond it). The 1 MB body limit applies as well. |
 | `dataturntable.ingest.websocket.max-sessions-per-pipeline` | `100` | Concurrent ingest WebSocket sessions one pipeline accepts; further ones are closed with "try again later". |
+| `dataturntable.ingest.tenant-rate-limit-per-minute` | `0` (off) | Default ingest quota per tenant in records per minute, all its credentials and protocols together (`429` + `Retry-After` beyond it). A tenant's own `ingestRecordsPerMinute` in its quota overrides it. Counted per ingest instance. |
 | `dataturntable.ingest.rate-limit-per-minute` | `0` (off) | Per-key ingest limit (`429` beyond it). Off by default: fire-and-forget senders do not retry, so a limit trades their data for overload protection |
 | `DATATURNTABLE_INGEST_WEBSOCKET_IDLE_TIMEOUT_MS` | `300000` | Idle WebSocket ingest sessions are closed after this time (IMP-14) |
 | `DATATURNTABLE_INGEST_WEBSOCKET_IDLE_REAP_INTERVAL` | `10s` | How often idle sessions are checked |

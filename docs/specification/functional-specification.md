@@ -793,7 +793,7 @@ Permissions are product-defined names of the form `resource:action`; each corres
 | `tenant:manage` | Child tenants, memberships, roles |
 | `*` | All permissions (built-in Superadmin template) |
 
-Planned additions: `system.config:read`, `system.config:write`, `system.deployment:write`, `system.monitoring:read`, `system.roles:manage`, `connection:*`, `audit.note:write`, `module.network:grant`.
+Planned additions: `system.config:read`, `system.config:write`, `system.deployment:write`, `system.monitoring:read`, `system.roles:manage`, `connection:*`, `module.network:grant`.
 
 Roles, their permissions and assignments are defined per installation (IAM-02); built-in templates are immutable, inspectable, clonable and disableable (IAM-05 – IAM-07). Assignments have a scope (system or tenant subtree) and an optional validity period; permissions are evaluated on each request (IAM-04). Nobody can grant permissions they do not hold; the last system administrator cannot be removed (IAM-08).
 
@@ -852,8 +852,10 @@ Roles, their permissions and assignments are defined per installation (IAM-02); 
 | GET | `/api/v1/alerts/history` | Alert history (`?tenantId=&limit=`) |
 | GET | `/api/v1/monitoring/...` | Pipeline and platform monitoring |
 | GET | `/api/internal/v1/audit`, `/api/internal/v1/audit/export?format=csv\|json` | Audit trail: search, filter, page; export (itself audited). Needs `audit:read` in the tenant, or a platform administrator without `tenantId` |
+| GET | `/api/internal/v1/audit/verify` | Recomputes the audit hash chain; platform administrator |
+| GET/POST | `/api/internal/v1/audit/{eventId}/notes`, `/api/internal/v1/audit/notes` | Immutable notes on a record or a component (`audit:read` / `audit.note:write`) |
+| POST | `/api/internal/v1/roles/{id}/clone` | Copies a role, typically a built-in template, into an editable one |
 | GET | `/api/v1/audit/{target}` | Audit trail of one component (target) |
-| POST | `/api/v1/audit/{eventId}/notes`, `/api/v1/audit/notes` | Notes (target) |
 | GET | `/q/health`, `/q/metrics` | Health and Prometheus metrics |
 
 ### 11.3 Ingestion API

@@ -751,7 +751,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | MOD-12, MOD-13 | + | Module config reaches the constructor; errors were previously swallowed. | Done |
 | MOD-14 | + | Former FR-008. | Done |
 | MOD-15 | + | Model artifact persistence (owner request 2026-09-28). | Partial (`ModelArtifact`/`ModelArtifactService`, `save_model_fn`/`load_model_fn` wired into `DockerService`'s Python harness; verified with a real Docker daemon: train-then-infer across two independent executions, and against real PostgreSQL. **Only half the requirement is met: artifacts are module-scoped, so "of the same module" works but "or a different one" does not — a different module gets an empty snapshot and must be told to share the module. Closing it means scoping lookups by tenant and name (keeping the producing module for provenance), which is an isolation decision, not a bug fix. Worked example: `docs/examples/model-forecast/`**) |
-| MOD-16 | + | Versioning and the STR-08 exception. | Partial (versioned, encrypted, opaque to the platform, exception recorded as DAT-10; a run does not yet log which version it read, only which version a save created) |
+| MOD-16 | + | Versioning and the STR-08 exception. | Done (versioned, encrypted, opaque to the platform, exception recorded as DAT-10; `model_artifact_reads` records per run which version `load_model_fn` returned; not shown in the UI yet) |
 | MOD-17 | + | Training pipeline. | Done |
 | MOD-18 | + | Inference pipeline, loaded once per worker. | Done (`ModelArtifactService` caches per module, invalidated at once on a local save; other instances pick up a save within `dataturntable.execution.model-artifact-cache-seconds`, default 60s — same instant-local/eventual-remote pattern as ingest API keys) |
 | MOD-19 | + | Hot-swap without a pipeline restart. | Done (verified: retraining under the same name and re-running inference picks up the new version) |
@@ -816,14 +816,16 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | TEN-06, TEN-07 | = | | Done |
 | TEN-08 | ~ | Replaced: system scope grants no implicit data access. | Open |
 | TEN-09 | = | | Done |
-| TEN-10 | + | Noisy-neighbour protection for NFR-P1. | Open |
+| TEN-10 | + | Noisy-neighbour protection for NFR-P1. | Partial (per-tenant ingest quota in records per minute — the tenant's own `ingestRecordsPerMinute` or the installation default — over HTTP, batch and WebSocket, `429` + `Retry-After`; counted per ingest instance, not across replicas; no payload-size quota per tenant; nothing yet for fairness in processing) |
 | IAM-01, IAM-02 | + | Persona and permission model; exact-token matching (former FR-001). | Partial (one naming style, exact-token evaluation; roles editable per tenant) |
-| IAM-05 | + | Role templates. | Partial (roles seeded; not immutable, no clone/disable) |
+| IAM-05 | + | Role templates. | Partial (Viewer, Editor and Tenant Admin of a new tenant are marked built-in, cannot be edited or deleted, and can be inspected, cloned and disabled; a disabled role grants nothing and cannot be assigned. Roles of tenants created before this stay editable. The system-scope templates — System Operator, Config Auditor, Cross-Tenant Data Analyst — do not exist, see TEN-05) |
 | IAM-03, IAM-04, IAM-06 – IAM-13 | + | Scopes, time-bounded assignments, OIDC, auth proxy, sessions. | Open |
 | IAM-14 | + | Former FR-004. | Done (authorization version in the token; changes invalidate sessions) |
 | IAM-15 | + | Former FR-002/FR-027. | Partial (explanation API `AuthorizationResource`; used in the Users page) |
 | AUD-01 | + | Paper-trail requirement (extends NFR-S5). | Partial (create/update/delete of pipelines, connectors, tenants, users, memberships, roles, secrets, API keys, alert channels; run trigger/cancel/retry; login success/failure; retention deletions; no deployment/backup events) |
-| AUD-02 – AUD-06 | + | | Open (records are written by `AuditService`; no system-scope data-access auditing, no actor/target snapshots, not in the same transaction everywhere, no hash chain, no notes) |
+| AUD-02 – AUD-04 | + | | Open (records are written by `AuditService`, in the caller's transaction where there is one; no system-scope data-access auditing, no actor/target name snapshots, IP address or user agent, no intent/outcome pair for actions outside the database) |
+| AUD-05 | + | | Partial (hash chain over all records with `GET /api/internal/v1/audit/verify` and a "Verify chain" action in the UI; PostgreSQL refuses `UPDATE` on `audit_events`. A database superuser can still drop the trigger and rewrite the chain from the tampered record on; an external anchor for the head hash is not built. Records older than the chain are reported as unchained) |
+| AUD-06 | + | | Partial (immutable notes on an audit record and standalone on a component, `audit.note:write`, audited; shown and added in the audit page. No Activity tab on the component pages yet, UI-17) |
 | AUD-07 | + | | Partial (`GET /api/internal/v1/audit`: time range, actor, action, target, tenant, outcome, full text, paging; CSV/JSON export that is itself audited; UI page `/audit`; no saved filters, no filter by source) |
 | AUD-08 | + | | Done (`audit:read` within a tenant; the installation-wide view needs a platform administrator) |
 | AUD-09, AUD-10 | + | | Open (installation-wide retention days exist, see OPS-07/STR-07; no minimum, no archive to the lakehouse, no forwarding) |

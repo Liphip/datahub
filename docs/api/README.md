@@ -159,3 +159,18 @@ With `tenantId` the caller needs `audit:read` and access to that tenant. Without
 installation is searched, including records that belong to no tenant (failed logins, retention
 runs); that needs a platform administrator. The built-in Tenant Admin role of tenants created from
 now on carries `audit:read`; add it to the role of existing tenants in the role editor.
+
+`GET /api/internal/v1/audit/verify` (platform administrator) recomputes the hash chain that links
+every audit record to the one before it and answers `{ intact, checked, unchained, brokenAtSeq,
+problem }`. Notes: `POST /api/internal/v1/audit/{eventId}/notes` with `{ "note": "…" }` attaches a
+note to a record, `POST /api/internal/v1/audit/notes` with `tenantId`, `resourceType`, `resourceId`
+and `note` adds one to a component's timeline; both need `audit.note:write`. Notes cannot be
+changed or deleted.
+
+## Tenant ingest quota (TEN-10)
+
+Set `ingestRecordsPerMinute` in a tenant's quota (`PATCH /api/internal/v1/tenants/{id}` with
+`{"quota": "{\"ingestRecordsPerMinute\": 6000}"}`), or an installation default with
+`dataturntable.ingest.tenant-rate-limit-per-minute`. Beyond it ingest answers `429` with
+`Retry-After`; a batch is accepted or refused as a whole. A changed quota takes effect within the
+pipeline directory refresh interval (10 s by default).

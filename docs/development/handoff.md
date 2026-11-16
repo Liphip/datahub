@@ -1667,6 +1667,58 @@ Smaller items that can be built and tested here next: IAM-05 (immutable built-in
 disable), MOD-16 (record which model version a run read), UI-20 (hard-coded editor labels),
 AUD-06 notes, TEN-10 per-tenant ingest quota on top of `IngestRateLimiter`.
 
+## Session 2026-11-16 (continued): CI repaired; role templates, audit chain and notes, tenant quota, model reads
+
+**The push before this one (`2fa00ce`) was red in CI for two real reasons, both fixed:**
+- `ApiKeyResourceTest` got `400` instead of `202`. Not a test problem: `PipelineDirectory` answered
+  from a cached "inactive" entry for up to one refresh interval after a pipeline was activated, so
+  ingest refused records — and a fire-and-forget sender does not resend. An inactive answer is now
+  confirmed against the database before it is given (the accept path still never touches it).
+  Regression test in `IngestBatchTest`, shown to fail without the fix.
+- The image scan found eight HIGH CVEs published since September in jars the Quarkus 3.39.5 BOM
+  manages (jackson 2.22.2, guava 33.6.0, lz4-java 1.11.1, snappy-java 1.1.10.8). Pinned to the
+  fixed versions ahead of the BOM in `backend/pom.xml`; remove a pin when the platform catches up.
+  **This will recur**: a scan that gates on newly published CVEs turns red without any code change.
+
+**Built this session** (all with tests; backend suite 400 tests, 0 failures, 22 skipped):
+
+| Requirement | What | Where |
+|---|---|---|
+| IAM-05 | Built-in roles marked, immutable, `POST /roles/{id}/clone`, `PATCH {isDisabled}`; UI buttons | `RoleResource`, `Role`, `V2__role_disabled.sql`, `RoleTemplateTest` |
+| AUD-05 | Hash chain, `GET /audit/verify`, update refused by a PostgreSQL trigger; UI "Verify chain" | `AuditService`, `V3__audit_chain_and_notes.sql`, `AuditResourceTest` |
+| AUD-06 | Immutable notes on records and components, ability `audit.note:write`; UI in the record details | `AuditResource`, `AuditNote` |
+| TEN-10 | Per-tenant ingest quota, `429` + `Retry-After`, HTTP/batch/WebSocket | `IngestRateLimiter.tenantRetryAfter`, `PipelineDirectory.Entry.tenantIngestPerMinute` |
+| MOD-16 | Which model version a run used | `ModelArtifactService.recordRead`, `DockerService.recordModelReads`, `V4__model_artifact_reads.sql` |
+
+**Migrations V2–V4 were run against PostgreSQL 16 locally** with the CI invocation
+(`PostgresMigrationBehaviorTest`, profile `postgres-it`): they apply, Hibernate `validate` passes,
+and an `UPDATE` on `audit_events` is refused by the trigger. The shipped major version is 18; CI
+runs the same test against it.
+
+**Things to know before relying on these:**
+- **Audit writes are now serialised installation-wide.** `AuditService.record` locks the chain head
+  row until the caller's transaction ends. A long transaction that audits early holds every other
+  audited transaction back. Today's callers audit at the end; keep it that way.
+- **The chain proves less than "tamper-proof".** It catches a changed, removed or inserted record.
+  It does not stop someone who can drop the trigger and recompute every later hash; that needs the
+  head hash anchored outside the database (not built). Retention deleting the oldest records is not
+  reported as a break.
+- **`MOD-16` records what `load_model_fn` returned**, not what was preloaded. A module that reads
+  the `MODEL_ARTIFACTS` environment variable directly bypasses the record.
+- **Built-in roles: only tenants created from now on.** Existing tenants' Viewer/Editor/Tenant Admin
+  stay ordinary editable roles and do not gain `audit:read` / `audit.note:write`; there is no
+  migration, because those roles may have been customised.
+- **Tenant quota is per ingest instance** (in-memory counter) and per minute.
+- UI for role clone/disable and for audit verify/notes is covered by typecheck, lint and page tests;
+  only the audit page of the previous entry was driven in a real browser.
+
+**Still open, unchanged in size:** lakehouse (LAK), identity/OIDC and system-scope roles (IAM-03–13,
+API-08, TEN-05/08), AUD-02–04 and AUD-09, operations from the UI and Helm (OPS, NFR-S1), throughput
+(PIP-15, MOD-03, NFR-P1/P2), MOD-05 proper, MOD-07 `query_fn`, PIP-13 requeue, and everything marked
+"not on a cluster". Next items that fit this sandbox: UI-17 Activity tab on component pages (the
+notes API is ready for it), UI-20 hard-coded editor labels, AUD-03 actor/target snapshots, STR-07
+per-tenant retention, API-04/05 management API keys.
+
 ## Sources used
 
 - BK6-22-300 Anlage 1: https://www.bundesnetzagentur.de/DE/Beschlusskammern/1_GZ/BK6-GZ/2022/BK6-22-300/Beschluss/BK6-22-300_Beschluss_Anlage1.pdf?__blob=publicationFile&v=1
