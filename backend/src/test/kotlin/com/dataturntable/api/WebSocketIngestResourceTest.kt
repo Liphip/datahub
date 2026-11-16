@@ -28,6 +28,22 @@ class WebSocketIngestResourceTest {
     }
 
     @Test
+    fun `the session limit is configurable and every refused session is counted`() {
+        // A plain unit test has no Quarkus registry bound to Micrometer's global one, and the empty
+        // composite hands out no-op counters; attach a simple registry for the duration of the test.
+        val registry = io.micrometer.core.instrument.simple.SimpleMeterRegistry()
+        io.micrometer.core.instrument.Metrics.addRegistry(registry)
+        val resource = WebSocketIngestResource().apply { maxSessionsPerPipeline = 2 }
+        val before = IngestRejections.total("websocket_session_limit")
+        assertTrue(resource.registerSession("pipeline-3", session("a")))
+        assertTrue(resource.registerSession("pipeline-3", session("b")))
+        assertFalse(resource.registerSession("pipeline-3", session("c")))
+        assertEquals(2, resource.sessionCount("pipeline-3"))
+        assertEquals(before + 1.0, IngestRejections.total("websocket_session_limit"))
+        io.micrometer.core.instrument.Metrics.removeRegistry(registry)
+    }
+
+    @Test
     fun `a distinct session can be registered until the limit is reached`() {
         val resource = WebSocketIngestResource()
         assertTrue(resource.registerSession("pipeline-2", session("one")))

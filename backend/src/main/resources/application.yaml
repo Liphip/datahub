@@ -222,6 +222,8 @@ dataturntable:
       # WebSocketIngestResource.reapIdleSessions) — enforcement granularity is roughly this
       # interval, so keep it well under idle-timeout-ms.
       idle-reap-interval: ${DATATURNTABLE_INGEST_WEBSOCKET_IDLE_REAP_INTERVAL:10s}
+      max-sessions-per-pipeline: ${DATATURNTABLE_INGEST_WEBSOCKET_MAX_SESSIONS_PER_PIPELINE:100}
+    batch-max-records: ${DATATURNTABLE_INGEST_BATCH_MAX_RECORDS:1000}
   kafka:
     topics:
       prefix: dataturntable

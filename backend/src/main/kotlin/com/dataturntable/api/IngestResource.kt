@@ -63,7 +63,7 @@ class IngestResource {
         if (!ingestAuthorization.authorize(apiKey, pipeline.tenantId, "pipeline", pipelineUuid)) {
             return error(401, "Invalid, expired, or insufficient ingestion credential")
         }
-        if (!ingestRateLimiter.tryAcquire(apiKey)) return error(429, "Ingestion rate limit exceeded")
+        if (!ingestRateLimiter.tryAcquire(apiKey)) return rateLimited()
         if (!pipeline.active) return error(400, "Pipeline is not active")
 
         val data = payload.toMutableMap<String, Any?>()
@@ -109,10 +109,13 @@ class IngestResource {
             return error(401, "Invalid, expired, or insufficient ingestion credential")
         }
         if (records.isEmpty()) return error(400, "Batch is empty")
-        if (records.size > batchMaxRecords) return error(413, "Batch exceeds $batchMaxRecords records")
+        if (records.size > batchMaxRecords) {
+            IngestRejections.count("batch_too_large")
+            return error(413, "Batch exceeds $batchMaxRecords records")
+        }
         if (!pipeline.active) return error(400, "Pipeline is not active")
         repeat(records.size) {
-            if (!ingestRateLimiter.tryAcquire(apiKey)) return error(429, "Ingestion rate limit exceeded")
+            if (!ingestRateLimiter.tryAcquire(apiKey)) return rateLimited()
         }
 
         val batchKey = idempotencyKey?.trim()?.takeIf { it.isNotEmpty() }
@@ -164,7 +167,7 @@ class IngestResource {
         if (!ingestAuthorization.authorize(apiKey, tenant, "connector", connectorUuid)) {
             return error(401, "Invalid, expired, or insufficient ingestion credential")
         }
-        if (!ingestRateLimiter.tryAcquire(apiKey)) return error(429, "Ingestion rate limit exceeded")
+        if (!ingestRateLimiter.tryAcquire(apiKey)) return rateLimited()
         val pipelines = candidates.filter { it.tenantId == tenant }
 
         val triggeredRuns = mutableListOf<Map<String, Any?>>()
@@ -199,6 +202,11 @@ class IngestResource {
 
     private fun error(status: Int, message: String): Response =
         Response.status(status).entity(mapOf("error" to message)).build()
+
+    private fun rateLimited(): Response {
+        IngestRejections.count("rate_limit")
+        return error(429, "Ingestion rate limit exceeded")
+    }
 
     private fun unavailable(message: String?): Response =
         Response.status(503).header("Retry-After", RETRY_AFTER_SECONDS)

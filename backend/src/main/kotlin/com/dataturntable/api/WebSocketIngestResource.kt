@@ -43,6 +43,10 @@ class WebSocketIngestResource {
     @ConfigProperty(name = "dataturntable.ingest.websocket.idle-timeout-ms", defaultValue = "300000")
     var idleTimeoutMs: Long = 300000
 
+    /** IMP-14: most concurrent ingest sessions one pipeline accepts; further ones are closed with TRY_AGAIN_LATER. */
+    @ConfigProperty(name = "dataturntable.ingest.websocket.max-sessions-per-pipeline", defaultValue = "100")
+    var maxSessionsPerPipeline: Int = 100
+
     private val objectMapper = com.dataturntable.json.JsonObjectMappers.create()
 
     private val sessions = ConcurrentHashMap<String, MutableSet<Session>>()
@@ -110,9 +114,10 @@ class WebSocketIngestResource {
         var registered = false
         sessions.compute(pipelineId) { _, existing ->
             val pipelineSessions = existing ?: ConcurrentHashMap.newKeySet()
-            if (pipelineSessions.size < 100 && pipelineSessions.add(session)) registered = true
+            if (pipelineSessions.size < maxSessionsPerPipeline && pipelineSessions.add(session)) registered = true
             pipelineSessions
         }
+        if (!registered) IngestRejections.count("websocket_session_limit")
         if (registered) {
             touch(session)
             LOG.infof("WebSocket session registered for pipeline %s", pipelineId)
