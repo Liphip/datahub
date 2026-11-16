@@ -10,6 +10,7 @@ import jakarta.inject.Inject
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
+import org.eclipse.microprofile.config.inject.ConfigProperty
 import java.time.Instant
 import java.util.UUID
 
@@ -38,6 +39,9 @@ class IngestResource {
 
     @Inject
     lateinit var ingestRateLimiter: IngestRateLimiter
+
+    @ConfigProperty(name = "dataturntable.ingest.batch-max-records", defaultValue = "1000")
+    var batchMaxRecords: Int = 1000
 
     /**
      * Queues [payload] for one pipeline. `X-Partition-Key` (e.g. a device id) lets one
@@ -79,6 +83,60 @@ class IngestResource {
         } catch (e: PipelineQueueUnavailableException) {
             unavailable(e.message)
         }
+    }
+
+    /**
+     * Batch form of [ingest] (IMP-01): a JSON array of records in one request, each queued as its
+     * own run. All-or-resend: a 202 means every record is stored; a 503 means at least one is not
+     * and the whole batch should be sent again. Resending is safe for identified records — each
+     * record's identity is its `deduplicateBy` key, or `<Idempotency-Key>:<index>` when the header
+     * is sent, so records already queued by the first attempt do not run twice. The rate limit
+     * counts every record, not the request.
+     */
+    @POST
+    @Path("/ingest/{pipelineId}/batch")
+    fun ingestBatch(
+        @PathParam("pipelineId") pipelineId: String,
+        @HeaderParam("X-API-Key") apiKey: String?,
+        @HeaderParam("X-Partition-Key") partitionKey: String?,
+        @HeaderParam("Idempotency-Key") idempotencyKey: String?,
+        records: List<Map<String, Any>>
+    ): Response {
+        val pipelineUuid = runCatching { UUID.fromString(pipelineId) }.getOrNull()
+            ?: return error(400, "Invalid pipelineId")
+        val pipeline = directory.get(pipelineUuid) ?: return error(404, "Pipeline not found")
+        if (!ingestAuthorization.authorize(apiKey, pipeline.tenantId, "pipeline", pipelineUuid)) {
+            return error(401, "Invalid, expired, or insufficient ingestion credential")
+        }
+        if (records.isEmpty()) return error(400, "Batch is empty")
+        if (records.size > batchMaxRecords) return error(413, "Batch exceeds $batchMaxRecords records")
+        if (!pipeline.active) return error(400, "Pipeline is not active")
+        repeat(records.size) {
+            if (!ingestRateLimiter.tryAcquire(apiKey)) return error(429, "Ingestion rate limit exceeded")
+        }
+
+        val batchKey = idempotencyKey?.trim()?.takeIf { it.isNotEmpty() }
+        val ingestedAt = Instant.now().toString()
+        val runIds = mutableListOf<String>()
+        records.forEachIndexed { index, record ->
+            val data = record.toMutableMap<String, Any?>()
+            data["_ingestedAt"] = ingestedAt
+            data["_tenantId"] = pipeline.tenantId?.toString()
+            val key = batchKey?.let { "$it:$index" } ?: PipelineDirectory.recordKey(record, pipeline.deduplicateBy)
+            try {
+                runIds.add(runQueue.enqueue(pipelineUuid, TriggerType.DATA, data, partitionKey = partitionKey, idempotencyKey = key).toString())
+            } catch (e: PipelineQueueUnavailableException) {
+                return Response.status(503).header("Retry-After", RETRY_AFTER_SECONDS)
+                    .entity(mapOf("error" to "Not all records could be queued, resend the batch",
+                        "accepted" to runIds.size, "total" to records.size)).build()
+            }
+        }
+        return Response.accepted(mapOf(
+            "status" to "accepted",
+            "pipelineId" to pipelineId,
+            "accepted" to runIds.size,
+            "runIds" to runIds
+        )).build()
     }
 
     /**
