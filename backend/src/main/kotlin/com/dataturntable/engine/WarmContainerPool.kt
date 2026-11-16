@@ -96,6 +96,10 @@ class WarmContainerPool {
     @ConfigProperty(name = "dataturntable.docker.resources.memory-limit", defaultValue = "512m")
     lateinit var memoryLimit: String
 
+    /** Same deployment-level switch DockerService.networkMode() obeys. */
+    @ConfigProperty(name = "dataturntable.docker.allow-network", defaultValue = "false")
+    var allowNetwork: Boolean = false
+
     /** Set to false to disable the pool entirely (e.g. in dev/test). */
     @ConfigProperty(name = "dataturntable.docker.pool.enabled", defaultValue = "true")
     var poolEnabled: Boolean = true
@@ -208,14 +212,22 @@ class WarmContainerPool {
      * Blocks until the container signals "__READY__" (may be slow if pip install runs).
      * Returns null on failure.
      */
+    /**
+     * Pure policy seam (NFR-S3). A warm container keeps its network mode for its whole life, so
+     * one that installs requirements over the network also *runs* modules with that network.
+     * That is only acceptable where the deployment allows module network access at all; under
+     * the default (`allow-network=false`) a warm container never gets a network, whatever its
+     * requirements — its pip install then fails and the caller falls back to the ephemeral path,
+     * which fails the same way and says why.
+     */
+    internal fun needsNetwork(requirements: String): Boolean = allowNetwork && requirements.isNotBlank()
+
     fun spawn(requirements: String = "", readyTimeoutSeconds: Long = 120): WarmContainer? {
         if (!poolEnabled) return null
         val name = "dt-warm-${UUID.randomUUID().toString().take(8)}"
         val runnerB64 = buildRunnerB64()
 
-        // Containers that need pip install require network access to reach PyPI.
-        // Containers with no requirements run fully isolated.
-        val needsNetwork = requirements.isNotBlank()
+        val needsNetwork = needsNetwork(requirements)
 
         val args = mutableListOf(
             "docker", "run", "-i", "--rm", "--name", name,

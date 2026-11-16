@@ -43,6 +43,17 @@ class DockerSandboxPolicyTest {
     }
 
     @Test
+    fun `a warm container gets a network only where the deployment allows module egress`() {
+        val closed = WarmContainerPool().apply { allowNetwork = false }
+        assertFalse(closed.needsNetwork("requests==2.32.0"), "requirements alone must not open the network")
+        assertFalse(closed.needsNetwork(""))
+
+        val open = WarmContainerPool().apply { allowNetwork = true }
+        assertTrue(open.needsNetwork("requests==2.32.0"))
+        assertFalse(open.needsNetwork(""), "a container without requirements never needs a network")
+    }
+
+    @Test
     fun `captured output never exceeds its configured hard cap`() {
         val service = DockerService()
         val sink = StringBuilder()
