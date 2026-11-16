@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api, { type ApiError } from '../services/api';
 import type { AlertChannel, Pipeline, CodeModule, Connector, EnrichConfig, MetadataType, ModuleVersion, PipelineRun, SaveMetadataMapping } from '../types';
@@ -798,6 +799,7 @@ function NodeConfigPanel({
   canWrite: boolean;
   onChange: (patch: Partial<PipelineNodeData>) => void;
 }) {
+  const { t } = useTranslation();
   const compatibleTypes = data.nodeType === 'IMPORT'
     ? ['IMPORT', 'DB_LOAD']
     : data.nodeType === 'EXPORT'
@@ -832,8 +834,8 @@ function NodeConfigPanel({
           <label className="block text-xs font-medium text-gray-600 mb-1">Evaluation</label>
           <div className="grid grid-cols-2 gap-1 text-xs" role="radiogroup">
             {[
-              { rule: true, label: 'Built-in rule' },
-              { rule: false, label: 'Python module' },
+              { rule: true, label: t('pipelineEditor.stepBuiltInRule') },
+              { rule: false, label: t('pipelineEditor.stepPythonModule') },
             ].map((option) => {
               const active = Boolean(data.alertRule) === option.rule;
               return (
@@ -862,13 +864,13 @@ function NodeConfigPanel({
           <div className={`grid gap-1 text-xs ${data.nodeType === 'EXPORT' ? 'grid-cols-3' : 'grid-cols-2'}`} role="radiogroup">
             {(data.nodeType === 'PROCESSING'
               ? [
-                  { key: 'module', label: 'Python module', patch: { enrich: undefined } },
-                  { key: 'builtin', label: 'Enrich with metadata', patch: { enrich: data.enrich ?? DEFAULT_ENRICH } },
+                  { key: 'module', label: t('pipelineEditor.stepPythonModule'), patch: { enrich: undefined } },
+                  { key: 'builtin', label: t('pipelineEditor.stepEnrich'), patch: { enrich: data.enrich ?? DEFAULT_ENRICH } },
                 ]
               : [
-                  { key: 'module', label: 'Python module', patch: { saveMetadata: undefined, passThrough: false } },
-                  { key: 'asis', label: 'Send as is', patch: { saveMetadata: undefined, passThrough: true } },
-                  { key: 'builtin', label: 'Save to metadata', patch: { saveMetadata: data.saveMetadata ?? DEFAULT_SAVE_METADATA, passThrough: false } },
+                  { key: 'module', label: t('pipelineEditor.stepPythonModule'), patch: { saveMetadata: undefined, passThrough: false } },
+                  { key: 'asis', label: t('pipelineEditor.stepSendAsIs'), patch: { saveMetadata: undefined, passThrough: true } },
+                  { key: 'builtin', label: t('pipelineEditor.stepSaveMetadata'), patch: { saveMetadata: data.saveMetadata ?? DEFAULT_SAVE_METADATA, passThrough: false } },
                 ]
             ).map((option) => {
               const current = data.enrich || data.saveMetadata ? 'builtin' : data.passThrough ? 'asis' : 'module';
@@ -908,8 +910,8 @@ function NodeConfigPanel({
           <label className="block text-xs font-medium text-gray-600 mb-1">Processing</label>
           <div className="grid grid-cols-2 gap-1 text-xs" role="radiogroup">
             {[
-              { passThrough: true, label: 'Pass through' },
-              { passThrough: false, label: 'Python module' },
+              { passThrough: true, label: t('pipelineEditor.stepPassThrough') },
+              { passThrough: false, label: t('pipelineEditor.stepPythonModule') },
             ].map((option) => {
               const active = Boolean(data.passThrough) === option.passThrough;
               return (

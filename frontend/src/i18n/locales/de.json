@@ -544,7 +544,13 @@
     "helpImport": "Importmodul: Ruft Daten von externen Quellen ab",
     "helpProcessing": "Verarbeitungsmodule: Daten transformieren (der Reihenfolge nach)",
     "helpAlert": "Alarmmodule: Bedingungen auswerten und Alarmereignisse ausgeben",
-    "helpExport": "Exportmodule: Daten an externe Systeme senden"
+    "helpExport": "Exportmodule: Daten an externe Systeme senden",
+    "stepBuiltInRule": "Eingebaute Regel",
+    "stepPythonModule": "Python-Modul",
+    "stepEnrich": "Mit Metadaten anreichern",
+    "stepSendAsIs": "Unverändert senden",
+    "stepSaveMetadata": "In Metadaten speichern",
+    "stepPassThrough": "Durchreichen"
   },
   "connectors": {
     "title": "Konnektoren",

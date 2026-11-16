@@ -544,7 +544,13 @@
     "helpImport": "Import Module: Fetches data from external sources",
     "helpProcessing": "Processing Modules: Transform data (run in order)",
     "helpAlert": "Alert Modules: Evaluate conditions and emit alert events",
-    "helpExport": "Export Modules: Send data to external systems"
+    "helpExport": "Export Modules: Send data to external systems",
+    "stepBuiltInRule": "Built-in rule",
+    "stepPythonModule": "Python module",
+    "stepEnrich": "Enrich with metadata",
+    "stepSendAsIs": "Send as is",
+    "stepSaveMetadata": "Save to metadata",
+    "stepPassThrough": "Pass through"
   },
   "connectors": {
     "title": "Connectors",
