@@ -26,6 +26,8 @@ class PipelineDirectory {
         /** Field paths whose values identify a record (`deduplicateBy` on IMPORT nodes). */
         val deduplicateBy: List<String>,
         val inputConnectorIds: Set<UUID>,
+        /** TEN-10: the tenant's own ingest quota (`ingestRecordsPerMinute` in its quota JSON), if it has one. */
+        val tenantIngestPerMinute: Int? = null,
     )
 
     private val log = Logger.getLogger(PipelineDirectory::class.java)
@@ -88,7 +90,10 @@ class PipelineDirectory {
             ?.let { runCatching { objectMapper.readValue(it, Map::class.java)["nodes"] as? List<*> }.getOrNull() }
             .orEmpty().filterIsInstance<Map<*, *>>()
             .filter { it["type"]?.toString()?.uppercase() == "IMPORT" }
+        val tenantQuota = p.tenant?.quota?.takeIf { it.isNotBlank() }
+            ?.let { runCatching { objectMapper.readValue(it, Map::class.java)["ingestRecordsPerMinute"] as? Number }.getOrNull() }
         return Entry(
+            tenantIngestPerMinute = tenantQuota?.toInt(),
             id = p.id!!,
             tenantId = p.tenant?.id,
             active = p.isActive,

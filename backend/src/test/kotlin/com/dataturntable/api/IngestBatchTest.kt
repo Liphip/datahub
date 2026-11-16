@@ -49,6 +49,24 @@ class IngestBatchTest {
         batch(id, apiKey, listOf(mapOf("v" to 1))).then().statusCode(202)
     }
 
+    /** TEN-10: a tenant's own quota answers 429 with Retry-After and leaves other tenants alone. */
+    @Test
+    fun `a tenant over its ingest quota gets 429 with Retry-After while another tenant is unaffected`() {
+        val limited = tenant()
+        api().body(mapOf("quota" to """{"ingestRecordsPerMinute": 3}""")).patch("/api/internal/v1/tenants/$limited").then().statusCode(200)
+        val limitedPipeline = pipeline(limited)
+        val limitedKey = key(limited, limitedPipeline)
+        val free = tenant()
+        val freePipeline = pipeline(free)
+        val freeKey = key(free, freePipeline)
+
+        batch(limitedPipeline, limitedKey, listOf(mapOf("v" to 1), mapOf("v" to 2))).then().statusCode(202)
+        batch(limitedPipeline, limitedKey, listOf(mapOf("v" to 3), mapOf("v" to 4))).then().statusCode(429)
+            .header("Retry-After", org.hamcrest.Matchers.notNullValue())
+        batch(limitedPipeline, limitedKey, listOf(mapOf("v" to 3))).then().statusCode(202)
+        batch(freePipeline, freeKey, (1..10).map { mapOf("v" to it) }).then().statusCode(202)
+    }
+
     private fun pipeline(tenantId: String): String {
         api().post("/api/internal/v1/metadata/templates/iot/install?tenantId=$tenantId").then().statusCode(200)
         val id = api().body(mapOf("name" to "Batch ${UUID.randomUUID()}", "graphDefinition" to mapOf(

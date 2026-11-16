@@ -224,6 +224,9 @@ dataturntable:
       idle-reap-interval: ${DATATURNTABLE_INGEST_WEBSOCKET_IDLE_REAP_INTERVAL:10s}
       max-sessions-per-pipeline: ${DATATURNTABLE_INGEST_WEBSOCKET_MAX_SESSIONS_PER_PIPELINE:100}
     batch-max-records: ${DATATURNTABLE_INGEST_BATCH_MAX_RECORDS:1000}
+    # TEN-10: default per-tenant quota (records per minute, 0 = off); a tenant's own
+    # "ingestRecordsPerMinute" in its quota overrides it.
+    tenant-rate-limit-per-minute: ${DATATURNTABLE_INGEST_TENANT_RATE_LIMIT_PER_MINUTE:0}
   kafka:
     topics:
       prefix: dataturntable

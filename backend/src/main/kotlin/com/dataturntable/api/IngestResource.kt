@@ -65,6 +65,7 @@ class IngestResource {
         }
         if (!ingestRateLimiter.tryAcquire(apiKey)) return rateLimited()
         if (!pipeline.active) return error(400, "Pipeline is not active")
+        tenantQuotaExceeded(pipeline, 1)?.let { return it }
 
         val data = payload.toMutableMap<String, Any?>()
         data["_ingestedAt"] = Instant.now().toString()
@@ -117,6 +118,7 @@ class IngestResource {
         repeat(records.size) {
             if (!ingestRateLimiter.tryAcquire(apiKey)) return rateLimited()
         }
+        tenantQuotaExceeded(pipeline, records.size)?.let { return it }
 
         val batchKey = idempotencyKey?.trim()?.takeIf { it.isNotEmpty() }
         val ingestedAt = Instant.now().toString()
@@ -169,6 +171,7 @@ class IngestResource {
         }
         if (!ingestRateLimiter.tryAcquire(apiKey)) return rateLimited()
         val pipelines = candidates.filter { it.tenantId == tenant }
+        tenantQuotaExceeded(pipelines.first(), pipelines.size)?.let { return it }
 
         val triggeredRuns = mutableListOf<Map<String, Any?>>()
         val errors = mutableListOf<String>()
@@ -206,6 +209,15 @@ class IngestResource {
     private fun rateLimited(): Response {
         IngestRejections.count("rate_limit")
         return error(429, "Ingestion rate limit exceeded")
+    }
+
+    /** TEN-10: `429` with `Retry-After` once the tenant's ingest quota for this minute is used up. */
+    private fun tenantQuotaExceeded(pipeline: PipelineDirectory.Entry, records: Int): Response? {
+        val retryAfter = ingestRateLimiter.tenantRetryAfter(pipeline.tenantId, pipeline.tenantIngestPerMinute, records)
+        if (retryAfter == 0) return null
+        IngestRejections.count("tenant_quota")
+        return Response.status(429).header("Retry-After", retryAfter)
+            .entity(mapOf("error" to "Tenant ingestion quota exceeded", "retryAfterSeconds" to retryAfter)).build()
     }
 
     private fun unavailable(message: String?): Response =

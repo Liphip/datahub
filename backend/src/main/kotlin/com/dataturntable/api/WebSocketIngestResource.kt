@@ -40,6 +40,9 @@ class WebSocketIngestResource {
     @Inject
     lateinit var redactor: SensitiveDataRedactor
 
+    @Inject
+    lateinit var ingestRateLimiter: com.dataturntable.security.IngestRateLimiter
+
     @ConfigProperty(name = "dataturntable.ingest.websocket.idle-timeout-ms", defaultValue = "300000")
     var idleTimeoutMs: Long = 300000
 
@@ -80,6 +83,13 @@ class WebSocketIngestResource {
         val pipeline = directory.get(pipelineUuid)
         if (pipeline == null || !pipeline.active) {
             return reply(session, mapOf("type" to "ingest.rejected", "status" to "error", "retry" to false, "error" to "Pipeline not found or not active"))
+        }
+        // TEN-10: the tenant quota counts WebSocket records together with HTTP ones.
+        val retryAfter = ingestRateLimiter.tenantRetryAfter(pipeline.tenantId, pipeline.tenantIngestPerMinute)
+        if (retryAfter > 0) {
+            IngestRejections.count("tenant_quota")
+            return reply(session, mapOf("type" to "ingest.rejected", "status" to "error", "retry" to true,
+                "retryAfterSeconds" to retryAfter, "error" to "Tenant ingestion quota exceeded"))
         }
 
         @Suppress("UNCHECKED_CAST")
