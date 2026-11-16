@@ -41,7 +41,10 @@ enum class Ability(val value: String) {
     USER_DELETE("user:delete"),
 
     // Tenant
-    TENANT_MANAGE("tenant:manage");
+    TENANT_MANAGE("tenant:manage"),
+
+    // Audit trail (read, search, export)
+    AUDIT_READ("audit:read");
     
     companion object {
         /**
