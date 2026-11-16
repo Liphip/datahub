@@ -239,4 +239,55 @@ class RetentionCleanupServiceTest {
             )
         }
     }
+
+    /** STR-07: a tenant's own retention overrides the installation-wide 30 days, in both directions. */
+    @Test
+    fun `a tenant's own retention overrides the installation default for that tenant only`() {
+        val keepsLong = UUID.randomUUID()   // 365 days: its 60-day-old data must survive
+        val keepsShort = UUID.randomUUID()  // 7 days: its 10-day-old data must go
+        val standard = UUID.randomUUID()    // no override: 30 days
+        val pipelineOf = mutableMapOf<UUID, UUID>()
+        val sixtyDays = Instant.now().minusSeconds(60L * 86_400)
+        val tenDays = Instant.now().minusSeconds(10L * 86_400)
+        val runs = mutableMapOf<String, UUID>()
+        val alerts = mutableMapOf<String, UUID>()
+
+        QuarkusTransaction.requiringNew().run {
+            mapOf(keepsLong to """{"retentionPipelineRunsDays": 365, "retentionAlertHistoryDays": 365}""",
+                keepsShort to """{"retentionPipelineRunsDays": 7, "retentionAlertHistoryDays": 7}""",
+                standard to null).forEach { (tenantId, quota) ->
+                em.createNativeQuery("INSERT INTO tenants (id, name, quota) VALUES (:id, :name, :quota)")
+                    .setParameter("id", tenantId).setParameter("name", "retention-$tenantId").setParameter("quota", quota).executeUpdate()
+                val pipelineId = UUID.randomUUID().also { pipelineOf[tenantId] = it }
+                em.createNativeQuery("INSERT INTO pipelines (id, tenant_id, name) VALUES (:id, :t, 'p')")
+                    .setParameter("id", pipelineId).setParameter("t", tenantId).executeUpdate()
+                listOf("old" to sixtyDays, "recent" to tenDays).forEach { (age, at) ->
+                    val runId = UUID.randomUUID().also { runs["$tenantId-$age"] = it }
+                    em.createNativeQuery("INSERT INTO pipeline_runs (id, pipeline_id, status, started_at) VALUES (:id, :p, 'SUCCESS', :at)")
+                        .setParameter("id", runId).setParameter("p", pipelineId).setParameter("at", at).executeUpdate()
+                    val alertId = UUID.randomUUID().also { alerts["$tenantId-$age"] = it }
+                    em.createNativeQuery("INSERT INTO alert_history (id, tenant_id, severity, title, sent_at, created_at, status, attempts) VALUES (:id, :t, 'WARNING', 'a', :at, :at, 'SENT', 1)")
+                        .setParameter("id", alertId).setParameter("t", tenantId).setParameter("at", at).executeUpdate()
+                }
+            }
+        }
+
+        retentionCleanupService.cleanupPipelineRuns()
+        retentionCleanupService.cleanupAlertHistory()
+
+        QuarkusTransaction.requiringNew().run {
+            fun kept(table: String, ids: Map<String, UUID>, key: String) = countById(table, ids.getValue(key)) == 1
+            for ((table, ids) in listOf("pipeline_runs" to runs, "alert_history" to alerts)) {
+                assertTrue(kept(table, ids, "$keepsLong-old"), "$table: 365-day tenant keeps 60-day-old rows")
+                assertTrue(kept(table, ids, "$keepsLong-recent"))
+                assertTrue(!kept(table, ids, "$keepsShort-old"))
+                assertTrue(!kept(table, ids, "$keepsShort-recent"), "$table: 7-day tenant loses 10-day-old rows")
+                assertTrue(!kept(table, ids, "$standard-old"), "$table: default 30 days removes 60-day-old rows")
+                assertTrue(kept(table, ids, "$standard-recent"))
+            }
+            // OPS-07 still holds per tenant: what was deleted was folded into the hourly aggregate first.
+            assertEquals(2, (em.createNativeQuery("SELECT COALESCE(SUM(run_count), 0) FROM pipeline_run_hourly_stats WHERE pipeline_id = :p")
+                .setParameter("p", pipelineOf.getValue(keepsShort)).singleResult as Number).toInt())
+        }
+    }
 }

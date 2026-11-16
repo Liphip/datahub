@@ -60,6 +60,8 @@ class RetentionCleanupService {
     @ConfigProperty(name = "quarkus.datasource.db-kind", defaultValue = "postgresql")
     lateinit var dbKind: String
 
+    private val quotaMapper = com.fasterxml.jackson.databind.ObjectMapper()
+
     data class CleanupResult(val category: String, val retentionDays: Int, val deleted: Int)
 
     private data class HourlyStatKey(val tenantId: UUID, val pipelineId: UUID, val hourBucket: Instant, val status: String)
@@ -110,10 +112,32 @@ class RetentionCleanupService {
         return results
     }
 
+    /**
+     * STR-07: a tenant's own retention, from its quota JSON ([key] in days, `-1` = keep
+     * indefinitely), overriding the installation-wide setting for that tenant only. A tenant
+     * whose quota cannot be read simply has no override.
+     */
+    internal fun tenantOverrides(key: String): Map<UUID, Int> =
+        em.createQuery("SELECT t.id, t.quota FROM Tenant t WHERE t.quota IS NOT NULL").resultList
+            .mapNotNull { row ->
+                row as Array<*>
+                val days = runCatching { (quotaMapper.readValue(row[1] as String, Map::class.java)[key] as? Number)?.toInt() }.getOrNull()
+                if (days == null) null else (row[0] as UUID) to days
+            }.toMap()
+
+    private fun cutoff(days: Int): Instant = Instant.now().minusSeconds(days.toLong() * 86_400)
+
     @Transactional
     fun cleanupPipelineRuns(): CleanupResult {
-        if (pipelineRunRetentionDays < 0) return CleanupResult("pipeline_runs", pipelineRunRetentionDays, 0)
-        val cutoff = Instant.now().minusSeconds(pipelineRunRetentionDays.toLong() * 86_400)
+        val overrides = tenantOverrides("retentionPipelineRunsDays")
+        var deleted = 0
+        overrides.filterValues { it >= 0 }.forEach { (tenantId, days) -> deleted += purgeRuns(cutoff(days), only = setOf(tenantId)) }
+        if (pipelineRunRetentionDays >= 0) deleted += purgeRuns(cutoff(pipelineRunRetentionDays), except = overrides.keys)
+        return CleanupResult("pipeline_runs", pipelineRunRetentionDays, deleted)
+    }
+
+    /** Deletes finished runs older than [cutoff], of the tenants in [only] or of all but those in [except]. */
+    private fun purgeRuns(cutoff: Instant, only: Set<UUID>? = null, except: Set<UUID> = emptySet()): Int {
         // OPS-07: before the detail is gone, fold it into pipeline_run_hourly_stats so run history
         // stays inspectable in aggregate (per pipeline/hour/status) even past the detail window.
         // JPQL rather than native SQL: a native query's UUID columns come back as raw bytes under
@@ -121,12 +145,20 @@ class RetentionCleanupService {
         // Runs with no pipeline (should not happen in practice; the column is nullable at the
         // schema level only) are excluded, since there's nothing to key an aggregate row by.
         val finishedStatuses = listOf(PipelineRunStatus.SUCCESS, PipelineRunStatus.FAILED, PipelineRunStatus.CANCELLED, PipelineRunStatus.TIMED_OUT)
+        val tenantClause = when {
+            only != null -> " AND r.pipeline.tenant.id IN :tenants"
+            except.isNotEmpty() -> " AND r.pipeline.tenant.id NOT IN :tenants"
+            else -> ""
+        }
+        val tenants = only ?: except
         @Suppress("UNCHECKED_CAST")
         val rows = em.createQuery(
             """SELECT r.pipeline.tenant.id, r.pipeline.id, r.startedAt, r.status
                FROM PipelineRun r
-               WHERE r.startedAt < :cutoff AND r.status IN :statuses AND r.pipeline IS NOT NULL"""
-        ).setParameter("cutoff", cutoff).setParameter("statuses", finishedStatuses).resultList as List<Array<Any>>
+               WHERE r.startedAt < :cutoff AND r.status IN :statuses AND r.pipeline IS NOT NULL$tenantClause"""
+        ).setParameter("cutoff", cutoff).setParameter("statuses", finishedStatuses)
+            .also { if (tenantClause.isNotEmpty()) it.setParameter("tenants", tenants) }
+            .resultList as List<Array<Any>>
 
         val counts = mutableMapOf<HourlyStatKey, Int>()
         for (row in rows) {
@@ -141,10 +173,16 @@ class RetentionCleanupService {
 
         // Only finished runs. A run row is also the record that makes resends idempotent: once it
         // is deleted, a record resent with the same idempotency key would run again.
-        val deleted = em.createNativeQuery(
-            "DELETE FROM pipeline_runs WHERE started_at < :cutoff AND status IN ('SUCCESS', 'FAILED', 'CANCELLED', 'TIMED_OUT')"
-        ).setParameter("cutoff", cutoff).executeUpdate()
-        return CleanupResult("pipeline_runs", pipelineRunRetentionDays, deleted)
+        val base = "DELETE FROM pipeline_runs WHERE started_at < :cutoff AND status IN ('SUCCESS', 'FAILED', 'CANCELLED', 'TIMED_OUT')"
+        val sql = when {
+            only != null -> "$base AND pipeline_id IN (SELECT id FROM pipelines WHERE tenant_id IN (:tenants))"
+            // Runs without a pipeline belong to no tenant and follow the installation-wide rule.
+            except.isNotEmpty() -> "$base AND (pipeline_id IS NULL OR pipeline_id NOT IN (SELECT id FROM pipelines WHERE tenant_id IN (:tenants)))"
+            else -> base
+        }
+        return em.createNativeQuery(sql).setParameter("cutoff", cutoff)
+            .also { if (only != null || except.isNotEmpty()) it.setParameter("tenants", tenants) }
+            .executeUpdate()
     }
 
     /**
@@ -182,12 +220,22 @@ class RetentionCleanupService {
 
     @Transactional
     fun cleanupAlertHistory(): CleanupResult {
-        if (alertHistoryRetentionDays < 0) return CleanupResult("alert_history", alertHistoryRetentionDays, 0)
-        val cutoff = Instant.now().minusSeconds(alertHistoryRetentionDays.toLong() * 86_400)
+        val overrides = tenantOverrides("retentionAlertHistoryDays")
         // Alerts still waiting in the delivery outbox are never removed.
-        val deleted = em.createNativeQuery(
-            "DELETE FROM alert_history WHERE created_at < :cutoff AND status IN ('SENT', 'SUPPRESSED', 'FAILED')"
-        ).setParameter("cutoff", cutoff).executeUpdate()
+        val base = "DELETE FROM alert_history WHERE created_at < :cutoff AND status IN ('SENT', 'SUPPRESSED', 'FAILED')"
+        var deleted = 0
+        overrides.filterValues { it >= 0 }.forEach { (tenantId, days) ->
+            deleted += em.createNativeQuery("$base AND tenant_id = :tenant")
+                .setParameter("cutoff", cutoff(days)).setParameter("tenant", tenantId).executeUpdate()
+        }
+        if (alertHistoryRetentionDays >= 0) {
+            deleted += if (overrides.isEmpty()) {
+                em.createNativeQuery(base).setParameter("cutoff", cutoff(alertHistoryRetentionDays)).executeUpdate()
+            } else {
+                em.createNativeQuery("$base AND (tenant_id IS NULL OR tenant_id NOT IN (:tenants))")
+                    .setParameter("cutoff", cutoff(alertHistoryRetentionDays)).setParameter("tenants", overrides.keys).executeUpdate()
+            }
+        }
         return CleanupResult("alert_history", alertHistoryRetentionDays, deleted)
     }
 
