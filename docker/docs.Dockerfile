@@ -12,5 +12,5 @@ COPY docs/ /workspace/docs/reference/
 # Zensical reads mkdocs.yml natively (Material for MkDocs reaches end of life on 2026-11-05)
 RUN zensical build -f mkdocs.yml
 
-FROM nginx:1.30.5-alpine3.24
+FROM nginx:1.30.6-alpine3.24
 COPY --from=builder /workspace/site /usr/share/nginx/html

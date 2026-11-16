@@ -1719,6 +1719,32 @@ API-08, TEN-05/08), AUD-02–04 and AUD-09, operations from the UI and Helm (OPS
 notes API is ready for it), UI-20 hard-coded editor labels, AUD-03 actor/target snapshots, STR-07
 per-tenant retention, API-04/05 management API keys.
 
+## Session 2026-11-16 (third part): CI green again, actor snapshots, per-tenant retention
+
+**CI on `4f19edb`:** backend tests (all 400, including the Docker-gated ones that do not run in the
+sandbox) and the backend image scan passed. Two jobs were red: the known `DC_NVD_API_KEY` one, and
+the **frontend image scan**, on three HIGH nginx CVEs fixed in 1.30.6 — the base image tag is bumped
+to `nginx:1.30.6-alpine3.24` in `docker/frontend.Dockerfile`, `docker/docs.Dockerfile` and the dev
+Compose file (`apk upgrade` cannot do this: nginx comes from nginx.org's own package pin).
+
+**Built since the previous entry** (backend suite now 402 tests, 0 failures, 22 skipped; V5 migration
+applied and validated on PostgreSQL 16):
+
+| Requirement | What | Where |
+|---|---|---|
+| AUD-03 (partial) | Actor name snapshot, remote address, user agent and source on every audit record; in the hash, the search and the export | `AuditService`, `RequestIdFilter`, `V5__audit_actor_snapshot.sql` |
+| STR-07 (partial) | `retentionPipelineRunsDays` / `retentionAlertHistoryDays` in a tenant's quota override the installation default | `RetentionCleanupService.tenantOverrides` |
+| UI-20 (partial) | Pipeline editor step choices translated | `PipelineEditor.tsx` |
+| AUD-05 hardening | The chain head lock waits at most 10 s, then the audited action fails instead of hanging | `AuditService.lockHead` |
+
+**Know before relying on these:**
+- The recorded address is what the HTTP layer reports. Behind a reverse proxy that is the proxy
+  unless Quarkus proxy forwarding is enabled for it.
+- The hash covers the AUD-03 fields only on records that have one of them; records written between
+  V3 and V5 verify with the older field set. This is deliberate, see `AuditService.hashOf`.
+- Per-tenant retention lives in the tenant's `quota` JSON next to `ingestRecordsPerMinute`; there is
+  no validation of those keys on write and no UI — a typo in a key is silently "no override".
+
 ## Sources used
 
 - BK6-22-300 Anlage 1: https://www.bundesnetzagentur.de/DE/Beschlusskammern/1_GZ/BK6-GZ/2022/BK6-22-300/Beschluss/BK6-22-300_Beschluss_Anlage1.pdf?__blob=publicationFile&v=1

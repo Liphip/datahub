@@ -55,9 +55,17 @@ class AuditService {
     }
 
     private fun lockHead(): AuditChainHead =
-        em.find(AuditChainHead::class.java, 1.toShort(), LockModeType.PESSIMISTIC_WRITE)
+        // Bounded wait: if the head cannot be locked (another audited transaction is stuck, or
+        // this thread already holds it in an outer transaction), the action fails after a few
+        // seconds instead of hanging — an action that cannot be audited must not go through (AUD-04).
+        em.find(AuditChainHead::class.java, 1.toShort(), LockModeType.PESSIMISTIC_WRITE,
+            mapOf("jakarta.persistence.lock.timeout" to HEAD_LOCK_TIMEOUT_MS))
             // Created by the migration in production; absent only where the schema comes from the entities.
             ?: AuditChainHead().also { em.persist(it); em.flush() }
+
+    private companion object {
+        const val HEAD_LOCK_TIMEOUT_MS = 10_000
+    }
 
     data class ChainReport(
         val intact: Boolean, val checked: Long, val unchained: Long,

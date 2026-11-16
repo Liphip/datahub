@@ -785,7 +785,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | STR-04 | ~ | Object storage bundled and used for the lakehouse; MinIO excluded (no longer distributed). | Open |
 | STR-05 | ~ | Targets are hot tier and lakehouse. | Partial |
 | STR-06 | = | | Done |
-| STR-07 | ~ | Moved to MVP: required to operate 1B/day. | Partial (per-category retention days, installation-wide, default unlimited; no per-tenant policy) |
+| STR-07 | ~ | Moved to MVP: required to operate 1B/day. | Partial (per-category retention days installation-wide, default unlimited; per-tenant override for run history and alert history through the tenant quota; not for readings or audit records, and no UI for it) |
 | STR-08 | + | Unstructured blob storage dropped: data_blobs table, blob endpoints, Files tab and blob config removed (decision of 2026-09-27). | Done |
 | STR-09 | + | Every record attributable to its connector/endpoint and source item. | Done |
 | LAK-01 – LAK-12 | + | Lakehouse. | Open |
@@ -799,7 +799,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | UI-11 | ~ | Moved to MVP (implemented). | Done |
 | UI-12 – UI-14 | = | | Done |
 | UI-15 – UI-19 | + | Single UI, Grafana for users, activity tabs, system area, in-app docs. | Open |
-| UI-20 | + | UI texts exist in English and German. | Partial (locale files complete and checked by a test; some pipeline-editor labels such as the step choices are hard-coded in English) |
+| UI-20 | + | UI texts exist in English and German. | Partial (locale files complete and checked by a test; the pipeline editor's step choices are translated, most of its other labels and the alert rule form are still hard-coded in English) |
 | UI-21 | + | Accessibility. | Open |
 | API-01, API-02 | ~ | API-02 names the data API path. | Done |
 | API-03 | ~ | Browser session via cookie for reverse-proxy authentication. | Open (JWT in localStorage) |
@@ -823,7 +823,8 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | IAM-14 | + | Former FR-004. | Done (authorization version in the token; changes invalidate sessions) |
 | IAM-15 | + | Former FR-002/FR-027. | Partial (explanation API `AuthorizationResource`; used in the Users page) |
 | AUD-01 | + | Paper-trail requirement (extends NFR-S5). | Partial (create/update/delete of pipelines, connectors, tenants, users, memberships, roles, secrets, API keys, alert channels; run trigger/cancel/retry; login success/failure; retention deletions; no deployment/backup events) |
-| AUD-02 – AUD-04 | + | | Open (records are written by `AuditService`, in the caller's transaction where there is one; no system-scope data-access auditing, no actor/target name snapshots, IP address or user agent, no intent/outcome pair for actions outside the database) |
+| AUD-02, AUD-04 | + | | Open (no system-scope data-access auditing; the record is written in the caller's transaction where there is one, but not every action has one, and there is no intent/outcome pair for actions outside the database) |
+| AUD-03 | + | | Partial (time, actor id and name snapshot, address, user agent, action, target type and id, tenant, outcome, source `api`/`system`, correlation id, redacted metadata. Missing: actor type, authentication method and session, target name snapshot and parent, scope, structured before/after, reason) |
 | AUD-05 | + | | Partial (hash chain over all records with `GET /api/internal/v1/audit/verify` and a "Verify chain" action in the UI; PostgreSQL refuses `UPDATE` on `audit_events`. A database superuser can still drop the trigger and rewrite the chain from the tampered record on; an external anchor for the head hash is not built. Records older than the chain are reported as unchained) |
 | AUD-06 | + | | Partial (immutable notes on an audit record and standalone on a component, `audit.note:write`, audited; shown and added in the audit page. No Activity tab on the component pages yet, UI-17) |
 | AUD-07 | + | | Partial (`GET /api/internal/v1/audit`: time range, actor, action, target, tenant, outcome, full text, paging; CSV/JSON export that is itself audited; UI page `/audit`; no saved filters, no filter by source) |
