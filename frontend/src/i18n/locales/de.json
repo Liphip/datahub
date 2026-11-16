@@ -1067,6 +1067,7 @@
     "deadLettersNone": "Keine Dead Letters.",
     "channel": "Kanal",
     "error": "Fehler",
-    "payload": "Inhalt"
+    "payload": "Inhalt",
+    "scope": "Bereich"
   }
 }

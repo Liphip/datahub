@@ -1067,6 +1067,7 @@
     "deadLettersNone": "No dead letters.",
     "channel": "Channel",
     "error": "Error",
-    "payload": "Payload"
+    "payload": "Payload",
+    "scope": "Scope"
   }
 }

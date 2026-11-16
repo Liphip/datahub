@@ -138,7 +138,7 @@ export default function Audit() {
           >
             {isPlatformAdmin && (
               <label className="text-sm">
-                <span className="block text-slate-600">{t('common.filter')}</span>
+                <span className="block text-slate-600">{t('audit.scope')}</span>
                 <select className="input mt-1 w-full" value={wholeInstallation ? 'all' : 'tenant'} onChange={(e) => setWholeInstallation(e.target.value === 'all')}>
                   <option value="tenant" disabled={!tenantId}>{t('audit.scopeTenant')}</option>
                   <option value="all">{t('audit.scopeAll')}</option>
