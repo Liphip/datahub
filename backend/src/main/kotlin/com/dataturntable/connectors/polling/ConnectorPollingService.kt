@@ -80,7 +80,7 @@ class ConnectorPollingService {
     var leaseReconcileIntervalSeconds: Long = 20
 
     private val scheduler: ScheduledExecutorService = Executors.newScheduledThreadPool(4)
-    private val scheduledTasks = ConcurrentHashMap<UUID, ScheduledFuture<*>>()
+    internal val scheduledTasks = ConcurrentHashMap<UUID, ScheduledFuture<*>>()
     private val connectorIntervals = ConcurrentHashMap<UUID, Int>()
     private val connectorTypes = ConcurrentHashMap<UUID, Connector.ConnectorType>()
     /** Fencing generation captured by each scheduled poll task. */
@@ -106,6 +106,8 @@ class ConnectorPollingService {
         val lastRunAt: Instant?,
         val lastRunSuccess: Boolean?,
         val lastRunError: String?,
+        /** CON-13: when the scheduler will poll next; null while nothing is scheduled. */
+        val nextRunAt: Instant? = null,
     )
 
     /**
@@ -113,8 +115,11 @@ class ConnectorPollingService {
      */
     fun getPollingInfo(connectorId: UUID): PollingInfo {
         val task = scheduledTasks[connectorId]
+        val scheduled = task != null && !task.isDone && !task.isCancelled
         return PollingInfo(
-            scheduled = task != null && !task.isDone && !task.isCancelled,
+            scheduled = scheduled,
+            // A poll that is running right now reports a delay <= 0; show "now" rather than a past time.
+            nextRunAt = if (scheduled) Instant.now().plusMillis(task!!.getDelay(TimeUnit.MILLISECONDS).coerceAtLeast(0)) else null,
             intervalSeconds = connectorIntervals[connectorId],
             lastRunAt = lastRunTimes[connectorId],
             lastRunSuccess = lastRunSuccesses[connectorId],

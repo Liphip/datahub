@@ -132,6 +132,7 @@ class ConnectorStatusService {
                 else
                     error("Last poll", "Failed at ${formatInstant(info.lastRunAt)}: ${info.lastRunError ?: "unknown error"}")
             }
+            info.nextRunAt?.let { checks += ok("Next poll", formatInstant(it)) }
         } else {
             val dirMsg = if (connector.direction == Connector.Direction.OUTPUT)
                 "OUTPUT — sends on pipeline run" else "INPUT — polling disabled"
@@ -157,6 +158,7 @@ class ConnectorStatusService {
                 else
                     error("Last read", "Failed at ${formatInstant(info.lastRunAt)}: ${info.lastRunError ?: "unknown error"}")
             }
+            info.nextRunAt?.let { checks += ok("Next read", formatInstant(it)) }
         } else {
             val dirMsg = if (connector.direction == Connector.Direction.OUTPUT)
                 "OUTPUT — writes on pipeline run" else "INPUT — polling disabled"
