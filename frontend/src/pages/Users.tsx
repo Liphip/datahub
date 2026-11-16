@@ -47,7 +47,7 @@ const PERMISSION_GROUPS = [
   },
   {
     label: 'Audit',
-    abilities: ['audit:read'],
+    abilities: ['audit:read', 'audit.note:write'],
   },
 ];
 

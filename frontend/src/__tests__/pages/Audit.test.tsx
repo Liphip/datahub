@@ -13,6 +13,9 @@ vi.mock('../../services/api', () => ({
         resourceType: 'retention_cleanup', resourceId: null, outcome: 'SUCCESS', metadata: { pipeline_runs: 3 } }],
     })),
     exportAudit: vi.fn(async () => new Blob(['x'])),
+    verifyAuditChain: vi.fn(async () => ({ intact: false, checked: 4, unchained: 0, brokenAtSeq: 5, problem: 'record content does not match its hash' })),
+    getAuditNotes: vi.fn(async () => [{ id: 'n1', note: 'Approved in change 4711', createdAt: '2026-01-01T11:00:00Z' }]),
+    addAuditNote: vi.fn(async (_id: string, note: string) => ({ id: 'n2', note, createdAt: '2026-01-01T12:00:00Z' })),
     getDeadLetters: vi.fn(async () => [{ id: 'd1', channel: 'pipeline-input', payload: 'not-a-json', error: 'Unparseable', createdAt: '2026-01-01T10:00:00Z' }]),
   },
 }))
@@ -52,6 +55,16 @@ describe('Audit page', () => {
     await waitFor(() => expect(api.searchAudit).toHaveBeenCalled())
     fireEvent.change(screen.getByDisplayValue('This tenant'), { target: { value: 'all' } })
     await waitFor(() => expect(api.searchAudit).toHaveBeenLastCalledWith(expect.objectContaining({ tenantId: undefined }), 50, 0))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Verify chain' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('broken at record 5')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+    expect(await screen.findByText(/Approved in change 4711/)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText(/Add a note/), { target: { value: 'Checked' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() => expect(api.addAuditNote).toHaveBeenCalledWith('e1', 'Checked'))
+    expect(await screen.findByText(/Checked/)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('tab', { name: 'Dead letters' }))
     expect(await screen.findByText('not-a-json')).toBeInTheDocument()

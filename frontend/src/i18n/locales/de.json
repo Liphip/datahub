@@ -1076,6 +1076,13 @@
     "channel": "Kanal",
     "error": "Fehler",
     "payload": "Inhalt",
-    "scope": "Bereich"
+    "scope": "Bereich",
+    "verify": "Kette prüfen",
+    "chainIntact": "Die Audit-Kette ist unversehrt: {{count}} Einträge geprüft.",
+    "chainBroken": "Die Audit-Kette ist bei Eintrag {{seq}} unterbrochen: {{problem}}.",
+    "chainUnchained": "{{count}} ältere Einträge stammen aus der Zeit vor der Kette und sind nicht abgedeckt.",
+    "notes": "Notizen",
+    "notesNone": "Noch keine Notizen.",
+    "noteAdd": "Notiz hinzufügen (danach nicht mehr änderbar)"
   }
 }

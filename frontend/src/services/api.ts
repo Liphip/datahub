@@ -1,5 +1,5 @@
 import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
-import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertHistory, DataSummaryResponse, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorInboxItem, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential, MetadataType, MetadataTemplate, SecretReference, AuthorizationExplanation, ApiKey, AuditFilter, AuditPage, DeadLetter, MetadataObjectSummary, MetadataObjectDetail, SaveMetadataMapping } from '../types';
+import type { AuthResponse, User, Tenant, TenantLineageDefaults, TenantLineageDefaultsDiagnostics, TenantLineageDiagnosticsPolicy, CodeModule, ModuleVersion, Pipeline, PipelineRun, PipelineRunLineage, TenantPipelineRun, PipelineRunSummary, TenantRunSummary, AlertChannel, AlertHistory, DataSummaryResponse, DataTableRegistrationResult, Connector, ConnectorImpactSummary, ConnectorInboxItem, ConnectorReferenceSummary, ConnectorStatus, Role, Membership, TenantContext, BrokerCredential, MetadataType, MetadataTemplate, SecretReference, AuthorizationExplanation, ApiKey, AuditChainReport, AuditFilter, AuditNote, AuditPage, DeadLetter, MetadataObjectSummary, MetadataObjectDetail, SaveMetadataMapping } from '../types';
 
 /** Error shape returned by backend endpoints (`{ error, missing }` JSON bodies). */
 export type ApiError = AxiosError<{ error?: string; message?: string; code?: string; details?: { missing?: string[] } & Record<string, unknown> }>;
@@ -1057,6 +1057,20 @@ class ApiService {
 
   async exportAudit(filter: AuditFilter, format: 'csv' | 'json'): Promise<Blob> {
     return (await this.client.get('/audit/export', { params: { ...filter, format }, responseType: 'blob' })).data as Blob;
+  }
+
+  /** Recomputes the audit hash chain (AUD-05); platform administrators only. */
+  async verifyAuditChain(): Promise<AuditChainReport> {
+    return (await this.client.get<AuditChainReport>('/audit/verify')).data;
+  }
+
+  async getAuditNotes(eventId: string): Promise<AuditNote[]> {
+    return (await this.client.get<AuditNote[]>(`/audit/${eventId}/notes`)).data;
+  }
+
+  /** Notes are immutable (AUD-06): a correction is another note. */
+  async addAuditNote(eventId: string, note: string): Promise<AuditNote> {
+    return (await this.client.post<AuditNote>(`/audit/${eventId}/notes`, { note })).data;
   }
 
   /** Messages the executors could not use (PIP-13); platform administrators only. */

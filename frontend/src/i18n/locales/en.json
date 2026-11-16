@@ -1076,6 +1076,13 @@
     "channel": "Channel",
     "error": "Error",
     "payload": "Payload",
-    "scope": "Scope"
+    "scope": "Scope",
+    "verify": "Verify chain",
+    "chainIntact": "The audit chain is intact: {{count}} records verified.",
+    "chainBroken": "The audit chain is broken at record {{seq}}: {{problem}}.",
+    "chainUnchained": "{{count}} older records predate the chain and are not covered.",
+    "notes": "Notes",
+    "notesNone": "No notes yet.",
+    "noteAdd": "Add a note (cannot be changed afterwards)"
   }
 }

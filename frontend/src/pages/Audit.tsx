@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
-import type { AuditEvent, AuditFilter, DeadLetter } from '../types';
+import type { AuditChainReport, AuditEvent, AuditFilter, AuditNote, DeadLetter } from '../types';
 
 const PAGE_SIZE = 50;
 
@@ -37,6 +37,16 @@ export default function Audit() {
   const [deadLetters, setDeadLetters] = useState<DeadLetter[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [chain, setChain] = useState<AuditChainReport | null>(null);
+  const canNote = Boolean(isPlatformAdmin || user?.abilities?.includes('*') || user?.abilities?.includes('audit.note:write'));
+
+  const verify = async () => {
+    try {
+      setChain(await api.verifyAuditChain());
+    } catch (err) {
+      setError(errorMessage(err, t('common.loadingFailed')));
+    }
+  };
 
   const filter = useCallback((): AuditFilter => ({
     tenantId: isPlatformAdmin && wholeInstallation ? undefined : tenantId,
@@ -105,6 +115,7 @@ export default function Audit() {
         <h1 className="text-2xl font-bold text-gray-900">{t('audit.title')}</h1>
         {tab === 'events' && (
           <div className="flex gap-2">
+            {isPlatformAdmin && <button className="btn-secondary text-sm" onClick={verify}>{t('audit.verify')}</button>}
             <button className="btn-secondary text-sm" onClick={() => download('csv')}>{t('audit.exportCsv')}</button>
             <button className="btn-secondary text-sm" onClick={() => download('json')}>{t('audit.exportJson')}</button>
           </div>
@@ -125,6 +136,15 @@ export default function Audit() {
               {t(key === 'events' ? 'audit.tabEvents' : 'audit.tabDeadLetters')}
             </button>
           ))}
+        </div>
+      )}
+
+      {chain && (
+        <div role="status" className={`mb-4 px-4 py-3 rounded-sm border text-sm ${chain.intact ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-700'}`}>
+          {chain.intact
+            ? t('audit.chainIntact', { count: chain.checked })
+            : t('audit.chainBroken', { seq: chain.brokenAtSeq, problem: chain.problem })}
+          {chain.unchained > 0 && ` ${t('audit.chainUnchained', { count: chain.unchained })}`}
         </div>
       )}
 
@@ -203,6 +223,7 @@ export default function Audit() {
                       open={expanded === event.id}
                       onToggle={() => setExpanded(expanded === event.id ? null : event.id)}
                       outcomeClass={outcomeClass(event.outcome)}
+                      canNote={canNote}
                       systemLabel={t('audit.system')}
                       detailsLabel={t('audit.details')}
                     />
@@ -244,8 +265,53 @@ export default function Audit() {
   );
 }
 
-function FragmentRow({ event, open, onToggle, outcomeClass, systemLabel, detailsLabel }: {
-  event: AuditEvent; open: boolean; onToggle: () => void; outcomeClass: string; systemLabel: string; detailsLabel: string;
+/** Notes on one record: listed oldest first; adding is the only change there is (AUD-06). */
+function Notes({ eventId, canNote }: { eventId: string; canNote: boolean }) {
+  const { t } = useTranslation();
+  const [notes, setNotes] = useState<AuditNote[]>([]);
+  const [draft, setDraft] = useState('');
+  const [failed, setFailed] = useState('');
+
+  useEffect(() => {
+    api.getAuditNotes(eventId).then(setNotes).catch((err) => setFailed(errorMessage(err, t('common.loadingFailed'))));
+  }, [eventId, t]);
+
+  const add = async () => {
+    if (!draft.trim()) return;
+    try {
+      const saved = await api.addAuditNote(eventId, draft.trim());
+      setNotes((current) => [...current, saved]);
+      setDraft('');
+      setFailed('');
+    } catch (err) {
+      setFailed(errorMessage(err, t('common.saveFailed')));
+    }
+  };
+
+  return (
+    <div className="mt-2 border-t border-gray-200 pt-2">
+      <div className="text-xs font-semibold text-slate-600">{t('audit.notes')}</div>
+      {notes.length === 0 && <div className="text-xs text-slate-500">{t('audit.notesNone')}</div>}
+      <ul className="space-y-1">
+        {notes.map((note) => (
+          <li key={note.id} className="text-xs">
+            <span className="text-slate-500">{new Date(note.createdAt).toLocaleString()}</span> — {note.note}
+          </li>
+        ))}
+      </ul>
+      {failed && <div className="text-xs text-red-700">{failed}</div>}
+      {canNote && (
+        <div className="mt-2 flex gap-2">
+          <input className="input flex-1 text-sm" aria-label={t('audit.noteAdd')} placeholder={t('audit.noteAdd')} value={draft} maxLength={4000} onChange={(e) => setDraft(e.target.value)} />
+          <button className="btn-secondary text-sm" disabled={!draft.trim()} onClick={add}>{t('common.add')}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FragmentRow({ event, open, onToggle, outcomeClass, systemLabel, detailsLabel, canNote }: {
+  event: AuditEvent; open: boolean; onToggle: () => void; outcomeClass: string; systemLabel: string; detailsLabel: string; canNote: boolean;
 }) {
   return (
     <>
@@ -262,7 +328,8 @@ function FragmentRow({ event, open, onToggle, outcomeClass, systemLabel, details
       {open && (
         <tr className="bg-gray-50">
           <td colSpan={6} className="px-3 py-2">
-            <pre className="max-h-60 overflow-auto text-xs whitespace-pre-wrap break-all">{JSON.stringify({ requestId: event.requestId, tenantId: event.tenantId, metadata: event.metadata }, null, 2)}</pre>
+            <pre className="max-h-60 overflow-auto text-xs whitespace-pre-wrap break-all">{JSON.stringify({ seq: event.seq, hash: event.hash, requestId: event.requestId, tenantId: event.tenantId, metadata: event.metadata }, null, 2)}</pre>
+            <Notes eventId={event.id} canNote={canNote} />
           </td>
         </tr>
       )}

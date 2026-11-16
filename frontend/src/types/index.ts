@@ -710,6 +710,26 @@ export interface AuditEvent {
   outcome: string;
   requestId?: string | null;
   metadata?: unknown;
+  seq?: number | null;
+  hash?: string | null;
+}
+
+export interface AuditNote {
+  id: string;
+  eventId?: string | null;
+  authorId?: string | null;
+  note: string;
+  createdAt: string;
+}
+
+export interface AuditChainReport {
+  intact: boolean;
+  checked: number;
+  unchained: number;
+  firstSeq?: number | null;
+  lastSeq?: number | null;
+  brokenAtSeq?: number | null;
+  problem?: string | null;
 }
 
 export interface AuditPage {
