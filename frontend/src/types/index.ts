@@ -696,3 +696,41 @@ export interface ApiKey {
   isActive: boolean;
   key?: string;
 }
+
+export interface AuditEvent {
+  id: string;
+  occurredAt: string;
+  actorId?: string | null;
+  tenantId?: string | null;
+  action: string;
+  resourceType: string;
+  resourceId?: string | null;
+  outcome: string;
+  requestId?: string | null;
+  metadata?: unknown;
+}
+
+export interface AuditPage {
+  total: number;
+  limit: number;
+  offset: number;
+  items: AuditEvent[];
+}
+
+export interface AuditFilter {
+  tenantId?: string;
+  from?: string;
+  to?: string;
+  action?: string;
+  resourceType?: string;
+  outcome?: string;
+  q?: string;
+}
+
+export interface DeadLetter {
+  id: string;
+  channel: string;
+  payload: string;
+  error: string;
+  createdAt: string;
+}

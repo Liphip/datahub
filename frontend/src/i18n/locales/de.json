@@ -113,7 +113,8 @@
     "users": "Benutzer",
     "tenants": "Mandanten",
     "metadata": "Metadaten",
-    "apiKeys": "API-Schlüssel"
+    "apiKeys": "API-Schlüssel",
+    "audit": "Audit"
   },
   "auth": {
     "login": "Anmelden",
@@ -1036,5 +1037,36 @@
     "done": "Fertig",
     "selectOne": "Mindestens eine Pipeline oder einen Konnektor auswählen.",
     "noPermission": "Sie haben keine Berechtigung, API-Schlüssel zu verwalten."
+  },
+  "audit": {
+    "title": "Audit-Protokoll",
+    "intro": "Wer hat wann was getan. Einträge können nur angefügt werden; auch ein Export wird protokolliert.",
+    "tabEvents": "Ereignisse",
+    "tabDeadLetters": "Dead Letters",
+    "scopeTenant": "Dieser Mandant",
+    "scopeAll": "Gesamte Installation",
+    "from": "Von",
+    "to": "Bis",
+    "action": "Aktion",
+    "actionHint": "z. B. connector.* oder auth.login.failed",
+    "resourceType": "Zieltyp",
+    "outcome": "Ergebnis",
+    "anyOutcome": "Alle",
+    "search": "Textsuche",
+    "time": "Zeit",
+    "actor": "Akteur",
+    "target": "Ziel",
+    "system": "System",
+    "details": "Details",
+    "none": "Keine Audit-Einträge für diese Filter.",
+    "total": "{{count}} Einträge",
+    "exportCsv": "CSV exportieren",
+    "exportJson": "JSON exportieren",
+    "noPermission": "Für das Audit-Protokoll wird die Berechtigung audit:read benötigt.",
+    "deadLettersIntro": "Nachrichten, die die Executor nicht verarbeiten konnten: nicht lesbar oder an eine nicht mehr vorhandene Pipeline adressiert. Die Inhalte sind geschwärzt; sie dienen der Diagnose und können hier nicht erneut eingereiht werden.",
+    "deadLettersNone": "Keine Dead Letters.",
+    "channel": "Kanal",
+    "error": "Fehler",
+    "payload": "Inhalt"
   }
 }

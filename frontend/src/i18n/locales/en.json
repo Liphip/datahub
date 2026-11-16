@@ -113,7 +113,8 @@
     "users": "Users",
     "tenants": "Tenants",
     "metadata": "Metadata",
-    "apiKeys": "API keys"
+    "apiKeys": "API keys",
+    "audit": "Audit"
   },
   "auth": {
     "login": "Login",
@@ -1036,5 +1037,36 @@
     "done": "Done",
     "selectOne": "Select at least one pipeline or connector.",
     "noPermission": "You do not have permission to manage API keys."
+  },
+  "audit": {
+    "title": "Audit trail",
+    "intro": "Who did what, and when. Records are append-only; an export is itself recorded.",
+    "tabEvents": "Events",
+    "tabDeadLetters": "Dead letters",
+    "scopeTenant": "This tenant",
+    "scopeAll": "Whole installation",
+    "from": "From",
+    "to": "To",
+    "action": "Action",
+    "actionHint": "e.g. connector.* or auth.login.failed",
+    "resourceType": "Target type",
+    "outcome": "Outcome",
+    "anyOutcome": "Any",
+    "search": "Text search",
+    "time": "Time",
+    "actor": "Actor",
+    "target": "Target",
+    "system": "System",
+    "details": "Details",
+    "none": "No audit records match these filters.",
+    "total": "{{count}} records",
+    "exportCsv": "Export CSV",
+    "exportJson": "Export JSON",
+    "noPermission": "You need the audit:read permission to see the audit trail.",
+    "deadLettersIntro": "Messages the executors could not use: unparseable, or addressed to a pipeline that no longer exists. Payloads are redacted, so they are shown for diagnosis and cannot be requeued from here.",
+    "deadLettersNone": "No dead letters.",
+    "channel": "Channel",
+    "error": "Error",
+    "payload": "Payload"
   }
 }

@@ -45,6 +45,10 @@ const PERMISSION_GROUPS = [
     label: 'Users / Tenant',
     abilities: ['user:read', 'user:write', 'user:delete', 'tenant:manage'],
   },
+  {
+    label: 'Audit',
+    abilities: ['audit:read'],
+  },
 ];
 
 export default function Users() {

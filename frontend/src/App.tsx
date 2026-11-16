@@ -72,6 +72,7 @@ const Users = lazy(() => import('./pages/Users'));
 const Alerts = lazy(() => import('./pages/Alerts'));
 const Metadata = lazy(() => import('./pages/Metadata'));
 const ApiKeys = lazy(() => import('./pages/ApiKeys'));
+const Audit = lazy(() => import('./pages/Audit'));
 const Data = lazy(() => import('./pages/Data'));
 const RunDetail = lazy(() => import('./pages/RunDetail'));
 import Layout from './components/Layout';
@@ -183,6 +184,7 @@ function App() {
                   <Route path="/data" element={<Data />} />
                   <Route path="/metadata" element={<Metadata />} />
                   <Route path="/api-keys" element={<ApiKeys />} />
+                  <Route path="/audit" element={<Audit />} />
                 </Routes>
                 </Suspense>
               </Layout>
