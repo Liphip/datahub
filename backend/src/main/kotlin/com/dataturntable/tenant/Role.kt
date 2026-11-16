@@ -37,6 +37,10 @@ open class Role : PanacheBase() {
     
     @Column(name = "is_system")
     var isSystem: Boolean = false
+
+    /** IAM-05: a disabled role grants nothing and cannot be assigned; memberships keep pointing at it. */
+    @Column(name = "is_disabled", nullable = false)
+    var isDisabled: Boolean = false
     
     @Column(name = "created_at")
     var createdAt: Instant = Instant.now()
@@ -95,6 +99,7 @@ open class Role : PanacheBase() {
      * Evaluates the named capability or state predicate.
      */
     fun hasAbility(ability: String): Boolean {
+        if (isDisabled) return false
         return grantedAbilities.any { it.value == "*" || it.value == ability } ||
             AbilityEvaluator.hasAbility(abilities, ability)
     }
@@ -103,6 +108,12 @@ open class Role : PanacheBase() {
      * Retrieves or enumerates the requested state.
      */
     fun getAbilitiesList(): List<String> {
+        if (isDisabled) return emptyList()
+        return definedAbilities()
+    }
+
+    /** What the role is defined to grant, whether or not it is currently disabled (for display and cloning). */
+    fun definedAbilities(): List<String> {
         return (AbilityEvaluator.parse(abilities) + grantedAbilities.map { it.value }).toList()
     }
 }

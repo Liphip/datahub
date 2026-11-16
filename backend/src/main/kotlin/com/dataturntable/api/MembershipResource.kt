@@ -166,6 +166,7 @@ class MembershipResource {
         if (!isRoleAssignableToTenant(role, tenant)) {
             return Response.status(400).entity(mapOf("error" to "Role does not belong to tenant")).build()
         }
+        if (role.isDisabled) return Response.status(400).entity(mapOf("error" to "Role is disabled")).build()
 
         val existingMembership = em.createQuery(
             "SELECT m FROM Membership m WHERE m.authUser.id = :userId AND m.tenant.id = :tenantId",
@@ -284,6 +285,7 @@ class MembershipResource {
             if (!isRoleAssignableToTenant(role, membership.tenant!!)) {
                 return Response.status(400).entity(mapOf("error" to "Role does not belong to tenant")).build()
             }
+            if (role.isDisabled) return Response.status(400).entity(mapOf("error" to "Role is disabled")).build()
             membership.role = role
             authorizationChanged = true
         }

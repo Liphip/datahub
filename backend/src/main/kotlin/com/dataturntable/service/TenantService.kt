@@ -32,6 +32,7 @@ class TenantService {
             description = "Default viewer role"
             abilities = "[\"module:read\", \"pipeline:read\", \"data:read\", \"alert:read\", \"connector:read\", \"metadata:read\", \"user:read\"]"
             isDefault = true
+            isSystem = true
         }
         viewerRole.persist()
         authorizationGrantService.replaceRoleAbilities(viewerRole, authorizationGrantService.legacyTokens(viewerRole.abilities))
@@ -41,6 +42,7 @@ class TenantService {
             name = "Editor"
             description = "Default editor role"
             abilities = "[\"module:read\", \"module:write\", \"pipeline:read\", \"pipeline:write\", \"pipeline:execute\", \"data:read\", \"data:write\", \"alert:read\", \"connector:read\", \"connector:write\", \"metadata:read\", \"metadata:write\", \"user:read\"]"
+            isSystem = true
         }
         editorRole.persist()
         authorizationGrantService.replaceRoleAbilities(editorRole, authorizationGrantService.legacyTokens(editorRole.abilities))
@@ -50,6 +52,7 @@ class TenantService {
             name = "Tenant Admin"
             description = "Tenant administrator role"
             abilities = "[\"module:read\", \"module:write\", \"module:delete\", \"pipeline:read\", \"pipeline:write\", \"pipeline:execute\", \"data:read\", \"data:write\", \"data:export\", \"alert:read\", \"alert:configure\", \"tenant:manage\", \"metadata:read\", \"metadata:write\", \"user:read\", \"user:write\", \"user:delete\", \"connector:read\", \"connector:write\", \"connector:delete\", \"secret:manage\", \"audit:read\"]"
+            isSystem = true
         }
         adminRole.persist()
         authorizationGrantService.replaceRoleAbilities(adminRole, authorizationGrantService.legacyTokens(adminRole.abilities))

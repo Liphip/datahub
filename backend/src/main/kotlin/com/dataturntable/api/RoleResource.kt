@@ -92,9 +92,10 @@ class RoleResource {
             "tenantId" to role.tenant?.id,
             "name" to role.name,
             "description" to role.description,
-            "abilities" to role.getAbilitiesList(),
+            "abilities" to role.definedAbilities(),
             "isDefault" to role.isDefault,
             "isSystem" to role.isSystem,
+            "isDisabled" to role.isDisabled,
             "createdAt" to role.createdAt?.toString()
         )
     }
@@ -226,18 +227,30 @@ class RoleResource {
             ?: return Response.status(400).entity(mapOf("error" to "Invalid role id")).build()
         val role = em.find(Role::class.java, roleId)
         return if (role != null) {
-            if (role.isSystem) {
-                return Response.status(403)
-                    .entity(mapOf("error" to "Cannot modify system role"))
-                    .build()
-            }
-
             val tenantId = role.tenant?.id?.toString()
             if (tenantId != null && !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
                 return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
             }
+            if (tenantId == null && !currentUser.isSuperAdmin()) {
+                return Response.status(403).entity(mapOf("error" to "Only superadmin can change global roles")).build()
+            }
             if (!SecurityUtils.hasAbility(currentUser, "tenant:manage")) {
                 return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
+            }
+            // IAM-05: a built-in template cannot be modified; the one thing that may change is
+            // whether it is disabled. To change what it grants, clone it.
+            if (role.isSystem && (request.keys - "isDisabled").isNotEmpty()) {
+                return Response.status(403)
+                    .entity(mapOf("error" to "Cannot modify system role; clone it instead"))
+                    .build()
+            }
+            (request["isDisabled"] as? Boolean)?.let { disable ->
+                if (disable && !currentUser.isSuperAdmin() && holdsRole(currentUser, role)) {
+                    return Response.status(409)
+                        .entity(mapOf("error" to "Cannot disable a role you hold yourself"))
+                        .build()
+                }
+                role.isDisabled = disable
             }
             
             request["name"]?.let { role.name = it as String }
@@ -268,6 +281,60 @@ class RoleResource {
         }
     }
     
+    private fun holdsRole(user: User, role: Role): Boolean =
+        (em.createQuery("SELECT COUNT(m) FROM Membership m WHERE m.authUser = :u AND m.role = :r")
+            .setParameter("u", user).setParameter("r", role).singleResult as Number).toLong() > 0
+
+    /**
+     * IAM-05: copies a role — typically a built-in template, which cannot be edited — into a new
+     * editable role in the same tenant. The copy is never a system role and starts enabled.
+     */
+    @POST
+    @Path("/{id}/clone")
+    @Transactional
+    fun clone(@PathParam("id") id: String, request: Map<String, Any>?): Response {
+        val currentUser = currentUser() ?: return Response.status(401).entity(mapOf("error" to "Unauthorized")).build()
+        val roleId = parseUuid(id, "role id")
+            ?: return Response.status(400).entity(mapOf("error" to "Invalid role id")).build()
+        val source = em.find(Role::class.java, roleId)
+            ?: return Response.status(404).entity(mapOf("error" to "Role not found")).build()
+        val tenantId = source.tenant?.id?.toString()
+        if (tenantId != null && !SecurityUtils.canAccessTenant(currentUser, tenantId)) {
+            return Response.status(403).entity(mapOf("error" to "Forbidden")).build()
+        }
+        if (tenantId == null && !currentUser.isSuperAdmin()) {
+            return Response.status(403).entity(mapOf("error" to "Only superadmin can clone global roles")).build()
+        }
+        if (!SecurityUtils.hasAbility(currentUser, "tenant:manage")) {
+            return Response.status(403).entity(mapOf("error" to "Insufficient permissions")).build()
+        }
+        val name = (request?.get("name") as? String)?.trim()?.takeIf { it.isNotEmpty() } ?: "${source.name} (copy)"
+        val taken = (em.createQuery("SELECT COUNT(r) FROM Role r WHERE r.name = :n AND ((:t IS NULL AND r.tenant IS NULL) OR r.tenant = :t)")
+            .setParameter("n", name).setParameter("t", source.tenant).singleResult as Number).toLong() > 0
+        if (taken) return Response.status(409).entity(mapOf("error" to "A role with this name already exists")).build()
+
+        val abilities = authorizationGrantService.normalize(source.definedAbilities())
+        val copy = Role().apply {
+            this.name = name
+            this.tenant = source.tenant
+            this.description = source.description
+            this.abilities = abilitiesJson(abilities)
+            this.isDefault = false
+            this.isSystem = false
+        }
+        copy.persist()
+        authorizationGrantService.replaceRoleAbilities(copy, abilities)
+        audit.record(
+            actorId = currentUser.id,
+            tenantId = copy.tenant?.id,
+            action = "identity.role.cloned",
+            resourceType = "role",
+            resourceId = copy.id.toString(),
+            metadata = mapOf("outcome" to "succeeded", "sourceRoleId" to source.id.toString())
+        )
+        return Response.status(201).entity(roleToMap(copy)).build()
+    }
+
     @DELETE
     @Path("/{id}")
     @Transactional
