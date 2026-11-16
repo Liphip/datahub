@@ -26,6 +26,12 @@ class AuditEvent {
 
     /** Position in the hash chain (AUD-05); null on records written before the chain existed. */
     @Column(unique = true) var seq: Long? = null
+    /** AUD-03: the actor's name as it was when the record was written. */
+    @Column(name = "actor_name", length = 320) var actorName: String? = null
+    @Column(name = "actor_ip", length = 64) var actorIp: String? = null
+    @Column(name = "user_agent", length = 512) var userAgent: String? = null
+    /** `api` for a record written while handling a request, `system` for jobs and consumers. */
+    @Column(length = 32) var source: String? = null
     @Column(name = "prev_hash", length = 64) var prevHash: String? = null
     @Column(length = 64) var hash: String? = null
 }

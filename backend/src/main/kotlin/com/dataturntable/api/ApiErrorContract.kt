@@ -14,6 +14,8 @@ import jakarta.ws.rs.ext.Provider
 import org.jboss.logging.Logger
 import java.util.UUID
 
+data class RequestOrigin(val ip: String?, val userAgent: String?)
+
 data class ApiError(
     val code: String,
     val message: String,
@@ -26,21 +28,37 @@ data class ApiError(
 @Provider
 @Priority(Priorities.USER)
 class RequestIdFilter : ContainerRequestFilter, ContainerResponseFilter {
+    @Context
+    lateinit var httpRequest: io.vertx.core.http.HttpServerRequest
+
     override fun filter(requestContext: ContainerRequestContext) {
         val requestId = UUID.randomUUID().toString()
         requestContext.setProperty(REQUEST_ID, requestId)
         CURRENT_REQUEST_ID.set(requestId)
+        // AUD-03: where a request came from, for the audit record written while it is handled.
+        // The address is the one the HTTP layer reports: behind a reverse proxy it is the
+        // client's only if Quarkus proxy forwarding is enabled for that proxy.
+        CURRENT_ORIGIN.set(RequestOrigin(
+            ip = runCatching { httpRequest.remoteAddress()?.host() }.getOrNull(),
+            userAgent = requestContext.getHeaderString("User-Agent")?.take(512),
+        ))
     }
 
     override fun filter(requestContext: ContainerRequestContext, responseContext: ContainerResponseContext) {
         CURRENT_REQUEST_ID.remove()
+        CURRENT_ORIGIN.remove()
     }
 
     companion object {
         const val REQUEST_ID = "dataturntable.request-id"
         private val CURRENT_REQUEST_ID = ThreadLocal<String?>()
 
+        private val CURRENT_ORIGIN = ThreadLocal<RequestOrigin?>()
+
         fun currentRequestId(): String? = CURRENT_REQUEST_ID.get()
+
+        /** Null outside an HTTP request (scheduled jobs, consumers). */
+        fun currentOrigin(): RequestOrigin? = CURRENT_ORIGIN.get()
     }
 }
 

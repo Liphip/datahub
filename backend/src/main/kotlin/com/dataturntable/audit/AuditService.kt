@@ -40,6 +40,11 @@ class AuditService {
             this.resourceId = resourceId
             this.requestId = requestId ?: RequestIdFilter.currentRequestId()
             this.metadata = mapper.writeValueAsString(redact(metadata))
+            val origin = RequestIdFilter.currentOrigin()
+            this.source = if (origin != null) "api" else "system"
+            this.actorIp = origin?.ip
+            this.userAgent = origin?.userAgent
+            this.actorName = actorId?.let { id -> runCatching { em.find(com.dataturntable.auth.User::class.java, id)?.email }.getOrNull() }
             this.seq = head.lastSeq + 1
             this.prevHash = head.lastHash
         }
@@ -100,8 +105,13 @@ class AuditService {
         val content = listOf(
             event.prevHash, event.seq, event.occurredAt.toEpochMilli(), event.actorId, event.tenantId, event.action,
             event.resourceType, event.resourceId, event.outcome, event.requestId, event.metadata,
-        ).joinToString("\u001f") { it?.toString() ?: "\u0000" }
-        return MessageDigest.getInstance("SHA-256").digest(content.toByteArray(StandardCharsets.UTF_8))
+        ) +
+            // The AUD-03 fields joined the hash after the chain existed: they are appended only
+            // when one is set, so records written before them still verify, and clearing all of
+            // them on a later record changes its hash like any other edit.
+            listOf(event.actorName, event.actorIp, event.userAgent, event.source).let { extra -> if (extra.any { it != null }) extra else emptyList() }
+        val text = content.joinToString("\u001f") { it?.toString() ?: "\u0000" }
+        return MessageDigest.getInstance("SHA-256").digest(text.toByteArray(StandardCharsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
     }
 

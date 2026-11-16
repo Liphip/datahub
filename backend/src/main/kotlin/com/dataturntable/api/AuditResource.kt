@@ -95,7 +95,8 @@ class AuditResource {
         add("UPPER(a.outcome) = :outcome", "outcome", filter.outcome?.uppercase())
         filter.text?.let {
             where += "(LOWER(a.action) LIKE :q ESCAPE '\\' OR LOWER(a.resourceType) LIKE :q ESCAPE '\\' " +
-                "OR LOWER(COALESCE(a.resourceId, '')) LIKE :q ESCAPE '\\' OR LOWER(COALESCE(a.metadata, '')) LIKE :q ESCAPE '\\')"
+                "OR LOWER(COALESCE(a.resourceId, '')) LIKE :q ESCAPE '\\' OR LOWER(COALESCE(a.metadata, '')) LIKE :q ESCAPE '\\' " +
+                "OR LOWER(COALESCE(a.actorName, '')) LIKE :q ESCAPE '\\')"
             params["q"] = "%" + like(it.lowercase()) + "%"
         }
         val jpql = "SELECT $select FROM AuditEvent a" + (if (where.isEmpty()) "" else " WHERE " + where.joinToString(" AND ")) + order
@@ -108,6 +109,7 @@ class AuditResource {
         "id" to event.id, "occurredAt" to event.occurredAt, "actorId" to event.actorId, "tenantId" to event.tenantId,
         "action" to event.action, "resourceType" to event.resourceType, "resourceId" to event.resourceId,
         "outcome" to event.outcome, "requestId" to event.requestId, "seq" to event.seq, "hash" to event.hash,
+        "actorName" to event.actorName, "actorIp" to event.actorIp, "userAgent" to event.userAgent, "source" to event.source,
         "metadata" to event.metadata?.let { runCatching { mapper.readValue(it, Any::class.java) }.getOrDefault(it) },
     )
 
@@ -158,9 +160,9 @@ class AuditResource {
             Response.ok(mapper.writeValueAsString(rows.map(::dto)), MediaType.APPLICATION_JSON)
                 .header("Content-Disposition", "attachment; filename=\"$name.json\"").build()
         } else {
-            val header = "occurredAt,action,outcome,resourceType,resourceId,actorId,tenantId,requestId,metadata"
+            val header = "occurredAt,action,outcome,resourceType,resourceId,actorId,actorName,actorIp,source,tenantId,requestId,metadata"
             val body = rows.joinToString("\n") { e ->
-                listOf(e.occurredAt, e.action, e.outcome, e.resourceType, e.resourceId, e.actorId, e.tenantId, e.requestId, e.metadata)
+                listOf(e.occurredAt, e.action, e.outcome, e.resourceType, e.resourceId, e.actorId, e.actorName, e.actorIp, e.source, e.tenantId, e.requestId, e.metadata)
                     .joinToString(",") { csv(it?.toString()) }
             }
             Response.ok(header + "\n" + body + "\n", "text/csv")

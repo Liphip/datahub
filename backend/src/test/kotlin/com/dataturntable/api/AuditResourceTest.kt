@@ -111,7 +111,7 @@ class AuditResourceTest {
             .then().statusCode(200).header("Content-Type", containsString("text/csv"))
             .header("Content-Disposition", containsString(".csv")).extract().asString()
         val lines = csv.trim().lines()
-        assertEquals("occurredAt,action,outcome,resourceType,resourceId,actorId,tenantId,requestId,metadata", lines[0])
+        assertEquals("occurredAt,action,outcome,resourceType,resourceId,actorId,actorName,actorIp,source,tenantId,requestId,metadata", lines[0])
         assertEquals(2, lines.size, "one header and one record: $csv")
         assertTrue(lines[1].contains(",audittest.created,"))
         assertTrue(lines[1].contains("\"\""), "embedded quotes are doubled: ${lines[1]}")
@@ -181,5 +181,30 @@ class AuditResourceTest {
         // Adding a note is itself audited; there is no way to change or remove one.
         api().get("/api/internal/v1/audit?tenantId=$tenantId&action=audit.note.added").then().statusCode(200).body("total", equalTo(2))
         api(writer).delete("/api/internal/v1/audit/$eventId/notes").then().statusCode(405)
+    }
+
+    /** AUD-03: a record made while handling a request names the actor as they were, and where they came from. */
+    @Test
+    fun `a record carries a snapshot of the actor's name, the address, user agent and source`() {
+        val tenantId = tenant()
+        val token = memberToken(tenantId, "[\"audit:read\"]")
+        // The export is audited; made by this member over HTTP with a recognisable user agent.
+        api(token).header("User-Agent", "audit-snapshot-test/1.0").get("/api/internal/v1/audit/export?tenantId=$tenantId&format=json").then().statusCode(200)
+        // A record written outside any request, like a scheduled job would.
+        audit.record(null, UUID.fromString(tenantId), "audittest.job", "thing", null)
+
+        val items = api().get("/api/internal/v1/audit?tenantId=$tenantId").then().statusCode(200).extract().jsonPath()
+        val exported = items.getMap<String, Any?>("items.find { it.action == 'audit.exported' }")
+        assertTrue(exported["actorName"].toString().startsWith("audit-") && exported["actorName"].toString().endsWith("@example.com"), "actor name snapshot: $exported")
+        assertEquals("audit-snapshot-test/1.0", exported["userAgent"])
+        assertEquals("api", exported["source"])
+        assertTrue(!exported["actorIp"]?.toString().isNullOrBlank(), "address: $exported")
+        // The actor's name is searchable.
+        api().get("/api/internal/v1/audit?tenantId=$tenantId&q=${exported["actorName"]}").then().statusCode(200).body("total", greaterThanOrEqualTo(1))
+
+        val job = items.getMap<String, Any?>("items.find { it.action == 'audittest.job' }")
+        assertEquals(null, job["actorName"])
+        // Both kinds are covered by the chain.
+        api().get("/api/internal/v1/audit/verify").then().statusCode(200).body("intact", equalTo(true))
     }
 }

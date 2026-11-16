@@ -712,6 +712,11 @@ export interface AuditEvent {
   metadata?: unknown;
   seq?: number | null;
   hash?: string | null;
+  /** The actor's name when the record was written (AUD-03). */
+  actorName?: string | null;
+  actorIp?: string | null;
+  userAgent?: string | null;
+  source?: string | null;
 }
 
 export interface AuditNote {

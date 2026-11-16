@@ -320,7 +320,7 @@ function FragmentRow({ event, open, onToggle, outcomeClass, systemLabel, details
         <td className="px-3 py-2 font-mono text-xs">{event.action}</td>
         <td className="px-3 py-2"><span className={`px-2 py-0.5 text-xs rounded-sm ${outcomeClass}`}>{event.outcome}</span></td>
         <td className="px-3 py-2 break-all">{event.resourceType}{event.resourceId ? ` · ${event.resourceId}` : ''}</td>
-        <td className="px-3 py-2 break-all text-xs">{event.actorId ?? systemLabel}</td>
+        <td className="px-3 py-2 break-all text-xs">{event.actorName ?? event.actorId ?? systemLabel}</td>
         <td className="px-3 py-2 text-right">
           <button className="text-blue-700 hover:underline text-xs" aria-expanded={open} onClick={onToggle}>{detailsLabel}</button>
         </td>
@@ -328,7 +328,7 @@ function FragmentRow({ event, open, onToggle, outcomeClass, systemLabel, details
       {open && (
         <tr className="bg-gray-50">
           <td colSpan={6} className="px-3 py-2">
-            <pre className="max-h-60 overflow-auto text-xs whitespace-pre-wrap break-all">{JSON.stringify({ seq: event.seq, hash: event.hash, requestId: event.requestId, tenantId: event.tenantId, metadata: event.metadata }, null, 2)}</pre>
+            <pre className="max-h-60 overflow-auto text-xs whitespace-pre-wrap break-all">{JSON.stringify({ actorId: event.actorId, actorIp: event.actorIp, userAgent: event.userAgent, source: event.source, seq: event.seq, hash: event.hash, requestId: event.requestId, tenantId: event.tenantId, metadata: event.metadata }, null, 2)}</pre>
             <Notes eventId={event.id} canNote={canNote} />
           </td>
         </tr>
