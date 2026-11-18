@@ -42,3 +42,7 @@ cd frontend && npx license-checker-rseidelsohn --production --summary
 | PostgreSQL HA / Kafka HA (Kubernetes) | CloudNativePG and Strimzi operators | Apache-2.0 | OK. Replace the Bitnami images and charts, which Bitnami no longer publishes for free. The Docker Swarm stacks were removed; supported targets are single-node Docker Compose and Kubernetes. |
 | Object storage (planned) | — | — | MinIO is **not** an option: prebuilt images stopped in October 2025, the community repository was archived in February 2026 and its Docker Hub repositories were deleted in September 2026. Candidates: SeaweedFS (Apache-2.0), Garage (AGPL-3.0, same unmodified-use reasoning as Grafana). |
 | Python module runtime | `python:3.14.x-slim` | PSF | OK. Packages that users install in their modules are the user's responsibility. |
+
+The optional OIDC login uses `io.quarkus:quarkus-oidc` (Apache-2.0), managed by the existing Quarkus BOM. Its desktop flow test uses the JDK HTTP server and the existing SmallRye JWT library; no identity-provider container or new frontend dependency is bundled.
+
+The optional desktop identity-provider overlay bundles `quay.io/keycloak/keycloak:26.6.2` (Keycloak, Apache-2.0). Desktop initialization uses the already bundled `python:3.14.7-slim-trixie` image and its OpenSSL executable; no host crypto tools are required.

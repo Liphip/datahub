@@ -25,6 +25,62 @@ import java.util.UUID
 @TestProfile(PostgresTestProfile::class)
 @org.junit.jupiter.api.condition.EnabledIf("com.dataturntable.test.PostgresTestProfile#available")
 class PostgresMigrationBehaviorTest {
+    @jakarta.inject.Inject
+    lateinit var oidcLogins: com.dataturntable.auth.OidcLoginService
+
+    @jakarta.inject.Inject
+    lateinit var pipelineData: com.dataturntable.service.PipelineDataService
+
+    @Test
+    fun `tenant table registration DB_SAVE and query work without database CREATE privileges`() {
+        val token = TestAuthHelpers.createAdminToken()
+        val rootId = given().header("Authorization", "Bearer $token").get("/api/internal/v1/tenants")
+            .then().statusCode(200).extract().jsonPath().getString("[0].id")
+        val tenantId = given().header("Authorization", "Bearer $token").contentType(ContentType.JSON)
+            .body(mapOf("name" to "desktop-storage-${UUID.randomUUID()}", "parentId" to rootId))
+            .post("/api/internal/v1/tenants").then().statusCode(201).extract().jsonPath().getString("id")
+        given().header("Authorization", "Bearer $token").contentType(ContentType.JSON)
+            .body(mapOf("tableName" to "desktop_readings", "tableType" to "relational",
+                "columns" to listOf(mapOf("name" to "v", "type" to "FLOAT"))))
+            .post("/api/v1/data/$tenantId/tables/register").then().statusCode(201)
+        val version = com.dataturntable.module.ModuleVersion().apply {
+            config = """{"table":"desktop_readings","mode":"append"}"""
+        }
+        pipelineData.execute(version, com.dataturntable.module.ModuleType.DB_SAVE,
+            mapOf("v" to 42), UUID.fromString(tenantId), "desktop-regression")
+        given().header("Authorization", "Bearer $token").get("/api/v1/data/$tenantId/query?table=desktop_readings")
+            .then().statusCode(200).body("data.size()", org.hamcrest.CoreMatchers.equalTo(1))
+            .body("data[0].v", org.hamcrest.CoreMatchers.equalTo(42.0f))
+        given().header("Authorization", "Bearer $token")
+            .queryParam("table", "desktop_readings").queryParam("start", "2000-01-01T00:00:00Z")
+            .queryParam("end", "2100-01-01T00:00:00Z")
+            .get("/api/v1/data/$tenantId/query").then().statusCode(200)
+            .body("data.size()", org.hamcrest.CoreMatchers.equalTo(1))
+    }
+
+    @Test
+    fun `OIDC links and one-use handoffs persist against the migrated schema`() {
+        val token = TestAuthHelpers.createAdminToken()
+        val userId = given().header("Authorization", "Bearer $token").get("/api/internal/v1/auth/me")
+            .then().statusCode(200).extract().jsonPath().getString("id")
+        val issuer = "https://desktop-provider.example"
+        val subject = "pg-subject-${UUID.randomUUID()}"
+        val path = "/api/internal/v1/users/$userId/identities"
+        val linkId = given().header("Authorization", "Bearer $token").contentType(ContentType.JSON)
+            .body(mapOf("issuer" to issuer, "subject" to subject)).post(path)
+            .then().statusCode(201).extract().jsonPath().getString("id")
+        try {
+            val handoff = oidcLogins.begin(issuer, subject)
+            val result = oidcLogins.exchange(handoff.code, handoff.browser)
+            org.junit.jupiter.api.Assertions.assertEquals(userId, result.user.id)
+            org.junit.jupiter.api.Assertions.assertThrows(SecurityException::class.java) {
+                oidcLogins.exchange(handoff.code, handoff.browser)
+            }
+        } finally {
+            given().header("Authorization", "Bearer $token").delete("$path/$linkId").then().statusCode(204)
+        }
+    }
+
     @Test
     fun `application boots against the migrated PostgreSQL schema and JSONB, secret round-trips behave correctly`() {
         val adminToken = TestAuthHelpers.createAdminToken()

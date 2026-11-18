@@ -132,7 +132,17 @@
     "createAccount": "Konto erstellen",
     "alreadyHaveAccount": "Haben Sie bereits ein Konto?",
     "firstDeployment": "Erste Bereitstellung?",
-    "runInitialSetup": "Ersteinrichtung starten"
+    "runInitialSetup": "Ersteinrichtung starten",
+    "oidcLogin": "Mit Identitätsanbieter anmelden",
+    "oidcFailed": "Externe Anmeldung fehlgeschlagen oder abgelaufen. Bitte erneut versuchen.",
+    "identityLinks": "Externe Identitäten",
+    "identityHelp": "Verknüpfen Sie den exakten Aussteller und die Subjektkennung des Identitätsanbieters mit diesem Konto. Übereinstimmende E-Mail-Adressen gewähren keinen Zugriff.",
+    "issuer": "Aussteller-URL",
+    "subject": "Subjektkennung (sub)",
+    "linkIdentity": "Identität verknüpfen",
+    "unlink": "Verknüpfung entfernen",
+    "unlinkConfirm": "Diese Verknüpfung entfernen und die aktuellen Tokens dieses Benutzers widerrufen?",
+    "identityFailed": "Identitätsverknüpfungen konnten nicht geändert werden. Prüfen Sie Aussteller, Subjektkennung und Berechtigungen."
   },
   "theme": {
     "toggle": "Farbschema umschalten",
@@ -955,7 +965,18 @@
     "useMine": "Meine verwenden",
     "mergeAndSave": "Zusammenführen und speichern",
     "configureTenantDefaults": "Mandantenweite Standardwerte für Pipeline-Verlaufstriage konfigurieren. Diese dienen als Baseline-Verhalten über Pipelines hinweg.",
-    "tuneAdvisoryThresholds": "Empfehlungsschwellenwerte für diesen Mandanten anpassen. Änderungen gelten sofort für Diagnosen in beiden Bereichen: Mandanten und Pipelines."
+    "tuneAdvisoryThresholds": "Empfehlungsschwellenwerte für diesen Mandanten anpassen. Änderungen gelten sofort für Diagnosen in beiden Bereichen: Mandanten und Pipelines.",
+    "quotaTitle": "Kontingente und Aufbewahrung",
+    "quotaHelp": "Leer verwendet den Installationsstandard. Eingang: 0 deaktiviert das Limit (pro Instanz und Minute). Aufbewahrung: -1 bewahrt den Verlauf unbegrenzt auf; 0 gibt den gesamten bisherigen Verlauf für die nächste Bereinigung frei. Änderungen gelten nach dem nächsten Pipeline-Abgleich.",
+    "quotaDefault": "Installationsstandard",
+    "quotaInvalid": "Geben Sie ganze Zahlen im erlaubten Bereich ein.",
+    "quotaSaveFailed": "Mandanteneinstellungen konnten nicht gespeichert werden.",
+    "quota": {
+      "ingestRecordsPerMinute": "Eingehende Datensätze pro Minute",
+      "maxConcurrentExecutions": "Gleichzeitige Ausführungen",
+      "retentionPipelineRunsDays": "Laufverlauf aufbewahren (Tage)",
+      "retentionAlertHistoryDays": "Alarmverlauf aufbewahren (Tage)"
+    }
   },
   "errors": {
     "generic": "Ein Fehler ist aufgetreten",
@@ -1090,5 +1111,26 @@
     "notes": "Notizen",
     "notesNone": "Noch keine Notizen.",
     "noteAdd": "Notiz hinzufügen (danach nicht mehr änderbar)"
+  },
+  "activity": {
+    "configuration": "Konfiguration",
+    "title": "Aktivität",
+    "events": "Audit-Ereignisse",
+    "notes": "Notizen",
+    "addNote": "Notiz hinzufügen",
+    "immutable": "Notizen bleiben dauerhaft und können nicht geändert oder gelöscht werden.",
+    "empty": "Keine Audit-Ereignisse für diese Komponente.",
+    "failed": "Aktivität konnte nicht geladen oder gespeichert werden. Bitte erneut versuchen.",
+    "system": "System",
+    "previous": "Zurück",
+    "next": "Weiter"
+  },
+  "membershipValidity": {
+    "title": "Zugriffsgültigkeit",
+    "help": "Zeiten gelten in Ihrer lokalen Zeitzone. Leer bedeutet unbegrenzt. Der Beginn ist einschließlich, das Ende ausschließlich. Änderungen widerrufen bestehende Tokens. Zeitlich begrenzte Mitgliedschaften gewähren bis zur gemeinsamen Sitzungsprüfung keinen Grafana-Organisationszugriff.",
+    "from": "Gültig ab",
+    "until": "Gültig bis",
+    "invalid": "Das Ende muss nach dem Beginn liegen.",
+    "failed": "Zugriffsgültigkeit konnte nicht gespeichert werden."
   }
 }

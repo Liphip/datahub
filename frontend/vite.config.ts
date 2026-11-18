@@ -16,6 +16,11 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
+      // OIDC redirect URIs must retain the browser-facing host and port.
+      '/api/internal/v1/auth/oidc/': {
+        target: process.env.API_PROXY_TARGET ?? 'http://localhost:8080',
+        changeOrigin: false,
+      },
       // Backend resources are served under /api/..., so the path is forwarded unchanged.
       '/api/': {
         target: process.env.API_PROXY_TARGET ?? 'http://localhost:8080',

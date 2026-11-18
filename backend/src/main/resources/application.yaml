@@ -1,4 +1,30 @@
 quarkus:
+  oidc:
+    tenant-enabled: false
+    devservices:
+      enabled: false
+    external:
+      tenant-paths: [/api/internal/v1/auth/oidc/login]
+      tenant-enabled: ${DATATURNTABLE_OIDC_ENABLED:false}
+      application-type: web-app
+      auth-server-url: ${DATATURNTABLE_OIDC_ISSUER:http://localhost:8180/realms/dataturntable}
+      client-id: ${DATATURNTABLE_OIDC_CLIENT_ID:dataturntable}
+      token:
+        audience: ["${DATATURNTABLE_OIDC_CLIENT_ID:dataturntable}"]
+      credentials:
+        secret: ${DATATURNTABLE_OIDC_CLIENT_SECRET:}
+      roles:
+        source: idtoken
+      authentication:
+        # Local roles come from our DB. The provider access token is neither used nor forwarded.
+        # Quarkus otherwise auto-enables access-token verification when JWTs are injected elsewhere.
+        verify-access-token: false
+        redirect-path: /api/internal/v1/auth/oidc/login
+        restore-path-after-redirect: false
+        pkce-required: true
+        nonce-required: true
+        scopes: [openid, profile, email]
+        cookie-path: /api/internal/v1/auth/oidc/login
   application:
     name: dataturntable
   smallrye-openapi:
@@ -147,6 +173,11 @@ jwt:
   duration: 3600
 
 dataturntable:
+  auth:
+    local-login-mode: ${DATATURNTABLE_LOCAL_LOGIN_MODE:all}
+    break-glass-user-ids: ${DATATURNTABLE_BREAK_GLASS_USER_IDS:}
+  oidc:
+    enabled: ${DATATURNTABLE_OIDC_ENABLED:false}
   alerts:
     enabled: true
     default-cooldown-seconds: ${DATATURNTABLE_ALERT_COOLDOWN_SECONDS:300}

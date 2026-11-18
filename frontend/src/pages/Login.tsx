@@ -1,16 +1,29 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
+import api from '../services/api';
 import { useAuthStore } from '../stores/auth';
 
 export default function Login() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { login } = useAuthStore();
+  const { login, completeOidcLogin } = useAuthStore();
+  const [oidcEnabled, setOidcEnabled] = useState(false);
+  const handoffStarted = useRef(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    api.oidcStatus().then(status => setOidcEnabled(status.enabled)).catch(() => {});
+    const code = new URLSearchParams(window.location.search).get('oidcCode');
+    if (!code || handoffStarted.current) return;
+    handoffStarted.current = true;
+    window.history.replaceState(null, '', window.location.pathname);
+    setLoading(true);
+    completeOidcLogin(code).then(() => navigate('/')).catch(() => setError(t('auth.oidcFailed'))).finally(() => setLoading(false));
+  }, [completeOidcLogin, navigate, t]);
 
   /**
    * Processes the named request, event, or operation.
@@ -39,6 +52,7 @@ export default function Login() {
           </h2>
         </div>
         
+        {oidcEnabled && <a href="/api/internal/v1/auth/oidc/login" className="btn-secondary block text-center">{t('auth.oidcLogin')}</a>}
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-sm">

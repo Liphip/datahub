@@ -174,3 +174,82 @@ Set `ingestRecordsPerMinute` in a tenant's quota (`PATCH /api/internal/v1/tenant
 `dataturntable.ingest.tenant-rate-limit-per-minute`. Beyond it ingest answers `429` with
 `Retry-After`; a batch is accepted or refused as a whole. A changed quota takes effect within the
 pipeline directory refresh interval (10 s by default).
+
+
+## Tenant limits and history retention
+
+The Tenants page's Edit dialog exposes ingest records per minute, concurrent executions, and
+run/alert history retention in days. A blank field removes that override and restores the
+installation default. Ingest `0` disables the per-instance rate limit; execution concurrency must
+be positive. Retention `-1` keeps history indefinitely and `0` makes all past history eligible at
+the next cleanup. Decreasing retention can delete history permanently at the next scheduled cleanup.
+
+`PATCH /api/internal/v1/tenants/{id}` accepts `quota` as a JSON-object **string**, replacing the
+entire quota object. `GET /tenants/{id}` and the tenant list return the parsed object. Preserve keys
+that are not being edited; send `{ "quota": "{}" }` to remove all overrides. Every value must be
+an integer fitting a signed 32-bit number. Unknown keys, malformed JSON, strings, fractions, null,
+negative ingest limits and concurrency below 1 return `400` before any tenant state is changed.
+Accepted keys are `ingestRecordsPerMinute`, `maxConcurrentExecutions`,
+`retentionPipelineRunsDays`, `retentionAlertHistoryDays`, and the existing stored provisioning
+fields `max_users`, `max_pipelines`, `max_storage_mb` (nonnegative; these three are not enforced).
+Ingest changes take effect after the pipeline directory refresh; retention uses the current quota
+at cleanup time. Retention for readings and per-tenant audit retention remain unimplemented.
+
+## External identity login (OIDC)
+
+Configure the external provider as described in the development setup guide. Browser login starts
+at `GET /api/internal/v1/auth/oidc/login`; Quarkus handles discovery, signature/issuer/audience
+validation, authorization code, state, PKCE and nonce. A verified `(issuer, sub)` must already be
+linked to an active local user. Email claims never link accounts or grant roles automatically.
+Local roles and authorization-version revocation continue to apply.
+
+Platform administrators manage links with `GET`/`POST /api/internal/v1/users/{userId}/identities`
+(`{ "issuer": "https://provider.example/realms/example", "subject": "provider-subject" }`), and
+`DELETE /api/internal/v1/users/{userId}/identities/{id}`. Linking and unlinking are audited. Unlinking
+revokes the user's existing local tokens and pending login handoffs. Subjects are case-sensitive;
+copy the exact issuer and subject from the provider. Never use an email address in place of a subject
+unless the provider actually uses that address as its immutable subject.
+
+The callback redirects to `/login?oidcCode=…`. The UI removes this short-lived code from the address
+bar and POSTs it to `/api/internal/v1/auth/oidc/exchange`. A 60-second HttpOnly, SameSite browser
+cookie binds the one-use handoff to the browser; copied URLs alone do not work. Only hashes are
+stored in the database, shared by replicas. No platform JWT is placed in a redirect URL.
+
+This is OIDC login into the existing bearer-token application, not complete IAM-09–12: the SPA
+still stores its local JWT as before. Shared sessions for embedded components, JIT provisioning,
+claim-to-role mapping, provider configuration in the UI, break-glass policy, RP/back-channel
+logout and session administration remain open.
+
+
+## Component activity
+
+Tenant, connector and role edit dialogs now include an Activity tab for users with `audit:read`.
+It loads only when selected, filters audit events by tenant, resource type and exact component id,
+and pages through the history. The same tab displays component notes (including notes attached to
+its audit records). Users with `audit.note:write` may append permanent notes; notes cannot be
+edited or deleted. Other component pages still need Activity tabs (UI-17 remains partial).
+
+
+Relational table reads use `created_at` for ordering and the optional `start`/`end` bounds;
+time-series reads use `time`. Table registration and DB_SAVE reuse an existing tenant schema
+without requiring that restricted tenant role to have database-wide CREATE privileges.
+
+
+## Time-bounded tenant membership
+
+Membership POST/PATCH accept optional `validFrom` and `validUntil` ISO-8601 instants. An omitted
+PATCH field preserves its value; `null` clears a boundary. The start is inclusive, the end exclusive.
+Both boundaries may be absent. A supplied end must be later than the start. Invalid timestamps,
+wrong types and reversed/equal bounds return `400` before changing validity. Membership responses
+include both boundaries and the current `effective` state. Administrative lists retain inactive
+memberships; inactive memberships supply no platform abilities, tenant access or login contexts.
+Validity changes revoke previously issued tokens through the existing authorization version.
+The passage of time is checked against the database membership on each request, without relying
+on a scheduled job or token refresh. Direct user grants and platform administration are separate.
+
+Users → Access validity edits membership dates in the browser's local timezone and sends UTC
+instants. Clearing a field removes that boundary. This covers tenant memberships; time-bounded
+system grants and propagation of expiry to independently authenticated embedded components still
+require the unfinished common-session/identity work. Bounded memberships therefore do not provision
+persistent Grafana organization access; changing an existing membership to bounded queues removal
+of that external grant through the existing synchronization worker.

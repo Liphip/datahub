@@ -72,7 +72,13 @@ services:
     container_name: dataturntable-control-api
     environment:
       QUARKUS_PROFILE: control-api
+      DATATURNTABLE_OIDC_ENABLED: ${DATATURNTABLE_OIDC_ENABLED:-false}
+      DATATURNTABLE_OIDC_ISSUER: ${DATATURNTABLE_OIDC_ISSUER:-http://localhost:8180/realms/dataturntable}
+      DATATURNTABLE_OIDC_CLIENT_ID: ${DATATURNTABLE_OIDC_CLIENT_ID:-dataturntable}
+      DATATURNTABLE_OIDC_CLIENT_SECRET: ${DATATURNTABLE_OIDC_CLIENT_SECRET:-}
       DATATURNTABLE_RUNTIME_ROLE: control-api
+      DATATURNTABLE_LOCAL_LOGIN_MODE: ${DATATURNTABLE_LOCAL_LOGIN_MODE:-all}
+      DATATURNTABLE_BREAK_GLASS_USER_IDS: ${DATATURNTABLE_BREAK_GLASS_USER_IDS:-}
       DB_HOST: postgresql
       DB_PORT: 5432
       DB_NAME: dataturntable
@@ -339,6 +345,8 @@ services:
 
   prometheus:
     image: prom/prometheus:v3.14.0
+    environment:
+      NO_PROXY: "localhost,127.0.0.1,::1,backend,control-api,public-api,ingest-edge,pipeline-executor,loki,prometheus,grafana,dashboard-grafana,dashboard,monitoring,nginx,frontend,docs,postgresql,kafka,mosquitto,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,${NO_PROXY:-}"
     container_name: dataturntable-prometheus
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -360,6 +368,8 @@ services:
 
   loki:
     image: grafana/loki:3.7.8
+    environment:
+      NO_PROXY: "localhost,127.0.0.1,::1,backend,control-api,public-api,ingest-edge,pipeline-executor,loki,prometheus,grafana,dashboard-grafana,dashboard,monitoring,nginx,frontend,docs,postgresql,kafka,mosquitto,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,${NO_PROXY:-}"
     container_name: dataturntable-loki
     command: -config.file=/etc/loki/loki.yml
     ports:
@@ -370,10 +380,13 @@ services:
 
   alloy:
     image: grafana/alloy:v1.19.2
+    environment:
+      NO_PROXY: "localhost,127.0.0.1,::1,backend,control-api,public-api,ingest-edge,pipeline-executor,loki,prometheus,grafana,dashboard-grafana,dashboard,monitoring,nginx,frontend,docs,postgresql,kafka,mosquitto,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,${NO_PROXY:-}"
     container_name: dataturntable-alloy
     command: run /etc/alloy/config.alloy --storage.path=/var/lib/alloy/data
     volumes:
       - ./monitoring/alloy/alloy-docker.hcl:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       - loki
@@ -384,9 +397,13 @@ services:
     ports:
       - "3001:3000"
     environment:
+      NO_PROXY: "localhost,127.0.0.1,::1,backend,control-api,public-api,ingest-edge,pipeline-executor,loki,prometheus,grafana,dashboard-grafana,dashboard,monitoring,nginx,frontend,docs,postgresql,kafka,mosquitto,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,${NO_PROXY:-}"
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/monitoring/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
       GF_DATABASE_TYPE: postgres
       GF_DATABASE_HOST: monitoring-postgresql:5432
       GF_DATABASE_NAME: monitoring
@@ -406,6 +423,7 @@ services:
     ports:
       - "3003:3000"
     environment:
+      NO_PROXY: "localhost,127.0.0.1,::1,backend,control-api,public-api,ingest-edge,pipeline-executor,loki,prometheus,grafana,dashboard-grafana,dashboard,monitoring,nginx,frontend,docs,postgresql,kafka,mosquitto,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,${NO_PROXY:-}"
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_USERS_ALLOW_SIGN_UP: "false"
@@ -462,6 +480,8 @@ services:
 
   blackbox-exporter:
     image: prom/blackbox-exporter:v0.28.0
+    environment:
+      NO_PROXY: "localhost,127.0.0.1,::1,backend,control-api,public-api,ingest-edge,pipeline-executor,loki,prometheus,grafana,dashboard-grafana,dashboard,monitoring,nginx,frontend,docs,postgresql,kafka,mosquitto,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,${NO_PROXY:-}"
     container_name: dataturntable-blackbox-exporter
     command:
       - --config.file=/etc/blackbox_exporter/blackbox.yml
@@ -498,3 +518,4 @@ volumes:
   dashboard-grafana-data:
   dashboard-pgdata:
   loki-data:
+  alloy-data:

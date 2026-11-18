@@ -17,6 +17,9 @@ export interface User {
  * Defines the interface `Membership`, the contract implemented by this source unit.
  */
 export interface Membership {
+  validFrom?: string | null;
+  validUntil?: string | null;
+  effective?: boolean;
   id: string;
   authUserId: string;
   authUserEmail?: string;
@@ -745,6 +748,7 @@ export interface AuditPage {
 }
 
 export interface AuditFilter {
+  resourceId?: string;
   tenantId?: string;
   from?: string;
   to?: string;

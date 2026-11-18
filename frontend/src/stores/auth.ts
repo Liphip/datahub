@@ -14,6 +14,7 @@ interface AuthState {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string, tenantId?: string) => Promise<void>;
+  completeOidcLogin: (code: string) => Promise<void>;
   register: (email: string, password: string, tenantName?: string, tenantId?: string) => Promise<void>;
   switchTenant: (tenantId: string) => Promise<void>;
   logout: () => void;
@@ -45,6 +46,14 @@ export const useAuthStore = create<AuthState>()(
           tenantContexts: contexts,
           isAuthenticated: true,
         });
+      },
+
+      completeOidcLogin: async (code: string) => {
+        const response = await api.exchangeOidc(code);
+        localStorage.setItem('token', response.token);
+        const contexts = await api.getAuthTenants().catch(() => []);
+        set({ user: response.user, token: response.token, selectedTenantId: response.user.tenantId || contexts[0]?.tenantId || null,
+          tenantContexts: contexts, isAuthenticated: true, isLoading: false });
       },
 
       register: async (email: string, password: string, tenantName?: string, tenantId?: string) => {

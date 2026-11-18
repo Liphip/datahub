@@ -59,6 +59,22 @@ describe('Connectors page: pull inputs', () => {
     vi.mocked(api.createConnector).mockImplementation(createConnector)
   })
 
+  it('distinguishes an enabled MQTT connector from a disconnected broker', async () => {
+    vi.mocked(api.getConnectors).mockResolvedValueOnce([{
+      id: 'mqtt1', name: 'Local MQTT', connectorType: 'MQTT', direction: 'INPUT',
+      config: { broker: 'mqtt://mosquitto:1883' }, isActive: true,
+      createdAt: '2026-01-01T00:00:00Z',
+    }] as never)
+    vi.mocked(api.getConnectorStatuses).mockResolvedValueOnce({
+      mqtt1: { checks: [{ name: 'Broker connection', status: 'ERROR', message: 'Not connected' }] },
+    } as never)
+    await renderPage()
+    expect(await screen.findByText('Enabled')).toBeInTheDocument()
+    expect(await screen.findByText(/Not connected/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Disable' })).toBeInTheDocument()
+    expect(screen.queryByText('Connected')).not.toBeInTheDocument()
+  })
+
   it('offers every inbox type, each locked to the INPUT direction', async () => {
     await renderPage()
     await openCreateModal()

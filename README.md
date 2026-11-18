@@ -6,8 +6,10 @@ Python modules, are enriched, stored, alerted on and delivered to other systems 
 identified records, without senders having to handle responses.
 
 **Status: pre-release.** The data path (ingest, pipelines, metadata, alerts, exports, HA delivery)
-works end to end. The lakehouse, the single login for all components (auth proxy, OIDC), the audit
-UI and micro-batch execution for the 1 billion records/day target are not built yet. The status of
+works end to end. Optional OIDC login with explicit account links, tenant quota/retention settings,
+and scoped activity tabs for tenants, connectors and roles are available. The lakehouse, shared
+login sessions for all components, complete identity-provider administration and micro-batch
+execution for the 1 billion records/day target remain unfinished. The status of
 every requirement is in the [requirements specification, Appendix A](docs/specification/requirements-specification.md#appendix-a-traceability-and-implementation-status).
 
 ## Features
@@ -38,18 +40,24 @@ A complete example — LoRaWAN readings enriched with SAP meter data and interna
 delivered to a metering and a grid-calculation system (§14a EnWG) — is in
 [docs/examples/energy-14a](docs/examples/energy-14a/README.md).
 
-## Quick start
+## Quick start: desktop deployment
 
-Requirements: Docker with Compose v2. For development also JDK 25, Maven 3.9+ and Node.js 22.12+.
+Install Docker Desktop (Linux containers) or Docker Engine with Compose v2.24+. From the repository
+root, start the persistent desktop evaluation installation:
 
 ```bash
-./scripts/dev/generate-dev-keys.sh                    # throwaway JWT keys (git-ignored)
-docker compose -f docker/docker-compose.dev.yml up -d
+docker compose -f docker/compose.desktop.yml up --build -d --wait
 ```
 
-Open http://localhost, create the first administrator, and follow the in-app documentation at
-http://localhost/docs. All service URLs, local development and tests:
-[docs/development/setup.md](docs/development/setup.md).
+Open **http://localhost:8088** on your desktop and run initial setup. This includes the UI, APIs,
+PostgreSQL, Kafka, MQTT, Python module execution, Grafana and documentation. No Kubernetes or host
+JDK/Node toolchain is needed. Keys and service credentials are generated automatically and retained.
+
+For a real local Keycloak provider, startup, shutdown and rebuild instructions, see
+[Desktop test deployment](docs/operations/desktop-deployment.md).
+The larger developer stack and host development workflow remain in
+[Development setup](docs/development/setup.md). Automated checks are separate:
+`bash scripts/dev/test-desktop.sh` runs the desktop smoke suite.
 
 ## Architecture
 

@@ -32,6 +32,9 @@ class AuthService {
     @PersistenceContext
     lateinit var em: EntityManager
     
+    @Inject
+    lateinit var localLoginPolicy: com.dataturntable.auth.LocalLoginPolicy
+
     private val secureRandom = SecureRandom()
     
     @Transactional
@@ -49,6 +52,9 @@ class AuthService {
             throw SecurityException("Invalid credentials")
         }
         
+        if (!localLoginPolicy.allows(user.id!!)) {
+            throw SecurityException("Invalid credentials")
+        }
         user.lastLoginAt = java.time.Instant.now()
         user.persist()
         
@@ -59,6 +65,15 @@ class AuthService {
 
         val token = generateJwtToken(user, requestedTenantId)
         return AuthResponse(token, toUserDto(user, requestedTenantId))
+    }
+
+    /** Issue the existing local authorization token after an OIDC subject has been verified and linked. */
+    @Transactional
+    fun loginExternal(userId: UUID): AuthResponse {
+        val user = em.find(User::class.java, userId) ?: throw SecurityException("Unauthorized")
+        if (!user.isActive) throw SecurityException("Account is disabled")
+        user.lastLoginAt = java.time.Instant.now()
+        return AuthResponse(generateJwtToken(user), toUserDto(user))
     }
 
     @Transactional
@@ -91,7 +106,7 @@ class AuthService {
             .setParameter("userId", userId)
             .resultList
 
-        return memberships.mapNotNull { membership ->
+        return memberships.filter { it.isEffective() }.mapNotNull { membership ->
             val tenant = membership.tenant ?: return@mapNotNull null
             val tenantId = tenant.id ?: return@mapNotNull null
             TenantContextDto(
@@ -196,8 +211,8 @@ class AuthService {
         if (user.isSuperAdmin()) groups.add("superadmin")
 
         // Prefer a root-tenant membership if present (superadmin scope), otherwise pick the first membership
-        val primaryMembership = user.loadMemberships().firstOrNull { it.tenant?.parent == null }
-            ?: user.loadMemberships().firstOrNull()
+        val primaryMembership = user.activeMemberships().firstOrNull { it.tenant?.parent == null }
+            ?: user.activeMemberships().firstOrNull()
 
         val contextMembership = tenantContextId?.let { user.getMembershipForTenant(it) }
 
@@ -246,7 +261,7 @@ class AuthService {
      * Converts a value into the representation required by its caller.
      */
     private fun toUserDto(user: User, tenantContextId: UUID? = null): UserDto {
-         val contextTenant = tenantContextId?.let { em.find(Tenant::class.java, it) }
+         val contextTenant = tenantContextId?.takeIf { user.canAccessTenant(it) }?.let { em.find(Tenant::class.java, it) }
          val primaryTenant = contextTenant ?: user.getPrimaryTenant()
          return UserDto(
              id = user.id.toString(),

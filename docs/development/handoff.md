@@ -1745,6 +1745,152 @@ applied and validated on PostgreSQL 16):
 - Per-tenant retention lives in the tenant's `quota` JSON next to `ingestRecordsPerMinute`; there is
   no validation of those keys on write and no UI — a typo in a key is silently "no override".
 
+
+## Session 2026-11-16: desktop OIDC, tenant settings and component activity
+
+Continued from the latest documented next items, prioritizing desktop testing without Kubernetes.
+No deployment or environment publication was performed.
+
+- Tenant edit dialogs now expose ingest/concurrency limits and per-tenant run/alert retention.
+  Blank removes an override; the PATCH API retains its quota JSON-string contract and now rejects
+  unknown keys, coercion, overflow and invalid ranges before changing any tenant state. The typed
+  frontend serializes the quota correctly. Individual GET now returns the parsed tenant view.
+- Added optional Quarkus OIDC code-flow login (disabled by default), PKCE, nonce and explicit
+  audience validation. Accounts are linked by exact issuer/subject, never by matching email. Only
+  platform administrators can link identities in Users; unlink revokes pending handoffs and local
+  tokens. The V6 migration stores links and hashed, browser-bound, one-use 60-second handoffs.
+  Quarkus OIDC's JWT producer overrides SmallRye JWT's injection by default; the explicit
+  `AuthenticatedTokenProducer` keeps existing local authentication working alongside OIDC.
+- Login has the optional provider button and handoff exchange. Vite's OIDC proxy and nginx's
+  internal API preserve the public host/port for callback URIs. Compose forwards provider settings
+  to control-api only. New UI strings are available in English and German.
+- Tenant, connector and role edit dialogs have lazy Activity tabs, filtered to the exact tenant
+  and component, with paged audit history and permanent notes. The API still enforces permissions.
+- `scripts/dev/test-desktop.sh` and `docs/development/identity-desktop.md` provide a tested desktop
+  smoke workflow using H2 and an in-process loopback OIDC provider; no Docker/Kubernetes required.
+
+Validation: the broad backend run passed 395 tests (0 failures/errors, 7 skipped), excluding
+`DockerServiceHostileModuleTest` and `ModelArtifactRoundTripTest`; these Docker module-execution
+suites were deliberately not rerun after the earlier onboarding machine stopped responding while
+running a hostile module. Subsequent targeted OIDC tests add invalid nonce/audience/issuer/signature
+and expiry cases. The desktop script passed 35 backend and 47 frontend tests, typecheck, lint
+(0 errors, 26 warnings), and production build. The final frontend suite additionally covers the
+OIDC login UI and passes 50 tests. V6 applies and Hibernate validates on PostgreSQL 18;
+the real-PostgreSQL handoff behavior check is included in `PostgresMigrationBehaviorTest`.
+
+Limits remain explicit in Appendix A: this is provider login into the existing SPA bearer-token
+model, not common HttpOnly component sessions or federated logout. Provider configuration is by
+process settings, not the UI; JIT provisioning, claim-to-role mappings, time-bounded/system grants,
+break-glass policy, SCIM and session administration remain open. Other component Activity tabs
+remain open. The lakehouse/storage milestones, micro-batch execution and cluster/throughput
+validation are still unimplemented; none was marked complete. The protocol flow is tested locally,
+but no real external identity provider or manual browser UI pass was performed this session.
+
+## Session 2026-11-16: desktop means a runnable deployment
+
+The owner clarified that desktop testing means a test installation on Docker Desktop/Engine,
+not an automated test script. `docker/compose.desktop.yml` now provides that installation:
+one backend JVM in role `all`, metadata and pipeline PostgreSQL, Kafka, MQTT, restricted Python
+containers, frontend, docs, Grafana and a loopback gateway. Initialization generates and preserves
+keys/service passwords in named volumes. Only Docker and Compose are required on the desktop.
+`compose.desktop-oidc.yml` adds a persistent local Keycloak provider, seeded client and evaluation
+user. README now leads with deployment; `docs/operations/desktop-deployment.md` contains the full
+workflow, first setup, optional identity links and lifecycle commands. The smoke script remains
+an independent automated-check tool.
+
+Actual deployment investigation found two issues fixed here: `.dockerignore` excluded the docs
+image's required Markdown/docs sources, and real Keycloak access tokens differ from ID tokens.
+Quarkus auto-enables access-token verification when JWTs are injected elsewhere; the code-flow
+configuration now explicitly uses/verifies ID tokens for identity and ignores the unused provider
+access token. The loopback fixture now returns a distinct opaque access token so this case is
+covered. Desktop `.localhost` issuer aliases are allowed for HTTP; lookalike remote domains are
+still refused. Keycloak's evaluation user includes required profile fields.
+
+Validation is performed against an isolated `dataturntable-desktop` project, preserving the
+pre-existing developer database. The cloud policy blocks `dl-cdn.alpinelinux.org`, so normal backend
+and frontend source-image builds cannot complete here. To validate runtime behavior, temporary
+cloud-only image tags package the locally built application and frontend/docs output; no TLS or
+package-signature verification was disabled, and the normal committed Dockerfiles remain the
+source-build path for desktops. Do not confuse this runtime validation with a successful build
+of all default images in the restricted cloud network. No cloud draft was changed or published.
+
+The deployment checks cover first-run setup, password login, API-key ingest through the gateway,
+Kafka delivery, a restricted Python module transforming 21 to 42, metadata save, key-generation
+idempotency, and stop/start persistence with the same account/pipeline/single idempotent run.
+The real Keycloak flow passed in Chromium, including provider login, callback, SPA handoff and
+an authenticated API request. Gateway response buffers were enlarged for the provider's encrypted
+token-state cookies, and Docker DNS resolution follows replaced upstream containers during rebuilds.
+
+A live DB_SAVE check then exposed PostgreSQL-only issues hidden by H2: repeating CREATE SCHEMA
+under a restricted tenant role still requires database CREATE, the relational table default used
+H2's CURRENT_TIMESTAMP() spelling, and relational queries always ordered/filtered by `time`
+instead of `created_at`. Existing schemas are now detected before CREATE (without broadening
+privileges), the timestamp spelling is portable, and relational reads use their own timestamp.
+Real PostgreSQL migration/storage/handoff tests pass (3 tests), H2 data tests pass (11 tests), and
+targeted OIDC/local-authentication checks pass (14 tests). The live deployment's Python → DB_SAVE →
+pipeline PostgreSQL → query flow returns the transformed value 42. All running services are healthy. Switching to the base Compose deployment with Keycloak stopped
+also passed Chromium password login and an authenticated API call; data and keys remained intact.
+
+Normal source-image builds in this cloud are still blocked by Alpine's package-host policy; the
+runtime checks use the documented temporary artifact images. Default desktop source builds must
+be verified after that network prerequisite is available. No cloud configuration was published.
+
+## Session 2026-11-17: restricted local login (IAM-11)
+
+Implemented a startup-validated `LocalLoginPolicy`: default `all`, optional `break-glass-only`
+with explicit existing account UUIDs. Invalid modes, malformed/short-form UUIDs and an empty
+restricted allowlist fail initialization. `AuthService.login` checks the policy after verifying
+the password, before updating login state or issuing a token. Rejections use the existing generic
+401 and failed-login audit path. Verified external login remains independent and still requires
+an active explicitly linked local account.
+
+Desktop and developer Compose forward the two policy variables. Configuration reference and
+desktop guide cover bootstrap, restart and recovery requirements. No migration is needed. The
+policy affects new password logins; existing issued tokens are not revoked by a configuration
+change, and there is no UI policy editor. Shared sessions, federated logout, runtime provider
+management, time-bounded grants and lakehouse/storage remain open; do not mark the whole roadmap
+complete. Targeted checks cover policy validation, password refusal/allowance, ordinary auth and
+the complete OIDC protocol fixture. All 15 targeted tests passed with no skips; Compose
+configuration and whitespace checks passed. The desktop smoke command now includes these policy
+checks. No cloud configuration was changed or published.
+
+## Session 2026-11-18: tenant membership validity
+
+V7 adds nullable validity bounds and a database interval constraint to memberships. The API validates
+bounds before assigning them, supports clearing via null, audits them and increments authorization
+version on edits. User permission/tenant evaluation, primary membership and login contexts ignore
+future/expired memberships; administrative history remains available. Authorization explanations
+exclude inactive membership/role grants. Users has an English/German local-time validity editor. Bounded memberships queue external Grafana
+organization-access removal rather than creating a grant that could outlive its bounds; shared
+session enforcement remains necessary before bounded Grafana access can be enabled.
+Tests cover half-open boundaries, invalid intervals, clearing, revocation, and natural expiry with
+an already issued token and unchanged authorization version. System-wide grants, multiple schedules,
+shared sessions/embedded component expiry and the other Appendix A gaps are still open. This is
+not completion of the whole implementation. Prior uncommitted work and desktop deployment were
+preserved. Validation: 17 targeted backend tests, 3 PostgreSQL migration/storage tests, and
+51 frontend tests passed; typecheck, lint (26 warnings, no errors), build and whitespace checks
+passed. No environment draft or publication was changed.
+
 ## Sources used
 
 - BK6-22-300 Anlage 1: https://www.bundesnetzagentur.de/DE/Beschlusskammern/1_GZ/BK6-GZ/2022/BK6-22-300/Beschluss/BK6-22-300_Beschluss_Anlage1.pdf?__blob=publicationFile&v=1
+
+
+## Session 2026-11-18: desktop deployment feedback
+
+Fixed Alloy's invalid empty logfmt stage, parsed both pipeline and connector event formats, and
+included all split backend roles in log enrichment and dashboard job selectors. Desktop Compose now
+runs Prometheus, Loki, Alloy and a monitoring Grafana with persistent storage and non-root-readable
+configuration prepared by init. Internal proxy exclusions prevent monitoring requests reaching an
+outbound proxy. Both gateway configurations expose monitoring and tenant Grafana subpaths and route
+/q/metrics and /q/health to APIs. Successful module stdout/stderr is redacted and mirrored into backend
+logs, while persisted node logs remain available to the app. Connector activation now says
+Enabled/Disabled, separate from actual broker status. Existing docs-context and PostgreSQL schema,
+timestamp and relational-query fixes are included in the same source delivery.
+
+Live desktop validation covered healthy services, real Grafana browser logins, provisioned dashboards,
+Prometheus/Loki datasource health, actual metrics scraping, and module output in app logs and Loki.
+The guide includes the requested complete teardown/rebuild workflow. Desktop exporter-specific
+infrastructure graphs still require the full developer Compose exporter stack. Standard source-image
+builds remain unverified in this cloud because its network policy blocks the Alpine package mirror;
+runtime validation used temporary artifact images. No cloud environment configuration was published.

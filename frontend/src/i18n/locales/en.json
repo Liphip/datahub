@@ -132,7 +132,17 @@
     "createAccount": "Create an account",
     "alreadyHaveAccount": "Already have an account?",
     "firstDeployment": "First deployment?",
-    "runInitialSetup": "Run initial setup"
+    "runInitialSetup": "Run initial setup",
+    "oidcLogin": "Sign in with your identity provider",
+    "oidcFailed": "External sign-in failed or expired. Please try again.",
+    "identityLinks": "External identities",
+    "identityHelp": "Link the exact issuer and subject from your identity provider to this account. Matching email addresses do not grant access.",
+    "issuer": "Issuer URL",
+    "subject": "Subject (sub)",
+    "linkIdentity": "Link identity",
+    "unlink": "Unlink",
+    "unlinkConfirm": "Unlink this identity and revoke this user’s current tokens?",
+    "identityFailed": "Could not update identity links. Check the issuer, subject and your permissions."
   },
   "theme": {
     "toggle": "Toggle color theme",
@@ -955,7 +965,18 @@
     "useMine": "Use mine",
     "mergeAndSave": "Merge And Save",
     "configureTenantDefaults": "Configure tenant-wide defaults for pipeline lineage triage. These act as baseline behavior across pipelines.",
-    "tuneAdvisoryThresholds": "Tune advisory thresholds for this tenant. Changes apply immediately to diagnostics in both Tenants and Pipelines."
+    "tuneAdvisoryThresholds": "Tune advisory thresholds for this tenant. Changes apply immediately to diagnostics in both Tenants and Pipelines.",
+    "quotaTitle": "Quotas and retention",
+    "quotaHelp": "Blank uses the installation default. Ingest: 0 disables the limit (per instance, per minute). Retention: -1 keeps history indefinitely; 0 makes all past history eligible for deletion at the next cleanup. Changes apply within the pipeline refresh interval.",
+    "quotaDefault": "Installation default",
+    "quotaInvalid": "Enter whole numbers within the allowed range.",
+    "quotaSaveFailed": "Failed to save tenant settings.",
+    "quota": {
+      "ingestRecordsPerMinute": "Ingest records per minute",
+      "maxConcurrentExecutions": "Concurrent executions",
+      "retentionPipelineRunsDays": "Run history retention (days)",
+      "retentionAlertHistoryDays": "Alert history retention (days)"
+    }
   },
   "errors": {
     "generic": "An error occurred",
@@ -1090,5 +1111,26 @@
     "notes": "Notes",
     "notesNone": "No notes yet.",
     "noteAdd": "Add a note (cannot be changed afterwards)"
+  },
+  "activity": {
+    "configuration": "Configuration",
+    "title": "Activity",
+    "events": "Audit events",
+    "notes": "Notes",
+    "addNote": "Add a note",
+    "immutable": "Notes are permanent and cannot be edited or deleted.",
+    "empty": "No audit events for this component.",
+    "failed": "Could not load or save activity. Please retry.",
+    "system": "System",
+    "previous": "Previous",
+    "next": "Next"
+  },
+  "membershipValidity": {
+    "title": "Access validity",
+    "help": "Times use your local timezone. Blank means no boundary. The start is inclusive; the end is exclusive. Saving changes revokes existing tokens. Time-bounded memberships do not grant Grafana organization access until shared-session enforcement is available.",
+    "from": "Valid from",
+    "until": "Valid until",
+    "invalid": "The end must be after the start.",
+    "failed": "Could not save access validity."
   }
 }

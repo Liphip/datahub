@@ -26,6 +26,10 @@ class AuthorizationVersionFilter : ContainerRequestFilter {
     override fun filter(requestContext: ContainerRequestContext) {
         if (identity.isAnonymous) return
         val token = identity.principal as? JsonWebToken ?: return
+        // This one endpoint consumes a provider ID token, then resolves an explicit local link.
+        // Every other authenticated request must still carry our local authorization version.
+        if (identity.getAttribute<String>("tenant-id") == "external" &&
+            requestContext.uriInfo.path.trimStart('/') == "api/internal/v1/auth/oidc/login") return
         val userId = try { UUID.fromString(token.subject) } catch (_: Exception) {
             requestContext.abortWith(Response.status(401).entity(mapOf("error" to "Unauthorized")).build())
             return

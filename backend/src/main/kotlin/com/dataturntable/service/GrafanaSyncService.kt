@@ -327,6 +327,9 @@ class GrafanaSyncService {
         val user = membership.authUser
         val tenant = membership.tenant
         return mapOf(
+            // Independent Grafana sessions cannot enforce interval boundaries yet (IAM-09).
+            // Do not provision a persistent external grant from a bounded platform membership.
+            "deleted" to (membership.validFrom != null || membership.validUntil != null),
             "membershipId" to membership.id?.toString(),
             "tenantId" to tenant?.id?.toString(),
             "tenantName" to tenant?.name,

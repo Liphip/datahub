@@ -135,6 +135,51 @@ class TenantResourceTest {
     }
     
     @Test
+    fun quotaSettingsRoundTripAndResetToDefaults() {
+        val token = TestAuthHelpers.createAdminToken()
+        val rootId = given().header("Authorization", "Bearer $token")
+            .get("/api/internal/v1/tenants").then().statusCode(200).extract().jsonPath().getString("[0].id")
+        val quota = """{"ingestRecordsPerMinute":0,"maxConcurrentExecutions":3,"retentionPipelineRunsDays":-1,"retentionAlertHistoryDays":0}"""
+        given().header("Authorization", "Bearer $token").contentType(ContentType.JSON)
+            .body(mapOf("quota" to quota)).patch("/api/internal/v1/tenants/$rootId").then().statusCode(200)
+        given().header("Authorization", "Bearer $token").get("/api/internal/v1/tenants/$rootId")
+            .then().statusCode(200).body("quota.retentionPipelineRunsDays", equalTo(-1))
+            .body("quota.retentionAlertHistoryDays", equalTo(0)).body("quota.ingestRecordsPerMinute", equalTo(0))
+            .body("quota.maxConcurrentExecutions", equalTo(3))
+        given().header("Authorization", "Bearer $token").contentType(ContentType.JSON)
+            .body(mapOf("quota" to "{}")).patch("/api/internal/v1/tenants/$rootId").then().statusCode(200)
+        given().header("Authorization", "Bearer $token").get("/api/internal/v1/tenants/$rootId")
+            .then().statusCode(200).body("quota.size()", equalTo(0))
+    }
+
+    @Test
+    fun invalidQuotaRejectsTheEntireUpdate() {
+        val token = TestAuthHelpers.createAdminToken()
+        val root = given().header("Authorization", "Bearer $token")
+            .get("/api/internal/v1/tenants").then().statusCode(200).extract().jsonPath()
+        val rootId = root.getString("[0].id")
+        val name = root.getString("[0].name")
+        given().header("Authorization", "Bearer $token").contentType(ContentType.JSON)
+            .body(mapOf("quota" to "{\"max_users\":100}"))
+            .patch("/api/internal/v1/tenants/$rootId").then().statusCode(200)
+        val invalid = listOf<Any?>(
+            null, mapOf("ingestRecordsPerMinute" to 1), "{", "[]", "null",
+            """{"retentionPipelineRunDays":7}""", """{"retentionPipelineRunsDays":-2}""",
+            """{"ingestRecordsPerMinute":-1}""", """{"maxConcurrentExecutions":0}""",
+            """{"ingestRecordsPerMinute":2147483648}""", """{"ingestRecordsPerMinute":1.5}""",
+            """{"ingestRecordsPerMinute":"5"}""", """{"ingestRecordsPerMinute":true}""",
+            """{"retentionAlertHistoryDays":null}"""
+        )
+        invalid.forEach { quota ->
+            given().header("Authorization", "Bearer $token").contentType(ContentType.JSON)
+                .body(mapOf("quota" to quota, "name" to "must not be persisted"))
+                .patch("/api/internal/v1/tenants/$rootId").then().statusCode(400)
+        }
+        given().header("Authorization", "Bearer $token").get("/api/internal/v1/tenants/$rootId")
+            .then().statusCode(200).body("name", equalTo(name)).body("quota.max_users", equalTo(100))
+    }
+
+    @Test
     fun testListTenantsRequiresAuth() {
         given()
         .`when`()

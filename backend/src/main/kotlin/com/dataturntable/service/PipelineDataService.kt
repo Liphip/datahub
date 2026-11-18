@@ -230,6 +230,11 @@ class PipelineDataService(
      * Implements `ensureSchemaExists` for this source unit.
      */
     private fun ensureSchemaExists(connection: Connection, schema: String) {
+        // A restricted PostgreSQL tenant role cannot repeat CREATE SCHEMA, even with IF NOT EXISTS.
+        connection.prepareStatement("SELECT 1 FROM information_schema.schemata WHERE schema_name = ?").use { query ->
+            query.setString(1, schema)
+            query.executeQuery().use { if (it.next()) return }
+        }
         connection.createStatement().use { stmt ->
             stmt.execute("""CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(schema)}""")
         }

@@ -126,15 +126,18 @@ open class User : PanacheBase() {
     /**
      * Retrieves or enumerates the requested state.
      */
+    fun activeMemberships(at: Instant = Instant.now()): List<Membership> =
+        loadMemberships().filter { it.isEffective(at) }
+
     fun getPrimaryTenant(): Tenant? {
-        return loadMemberships().firstOrNull()?.tenant
+        return activeMemberships().firstOrNull()?.tenant
     }
     
     /**
      * Retrieves or enumerates the requested state.
      */
     fun getMembershipForTenant(tenantId: UUID): Membership? {
-        return loadMemberships().firstOrNull { it.tenant?.id == tenantId }
+        return activeMemberships().firstOrNull { it.tenant?.id == tenantId }
     }
     
     /**
@@ -152,7 +155,7 @@ open class User : PanacheBase() {
         if (grantedAbilities.any { it.value == "*" || it.value == ability }) return true
         if (AbilityEvaluator.hasAbility(abilities, ability)) return true
 
-        return loadMemberships().any { membership ->
+        return activeMemberships().any { membership ->
             membership.grantedAbilities.any { it.value == "*" || it.value == ability } ||
                 AbilityEvaluator.hasAbility(membership.abilities, ability) ||
                 membership.role?.hasAbility(ability) == true
@@ -172,7 +175,7 @@ open class User : PanacheBase() {
 
         result.addAll(directAbilities)
         
-        loadMemberships().forEach { membership ->
+        activeMemberships().forEach { membership ->
             membership.role?.getAbilitiesList()?.forEach { result.add(it) }
             membership.grantedAbilities.forEach { result.add(it.value) }
             result.addAll(AbilityEvaluator.parse(membership.abilities))
@@ -187,7 +190,7 @@ open class User : PanacheBase() {
     fun canAccessTenant(tenantId: UUID): Boolean {
         if (isSuperAdmin()) return true
         // Access is granted if the user has a membership for the tenant or any ancestor
-        val memberships = loadMemberships()
+        val memberships = activeMemberships()
         return memberships.any { membership ->
             membership.tenant?.let { tenant ->
                 tenant.id == tenantId || tenant.hasDescendant(tenantId)

@@ -666,6 +666,11 @@ class PipelineConsumer {
                     )
                 }
 
+                if (userStdout.isNotBlank()) LOG.infof("MODULE_STDOUT pipeline=%s run=%s node=%s stdout=%s",
+                    pipelineId, runId, node.id, redactor.text(userStdout).orEmpty().replace("\n", "\\n"))
+                if (trimmedStderr.isNotBlank()) LOG.warnf("MODULE_STDERR pipeline=%s run=%s node=%s stderr=%s",
+                    pipelineId, runId, node.id, redactor.text(trimmedStderr).orEmpty().replace("\n", "\\n"))
+
                 // Record module-level Prometheus metrics (histogram timers for _bucket support)
                 metrics.moduleCounter(stage, "SUCCESS").increment()
                 metrics.moduleTimer(stage, "SUCCESS")

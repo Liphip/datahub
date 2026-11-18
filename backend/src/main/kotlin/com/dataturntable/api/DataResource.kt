@@ -225,12 +225,16 @@ class DataResource {
             val endInstant = parseIsoInstant(end, "end")
 
             val tableFullName = qualifiedTableName(tenantId, tableName)
+            val tableType = em.createNativeQuery(
+                "SELECT table_type FROM data_table_registry WHERE tenant_id = :tid AND table_name = :name"
+            ).setParameter("tid", tenantUuid).setParameter("name", tableName).resultList.firstOrNull()?.toString()
+            val timeColumn = if (tableType == "relational") "created_at" else "time"
             val sb = StringBuilder("SELECT * FROM $tableFullName")
             val conditions = mutableListOf<String>()
-            if (startInstant != null) conditions.add("\"time\" >= ?")
-            if (endInstant != null) conditions.add("\"time\" <= ?")
+            if (startInstant != null) conditions.add("\"$timeColumn\" >= ?")
+            if (endInstant != null) conditions.add("\"$timeColumn\" <= ?")
             if (conditions.isNotEmpty()) sb.append(" WHERE ").append(conditions.joinToString(" AND "))
-            sb.append(" ORDER BY \"time\" DESC LIMIT ?")
+            sb.append(" ORDER BY \"$timeColumn\" DESC LIMIT ?")
 
             val result = pipelineConnectionForTenant(tenantUuid) { connection ->
                 connection.prepareStatement(sb.toString()).use { statement ->
@@ -827,7 +831,7 @@ class DataResource {
         if (colDefs.isBlank()) return
         connection.createStatement().use { statement ->
             statement.execute(
-                "CREATE TABLE IF NOT EXISTS $safeTable (tenant_id UUID DEFAULT '${tenantId}', created_at $timestampType DEFAULT CURRENT_TIMESTAMP(), $colDefs)"
+                "CREATE TABLE IF NOT EXISTS $safeTable (tenant_id UUID DEFAULT '${tenantId}', created_at $timestampType DEFAULT CURRENT_TIMESTAMP, $colDefs)"
             )
         }
     }
@@ -836,6 +840,13 @@ class DataResource {
      * Implements `ensureTenantSchemaExists` for this source unit.
      */
     private fun ensureTenantSchemaExists(connection: Connection, tenantId: String) {
+        val schema = tenantSchemaName(tenantId)
+        // PostgreSQL checks database CREATE even for CREATE SCHEMA IF NOT EXISTS.
+        // The tenant role owns its pre-provisioned schema, but must not gain database CREATE.
+        connection.prepareStatement("SELECT 1 FROM information_schema.schemata WHERE schema_name = ?").use { query ->
+            query.setString(1, schema)
+            query.executeQuery().use { if (it.next()) return }
+        }
         connection.createStatement().use { statement ->
             statement.execute("""CREATE SCHEMA IF NOT EXISTS "${tenantSchemaName(tenantId)}"""")
         }

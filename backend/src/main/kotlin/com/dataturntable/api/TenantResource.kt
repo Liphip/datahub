@@ -809,12 +809,33 @@ class TenantResource {
         }
         val tenant = em.find(Tenant::class.java, tenantId)
         return if (tenant != null) {
-            Response.ok(mapOf("id" to tenant.id, "name" to tenant.name, "settings" to tenant.settings)).build()
+            Response.ok(toTenantMap(tenant)).build()
         } else {
             Response.status(404).entity(mapOf("error" to "Tenant not found")).build()
         }
     }
     
+    /** Reject misspelled keys, coercion and overflow before changing any tenant state. */
+    private fun validatedQuota(value: Any?): String {
+        require(value is String) { "quota must be a JSON object encoded as a string" }
+        val tree = try { objectMapper.readTree(value) } catch (e: Exception) {
+            throw IllegalArgumentException("quota must contain valid JSON")
+        }
+        require(tree != null && tree.isObject) { "quota must contain a JSON object" }
+        val minimums = mapOf(
+            "ingestRecordsPerMinute" to 0, "maxConcurrentExecutions" to 1,
+            "retentionPipelineRunsDays" to -1, "retentionAlertHistoryDays" to -1,
+            "max_users" to 0, "max_pipelines" to 0, "max_storage_mb" to 0
+        )
+        tree.fields().forEachRemaining { (key, number) ->
+            val minimum = minimums[key] ?: throw IllegalArgumentException("Unknown quota key: $key")
+            require(number.isIntegralNumber && number.canConvertToInt() && number.intValue() >= minimum) {
+                "$key must be an integer between $minimum and ${Int.MAX_VALUE}"
+            }
+        }
+        return objectMapper.writeValueAsString(tree)
+    }
+
     @PATCH
     @Path("/{id}")
     @Transactional
@@ -836,9 +857,14 @@ class TenantResource {
         }
         val tenant = em.find(Tenant::class.java, tenantId)
         return if (tenant != null) {
+            val quota = if (request.containsKey("quota")) {
+                try { validatedQuota(request["quota"]) } catch (e: IllegalArgumentException) {
+                    return Response.status(400).entity(mapOf("error" to e.message)).build()
+                }
+            } else null
             request["name"]?.let { tenant.name = it as String }
             request["settings"]?.let { tenant.settings = it as String }
-            request["quota"]?.let { tenant.quota = it as String }
+            quota?.let { tenant.quota = it }
             tenant.updatedAt = java.time.Instant.now()
             em.merge(tenant)
             grafanaSyncService.queueTenantSync(tenant)

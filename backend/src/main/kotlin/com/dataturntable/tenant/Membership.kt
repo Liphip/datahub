@@ -34,6 +34,16 @@ class Membership : PanacheBase() {
     @Column(name = "abilities", columnDefinition = "text")
     var abilities: String? = null
     
+    @Column(name = "valid_from")
+    var validFrom: Instant? = null
+
+    @Column(name = "valid_until")
+    var validUntil: Instant? = null
+
+    /** Half-open validity interval: the start is inclusive and the end exclusive. */
+    fun isEffective(at: Instant = Instant.now()): Boolean =
+        (validFrom == null || !at.isBefore(validFrom)) && (validUntil == null || at.isBefore(validUntil))
+
     @Column(name = "created_at")
     var createdAt: Instant = Instant.now()
 

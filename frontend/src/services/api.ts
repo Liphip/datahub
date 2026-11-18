@@ -54,7 +54,7 @@ class ApiService {
 
     this.client.interceptors.request.use((config: InternalAxiosRequestConfig) => {
       const token = localStorage.getItem('token');
-      if (token && config.headers) {
+      if (token && config.headers && !String(config.url).startsWith('/auth/oidc/')) {
         config.headers.Authorization = `Bearer ${token}`;
       }
       return config;
@@ -67,7 +67,8 @@ class ApiService {
       },
       (error) => {
         const requestUrl = String(error.config?.url || '');
-        const isPublicAuthCall = requestUrl.includes('/auth/login')
+        const isPublicAuthCall = requestUrl.includes('/auth/oidc/')
+          || requestUrl.includes('/auth/login')
           || requestUrl.includes('/auth/register')
           || requestUrl.includes('/auth/setup');
 
@@ -104,7 +105,8 @@ class ApiService {
       },
       (error) => {
         const requestUrl = String(error.config?.url || '');
-        const isPublicAuthCall = requestUrl.includes('/auth/login')
+        const isPublicAuthCall = requestUrl.includes('/auth/oidc/')
+          || requestUrl.includes('/auth/login')
           || requestUrl.includes('/auth/register')
           || requestUrl.includes('/auth/setup');
 
@@ -198,6 +200,26 @@ class ApiService {
   /**
    * Creates or persists the requested state.
    */
+  async oidcStatus(): Promise<{ enabled: boolean }> {
+    return (await this.client.get('/auth/oidc/status')).data;
+  }
+
+  async exchangeOidc(code: string): Promise<AuthResponse> {
+    return (await this.client.post('/auth/oidc/exchange', { code })).data;
+  }
+
+  async getIdentityLinks(userId: string): Promise<{ id: string; issuer: string; subject: string }[]> {
+    return (await this.client.get(`/users/${userId}/identities`)).data;
+  }
+
+  async linkIdentity(userId: string, issuer: string, subject: string): Promise<void> {
+    await this.client.post(`/users/${userId}/identities`, { issuer, subject });
+  }
+
+  async unlinkIdentity(userId: string, id: string): Promise<void> {
+    await this.client.delete(`/users/${userId}/identities/${id}`);
+  }
+
   async createTenant(name: string, parentId?: string): Promise<Tenant> {
     const response = await this.client.post<Tenant>('/tenants', { name, parentId });
     return response.data;
@@ -207,7 +229,7 @@ class ApiService {
    * Updates the requested state.
    */
   async updateTenant(id: string, data: Partial<Tenant>): Promise<Tenant> {
-    const response = await this.client.patch<Tenant>(`/tenants/${id}`, data);
+    const response = await this.client.patch<Tenant>(`/tenants/${id}`, { ...data, ...(data.quota !== undefined ? { quota: JSON.stringify(data.quota) } : {}) });
     return response.data;
   }
 
@@ -361,6 +383,10 @@ class ApiService {
   /**
    * Updates the requested state.
    */
+  async updateMembershipValidity(tenantId: string, membershipId: string, validFrom: string | null, validUntil: string | null): Promise<Membership> {
+    return (await this.client.patch<Membership>(`/tenants/${tenantId}/memberships/${membershipId}`, { validFrom, validUntil })).data;
+  }
+
   async updateTenantMembership(tenantId: string, membershipId: string, roleId?: string, abilities?: string[]): Promise<Membership> {
     const response = await this.client.patch<Membership>(`/tenants/${tenantId}/memberships/${membershipId}`, {
       roleId,
@@ -1062,6 +1088,14 @@ class ApiService {
   /** Recomputes the audit hash chain (AUD-05); platform administrators only. */
   async verifyAuditChain(): Promise<AuditChainReport> {
     return (await this.client.get<AuditChainReport>('/audit/verify')).data;
+  }
+
+  async getComponentNotes(tenantId: string, resourceType: string, resourceId: string): Promise<AuditNote[]> {
+    return (await this.client.get('/audit/notes', { params: { tenantId, resourceType, resourceId } })).data;
+  }
+
+  async addComponentNote(data: { tenantId: string; resourceType: string; resourceId: string; note: string }): Promise<AuditNote> {
+    return (await this.client.post('/audit/notes', data)).data;
   }
 
   async getAuditNotes(eventId: string): Promise<AuditNote[]> {

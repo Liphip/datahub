@@ -74,10 +74,10 @@ class AuthorizationResource {
         val sources = linkedMapOf<String, List<String>>()
         sources["platformAdmin"] = if (target.isSuperAdmin()) listOf("*") else emptyList()
         sources["user"] = (authorizationGrantService.legacyTokens(target.abilities) + target.grantedAbilities.map { it.value }).distinct()
-        sources["membership"] = (authorizationGrantService.legacyTokens(membership.abilities) + membership.grantedAbilities.map { it.value }).distinct()
-        sources["role"] = membership.role?.getAbilitiesList() ?: emptyList()
+        sources["membership"] = if (!membership.isEffective()) emptyList() else (authorizationGrantService.legacyTokens(membership.abilities) + membership.grantedAbilities.map { it.value }).distinct()
+        sources["role"] = if (membership.isEffective()) membership.role?.getAbilitiesList() ?: emptyList() else emptyList()
         val effective = sources.values.flatten().toSet()
-        val granted = target.isSuperAdmin() || "*" in effective || requestedAbility in effective
+        val granted = target.canAccessTenant(targetTenantId) && (target.isSuperAdmin() || "*" in effective || requestedAbility in effective)
 
         return Response.ok(
             mapOf(

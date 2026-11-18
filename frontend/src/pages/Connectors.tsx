@@ -1,3 +1,4 @@
+import ComponentTabs from '../components/ComponentTabs';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
@@ -677,7 +678,7 @@ export default function Connectors() {
         ? await api.disconnectConnector(connector.id, options?.forceDisconnect === true)
         : await api.connectConnector(connector.id);
       setConnectors((prev) => prev.map((c) => (c.id === connector.id ? { ...c, ...updated } : c)));
-      showToast(connector.isActive ? 'Connector disconnected' : 'Connector connected', 'success');
+      showToast(connector.isActive ? 'Connector disabled' : 'Connector enabled', 'success');
     } catch (caught) {
       const err = caught as ApiError;
       if (connector.isActive && err?.response?.status === 409 && options?.forceDisconnect !== true) {
@@ -1095,7 +1096,7 @@ export default function Connectors() {
                     {connector.direction}
                   </span>
                   <span className={`px-2 py-1 text-xs font-medium rounded-sm ${connector.isActive ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-700'}`}>
-                    {connector.isActive ? 'Connected' : 'Disconnected'}
+                    {connector.isActive ? t('common.enabled') : t('common.disabled')}
                   </span>
                 </div>
               </div>
@@ -1162,7 +1163,7 @@ export default function Connectors() {
                     disabled={togglingId === connector.id}
                     className="text-emerald-700 hover:text-emerald-900 text-sm disabled:opacity-40"
                   >
-                    {togglingId === connector.id ? 'Working...' : connector.isActive ? 'Disconnect' : 'Connect'}
+                    {togglingId === connector.id ? 'Working...' : connector.isActive ? 'Disable' : 'Enable'}
                   </button>
                 )}
                 {canWriteConnectors && (
@@ -1680,6 +1681,7 @@ export default function Connectors() {
               {editingConnector ? 'Edit Connector' : 'Create Connector'}
             </h2>
             
+            <ComponentTabs tenantId={tenantId} resourceType="connector" resourceId={editingConnector?.id} onClose={() => setShowModal(false)}>
             <form onSubmit={handleSubmit}>
               <div className="space-y-4">
                 <div>
@@ -2002,6 +2004,7 @@ export default function Connectors() {
                 </button>
               </div>
             </form>
+            </ComponentTabs>
           </div>
         </div>
       )}

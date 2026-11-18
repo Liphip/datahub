@@ -785,7 +785,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | STR-04 | ~ | Object storage bundled and used for the lakehouse; MinIO excluded (no longer distributed). | Open |
 | STR-05 | ~ | Targets are hot tier and lakehouse. | Partial |
 | STR-06 | = | | Done |
-| STR-07 | ~ | Moved to MVP: required to operate 1B/day. | Partial (per-category retention days installation-wide, default unlimited; per-tenant override for run history and alert history through the tenant quota; not for readings or audit records, and no UI for it) |
+| STR-07 | ~ | Moved to MVP: required to operate 1B/day. | Partial (per-category retention days installation-wide, default unlimited; per-tenant override for run history and alert history through the tenant quota; validated tenant editor for run/alert history and ingest/concurrency limits; not for readings or audit records) |
 | STR-08 | + | Unstructured blob storage dropped: data_blobs table, blob endpoints, Files tab and blob config removed (decision of 2026-09-27). | Done |
 | STR-09 | + | Every record attributable to its connector/endpoint and source item. | Done |
 | LAK-01 – LAK-12 | + | Lakehouse. | Open |
@@ -798,7 +798,8 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | UI-10 | = | | Done (theme switch in the sidebar) |
 | UI-11 | ~ | Moved to MVP (implemented). | Done |
 | UI-12 – UI-14 | = | | Done |
-| UI-15 – UI-19 | + | Single UI, Grafana for users, activity tabs, system area, in-app docs. | Open |
+| UI-15, UI-16, UI-18, UI-19 | + | Single UI, Grafana for users, system area, in-app docs. | Open |
+| UI-17 | + | Component activity. | Partial (audit history and immutable notes in tenant, connector and role edit dialogs; remaining component pages open) |
 | UI-20 | + | UI texts exist in English and German. | Partial (locale files complete and checked by a test; the pipeline editor's step choices are translated, most of its other labels and the alert rule form are still hard-coded in English) |
 | UI-21 | + | Accessibility. | Open |
 | API-01, API-02 | ~ | API-02 names the data API path. | Done |
@@ -807,7 +808,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | API-06 | ~ | Contract generated and linted in CI. | Done |
 | API-10 | + | Former FR-028. | Done |
 | API-07 | ~ | Path `/api/ingest/v1/`. | Done |
-| API-08 | ~ | Moved to MVP. | Open |
+| API-08 | ~ | Moved to MVP. | Partial (OIDC code-flow login with PKCE/nonce and explicit issuer/subject account links; existing local bearer tokens after login; no shared component session or federated logout) |
 | API-09 | = | | Open |
 | TEN-01, TEN-02 | = | | Done |
 | TEN-03 | ~ | Isolation at database and storage level (security review found shared DB credentials). | Partial (database level done for the hot tier — see NFR-S8; storage-level/lakehouse namespace isolation does not apply yet, the lakehouse is not built) |
@@ -819,14 +820,17 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | TEN-10 | + | Noisy-neighbour protection for NFR-P1. | Partial (per-tenant ingest quota in records per minute — the tenant's own `ingestRecordsPerMinute` or the installation default — over HTTP, batch and WebSocket, `429` + `Retry-After`; counted per ingest instance, not across replicas; no payload-size quota per tenant; nothing yet for fairness in processing) |
 | IAM-01, IAM-02 | + | Persona and permission model; exact-token matching (former FR-001). | Partial (one naming style, exact-token evaluation; roles editable per tenant) |
 | IAM-05 | + | Role templates. | Partial (Viewer, Editor and Tenant Admin of a new tenant are marked built-in, cannot be edited or deleted, and can be inspected, cloned and disabled; a disabled role grants nothing and cannot be assigned. Roles of tenants created before this stay editable. The system-scope templates — System Operator, Config Auditor, Cross-Tenant Data Analyst — do not exist, see TEN-05) |
-| IAM-03, IAM-04, IAM-06 – IAM-13 | + | Scopes, time-bounded assignments, OIDC, auth proxy, sessions. | Open |
+| IAM-06 – IAM-09, IAM-12 – IAM-13 | + | Scopes, time-bounded assignments, auth proxy, sessions. | Open |
+| IAM-10 | + | External identities. | Partial (one OIDC provider through process configuration; administrator-managed issuer/subject links in Users; no runtime provider editor, claim mapping or JIT provisioning) |
+| IAM-03, IAM-04 | + | Scoped, time-bounded assignments. | Partial (tenant membership validity bounds, API/UI editor, per-request expiry enforcement and authorization explanations; system grants, multiple assignment schedules and common component sessions remain open) |
+| IAM-11 | + | Break-glass passwords. | Done (process-configured local password policy with explicit account UUID allowlist; invalid restricted settings fail startup; OIDC unaffected. No UI policy editor.) |
 | IAM-14 | + | Former FR-004. | Done (authorization version in the token; changes invalidate sessions) |
 | IAM-15 | + | Former FR-002/FR-027. | Partial (explanation API `AuthorizationResource`; used in the Users page) |
 | AUD-01 | + | Paper-trail requirement (extends NFR-S5). | Partial (create/update/delete of pipelines, connectors, tenants, users, memberships, roles, secrets, API keys, alert channels; run trigger/cancel/retry; login success/failure; retention deletions; no deployment/backup events) |
 | AUD-02, AUD-04 | + | | Open (no system-scope data-access auditing; the record is written in the caller's transaction where there is one, but not every action has one, and there is no intent/outcome pair for actions outside the database) |
 | AUD-03 | + | | Partial (time, actor id and name snapshot, address, user agent, action, target type and id, tenant, outcome, source `api`/`system`, correlation id, redacted metadata. Missing: actor type, authentication method and session, target name snapshot and parent, scope, structured before/after, reason) |
 | AUD-05 | + | | Partial (hash chain over all records with `GET /api/internal/v1/audit/verify` and a "Verify chain" action in the UI; PostgreSQL refuses `UPDATE` on `audit_events`. A database superuser can still drop the trigger and rewrite the chain from the tampered record on; an external anchor for the head hash is not built. Records older than the chain are reported as unchained) |
-| AUD-06 | + | | Partial (immutable notes on an audit record and standalone on a component, `audit.note:write`, audited; shown and added in the audit page. No Activity tab on the component pages yet, UI-17) |
+| AUD-06 | + | | Partial (immutable notes on an audit record and standalone on a component, `audit.note:write`, audited; shown and added in the audit page. Activity tabs on tenant, connector and role edit dialogs; other component pages remain open, UI-17) |
 | AUD-07 | + | | Partial (`GET /api/internal/v1/audit`: time range, actor, action, target, tenant, outcome, full text, paging; CSV/JSON export that is itself audited; UI page `/audit`; no saved filters, no filter by source) |
 | AUD-08 | + | | Done (`audit:read` within a tenant; the installation-wide view needs a platform administrator) |
 | AUD-09, AUD-10 | + | | Open (installation-wide retention days exist, see OPS-07/STR-07; no minimum, no archive to the lakehouse, no forwarding) |

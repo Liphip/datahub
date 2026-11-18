@@ -1,5 +1,9 @@
 # Development Setup
 
+For a running desktop test installation with Docker and no Kubernetes, start with the
+[desktop deployment guide](../operations/desktop-deployment.md). The commands below also cover
+host development and the larger multi-role developer stack.
+
 How to run, build and test DataTurntable locally. Configuration values are listed in the
 [configuration reference](configuration-reference.md); contribution rules are in
 [CONTRIBUTING.md](../../CONTRIBUTING.md).
@@ -108,3 +112,43 @@ manifest rendering, the PostgreSQL migration test, image build and scans.
 One Flyway baseline, `backend/src/main/resources/db/migration/V1__baseline.sql`. Before the first
 production installation the baseline is edited directly (no backward compatibility, no data
 migrations); after that, every change becomes a new versioned migration.
+
+
+## Desktop checks without Kubernetes
+
+With JDK 25, Maven 3.9+ and Node 22.12+ on PATH, run `bash scripts/dev/test-desktop.sh` from any
+working directory. This runs representative backend API/retention/rate-limit tests, the full
+OIDC redirect/code exchange against a loopback test provider, and frontend checks/build. H2 and
+an in-process identity provider are used; neither Docker nor Kubernetes is needed. The loopback
+provider is a test fixture only, never an application authentication service. The full backend
+suite and real PostgreSQL migration check remain the broader checks listed above.
+
+For manual development, the backend and frontend host commands above work with Compose's local
+PostgreSQL/Kafka/MQTT infrastructure; Kubernetes is optional. Vite uses port **3000** as configured
+in `frontend/vite.config.ts` (the earlier example's `5173` is Vite's generic default).
+
+### Optional external OIDC provider
+
+OIDC is disabled by default. Keep local password login available while configuring a provider.
+Set these process variables on the control API and restart it:
+
+- `DATATURNTABLE_OIDC_ENABLED=true`
+- `DATATURNTABLE_OIDC_ISSUER`: the provider's exact issuer URL (for example,
+  `http://localhost:8180/realms/dataturntable` for a local desktop Keycloak)
+- `DATATURNTABLE_OIDC_CLIENT_ID=dataturntable`
+- `DATATURNTABLE_OIDC_CLIENT_SECRET`: the provider's confidential-client secret, securely injected
+
+Register the exact public callback, e.g.
+`http://localhost:3000/api/internal/v1/auth/oidc/login` when using Vite's API proxy, or
+`http://localhost/api/internal/v1/auth/oidc/login` through Compose's gateway. Use a confidential
+OIDC web client supporting authorization-code flow and PKCE S256. Use HTTPS in production;
+configure trusted proxy forwarding when TLS terminates upstream. The callback's perceived origin
+must match the registered redirect. Never enable arbitrary forwarded headers from untrusted clients.
+
+As a platform administrator, open Users → External identities and link the existing user's exact
+issuer and subject. Then use the identity-provider button on Login. Local development needs no
+Kubernetes, and the automated flow test needs no external provider at all. On multiple control API
+replicas, configure stable shared Quarkus OIDC state and token-state encryption secrets through
+secret management so provider redirects and encrypted provider cookies survive replica changes.
+This initial integration does not provide installation-wide browser sessions or federated logout;
+see the API guide's limitations before deploying it as an SSO solution.

@@ -121,3 +121,51 @@ Never commit production values for database passwords, Grafana credentials, JWT 
 connector encryption key, connector credentials or alert tokens. Inject them with the deployment's
 secret mechanism (Compose `env_file`/secrets, Kubernetes Secrets). Connector and alert-channel
 credentials are stored as platform secrets and referenced with `secretRefs` (CON-18).
+
+
+## Optional OIDC login
+
+| Environment variable | Default | Meaning |
+|---|---|---|
+| `DATATURNTABLE_OIDC_ENABLED` | `false` | Enable the external browser login on the control API. |
+| `DATATURNTABLE_OIDC_ISSUER` | `http://localhost:8180/realms/dataturntable` | Exact provider issuer/discovery base; HTTPS in production. |
+| `DATATURNTABLE_OIDC_CLIENT_ID` | `dataturntable` | Confidential client id, also the required ID-token audience. |
+| `DATATURNTABLE_OIDC_CLIENT_SECRET` | empty | Client secret from secret management; required by a confidential provider. |
+
+Changes require restarting the control API. The provider is disabled unless explicitly enabled.
+Compose passes these variables to `control-api` only. For host development, export them before
+starting Quarkus. See [desktop identity checks](identity-desktop.md) for local protocol tests and
+[setup](setup.md) for callback registration and multi-replica encryption-key requirements.
+
+
+## Desktop deployment
+
+`docker/compose.desktop.yml` selects the `all` runtime role, one warm Python container and a 2 GiB
+backend heap. It automatically generates persistent keys and service credentials; the larger
+multi-role developer Compose file remains separate. The desktop gateway and MQTT listeners bind
+to loopback. `DESKTOP_PORT` (8088), `DESKTOP_MQTT_PORT` (1884), `DESKTOP_MQTT_WS_PORT` (9002) and
+`DESKTOP_DOCKER_SOCKET` (`/var/run/docker.sock`) customize host access. The optional
+`compose.desktop-oidc.yml` starts Keycloak with the fixed issuer
+`http://idp.localhost:8180/realms/dataturntable`. See the [deployment guide](../operations/desktop-deployment.md).
+
+The OIDC browser flow verifies the ID token; provider access tokens are not used for platform
+permissions or forwarded to services. `authentication.verify-access-token=false` and
+`roles.source=idtoken` are explicit to prevent JWT injection elsewhere in the application from
+automatically enabling unrelated access-token verification. Issuer, audience, signature, nonce,
+PKCE and expiry validation for the ID token remain enabled.
+
+
+## Local password / break-glass policy (IAM-11)
+
+`DATATURNTABLE_LOCAL_LOGIN_MODE` defaults to `all`. Set it to `break-glass-only` to restrict password
+login to the comma-separated account UUIDs in `DATATURNTABLE_BREAK_GLASS_USER_IDS`. All identifiers
+must be complete UUIDs. Unknown modes, invalid identifiers and an empty restricted allowlist fail
+startup instead of falling back to unrestricted access. OIDC login still requires an explicit
+issuer/subject link to an active account and is unaffected by the password-only restriction.
+
+Bootstrap the installation in `all` mode, designate existing account IDs, verify provider login,
+and then restart the control API with the restriction. Preserve at least one tested emergency
+account. Update the process settings and restart to change the policy; no account migration is
+required and there is no UI editor yet. Restriction applies to new password logins, not to tokens
+already issued. User deactivation/password/role changes retain their authorization-version checks.
+Both desktop and multi-role development Compose forward these settings to the control API.

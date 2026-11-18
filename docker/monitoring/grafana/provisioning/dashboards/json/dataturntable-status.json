@@ -46,7 +46,7 @@
       "id": 2,
       "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
       "targets": [
-        { "expr": "max(up{job=\"dataturntable-backend\"})", "refId": "A" }
+        { "expr": "max(up{job=~\"dataturntable-(backend|control-api|public-api|ingest-edge|pipeline-executor)\"})", "refId": "A" }
       ],
       "title": "Backend",
       "type": "stat"

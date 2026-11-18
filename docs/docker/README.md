@@ -23,6 +23,12 @@ Licences of every bundled image: [licenses.md](../development/licenses.md).
 
 ## Docker Compose
 
+For Docker Desktop/Engine evaluation without Kubernetes or host build tools, use
+[`compose.desktop.yml`](../../docker/compose.desktop.yml) and the
+[desktop deployment guide](../operations/desktop-deployment.md). It has one backend JVM, generated
+keys and service passwords, persistent volumes, a localhost gateway and an optional Keycloak overlay.
+The larger multi-role stack below remains available for development and operations.
+
 ```bash
 ./scripts/dev/generate-dev-keys.sh
 docker compose -f docker/docker-compose.dev.yml up -d

@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
+import ComponentTabs from '../components/ComponentTabs';
+import MembershipValidityEditor from '../components/MembershipValidityEditor';
+import IdentityLinks from '../components/IdentityLinks';
 import type { AuthorizationExplanation, Membership, Role, User } from '../types';
 
 /**
@@ -54,6 +57,8 @@ const PERMISSION_GROUPS = [
 export default function Users() {
   const { t } = useTranslation();
   const { user, selectedTenantId, tenantContexts } = useAuthStore();
+  const [validityMember, setValidityMember] = useState<Membership | null>(null);
+  const [identityUser, setIdentityUser] = useState<{ id: string; email: string } | null>(null);
   const [activeTab, setActiveTab] = useState<'members' | 'roles' | 'debug'>('members');
   const [users, setUsers] = useState<User[]>([]);
   const [memberships, setMemberships] = useState<Membership[]>([]);
@@ -472,6 +477,11 @@ export default function Users() {
         </div>
       </div>
 
+      {identityUser && <IdentityLinks userId={identityUser.id} name={identityUser.email} onClose={() => setIdentityUser(null)} />}
+
+      {validityMember && selectedTenantId && <MembershipValidityEditor membership={validityMember} tenantId={selectedTenantId}
+        onClose={() => setValidityMember(null)} onSaved={() => { setValidityMember(null); void handleReload(); }} />}
+
       {/* Tab switcher */}
       <div className="mb-6 flex space-x-2">
         <button
@@ -671,6 +681,8 @@ export default function Users() {
                               </span>
                             ) : (
                               <span className="space-x-3">
+                                {membership && <button className="text-primary-600" onClick={() => setValidityMember(membership)}>{t('membershipValidity.title')}</button>}
+                                {user?.superadmin && <button className="text-primary-600" onClick={() => setIdentityUser({ id: u.id, email: u.email })}>{t('auth.identityLinks')}</button>}
                                 {membership && !isEditingThis && (
                                   <button
                                     onClick={() => setEditState({ membershipId: membership.id, roleId: membership.roleId ?? roles[0]?.id ?? '' })}
@@ -909,6 +921,7 @@ export default function Users() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">{editingRole ? 'Edit Role' : 'Create Role'}</h2>
+            <ComponentTabs tenantId={selectedTenantId || undefined} resourceType="role" resourceId={editingRole?.id} onClose={() => setShowRoleModal(false)}>
             <form onSubmit={handleSaveRole}>
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Name <span className="text-red-500">*</span></label>
@@ -977,6 +990,7 @@ export default function Users() {
                 </button>
               </div>
             </form>
+            </ComponentTabs>
           </div>
         </div>
       )}

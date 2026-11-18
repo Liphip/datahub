@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
+import ComponentTabs from '../components/ComponentTabs';
 import type { Tenant } from '../types';
 
 /**
@@ -28,6 +29,8 @@ export default function Tenants() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const quotaFields = ['ingestRecordsPerMinute', 'maxConcurrentExecutions', 'retentionPipelineRunsDays', 'retentionAlertHistoryDays'] as const;
+  const [quotaValues, setQuotaValues] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedTenantIds, setExpandedTenantIds] = useState<Record<string, boolean>>({});
   const [switchingTenantId, setSwitchingTenantId] = useState<string | null>(null);
@@ -122,6 +125,8 @@ export default function Tenants() {
    */
   const handleEditTenant = (tenant: TenantWithChildren) => {
     setEditingTenant(tenant);
+    setError(null);
+    setQuotaValues(Object.fromEntries(quotaFields.map(key => [key, tenant.quota?.[key] === undefined ? '' : String(tenant.quota[key])])));
     setNewTenantName(tenant.name);
     setShowEditModal(true);
   };
@@ -135,15 +140,27 @@ export default function Tenants() {
 
     setCreating(true);
     try {
-      await api.updateTenant(editingTenant.id, { name: newTenantName });
+      const quota = { ...editingTenant.quota };
+      for (const key of quotaFields) {
+        const raw = quotaValues[key]?.trim() || '';
+        if (!raw) { delete quota[key]; continue; }
+        const value = Number(raw);
+        const minimum = key.startsWith('retention') ? -1 : key === 'maxConcurrentExecutions' ? 1 : 0;
+        if (!Number.isInteger(value) || value < minimum || value > 2147483647) {
+          setError(t('tenants.quotaInvalid'));
+          return;
+        }
+        quota[key] = value;
+      }
+      await api.updateTenant(editingTenant.id, { name: newTenantName, quota });
       await fetchTenants(searchQuery.trim() || undefined);
       setShowEditModal(false);
       setEditingTenant(null);
       setNewTenantName('');
       showToast('Tenant updated', 'success');
     } catch (err) {
-      console.error('Error updating tenant:', err);
-      showToast('Failed to update tenant', 'error');
+      const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      setError(message || t('tenants.quotaSaveFailed'));
     } finally {
       setCreating(false);
     }
@@ -453,6 +470,8 @@ export default function Tenants() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">Edit Tenant</h2>
+            {error && <p role="alert" className="mb-3 text-red-700">{error}</p>}
+            <ComponentTabs tenantId={editingTenant.id} resourceType="tenant" resourceId={editingTenant.id} onClose={() => setShowEditModal(false)}>
             <form onSubmit={handleUpdateTenant}>
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Tenant Name <span className="text-red-500">*</span></label>
@@ -465,6 +484,19 @@ export default function Tenants() {
                   autoFocus
                 />
               </div>
+              <fieldset className="mb-4 space-y-3">
+                <legend className="font-medium">{t('tenants.quotaTitle')}</legend>
+                <p className="text-sm text-gray-600">{t('tenants.quotaHelp')}</p>
+                {quotaFields.map(key => (
+                  <label key={key} className="block text-sm">
+                    {t(`tenants.quota.${key}`)}
+                    <input type="number" step="1" min={key.startsWith('retention') ? -1 : key === 'maxConcurrentExecutions' ? 1 : 0}
+                      max="2147483647" value={quotaValues[key] || ''}
+                      onChange={e => setQuotaValues(prev => ({ ...prev, [key]: e.target.value }))}
+                      placeholder={t('tenants.quotaDefault')} className="input w-full" />
+                  </label>
+                ))}
+              </fieldset>
               <div className="flex justify-end space-x-2">
                 <button
                   type="button"
@@ -478,6 +510,7 @@ export default function Tenants() {
                 </button>
               </div>
             </form>
+            </ComponentTabs>
           </div>
         </div>
       )}

@@ -92,9 +92,25 @@ class MembershipResource {
     /**
      * Converts a value into the representation required by its caller.
      */
+    private fun validity(request: Map<String, Any>, existing: Membership? = null): Pair<java.time.Instant?, java.time.Instant?> {
+        fun parse(key: String, previous: java.time.Instant?): java.time.Instant? {
+            if (!request.containsKey(key)) return previous
+            val raw = request[key] ?: return null
+            return (raw as? String)?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() }
+                ?: throw BadRequestException("$key must be an ISO-8601 instant or null")
+        }
+        val from = parse("validFrom", existing?.validFrom)
+        val until = parse("validUntil", existing?.validUntil)
+        if (from != null && until != null && !from.isBefore(until)) throw BadRequestException("validUntil must be after validFrom")
+        return from to until
+    }
+
     private fun toMembershipDto(membership: Membership): Map<String, Any?> {
         return mapOf(
             "id" to membership.id,
+            "validFrom" to membership.validFrom,
+            "validUntil" to membership.validUntil,
+            "effective" to membership.isEffective(),
             "authUserId" to membership.authUser?.id,
             "authUserEmail" to membership.authUser?.email,
             "authUserFirstName" to membership.authUser?.firstName,
@@ -184,9 +200,12 @@ class MembershipResource {
             return Response.status(409).entity(mapOf("error" to "Root-tenant admins cannot hold sub-tenant memberships")).build()
         }
 
+        val (validFrom, validUntil) = validity(request)
         val grantedAbilities = authorizationGrantService.normalize(request["abilities"] as? Collection<*>)
         val membership = Membership().apply {
             this.authUser = user
+            this.validFrom = validFrom
+            this.validUntil = validUntil
             this.tenant = tenant
             this.role = role
             this.abilities = objectMapper.writeValueAsString(grantedAbilities)
@@ -202,7 +221,7 @@ class MembershipResource {
             action = "identity.membership.created",
             resourceType = "membership",
             resourceId = membership.id.toString(),
-            metadata = mapOf("outcome" to "succeeded", "userId" to user.id.toString(), "roleId" to role.id.toString())
+            metadata = mapOf("outcome" to "succeeded", "userId" to user.id.toString(), "roleId" to role.id.toString(), "validFrom" to validFrom, "validUntil" to validUntil)
         )
 
         return Response.status(201).entity(toMembershipDto(membership)).build()
@@ -278,7 +297,8 @@ class MembershipResource {
             return Response.status(404).entity(mapOf("error" to "Membership not found")).build()
         }
 
-        var authorizationChanged = false
+        val (validFrom, validUntil) = validity(request, membership)
+        var authorizationChanged = membership.validFrom != validFrom || membership.validUntil != validUntil
         request["roleId"]?.let {
             val role = em.find(Role::class.java, UUID.fromString(it as String))
                 ?: return Response.status(404).entity(mapOf("error" to "Role not found")).build()
@@ -295,6 +315,8 @@ class MembershipResource {
             authorizationGrantService.replaceMembershipAbilities(membership, grantedAbilities)
             authorizationChanged = true
         }
+        membership.validFrom = validFrom
+        membership.validUntil = validUntil
         if (authorizationChanged) membership.authUser?.authorizationVersion = (membership.authUser?.authorizationVersion ?: 0) + 1
         membership.persist()
         grafanaSyncService.queueMembershipSync(membership)
@@ -305,7 +327,7 @@ class MembershipResource {
             action = "identity.membership.updated",
             resourceType = "membership",
             resourceId = membership.id.toString(),
-            metadata = mapOf("outcome" to "succeeded", "authorizationChanged" to authorizationChanged)
+            metadata = mapOf("outcome" to "succeeded", "authorizationChanged" to authorizationChanged, "validFrom" to validFrom, "validUntil" to validUntil)
         )
 
         return Response.ok(toMembershipDto(membership)).build()

@@ -224,3 +224,17 @@ expected behavior rather than runtime functionality. Keep a test name aligned wi
 the corresponding endpoint/service contract. Compose, Kubernetes and monitoring
 manifests are deployment configuration; see `docs/docker/README.md` and the
 operations documents for their runtime purpose.
+
+
+## External identity login and component activity
+
+- `auth/ExternalIdentity.kt`: explicit issuer/subject links and short-lived hashed login tickets.
+- `auth/OidcLoginService.kt`: verified-subject lookup, browser binding, expiry and atomic handoff consumption.
+- `api/OidcResource.kt`: OIDC login callback and same-origin handoff exchange; provider verification is handled by Quarkus.
+- `api/ExternalIdentityResource.kt`: platform-administrator account links, audit and unlink revocation.
+- `security/AuthenticatedTokenProducer.kt`: preserves injection of the authenticated local JWT alongside the OIDC extension.
+- `frontend/src/components/IdentityLinks.tsx`: platform-administrator link editor on Users.
+- `frontend/src/components/ComponentTabs.tsx`: lazy scoped activity, paged audit history and permanent component notes.
+- `scripts/dev/test-desktop.sh`: representative local API/OIDC and frontend checks without Docker or Kubernetes.
+
+`auth/LocalLoginPolicy.kt` validates the process-configured password-login policy and explicit break-glass account UUIDs. `AuthService.login` applies it after password verification and before issuing a token; verified external login follows its separate issuer/subject link path.
