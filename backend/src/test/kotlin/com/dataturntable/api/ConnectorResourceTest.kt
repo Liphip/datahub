@@ -270,25 +270,59 @@ class ConnectorResourceTest {
     @Test
     fun testCreateConnectorAllowsCredentialsUnderSecretRefs() {
         val token = TestAuthHelpers.createAdminToken()
-
-        given()
+        val secretId = java.util.UUID.randomUUID().toString()
+        val config = mapOf(
+            "broker" to "mqtt://localhost:1883",
+            "secretRefs" to mapOf("password" to mapOf("id" to secretId, "version" to 1))
+        )
+        val id = given()
             .header("Authorization", "Bearer $token")
             .contentType("application/json")
-            .body(mapOf(
-                "name" to "SecretRefs Connector",
-                "connectorType" to "MQTT",
-                "direction" to "INPUT",
-                "config" to mapOf(
-                    "broker" to "mqtt://localhost:1883",
-                    "secretRefs" to mapOf(
-                        "apiKey" to mapOf("id" to java.util.UUID.randomUUID().toString(), "version" to 1)
-                    )
-                )
-            ))
-        .`when`()
-            .post("/api/internal/v1/connectors")
-        .then()
-            .statusCode(201)
+            .body(mapOf("name" to "SecretRefs Connector", "connectorType" to "MQTT", "direction" to "INPUT", "config" to config))
+        .`when`().post("/api/internal/v1/connectors")
+        .then().statusCode(201).extract().path<String>("id")
+
+        val fetchedConfig = given().header("Authorization", "Bearer $token")
+        .`when`().get("/api/internal/v1/connectors/$id")
+        .then().statusCode(200)
+            .body("config.secretRefs.password.id", equalTo(secretId))
+            .body("config.secretRefs.password.version", equalTo(1))
+            .extract().path<Map<String, Any>>("config")
+
+        given().header("Authorization", "Bearer $token").contentType("application/json")
+            .body(mapOf("config" to fetchedConfig))
+        .`when`().patch("/api/internal/v1/connectors/$id")
+        .then().statusCode(200)
+
+        given().header("Authorization", "Bearer $token")
+        .`when`().get("/api/internal/v1/connectors")
+        .then().statusCode(200).body("find { it.id == '$id' }.config.secretRefs.password.id", equalTo(secretId))
+    }
+
+    @Test
+    fun testRejectsMalformedSecretReferencesOnCreateAndUpdate() {
+        val token = TestAuthHelpers.createAdminToken()
+        val id = given().header("Authorization", "Bearer $token").contentType("application/json")
+            .body(mapOf("name" to "Malformed refs guard", "connectorType" to "REST", "direction" to "OUTPUT", "config" to mapOf("baseUrl" to "https://example.com")))
+        .`when`().post("/api/internal/v1/connectors")
+        .then().statusCode(201).extract().path<String>("id")
+        val secretId = java.util.UUID.randomUUID().toString()
+        val malformed = listOf(
+            "********", mapOf("0" to "*"), listOf("*"),
+            mapOf("password" to mapOf("id" to "not-an-id")),
+            mapOf("password" to mapOf("id" to secretId, "version" to -1)),
+            mapOf("password" to mapOf("id" to secretId, "version" to 1.5)),
+            mapOf("password" to mapOf("id" to secretId, "value" to "do-not-expose"))
+        )
+        for (refs in malformed) {
+            val config = mapOf("baseUrl" to "https://example.com", "secretRefs" to refs)
+            given().header("Authorization", "Bearer $token").contentType("application/json")
+                .body(mapOf("name" to "Bad ref "+java.util.UUID.randomUUID(), "connectorType" to "REST", "direction" to "OUTPUT", "config" to config))
+            .`when`().post("/api/internal/v1/connectors").then().statusCode(400)
+            given().header("Authorization", "Bearer $token").contentType("application/json")
+                .body(mapOf("config" to config))
+            .`when`().patch("/api/internal/v1/connectors/$id").then().statusCode(400)
+        }
     }
 
     @Test

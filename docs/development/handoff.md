@@ -1894,3 +1894,26 @@ The guide includes the requested complete teardown/rebuild workflow. Desktop exp
 infrastructure graphs still require the full developer Compose exporter stack. Standard source-image
 builds remain unverified in this cloud because its network policy blocks the Alpine package mirror;
 runtime validation used temporary artifact images. No cloud environment configuration was published.
+
+## Session 2026-11-19: MQTT credential editing regression
+
+Traced `Invalid secret reference for 0` to ConnectorResource masking the entire secretRefs map as
+`********`; the frontend then spread that string into numeric properties on edit. Valid reference
+metadata is now returned intact, without exposing secret values. Create/update and runtime resolution
+validate reference structure, IDs and positive integer versions. The editor refuses malformed stored
+metadata unless credentials are re-entered to replace it; save errors now reach the form. Existing
+corrupted references cannot recover the original IDs and require re-entered credentials or a clean
+test deployment. MQTT diagnostics now include Paho reason codes and a bounded, redacted cause chain;
+configuration-resolution errors also update the connector's lastError. Tests cover API create/read/
+list/edit reference round trips, malformed writes, editor repair and nested network errors. The
+external broker's TLS/port/credential requirements have not been established from the supplied logs.
+
+The same feedback also exposed a separate module-config response mismatch: ModuleVersion stores
+JSON text, but versionToMap returned that String while ModuleEditor expected an object and called
+JSON.stringify again. Version responses now decode the stored root object (including old extra
+encoding layers), new writes require an object, and both initial/history editor loads recognize
+older JSON-text responses. Tests exercise full create/read/resave round trips, invalid root types,
+legacy serialization and both editor load paths.
+
+Validation: 53 targeted backend tests and all 58 frontend tests passed, including four module editor
+round-trip/history cases. Frontend typecheck/build passed; lint has 26 existing warnings and no errors.

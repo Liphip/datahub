@@ -25,6 +25,19 @@ describe('secret references in forms', () => {
     expect(hasSecret(existing, 'authToken')).toBe(true);
   });
 
+  it('rejects masked or corrupted reference metadata instead of spreading string characters', async () => {
+    for (const secretRefs of ['********', { 0: '*' }, ['*']]) {
+      await expect(withSecretRefs('t', { password: '' }, ['password'], { secretRefs }, 'x'))
+        .rejects.toThrow('Re-enter and save');
+    }
+  });
+
+  it('repairs corrupt metadata when credentials are entered again', async () => {
+    const config = await withSecretRefs('t', { password: 'replacement' }, ['password'], { secretRefs: { 0: '*' } }, 'x');
+    expect(config).toEqual({ secretRefs: { password: { id: 'id-password', version: 1 } } });
+    expect(config).not.toHaveProperty('password');
+  });
+
   it('builds valid secret names', () => {
     expect(secretName('9 Wärme', 'password')).toMatch(/^W-rme\.password\.[a-z0-9]+$/);
   });

@@ -152,6 +152,7 @@ class ConnectorResource {
             val lowerKey = key.lowercase()
             val isSensitive = sensitiveFragments.any { lowerKey.contains(it) }
             result[key] = when {
+                key == "secretRefs" -> if (com.dataturntable.connectors.ConnectorSecretReferences.validationError(v) == null) v else "********"
                 isSensitive && v is String && v.isNotEmpty() -> "********"
                 isSensitive && v != null -> "********"
                 v is Map<*, *> -> maskConnectorConfig(v)
@@ -187,7 +188,7 @@ class ConnectorResource {
             is Map<*, *> -> node.entries.firstNotNullOfOrNull { (rawKey, child) ->
                 val key = rawKey?.toString()?.replace(Regex("[^A-Za-z0-9]"), "")?.lowercase().orEmpty()
                 when {
-                    key == "secretrefs" -> validate(child, true)
+                    key == "secretrefs" -> com.dataturntable.connectors.ConnectorSecretReferences.validationError(child)
                     !insideSecretRefs && key in sensitiveNames -> "Connector credentials must use secretRefs"
                     else -> validate(child, insideSecretRefs)
                 }

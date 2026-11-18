@@ -6,6 +6,16 @@ import { useAuthStore } from '../stores/auth';
 import api from '../services/api';
 import type { CodeModule } from '../types';
 
+/** Older APIs returned JSON text; decode it before formatting the editor's object. */
+function moduleConfigText(value: unknown): string {
+  let config: unknown = value ?? {};
+  for (let depth = 0; depth < 3 && typeof config === 'string'; depth++) {
+    const text = config;
+    try { config = JSON.parse(text); } catch { return text; }
+  }
+  return typeof config === 'string' ? config : JSON.stringify(config, null, 2) ?? '{}';
+}
+
 const TEMPLATES = {
   IMPORT: `class ImportModule:
     """
@@ -225,7 +235,7 @@ export default function ModuleEditor() {
         if (data.versions && data.versions.length > 0) {
           const latestCode = data.versions[0].code || TEMPLATES[data.moduleType as keyof typeof TEMPLATES] || TEMPLATES.PROCESSING;
           const latestRequirements = data.versions[0].requirements || 'pandas\nnumpy';
-          const latestConfig = JSON.stringify(data.versions[0].config || {}, null, 2);
+          const latestConfig = moduleConfigText(data.versions[0].config);
           setCode(latestCode);
           setRequirements(latestRequirements);
           setConfigText(latestConfig);
@@ -386,7 +396,7 @@ export default function ModuleEditor() {
 
     const nextCode = selectedVersion.code || TEMPLATES[module.moduleType as keyof typeof TEMPLATES] || TEMPLATES.PROCESSING;
     const nextRequirements = selectedVersion.requirements || 'pandas\nnumpy';
-    const nextConfig = JSON.stringify(selectedVersion.config || {}, null, 2);
+    const nextConfig = moduleConfigText(selectedVersion.config);
     setCode(nextCode);
     setRequirements(nextRequirements);
     setConfigText(nextConfig);
@@ -471,10 +481,11 @@ export default function ModuleEditor() {
           </div>
 
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="module-config" className="block text-sm font-medium text-gray-700 mb-1">
               Module config (JSON)
             </label>
             <textarea
+              id="module-config"
               value={configText}
               onChange={(e) => setConfigText(e.target.value)}
               className="input h-40 font-mono text-sm"

@@ -11,7 +11,11 @@ class ConnectorSecretReferenceResolver {
     @Inject lateinit var secrets: SecretService
 
     fun resolve(connector: Connector, config: Map<String, Any?>): Map<String, Any?> {
-        val refs = config["secretRefs"] as? Map<*, *> ?: return config
+        if (!config.containsKey("secretRefs")) return config
+        ConnectorSecretReferences.validationError(config["secretRefs"])?.let {
+            throw IllegalArgumentException("$it. Re-enter and save connector credentials.")
+        }
+        val refs = config["secretRefs"] as Map<*, *>
         val tenantId = connector.tenant?.id ?: throw IllegalStateException("Connector tenant missing")
         val resolved = config.toMutableMap()
         refs.forEach { (fieldRaw, refRaw) ->

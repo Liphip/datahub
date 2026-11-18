@@ -200,3 +200,28 @@ Images are rebuilt from source; deleting downloaded base images is unnecessary.
   non-root monitoring containers. Internal monitoring requests bypass configured HTTP proxies.
 - The docs build context includes `docs/` and Markdown files. The tenant-schema fix reuses existing
   schemas under restricted roles; granting broad database CREATE privileges is unnecessary.
+
+### MQTT credential-reference errors
+
+`Invalid secret reference for 0` can occur on connectors edited with the older UI/API: the API
+masked `secretRefs` as a string and the editor saved its characters as numbered entries. Updated
+versions return reference IDs/versions (never secret values) and reject malformed references before
+saving. For an already affected connector, edit it and re-enter all credential fields, then save;
+the editor creates replacement secret references. A clean test deployment also removes the affected
+configuration. A blank credential field preserves valid references; it cannot repair corrupted ones.
+
+`has no pipeline topic subscriptions yet` is informational: connecting without subscriptions is
+allowed. Configure an active pipeline IMPORT node with an MQTT Topic to receive messages.
+`MqttException` indicates a separate broker connection failure. Updated logs, connector status and
+the Test action include Paho's reason code and underlying cause, with credentials redacted. A broker
+URL without a port uses the protocol default: `mqtt://host` uses plain TCP on 1883; use
+`mqtts://host:8883` when the broker requires TLS. Choose the URL/port and credentials required by
+your broker; HTTP proxy settings do not provide a TCP MQTT tunnel.
+
+### Escaped module configuration
+
+Module versions now return config as a JSON object instead of the database's JSON text. The editor
+also recognizes older JSON-text responses, including an extra encoding layer, when opening the
+latest version or loading history. Existing valid config does not need to be recreated. Reopen the
+module after updating; edits are saved as objects. New API writes reject arrays/scalars/JSON strings
+as config rather than creating another encoding layer.

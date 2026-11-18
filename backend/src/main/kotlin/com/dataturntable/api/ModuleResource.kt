@@ -97,6 +97,14 @@ class ModuleResource {
      * Implements `versionToMap` for this source unit.
      */
     private fun versionToMap(version: ModuleVersion): Map<String, Any?> {
+        // Persistence uses JSON text; the API contract exposes the decoded object to editors.
+        var config: Any? = version.config ?: emptyMap<String, Any?>()
+        repeat(3) {
+            if (config is String) {
+                config = runCatching { com.dataturntable.json.JsonObjectMappers.create().readValue(config as String, Any::class.java) }
+                    .getOrDefault(config)
+            }
+        }
         return mapOf(
             "id" to version.id,
             "moduleId" to version.module?.id,
@@ -108,7 +116,7 @@ class ModuleResource {
             "runtimeImageDigest" to version.runtimeImageDigest,
             "code" to version.code,
             "requirements" to version.requirements,
-            "config" to version.config,
+            "config" to config,
             "isActive" to version.isActive,
             "createdAt" to version.createdAt
         )
@@ -380,6 +388,9 @@ class ModuleResource {
         val requirements = request["requirements"] as? String ?: ""
         val versionTag = request["versionTag"] as? String
         val config = request["config"] ?: emptyMap<String, Any?>()
+        if (config !is Map<*, *>) {
+            return Response.status(400).entity(mapOf("error" to "Module config must be a JSON object")).build()
+        }
         val fingerprint = contentFingerprint(code, requirements, config, versionTag)
 
         val existingVersions = em.createQuery(

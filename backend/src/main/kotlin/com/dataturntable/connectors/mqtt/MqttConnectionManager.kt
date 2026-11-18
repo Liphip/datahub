@@ -42,6 +42,19 @@ class MqttConnectionManager {
 
     private val LOG = Logger.getLogger(MqttConnectionManager::class.java)
 
+    /** Paho often reports only "MqttException" in message; retain its reason and safe cause chain. */
+    internal fun connectionError(error: Throwable): String {
+        val parts = mutableListOf<String>()
+        var current: Throwable? = error
+        repeat(5) {
+            val cause = current ?: return@repeat
+            val reason = if (cause is MqttException) " reasonCode=${cause.reasonCode}" else ""
+            parts += "${cause.javaClass.simpleName}$reason: ${cause.message.orEmpty()}"
+            current = cause.cause
+        }
+        return redactor.text(parts.joinToString("; caused by ")).orEmpty().replace('\n', ' ').replace('\r', ' ').take(2048)
+    }
+
     @Inject
     lateinit var messageRouter: MqttMessageRouter
 
@@ -170,7 +183,8 @@ class MqttConnectionManager {
                     leaseTokens[connectorId] = claim.fencingToken
                     connectAndSubscribe(connectorId, claim.fencingToken)
                 } catch (e: Exception) {
-                    LOG.errorf("Failed to connect MQTT connector %s: %s", connectorId, e.message)
+                    clientErrors[connectorId] = connectionError(e)
+                    LOG.errorf("Failed to connect MQTT connector %s: %s", connectorId, clientErrors[connectorId])
                 }
             }
 
@@ -179,7 +193,7 @@ class MqttConnectionManager {
                 disconnectConnector(id)
             }
         } catch (e: Exception) {
-            LOG.errorf("MQTT refreshAll failed: %s", e.message)
+            LOG.errorf("MQTT refreshAll failed: %s", connectionError(e))
         }
     }
 
@@ -204,7 +218,8 @@ class MqttConnectionManager {
                 disconnectConnector(connectorId)
             }
         } catch (e: Exception) {
-            LOG.errorf("Failed to refresh MQTT connector %s: %s", connectorId, e.message)
+            clientErrors[connectorId] = connectionError(e)
+            LOG.errorf("Failed to refresh MQTT connector %s: %s", connectorId, clientErrors[connectorId])
         }
     }
 
@@ -325,10 +340,10 @@ class MqttConnectionManager {
             )
         } catch (e: Exception) {
             try { client.close() } catch (_: Exception) {}
-            clientErrors[connectorId] = e.message ?: "Connection failed"
+            clientErrors[connectorId] = connectionError(e)
             subscribedTopicsMap.remove(connectorId)
             connectorMetrics.connectionCounter("mqtt", "failure").increment()
-            LOG.errorf("MQTT connector %s failed to connect to %s: %s", connectorId, redactor.text(brokerUrl), redactor.text(e.message))
+            LOG.errorf("MQTT connector %s failed to connect to %s: %s", connectorId, redactor.text(brokerUrl), clientErrors[connectorId])
             throw e
         }
     }
@@ -486,7 +501,7 @@ class MqttConnectionManager {
             try { client.disconnect(1000) } catch (_: Exception) {}
             true to "Connected to ${redactor.text(brokerUrl)}"
         } catch (e: Exception) {
-            false to (redactor.text(e.message) ?: "Connection failed")
+            false to connectionError(e)
         } finally {
             try { client.close() } catch (_: Exception) {}
         }

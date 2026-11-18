@@ -629,8 +629,9 @@ export default function Connectors() {
       setError('');
       showToast(editingConnector ? 'Connector updated' : 'Connector created', 'success');
     } catch (err) {
-      console.error('Error saving connector:', err);
-      setError(editingConnector ? 'Failed to update connector' : 'Failed to create connector');
+      const apiError = err as ApiError;
+      setError(apiError?.response?.data?.error || (err instanceof Error ? err.message : '')
+        || (editingConnector ? 'Failed to update connector' : 'Failed to create connector'));
     } finally {
       setSavingConnector(false);
     }

@@ -216,6 +216,52 @@ class ModuleResourceTest {
     }
 
     @Test
+    fun testModuleConfigRemainsAnObjectAcrossEditorRoundTrip() {
+        val token = adminToken()
+        val moduleId = createModule(token, firstTenantId(token), "Config round trip ${UUID.randomUUID()}")
+        val config = mapOf("table" to "measurements", "nested" to mapOf("enabled" to true), "columns" to listOf("time", "value"))
+        val versionId = given().header("Authorization", "Bearer $token").contentType(ContentType.JSON)
+            .body(mapOf("code" to "print('config')", "config" to config))
+        .`when`().post("/api/internal/v1/modules/$moduleId/versions")
+        .then().statusCode(201)
+            .body("config.table", equalTo("measurements"))
+            .body("config.nested.enabled", equalTo(true))
+            .extract().path<String>("id")
+
+        val fetched = given().header("Authorization", "Bearer $token")
+        .`when`().get("/api/internal/v1/modules/$moduleId")
+        .then().statusCode(200).body("versions[0].config.table", equalTo("measurements"))
+            .extract().path<Map<String, Any>>("versions[0].config")
+        given().header("Authorization", "Bearer $token").contentType(ContentType.JSON)
+            .body(mapOf("code" to "print('config')", "config" to fetched))
+        .`when`().post("/api/internal/v1/modules/$moduleId/versions")
+        .then().statusCode(200).body("createdNewVersion", equalTo(false))
+            .body("config.nested.enabled", equalTo(true))
+
+        // Previously serialized JSON text is decoded too, allowing an affected editor to recover.
+        QuarkusTransaction.requiringNew().run {
+            val stored = em.find(com.dataturntable.module.ModuleVersion::class.java, UUID.fromString(versionId))
+            val mapper = com.dataturntable.json.JsonObjectMappers.create()
+            stored.config = mapper.writeValueAsString(mapper.writeValueAsString(config))
+        }
+        given().header("Authorization", "Bearer $token")
+        .`when`().get("/api/internal/v1/modules/$moduleId/versions")
+        .then().statusCode(200).body("[0].config.table", equalTo("measurements"))
+    }
+
+    @Test
+    fun testRejectsModuleConfigThatIsNotAnObject() {
+        val token = adminToken()
+        val moduleId = createModule(token, firstTenantId(token), "Config validation ${UUID.randomUUID()}")
+        for (config in listOf("{\"table\":\"measurements\"}", listOf("table"), 42, true)) {
+            given().header("Authorization", "Bearer $token").contentType(ContentType.JSON)
+                .body(mapOf("code" to "print('config')", "config" to config))
+            .`when`().post("/api/internal/v1/modules/$moduleId/versions")
+            .then().statusCode(400).body("error", equalTo("Module config must be a JSON object"))
+        }
+    }
+
+    @Test
     fun testCreateVersionDoesNotDuplicateWhenFingerprintIsUnchanged() {
         val token = adminToken()
         val tenantId = firstTenantId(token)
