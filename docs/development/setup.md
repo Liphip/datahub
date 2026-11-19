@@ -1,9 +1,5 @@
 # Development Setup
 
-For a running desktop test installation with Docker and no Kubernetes, start with the
-[desktop deployment guide](../operations/desktop-deployment.md). The commands below also cover
-host development and the larger multi-role developer stack.
-
 How to run, build and test DataTurntable locally. Configuration values are listed in the
 [configuration reference](configuration-reference.md); contribution rules are in
 [CONTRIBUTING.md](../../CONTRIBUTING.md).
@@ -56,6 +52,34 @@ redundant (NFR-R8).
 The backend containers are not published directly; everything goes through nginx
 (`docker/nginx.conf`: `/api/internal/v1/`, `/api/v1/`, `/api/ingest/v1/`, `/monitoring`,
 `/dashboard`, `/docs`, `/`).
+
+### Try the product
+
+1. Create a tenant and select it in the UI.
+2. Create a PROCESSING module with no requirements:
+
+   ```python
+   def process(input_data):
+       return {**input_data, "value": input_data["value"] * 2}
+   ```
+
+3. Use the pipeline editor to connect an IMPORT node, this PROCESSING module and a DB_SAVE or
+   EXPORT node, and activate the pipeline. The [energy example](../examples/energy-14a/README.md)
+   and [model example](../examples/model-forecast/README.md) show fuller workflows.
+4. Create an ingest API key scoped to that pipeline and send a record to
+   `/api/ingest/v1/ingest/{pipelineId}` with `X-API-Key` (see the [API guide](../api/README.md)).
+5. Inspect the pipeline run, node results and logs in the UI.
+
+Connections to databases and brokers inside the stack use their Compose names (`postgresql`,
+`pipeline-postgresql`, `mosquitto`, `kafka`), not `localhost`.
+
+Module code runs in a separate container without network, started through the mounted Docker
+socket. A module's requirements are installed once per distinct set by a separate container on
+the Docker `bridge` network, which must reach PyPI (otherwise set
+`dataturntable.docker.dependency-install.index-url` or `.proxy`); the first message after a
+requirements change therefore takes longer, and only wheels are accepted by default. The
+installed packages are kept in Docker volumes named `dt-pkgs-…`; remove unused ones with
+`docker volume prune`.
 
 ## Backend and frontend outside containers
 

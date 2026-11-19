@@ -142,17 +142,6 @@ Compose passes these variables to `control-api` only. For host development, expo
 starting Quarkus. See [desktop identity checks](identity-desktop.md) for local protocol tests and
 [setup](setup.md) for callback registration and multi-replica encryption-key requirements.
 
-
-## Desktop deployment
-
-`docker/compose.desktop.yml` selects the `all` runtime role, one warm Python container and a 2 GiB
-backend heap. It automatically generates persistent keys and service credentials; the larger
-multi-role developer Compose file remains separate. The desktop gateway and MQTT listeners bind
-to loopback. `DESKTOP_PORT` (8088), `DESKTOP_MQTT_PORT` (1884), `DESKTOP_MQTT_WS_PORT` (9002) and
-`DESKTOP_DOCKER_SOCKET` (`/var/run/docker.sock`) customize host access. The optional
-`compose.desktop-oidc.yml` starts Keycloak with the fixed issuer
-`http://idp.localhost:8180/realms/dataturntable`. See the [deployment guide](../operations/desktop-deployment.md).
-
 The OIDC browser flow verifies the ID token; provider access tokens are not used for platform
 permissions or forwarded to services. `authentication.verify-access-token=false` and
 `roles.source=idtoken` are explicit to prevent JWT injection elsewhere in the application from

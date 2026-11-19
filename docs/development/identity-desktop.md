@@ -1,8 +1,7 @@
 # Identity checks on a desktop
 
-For an interactive test deployment of the product and a real local Keycloak provider, use the
-[desktop deployment](../operations/desktop-deployment.md). This page describes automated checks,
-which are separate from that running installation.
+This page describes automated identity checks. For an interactive test with a real provider,
+run the [developer Compose stack](setup.md) and configure OIDC as described there.
 
 Run `bash scripts/dev/test-desktop.sh` with JDK 25, Maven 3.9+ and Node 22.12+ on PATH.
 No Kubernetes cluster, Docker daemon or external identity provider is required for this smoke suite.

@@ -1957,3 +1957,12 @@ Running Docker tests in this cloud: start `dockerd`, pull `mirror.gcr.io/library
 and tag it (Docker Hub rate-limits), and build an image adding `/root/.ccr/ca-bundle.crt` as
 `PIP_CERT`/`SSL_CERT_FILE` (TLS interception); run with `DATATURNTABLE_DOCKER_MODULE_BASE_IMAGE=<that image>`.
 
+## Session 2026-11-19: desktop Compose stack removed
+
+Owner does not use `docker/compose.desktop.yml`/`compose.desktop-oidc.yml` and tests locally with
+`docker/docker-compose.dev.yml`. Removed both files, `docker/desktop/` (init, entrypoint, nginx)
+and `docs/operations/desktop-deployment.md`; its walkthrough and the module-requirements note
+moved to `docs/development/setup.md` ("Try the product"). `scripts/dev/test-desktop.sh` and
+`identity-desktop.md` stay: they are Docker-free automated checks, unrelated to that stack.
+Entries above that mention the desktop stack are historical.
+

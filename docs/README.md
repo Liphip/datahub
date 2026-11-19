@@ -7,7 +7,6 @@ Each fact is kept in one place. Start with the document that matches your questi
 | What must the product do, why, and what is built already? | [Requirements specification](specification/requirements-specification.md) — goals, requirements, decisions, **implementation status (Appendix A)** |
 | How does it work? | [Functional specification](specification/functional-specification.md) |
 | What is being worked on, what is open, what did we learn? | [Handoff / work log](development/handoff.md) |
-| How do I deploy the product on a desktop for testing? | [Desktop test deployment](operations/desktop-deployment.md) |
 | How do I test identity on a desktop without Kubernetes? | [Desktop identity checks](development/identity-desktop.md) |
 | How do I run, build and test it? | [Development setup](development/setup.md) |
 | Which settings exist? | [Configuration reference](development/configuration-reference.md) |

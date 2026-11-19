@@ -40,24 +40,18 @@ A complete example — LoRaWAN readings enriched with SAP meter data and interna
 delivered to a metering and a grid-calculation system (§14a EnWG) — is in
 [docs/examples/energy-14a](docs/examples/energy-14a/README.md).
 
-## Quick start: desktop deployment
+## Quick start
 
-Install Docker Desktop (Linux containers) or Docker Engine with Compose v2.24+. From the repository
-root, start the persistent desktop evaluation installation:
+Install Docker with Compose v2. From the repository root:
 
 ```bash
-docker compose -f docker/compose.desktop.yml up --build -d --wait
+./scripts/dev/generate-dev-keys.sh
+docker compose -f docker/docker-compose.dev.yml up --build -d
 ```
 
-Open **http://localhost:8088** on your desktop and run initial setup. This includes the UI, APIs,
-PostgreSQL, Kafka, MQTT, Python module execution, Grafana and documentation. No Kubernetes or host
-JDK/Node toolchain is needed. Keys and service credentials are generated automatically and retained.
-
-For a real local Keycloak provider, startup, shutdown and rebuild instructions, see
-[Desktop test deployment](docs/operations/desktop-deployment.md).
-The larger developer stack and host development workflow remain in
-[Development setup](docs/development/setup.md). Automated checks are separate:
-`bash scripts/dev/test-desktop.sh` runs the desktop smoke suite.
+Open **http://localhost** and run initial setup. Ports, the host development workflow and tests
+are in [Development setup](docs/development/setup.md). `bash scripts/dev/test-desktop.sh` runs a
+smoke suite that needs neither Docker nor Kubernetes.
 
 ## Architecture
 
