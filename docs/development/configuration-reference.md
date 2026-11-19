@@ -100,6 +100,11 @@ development only; set explicit credentials in every other deployment.
 |---|---|---|
 | `dataturntable.docker.module.base-image` | `python:3.14.7-slim-trixie` | Base image for module containers |
 | `dataturntable.docker.module.network` | `dataturntable` | Docker network for modules that are granted network access |
+| `dataturntable.docker.dependency-install.network` | `bridge` | Network of the short-lived container that installs module requirements (MOD-05). It must reach the package index; the module's own container stays without one |
+| `dataturntable.docker.dependency-install.index-url` | — | Alternative package index (pip `--index-url`), e.g. an internal mirror |
+| `dataturntable.docker.dependency-install.proxy` | — | Outbound proxy for the install container only (`HTTPS_PROXY`/`HTTP_PROXY`) |
+| `dataturntable.docker.dependency-install.allow-source-builds` | `false` | Accept sdists. Off by default: only wheels are installed, so no package build script runs while the install container has a network |
+| `dataturntable.docker.dependency-install.timeout-seconds` | `600` | Limit for one install |
 | `dataturntable.docker.resources.cpu-limit`, `.memory-limit` | `1.0`, `512m` | Container limits (MOD-04) |
 | `MQTT_INTEGRATED_INTERNAL_BROKER_URL` | `mqtt://mosquitto:1883` | Bundled broker as seen from the stack (UI default) |
 | `MQTT_INTEGRATED_EXTERNAL_BROKER_URL` | `mqtt://localhost:1883` | Bundled broker as seen from a developer machine (UI default) |

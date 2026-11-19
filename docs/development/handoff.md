@@ -1917,3 +1917,43 @@ legacy serialization and both editor load paths.
 
 Validation: 53 targeted backend tests and all 58 frontend tests passed, including four module editor
 round-trip/history cases. Frontend typecheck/build passed; lint has 26 existing warnings and no errors.
+
+## Session 2026-11-19: errors from the production logs (MQTT pipeline p1)
+
+Two real bugs explained the uploaded Loki logs; both are fixed with regression tests.
+
+1. **"Connection refresh failed: null" after every connector/pipeline save.** The after-commit
+   lambdas in `ConnectorResource`/`PipelineResource` read `mqttConnectionManager` etc. through the
+   resource. The resource is `@Authenticated`; Quarkus intercepts the Kotlin property getters of its
+   generated subclass too, and on the refresh thread (no security identity) they throw
+   `UnauthorizedException` with a null message. So saving a pipeline never refreshed MQTT
+   subscriptions; they only caught up at the periodic reconcile (logs: `subscriptions=0` → `1`).
+   Fix: capture the beans in locals before `afterCommit.run { }`. `AfterCommit` now logs the
+   exception class and stack trace, counts failures (`dataturntable.connector.refresh.failures`) and
+   has `awaitIdle()` for tests. Rule: an after-commit action must never reach through an
+   `@Authenticated` bean. Test: `AfterCommitRefreshTest` (fails with 5 failures without the fix).
+2. **pip "Temporary failure in name resolution" for every message.** A module with requirements
+   ran pip inside its own container, which runs `--network none` (MOD-05). New
+   `ModuleDependencyCache`: a separate install container (network `dependency-install.network`,
+   default `bridge`; non-root, read-only rootfs, cap-drop ALL; no module code/input/config/secrets;
+   `--only-binary=:all:` unless `allow-source-builds`) installs into Docker volume
+   `dt-pkgs-<sha256 prefix of normalised requirements>`; completion is an atomic rename to
+   `/pkgs/site`. Module runs (`DockerService` and `WarmContainerPool`) mount it read-only at
+   `/opt/dt-packages` with `PYTHONPATH=/opt/dt-packages/site`. This also fixes a latent warm-pool
+   bug: packages were added only to the runner's `sys.path`, so the per-job child process could not
+   import them. The first message after a requirements change waits for the install (pandas: ~12 s);
+   an install failure fails the run with pip's stderr. Desktop/production hosts need the install
+   network to reach PyPI or set `index-url`/`proxy`. Old volumes are not garbage-collected yet
+   (`docker volume prune` or `docker volume rm dt-pkgs-…`). Kubernetes backend: not changed.
+   Tests: `ModuleDependencyCacheTest` (argument policy) and Docker-gated
+   `DockerServiceHostileModuleTest` (six importable while the module still has no network, volume
+   reused, unknown package fails with pip's message; pandas opt-in via `DATATURNTABLE_TEST_PANDAS=1`).
+
+Not bugs: `(no channel)` alert lines / no admin e-mail addresses (alerting unconfigured; the alerts
+were caused by the failed runs above); Kafka `UNKNOWN_TOPIC_OR_PARTITION`/`TOPIC_ALREADY_EXISTS` at
+startup (topic auto-creation race, transient); SmallRye startup notices.
+
+Running Docker tests in this cloud: start `dockerd`, pull `mirror.gcr.io/library/python:3.14.7-slim-trixie`
+and tag it (Docker Hub rate-limits), and build an image adding `/root/.ccr/ca-bundle.crt` as
+`PIP_CERT`/`SSL_CERT_FILE` (TLS interception); run with `DATATURNTABLE_DOCKER_MODULE_BASE_IMAGE=<that image>`.
+

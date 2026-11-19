@@ -89,6 +89,9 @@ class DockerService {
 
     @Inject
     lateinit var modelArtifactService: ModelArtifactService
+
+    @Inject
+    lateinit var dependencyCache: ModuleDependencyCache
     
     @ConfigProperty(name = "dataturntable.docker.module.base-image", defaultValue = "python:3.14.7-slim-trixie")
     lateinit var baseImage: String
@@ -351,34 +354,22 @@ class DockerService {
             "--name", containerName
         )
 
-        // Network access is opt-in at deployment level; dependency installation must use
-        // prebuilt artifacts in the secure default profile rather than opening egress.
+        // Network access is opt-in at deployment level. Requirements are not installed here: the
+        // module's container has no network by default, so they come pre-installed from
+        // ModuleDependencyCache's volume (MOD-05).
         dockerArgs.addAll(listOf("--network", networkMode(limits)))
+        dependencyCache.ensure(requirements)?.let { dockerArgs.addAll(dependencyCache.mountArgs(it)) }
 
         dockerArgs.addAll(sandboxArguments(limits))
 
         dockerArgs.addAll(listOf(
             "-e", envArg("MODULE_CODE", scriptB64),
-            "-e", envArg("MODULE_REQUIREMENTS", requirements),
         ))
         envMap.forEach { (key, value) -> dockerArgs.addAll(listOf("-e", envArg(key, value))) }
         
-        // Bootstrap: optionally install requirements, then exec the module script.
-        // Packages are installed to /tmp/packages (the only writable space under --read-only).
+        // Bootstrap: exec the module script. Its requirements are already on PYTHONPATH.
         val bootstrap = """
-import sys, os, base64, subprocess
-_reqs = os.environ.get('MODULE_REQUIREMENTS', '').strip()
-if _reqs:
-    _r = subprocess.run(
-        [sys.executable, '-m', 'pip', 'install',
-         '--target', '/tmp/packages', '-q', '--no-warn-script-location']
-        + [r for r in _reqs.splitlines() if r.strip()],
-        capture_output=True, text=True,
-    )
-    if _r.returncode != 0:
-        sys.stderr.write('pip install failed: ' + _r.stderr)
-        sys.exit(1)
-    sys.path.insert(0, '/tmp/packages')
+import os, base64
 exec(base64.b64decode(os.environ['MODULE_CODE']).decode())
 """.trimIndent()
 

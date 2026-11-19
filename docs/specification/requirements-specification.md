@@ -744,7 +744,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | MOD-02 | ~ | Seven module types instead of four. | Done |
 | MOD-03 | ~ | Pods on Kubernetes; long-running workers instead of one container per message (NFR-P5). | Partial (Docker only) |
 | MOD-04 | ~ | Full quota list (former FR-014). | Done (Docker backend) |
-| MOD-05 | ~ | Installing requirements currently opens network access. | Partial |
+| MOD-05 | ~ | Requirements are installed once per distinct set by a separate container (network, but no module code, data or secrets; wheels only by default) into a read-only volume mounted into the network-less module container. | Done (Docker backend) |
 | MOD-06 | = | | Open (slim base image) |
 | MOD-07 | = | | Partial (`query_fn` returns an empty result) |
 | MOD-08 – MOD-11 | = | | Done |
@@ -856,7 +856,7 @@ Change against version 1.1: **=** unchanged, **~** wording changed (idea kept), 
 | NFR-R11 | + | Former NFR-017. | Partial (drill done with the Compose topology; not on Kubernetes, no schedule) |
 | NFR-S1 | = | | Open |
 | NFR-S2 | ~ | Client-side SHA-256 pre-hashing dropped: over TLS it adds no protection (the hash becomes the password). BCrypt storage kept; minimum length added. | Done |
-| NFR-S3 | ~ | Hostile-by-default (former NFR-002). | Partial (Docker backend hardened and tested with hostile modules; network opened while installing requirements; Kubernetes backend never run on a cluster) |
+| NFR-S3 | ~ | Hostile-by-default (former NFR-002). | Partial (Docker backend hardened and tested with hostile modules; requirements installed outside the module container; Kubernetes backend never run on a cluster) |
 | NFR-S4 | = | | Done |
 | NFR-S5 | ~ | Detailed in AUD. | Partial (see AUD-01) |
 | NFR-S6 | = | | Open |

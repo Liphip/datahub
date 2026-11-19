@@ -66,8 +66,10 @@ installation, without high availability, TLS termination or production identity/
    `/api/ingest/v1/ingest/{pipelineId}` endpoint with `X-API-Key` and optionally `Idempotency-Key`.
    See the [API guide](../api/README.md) for the request contract.
 5. Inspect the pipeline run, node results and logs in the UI. The Python code runs in a separate,
-   restricted container; it does not run inside the backend. Requirements that need Internet
-   access are subject to the existing module-network policy.
+   restricted container without network; it does not run inside the backend. A module's
+   requirements are installed once, by a separate container on the `bridge` network that must
+   reach PyPI (or set `dataturntable.docker.dependency-install.index-url`/`.proxy`), so the first
+   message after a requirements change takes longer. Only wheels are accepted by default.
 6. Edit tenant limits/retention and inspect the Activity tabs on tenants, connectors and roles.
 
 Connections to databases/brokers inside this deployment use their Compose names (`postgresql`,

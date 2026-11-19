@@ -87,6 +87,9 @@ class WarmContainerPool {
     @Inject
     lateinit var runtimeRoleConfig: RuntimeRoleConfig
 
+    @Inject
+    lateinit var dependencyCache: ModuleDependencyCache
+
     @ConfigProperty(name = "dataturntable.docker.module.base-image", defaultValue = "python:3.14.7-slim-trixie")
     lateinit var baseImage: String
 
@@ -208,26 +211,32 @@ class WarmContainerPool {
     }
 
     /**
-     * Spawn a new warm container with [requirements] pre-installed.
-     * Blocks until the container signals "__READY__" (may be slow if pip install runs).
-     * Returns null on failure.
-     */
-    /**
-     * Pure policy seam (NFR-S3). A warm container keeps its network mode for its whole life, so
-     * one that installs requirements over the network also *runs* modules with that network.
-     * That is only acceptable where the deployment allows module network access at all; under
-     * the default (`allow-network=false`) a warm container never gets a network, whatever its
-     * requirements — its pip install then fails and the caller falls back to the ephemeral path,
-     * which fails the same way and says why.
+     * Pure policy seam (NFR-S3). A warm container keeps its network mode for its whole life and
+     * runs many jobs, so it gets one only where the deployment allows module egress at all
+     * (`allow-network`). Installing requirements never needs it: they come from
+     * [ModuleDependencyCache], installed beforehand in a separate container.
      */
     internal fun needsNetwork(requirements: String): Boolean = allowNetwork && requirements.isNotBlank()
 
+    /**
+     * Spawns a warm container with [requirements] available (installing them first if this is
+     * the first time they are needed). Blocks until it signals "__READY__"; null on failure.
+     */
     fun spawn(requirements: String = "", readyTimeoutSeconds: Long = 120): WarmContainer? {
         if (!poolEnabled) return null
         val name = "dt-warm-${UUID.randomUUID().toString().take(8)}"
         val runnerB64 = buildRunnerB64()
 
         val needsNetwork = needsNetwork(requirements)
+        // MOD-05: requirements come pre-installed from a read-only volume; the container itself
+        // never installs anything. A failed install leaves the module to the ephemeral path,
+        // which reports pip's output with the failed run.
+        val packages = if (requirements.isBlank()) null else try {
+            dependencyCache.ensure(requirements)
+        } catch (e: Exception) {
+            LOG.warnf("Not spawning warm container for %s: %s", requirements.take(60), e.message)
+            return null
+        }
 
         val args = mutableListOf(
             "docker", "run", "-i", "--rm", "--name", name,
@@ -238,15 +247,12 @@ class WarmContainerPool {
             "--security-opt", "no-new-privileges:true",
             "--pids-limit", "128",
             "--ulimit", "nofile=1024:1024",
-            "--tmpfs", "/tmp:size=256m",   // pip --target /tmp/packages goes here
-            "--tmpfs", "/.cache",          // pip cache dir (user 1000 can't write to / otherwise)
+            "--tmpfs", "/tmp:size=256m",
             "--cpu-shares", (cpuLimit.toDouble() * 1024).toInt().toString(),
             "--memory", memoryLimit,
             "-e", "__DT_RUNNER__=$runnerB64",
         )
-        if (needsNetwork) {
-            args.addAll(listOf("-e", envArg("MODULE_REQUIREMENTS", requirements)))
-        }
+        packages?.let { args.addAll(dependencyCache.mountArgs(it)) }
         args.addAll(listOf(
             baseImage,
             "python3", "-c",
@@ -324,7 +330,7 @@ class WarmContainerPool {
      * Build the base64-encoded Python runner that runs inside every warm container.
      *
      * Startup:
-     *   1. Optionally install requirements from MODULE_REQUIREMENTS env var into /tmp/packages.
+     *   1. Requirements are already on PYTHONPATH, from ModuleDependencyCache's read-only volume.
      *   2. Write "__READY__\n" to stdout.
      *
      * Job loop (one JSON line per job from stdin):
@@ -337,20 +343,6 @@ class WarmContainerPool {
         // Using trimIndent + raw strings so indentation doesn't end up in the Python.
         val script = """
 import sys, json, os, base64, subprocess
-
-_reqs = os.environ.get('MODULE_REQUIREMENTS', '').strip()
-if _reqs:
-    _r = subprocess.run(
-        [sys.executable, '-m', 'pip', 'install',
-         '--target', '/tmp/packages', '-q', '--no-warn-script-location']
-        + [r for r in _reqs.splitlines() if r.strip()],
-        capture_output=True, text=True,
-    )
-    if _r.returncode != 0:
-        sys.stdout.write(json.dumps({'error': 'pip install failed: ' + _r.stderr}) + '\n')
-        sys.stdout.flush()
-        sys.exit(1)
-    sys.path.insert(0, '/tmp/packages')
 
 sys.stdout.write('__READY__\n')
 sys.stdout.flush()

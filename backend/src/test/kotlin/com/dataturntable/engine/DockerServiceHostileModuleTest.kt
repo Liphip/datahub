@@ -31,14 +31,14 @@ class DockerServiceHostileModuleTest {
     @Inject
     lateinit var dockerService: DockerService
 
-    private fun moduleVersion(code: String): ModuleVersion = ModuleVersion().apply {
+    private fun moduleVersion(code: String, requirements: String = ""): ModuleVersion = ModuleVersion().apply {
         this.code = code
-        this.requirements = ""
+        this.requirements = requirements
     }
 
-    private fun runProcessing(code: String, limits: ExecutionLimits): ModuleExecutionOutput =
+    private fun runProcessing(code: String, limits: ExecutionLimits, requirements: String = ""): ModuleExecutionOutput =
         dockerService.executeModule(
-            moduleVersion = moduleVersion(code),
+            moduleVersion = moduleVersion(code, requirements),
             inputData = mapOf("value" to 1),
             pipelineId = "hostile-test",
             runId = UUID.randomUUID().toString(),
@@ -169,5 +169,67 @@ class DockerServiceHostileModuleTest {
         // Blocked by --pids-limit (fork raises BlockingIOError/OSError once the cap is hit) rather
         // than succeeding or hanging until the 15s timeout.
         assertFalse(error.message?.contains("timed out") == true, "fork bomb should be rejected by pids-limit, not time out: ${error.message}")
+    }
+
+    @Inject
+    lateinit var dependencyCache: ModuleDependencyCache
+
+    /**
+     * MOD-05, and the production failure behind it: a module whose requirements needed a network
+     * failed every run with "pip install failed ... Temporary failure in name resolution", because
+     * the install ran inside the module's own network-less container. Requirements now come from
+     * a volume installed beforehand in a separate container; the module still has no network.
+     */
+    @Test
+    fun `a module's requirements are importable while the module itself still has no network`() {
+        val code = """
+            |def process(input_data, query):
+            |    import six, socket
+            |    try:
+            |        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            |        s.settimeout(3)
+            |        s.connect(('8.8.8.8', 53))
+            |        reached = True
+            |    except OSError:
+            |        reached = False
+            |    return {"six": six.__version__, "network": reached}
+        """.trimMargin()
+        val limits = ExecutionLimits(timeoutSeconds = 60)
+
+        val first = runProcessing(code, limits, requirements = "six==1.17.0\n# a comment\n")
+        val result = first.result as Map<*, *>
+        assertEquals("1.17.0", result["six"])
+        assertEquals(false, result["network"], "the module's own container must stay without a network")
+
+        // The same requirements map to the same, already complete volume: no second install.
+        val volume = dependencyCache.volumeName("six==1.17.0")
+        assertEquals(volume, dependencyCache.ensure("  six==1.17.0  "))
+        val second = runProcessing(code, limits, requirements = "six==1.17.0")
+        assertEquals("1.17.0", (second.result as Map<*, *>)["six"])
+    }
+
+    @Test
+    fun `a requirement that cannot be installed fails the run with pip's own explanation`() {
+        val error = org.junit.jupiter.api.Assertions.assertThrows(ModuleExecutionException::class.java) {
+            runProcessing(
+                code = "def process(input_data, query):\n    return {}",
+                limits = ExecutionLimits(timeoutSeconds = 60),
+                requirements = "dataturntable-no-such-package-${UUID.randomUUID().toString().take(8)}==0.0.1",
+            )
+        }
+        assertTrue(error.message!!.contains("Installing module requirements failed"), error.message)
+        assertTrue(error.stderr.contains("No matching distribution", ignoreCase = true) || error.stderr.contains("Could not find", ignoreCase = true), error.stderr)
+    }
+
+    /** The requirement behind the reported production failure (an IMPORT module needing pandas). Large download, so opt-in. */
+    @Test
+    @org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable(named = "DATATURNTABLE_TEST_PANDAS", matches = "1")
+    fun pandasModuleRuns() {
+        val out = runProcessing(
+            code = "def process(input_data, query):\n    import pandas as pd\n    return {'sum': int(pd.Series([1, 2, 3]).sum())}",
+            limits = ExecutionLimits(timeoutSeconds = 120, memoryMiB = 1024),
+            requirements = "pandas",
+        )
+        assertEquals(6, (out.result as Map<*, *>)["sum"])
     }
 }
