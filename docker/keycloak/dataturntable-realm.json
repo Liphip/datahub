@@ -1,0 +1,35 @@
+{
+  "realm": "dataturntable",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "clients": [
+    {
+      "clientId": "dataturntable",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "dataturntable-dev-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost/api/internal/v1/auth/oidc/login",
+        "http://localhost:3000/api/internal/v1/auth/oidc/login"
+      ],
+      "webOrigins": ["http://localhost", "http://localhost:3000"],
+      "attributes": {"pkce.code.challenge.method": "S256"}
+    }
+  ],
+  "users": [
+    {
+      "id": "2f437af0-07f5-49cd-a58a-bfbe728cd5ef",
+      "username": "dev-user",
+      "enabled": true,
+      "email": "dev-user@example.invalid",
+      "emailVerified": true,
+      "firstName": "Dev",
+      "lastName": "User",
+      "credentials": [{"type": "password", "value": "dev-user", "temporary": false}]
+    }
+  ]
+}

@@ -45,4 +45,4 @@ cd frontend && npx license-checker-rseidelsohn --production --summary
 
 The optional OIDC login uses `io.quarkus:quarkus-oidc` (Apache-2.0), managed by the existing Quarkus BOM. Its desktop flow test uses the JDK HTTP server and the existing SmallRye JWT library; no identity-provider container or new frontend dependency is bundled.
 
-The optional desktop identity-provider overlay bundles `quay.io/keycloak/keycloak:26.6.2` (Keycloak, Apache-2.0). Desktop initialization uses the already bundled `python:3.14.7-slim-trixie` image and its OpenSSL executable; no host crypto tools are required.
+The developer Compose stack bundles `quay.io/keycloak/keycloak:26.6.2` (Keycloak, Apache-2.0) as a development identity provider.

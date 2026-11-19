@@ -1966,3 +1966,16 @@ moved to `docs/development/setup.md` ("Try the product"). `scripts/dev/test-desk
 `identity-desktop.md` stay: they are Docker-free automated checks, unrelated to that stack.
 Entries above that mention the desktop stack are historical.
 
+## Session 2026-11-19: Keycloak in the developer Compose stack
+
+`docker/docker-compose.dev.yml` now runs `quay.io/keycloak/keycloak:26.6.2` (`start-dev`, realm
+imported from `docker/keycloak/dataturntable-realm.json`, loopback port 8180, network alias
+`idp.localhost` so browser and backend see the same issuer). `control-api` defaults to OIDC enabled
+against it (overridable with the same `DATATURNTABLE_OIDC_*` variables) and waits for it to be
+healthy. Fixed dev credentials, documented in setup.md. Verified here: Keycloak healthy, discovery
+from inside the Compose network returns issuer `http://idp.localhost:8180/realms/dataturntable`, and a
+scripted authorization-code + PKCE login of `dev-user` redirects to
+`http://localhost/api/internal/v1/auth/oidc/login` and exchanges for an ID token with the client
+secret. Not verified here: the control-api container itself completing the login (image not built
+in this cloud).
+

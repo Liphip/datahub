@@ -65,6 +65,35 @@ services:
       timeout: 5s
       retries: 3
 
+  # Development identity provider. The issuer http://idp.localhost:8180 is the same for the browser
+  # (*.localhost resolves to loopback) and for control-api (network alias). Fixed development
+  # credentials only: admin console admin/admin, realm user dev-user/dev-user.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.6.2
+    container_name: dataturntable-keycloak
+    command: ["start-dev", "--import-realm", "--http-port=8180", "--hostname=http://idp.localhost:8180", "--health-enabled=true"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports:
+      - "127.0.0.1:8180:8180"
+    networks:
+      default:
+        aliases: [idp.localhost]
+    volumes:
+      - ./keycloak/dataturntable-realm.json:/opt/keycloak/data/import/dataturntable-realm.json:ro
+      - keycloak-data:/opt/keycloak/data
+    healthcheck:
+      test:
+        - CMD
+        - /bin/bash
+        - -ec
+        - "exec 3<>/dev/tcp/127.0.0.1/9000; printf 'GET /health/ready HTTP/1.0\r\n\r\n' >&3; read -r status <&3; [[ $$status == *'200'* ]]"
+      interval: 10s
+      timeout: 5s
+      retries: 40
+      start_period: 60s
+
   control-api:
     build:
       context: ..
@@ -72,10 +101,11 @@ services:
     container_name: dataturntable-control-api
     environment:
       QUARKUS_PROFILE: control-api
-      DATATURNTABLE_OIDC_ENABLED: ${DATATURNTABLE_OIDC_ENABLED:-false}
-      DATATURNTABLE_OIDC_ISSUER: ${DATATURNTABLE_OIDC_ISSUER:-http://localhost:8180/realms/dataturntable}
+      # Bundled development Keycloak (service `keycloak`). Password login stays available.
+      DATATURNTABLE_OIDC_ENABLED: ${DATATURNTABLE_OIDC_ENABLED:-true}
+      DATATURNTABLE_OIDC_ISSUER: ${DATATURNTABLE_OIDC_ISSUER:-http://idp.localhost:8180/realms/dataturntable}
       DATATURNTABLE_OIDC_CLIENT_ID: ${DATATURNTABLE_OIDC_CLIENT_ID:-dataturntable}
-      DATATURNTABLE_OIDC_CLIENT_SECRET: ${DATATURNTABLE_OIDC_CLIENT_SECRET:-}
+      DATATURNTABLE_OIDC_CLIENT_SECRET: ${DATATURNTABLE_OIDC_CLIENT_SECRET:-dataturntable-dev-secret}
       DATATURNTABLE_RUNTIME_ROLE: control-api
       DATATURNTABLE_LOCAL_LOGIN_MODE: ${DATATURNTABLE_LOCAL_LOGIN_MODE:-all}
       DATATURNTABLE_BREAK_GLASS_USER_IDS: ${DATATURNTABLE_BREAK_GLASS_USER_IDS:-}
@@ -122,6 +152,8 @@ services:
       monitoring-postgresql:
         condition: service_healthy
       kafka:
+        condition: service_healthy
+      keycloak:
         condition: service_healthy
 
   public-api:
@@ -519,3 +551,4 @@ volumes:
   dashboard-pgdata:
   loki-data:
   alloy-data:
+  keycloak-data:

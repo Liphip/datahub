@@ -138,7 +138,7 @@ credentials are stored as platform secrets and referenced with `secretRefs` (CON
 | `DATATURNTABLE_OIDC_CLIENT_SECRET` | empty | Client secret from secret management; required by a confidential provider. |
 
 Changes require restarting the control API. The provider is disabled unless explicitly enabled.
-Compose passes these variables to `control-api` only. For host development, export them before
+Compose passes these variables to `control-api` only and, by default, points them at its bundled Keycloak (see [setup](setup.md)). For host development, export them before
 starting Quarkus. See [desktop identity checks](identity-desktop.md) for local protocol tests and
 [setup](setup.md) for callback registration and multi-replica encryption-key requirements.
 

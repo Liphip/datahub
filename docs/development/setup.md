@@ -151,14 +151,33 @@ For manual development, the backend and frontend host commands above work with C
 PostgreSQL/Kafka/MQTT infrastructure; Kubernetes is optional. Vite uses port **3000** as configured
 in `frontend/vite.config.ts` (the earlier example's `5173` is Vite's generic default).
 
-### Optional external OIDC provider
+### Keycloak in the developer stack
 
-OIDC is disabled by default. Keep local password login available while configuring a provider.
+`docker/docker-compose.dev.yml` starts a development Keycloak (`keycloak`, port 8180 on loopback)
+with the realm from `docker/keycloak/dataturntable-realm.json`, and enables OIDC on `control-api`.
+Password login stays available. Fixed development credentials only:
+
+| What | Value |
+|---|---|
+| Issuer | `http://idp.localhost:8180/realms/dataturntable` (browsers resolve `*.localhost` to loopback; inside Compose it is a network alias) |
+| Keycloak admin console | http://idp.localhost:8180/admin, `admin/admin` |
+| Realm user | `dev-user/dev-user`, subject `2f437af0-07f5-49cd-a58a-bfbe728cd5ef` |
+| Client | `dataturntable`, secret `dataturntable-dev-secret`, callbacks via `http://localhost` and Vite's `http://localhost:3000` |
+
+To sign in with it: create the administrator with a password, open Users → External identities and
+link that user to the issuer and subject above, then use the identity-provider button on Login.
+The realm file is imported only into an empty Keycloak; after editing it, run
+`docker compose -f docker/docker-compose.dev.yml rm -sfv keycloak && docker volume rm docker_keycloak-data`.
+To run without OIDC, set `DATATURNTABLE_OIDC_ENABLED=false` before `up`.
+
+### External OIDC provider
+
+Keep local password login available while configuring a provider.
 Set these process variables on the control API and restart it:
 
 - `DATATURNTABLE_OIDC_ENABLED=true`
 - `DATATURNTABLE_OIDC_ISSUER`: the provider's exact issuer URL (for example,
-  `http://localhost:8180/realms/dataturntable` for a local desktop Keycloak)
+  `http://idp.localhost:8180/realms/dataturntable` for the bundled Keycloak)
 - `DATATURNTABLE_OIDC_CLIENT_ID=dataturntable`
 - `DATATURNTABLE_OIDC_CLIENT_SECRET`: the provider's confidential-client secret, securely injected
 
