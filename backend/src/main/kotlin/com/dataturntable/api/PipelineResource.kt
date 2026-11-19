@@ -1060,9 +1060,11 @@ class PipelineResource {
         )
 
         // Refresh routing tables so MQTT/WS subscriptions stay in sync if pipeline is active
+        val refreshMqtt = mqttConnectionManager
+        val refreshWebSocket = webSocketConnectionManager
         afterCommit.run {
-            mqttConnectionManager.refreshAll()
-            webSocketConnectionManager.refreshAll()
+            refreshMqtt.refreshAll()
+            refreshWebSocket.refreshAll()
         }
 
         return Response.status(201).entity(pipelineToMap(pipeline)).build()
@@ -1120,9 +1122,11 @@ class PipelineResource {
                 mapOf("outcome" to "succeeded")
             )
             // Rebuild routing tables to remove this pipeline's subscriptions
+            val refreshMqtt = mqttConnectionManager
+            val refreshWebSocket = webSocketConnectionManager
             afterCommit.run {
-                mqttConnectionManager.refreshAll()
-                webSocketConnectionManager.refreshAll()
+                refreshMqtt.refreshAll()
+                refreshWebSocket.refreshAll()
             }
             Response.noContent().build()
         } else {
@@ -1175,9 +1179,11 @@ class PipelineResource {
             )
 
             // Refresh connection managers so topic subscriptions stay in sync with graph changes
+            val refreshMqtt = mqttConnectionManager
+            val refreshWebSocket = webSocketConnectionManager
             afterCommit.run {
-                mqttConnectionManager.refreshAll()
-                webSocketConnectionManager.refreshAll()
+                refreshMqtt.refreshAll()
+                refreshWebSocket.refreshAll()
             }
 
             Response.ok(pipelineToMap(pipeline)).build()
